@@ -8,6 +8,35 @@ A lightweight OPC UA server implementation for the Raspberry Pi Pico (RP2040) pl
 - Designed for resource-constrained embedded systems
 - Can work together with [Autosys](https://github.com/Maronari/Autosys)
 
+## Project Structure
+
+```
+.
+├── CMakeLists.txt                # Main CMake build script
+├── examples/                     # Example applications and test projects
+│   ├── CMakeLists.txt
+│   └── opc_dhcp/
+│       ├── CMakeLists.txt
+│       └── w5x00_opc_dhcp.c      # OPC UA server example
+├── libraries/                    # Third-party and custom libraries
+│   ├── CMakeLists.txt
+│   ├── FreeRTOS-Kernel/          # FreeRTOS kernel
+│   ├── ioLibrary_Driver/         # Wiznet Ethernet drivers
+│   ├── mbedtls/                  # mbedTLS cryptography library
+│   ├── pico-extras/              # Pico SDK extras
+│   └── pico-sdk/                 # Raspberry Pi Pico SDK
+├── port/                         # Porting and integration for Pico
+│   ├── CMakeLists.txt
+│   ├── port_common.h
+│   ├── FreeRTOS-Kernel/          # FreeRTOS adaptation
+│   ├── ioLibrary_Driver/         # Wiznet driver adaptation
+│   ├── lwip/                     # lwIP network stack
+│   ├── mbedtls/                  # mbedTLS adaptation
+│   ├── open62541/                # open62541 OPC UA stack and FreeRTOS integration
+│   └── timer/                    # Timer utilities
+└── UAExpertConf.uap              # UAExpert client configuration
+```
+
 ## Architecture
 
 ![RP2040 Program Architecture](static/images/program-architecture.png)
