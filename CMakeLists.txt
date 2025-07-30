@@ -10,8 +10,6 @@ endif()
 
 set(PICO_DEOPTIMIZED_DEBUG ON)
 
-include(rp2040_hat_lwip_c-patch.cmake)
-include(rp2040_hat_freertos_c-patch.cmake)
 include(pico_sdk_import.cmake)
 include(rp2040_hat_lwip_c_sdk_version.cmake)
 include(rp2040_hat_freertos_c_sdk_version.cmake)
