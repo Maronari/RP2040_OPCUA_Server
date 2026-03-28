@@ -12,6 +12,8 @@
  * Includes
  * ----------------------------------------------------------------------------------------------------
  */
+#include <stdint.h>
+
 #include "lwip/netif.h"
 
 /**
@@ -97,6 +99,13 @@ void netif_status_callback(struct netif *netif);
  *  \return ERR_OK if Network interface initialized
  */
 err_t netif_initialize(struct netif *netif);
+
+/*! \brief Set the MAC address used by the lwIP netif wrapper
+ *  \ingroup w5x00_lwip
+ *
+ *  \param mac_addr a pointer to a 6-byte MAC address
+ */
+void w5x00_lwip_set_mac_address(const uint8_t mac_addr[6]);
 
 /*! \brief ethernet frame cyclic redundancy check
  *  \ingroup w5x00_lwip

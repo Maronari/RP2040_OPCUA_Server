@@ -25,19 +25,36 @@ target_sources(FREERTOS_FILES PUBLIC
         ${FREERTOS_DIR}/portable/ThirdParty/GCC/RP2040/idle_task_static_memory.c
         )
 
+add_library(FREERTOS_CALLOC STATIC)
+
+target_sources(FREERTOS_CALLOC PUBLIC
+        ${PORT_DIR}/FreeRTOS-Kernel/inc/myMalloc/myMalloc.c
+        )
+
+target_include_directories(FREERTOS_CALLOC PUBLIC
+        ${PORT_DIR}/FreeRTOS-Kernel/inc/myMalloc
+        )
+
+target_link_libraries(FREERTOS_CALLOC PUBLIC
+        FREERTOS_FILES
+        pico_stdlib
+        )
+
 # lwip
 add_library(LWIP_FILES STATIC)
 
 target_sources(LWIP_FILES PUBLIC
         ${PORT_DIR}/lwip/w5x00_lwip.c
-        ${PICO_LWIP_PATH}/contrib/ports/freertos/sys_arch.c
         )
 
 target_include_directories(LWIP_FILES PUBLIC
         ${WIZNET_DIR}/Ethernet
         ${PORT_DIR}
         ${PORT_DIR}/lwip
-        ${PICO_LWIP_PATH}/contrib/ports/freertos/include
+        ${PICO_SDK_PATH}/lib/lwip/src/include
+        ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
+        ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
+        ${PICO_SDK_PATH}/src/rp2_common/pico_rand/include
         )
 
 target_link_libraries(LWIP_FILES PUBLIC
@@ -45,6 +62,7 @@ target_link_libraries(LWIP_FILES PUBLIC
         ETHERNET_FILES
         pico_lwip
         pico_lwip_nosys
+        pico_lwip_contrib_freertos_headers
         pico_lwip_freertos
         )
 
@@ -68,6 +86,7 @@ add_library(OPEN62541_FILES STATIC)
 
 target_sources(OPEN62541_FILES PUBLIC
         ${PORT_DIR}/open62541/open62541.c
+        #${PORT_DIR}/open62541/opc_add_temperature.c
         )
 
 target_include_directories(OPEN62541_FILES PUBLIC
@@ -75,13 +94,19 @@ target_include_directories(OPEN62541_FILES PUBLIC
         ${WIZNET_DIR}/Ethernet
         ${PORT_DIR}
         ${PORT_DIR}/lwip
-        pico_lwip_contrib_freertos_headers
+        ${PORT_DIR}/open62541/include
+        ${PICO_SDK_PATH}/lib/lwip/src/include
+        ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
+        ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
+        ${PICO_SDK_PATH}/src/rp2_common/pico_rand/include
         )
 
 target_link_libraries(OPEN62541_FILES PRIVATE
         pico_lwip
         pico_lwip_nosys
+        pico_lwip_contrib_freertos_headers
         FREERTOS_FILES
+        FREERTOS_CALLOC
         pico_stdlib
         pico_lwip_contrib_freertos
         )
