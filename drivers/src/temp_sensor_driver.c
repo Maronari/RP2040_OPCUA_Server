@@ -1,0 +1,30 @@
+#include "drivers/temp_sensor_driver.h"
+
+#include <stddef.h>
+
+#include "hardware/adc.h"
+
+bool temp_sensor_driver_init(void)
+{
+    adc_init();
+    adc_set_temp_sensor_enabled(true);
+    return true;
+}
+
+bool temp_sensor_driver_read_celsius(float *out_temperature_c)
+{
+    if (out_temperature_c == NULL)
+    {
+        return false;
+    }
+
+    adc_select_input(4);
+    uint16_t raw = adc_read();
+    const float conversion_factor = 3.3f / 4095.0f;
+    const float voltage = raw * conversion_factor;
+
+    *out_temperature_c = 27.0f - ((voltage - 0.706f) / 0.001721f);
+    return true;
+}
+
+

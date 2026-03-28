@@ -1,0 +1,25 @@
+#ifndef SERVICES_SERVICE_TYPES_H
+#define SERVICES_SERVICE_TYPES_H
+
+typedef enum
+{
+    SERVICE_QUALITY_BAD = 0,
+    SERVICE_QUALITY_UNCERTAIN = 1,
+    SERVICE_QUALITY_GOOD = 2
+} service_quality_t;
+
+typedef enum
+{
+    NETWORK_MODE_DHCP = 0,
+    NETWORK_MODE_STATIC = 1
+} network_mode_t;
+
+typedef enum
+{
+    TEMPERATURE_ALARM_STATE_INVALID = 0,
+    TEMPERATURE_ALARM_STATE_NORMAL = 1,
+    TEMPERATURE_ALARM_STATE_HIGH = 2,
+    TEMPERATURE_ALARM_STATE_HIGH_HIGH = 3
+} temperature_alarm_state_t;
+
+#endif

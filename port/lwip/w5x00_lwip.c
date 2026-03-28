@@ -28,7 +28,7 @@
  * Variables
  * ----------------------------------------------------------------------------------------------------
  */
-uint8_t mac[6] = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56};
+static uint8_t g_mac[6] = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56};
 
 static uint8_t tx_frame[1542];
 static const uint32_t ethernet_polynomial_le = 0xedb88320U;
@@ -155,9 +155,14 @@ err_t netif_initialize(struct netif *netif)
     netif->output = etharp_output;
     netif->mtu = ETHERNET_MTU;
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET | NETIF_FLAG_IGMP | NETIF_FLAG_MLD6;
-    SMEMCPY(netif->hwaddr, mac, sizeof(netif->hwaddr));
+    SMEMCPY(netif->hwaddr, g_mac, sizeof(netif->hwaddr));
     netif->hwaddr_len = sizeof(netif->hwaddr);
     return ERR_OK;
+}
+
+void w5x00_lwip_set_mac_address(const uint8_t mac_addr[6])
+{
+    memcpy(g_mac, mac_addr, sizeof(g_mac));
 }
 
 static uint32_t ethernet_frame_crc(const uint8_t *data, int length)

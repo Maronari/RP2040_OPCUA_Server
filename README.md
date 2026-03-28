@@ -1,85 +1,56 @@
 # RP2040 OPC UA Server
 
-A lightweight OPC UA server implementation for the Raspberry Pi Pico (RP2040) platform.
-
-## Features
-
-- Implements core OPC UA server functionality
-- Designed for resource-constrained embedded systems
-- Can work together with [Autosys](https://github.com/Maronari/Autosys)
-
-## Project Structure
-
-```
-.
-├── CMakeLists.txt                # Main CMake build script
-├── examples/                     # Example applications and test projects
-│   ├── CMakeLists.txt
-│   └── opc_dhcp/
-│       ├── CMakeLists.txt
-│       └── w5x00_opc_dhcp.c      # OPC UA server example
-├── libraries/                    # Third-party and custom libraries
-│   ├── CMakeLists.txt
-│   ├── FreeRTOS-Kernel/          # FreeRTOS kernel
-│   ├── ioLibrary_Driver/         # Wiznet Ethernet drivers
-│   ├── mbedtls/                  # mbedTLS cryptography library
-│   ├── pico-extras/              # Pico SDK extras
-│   └── pico-sdk/                 # Raspberry Pi Pico SDK
-├── port/                         # Porting and integration for Pico
-│   ├── CMakeLists.txt
-│   ├── port_common.h
-│   ├── FreeRTOS-Kernel/          # FreeRTOS adaptation
-│   ├── ioLibrary_Driver/         # Wiznet driver adaptation
-│   ├── lwip/                     # lwIP network stack
-│   ├── mbedtls/                  # mbedTLS adaptation
-│   ├── open62541/                # open62541 OPC UA stack and FreeRTOS integration
-│   └── timer/                    # Timer utilities
-└── UAExpertConf.uap              # UAExpert client configuration
-```
+A layered OPC UA firmware skeleton for Raspberry Pi Pico / RP2040 with WIZnet Ethernet.
 
 ## Architecture
 
-![RP2040 Program Architecture](static/images/program-architecture.png)
+The project is split into four runtime layers:
 
-![RP2040 Program Architecture](static/images/physical-architecture.png)
+- `drivers`: hardware-facing code only. ADC / temperature, W5x00 Ethernet, LED, RTC, watchdog, flash storage.
+- `services`: business/runtime services. Sensor acquisition, network state, time sync state, diagnostics, config, alarms.
+- `opcua_model`: reflection of service state into the OPC UA address space.
+- `app`: device profile assembly point. Chooses enabled sensors, network mode, thresholds, methods, and task composition.
 
-## Getting Started
+## Project Structure
 
-### Prerequisites
-
-- Raspberry Pi Pico (RP2040)
-- CMake
-- GCC toolchain for ARM Cortex-M0+
-- [Pico SDK](https://github.com/raspberrypi/pico-sdk)
-
-### Building
-
-```sh
-git clone --recurse-submodules https://github.com/yourusername/RP2040_OPCUA_Server.git 
-cd RP2040_OPCUA_Server
-mkdir build && cd build
-cmake ..
-make w5x00_opc_dhcp
+```text
+.
++-- CMakeLists.txt
++-- app/
+�   L-- basic_profile/
++-- drivers/
++-- services/
++-- opcua_model/
++-- examples/          # legacy examples, off by default
++-- libraries/
+L-- port/
 ```
 
-### Flashing
+## Build
 
-Use your preferred method to flash the generated `.uf2` file to your Pico.
+The build is no longer pinned to a single board / chip / build type. Defaults are still provided, but they can now be overridden from CMake cache variables.
 
-![Logs](static/images/logs.png)
+```sh
+git clone --recurse-submodules https://github.com/yourusername/RP2040_OPCUA_Server.git
+cd RP2040_OPCUA_Server
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPICO_BOARD=pico -DWIZNET_CHIP=W5500
+cmake --build build --target device_profile_basic
+```
 
-## Usage
+Useful options:
 
-- Connect your OPC UA client to the Pico's IP address (gen get with DHCP) and configured port.
-- Browse and interact with exposed nodes.
+- `-DCMAKE_BUILD_TYPE=Debug|Release|RelWithDebInfo|MinSizeRel`
+- `-DPICO_BOARD=<board>`
+- `-DWIZNET_CHIP=W5100S|W5500`
+- `-DBUILD_LEGACY_EXAMPLES=ON`
 
-![Logs](static/images/node-example.png)
+## Runtime Notes
 
-## License
+- The OPC UA server no longer waits for DHCP lease acquisition before startup.
+- SNTP time synchronization no longer blocks OPC UA startup behind a fixed epoch threshold.
+- `time_service` now tracks synchronization quality separately from server startup.
+- `basic_profile` exposes service-backed nodes for sensors, network, time, diagnostics, and alarms.
 
-This project is licensed under the MIT License.
+## Legacy Example
 
-## Acknowledgements
-
-- [open62541](https://github.com/open62541/open62541)
-- Raspberry Pi Foundation
+The old `examples/opc_dhcp` target is still available behind `BUILD_LEGACY_EXAMPLES`, but the default build path is now the layered firmware profile in `app/basic_profile`.
