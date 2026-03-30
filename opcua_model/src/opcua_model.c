@@ -106,8 +106,17 @@ enum
     FIXED_CTX_COUNT
 };
 
-#define OPCUA_SEND_BUFFER_SIZE 16000u
-#define OPCUA_RECV_BUFFER_SIZE 16000u
+#define OPCUA_SEND_BUFFER_SIZE 8192u
+#define OPCUA_RECV_BUFFER_SIZE 8192u
+
+static void log_opcua_heap(const char *stage)
+{
+    printf("[OPC UA]\t%s, free heap=%u, min ever free=%u\n",
+           stage,
+           (unsigned)xPortGetFreeHeapSize(),
+           (unsigned)xPortGetMinimumEverFreeHeapSize());
+    fflush(stdout);
+}
 
 static opcua_model_config_t g_model_config;
 static bool g_model_initialized = false;
@@ -272,6 +281,43 @@ static UA_StatusCode model_set_datetime_value(UA_DataValue *value, UA_DateTime d
     value->hasStatus = true;
     value->status = status;
     return UA_STATUSCODE_GOOD;
+}
+
+static void model_set_default_variant_value(UA_VariableAttributes *attributes, UA_NodeId data_type)
+{
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_BOOLEAN].typeId))
+    {
+        UA_Boolean default_value = false;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_BOOLEAN]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_UINT32].typeId))
+    {
+        UA_UInt32 default_value = 0u;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_UINT32]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_FLOAT].typeId))
+    {
+        UA_Float default_value = 0.0f;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_FLOAT]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_DATETIME].typeId))
+    {
+        UA_DateTime default_value = 0;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_DATETIME]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_STRING].typeId))
+    {
+        UA_String default_value = UA_STRING((char *)"");
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_STRING]);
+    }
 }
 
 static UA_StatusCode model_read_value(UA_Server *server,
@@ -618,6 +664,8 @@ static UA_StatusCode model_add_readonly_variable(UA_Server *server,
 {
     UA_VariableAttributes attributes = UA_VariableAttributes_default;
     UA_DataSource data_source;
+    UA_NodeId created_node_id = UA_NODEID_NULL;
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
 
     memset(&data_source, 0, sizeof(data_source));
     data_source.read = model_read_value;
@@ -626,19 +674,26 @@ static UA_StatusCode model_add_readonly_variable(UA_Server *server,
     attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)display_name);
     attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)display_name);
     attributes.dataType = data_type;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
     attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
     attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    model_set_default_variant_value(&attributes, data_type);
 
-    return UA_Server_addDataSourceVariableNode(server,
-                                               UA_NODEID_STRING(1, (char *)node_id),
-                                               parent_node_id,
-                                               UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-                                               UA_QUALIFIEDNAME(1, (char *)display_name),
-                                               UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
-                                               attributes,
-                                               data_source,
-                                               context,
-                                               NULL);
+    status = UA_Server_addVariableNode(server,
+                                       UA_NODEID_STRING(1, (char *)node_id),
+                                       parent_node_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                       UA_QUALIFIEDNAME(1, (char *)display_name),
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+                                       attributes,
+                                       context,
+                                       &created_node_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return UA_Server_setVariableNode_dataSource(server, created_node_id, data_source);
 }
 
 static UA_StatusCode model_add_alarm_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
@@ -1274,16 +1329,40 @@ void opcua_model_task(void *argument)
     UA_Server *server = NULL;
     UA_ServerConfig *config = NULL;
     UA_StatusCode status = UA_STATUSCODE_GOOD;
-    UA_Boolean running = true;
+    bool wait_for_network_logged = false;
     (void)argument;
 
     if (!g_model_initialized)
     {
         printf("[OPC UA]\tModel is not initialized\n");
+        fflush(stdout);
         vTaskDelete(NULL);
     }
 
+    log_opcua_heap("Task started");
+    while (!network_manager_is_ready())
+    {
+        if (!wait_for_network_logged)
+        {
+            printf("[OPC UA]\tWaiting for IPv4 before server startup\n");
+            fflush(stdout);
+            wait_for_network_logged = true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    printf("[OPC UA]\tIPv4 is ready, continuing startup\n");
+    fflush(stdout);
     server = UA_Server_new();
+    if (server == NULL)
+    {
+        printf("[OPC UA]\tUA_Server_new returned NULL\n");
+        fflush(stdout);
+        vTaskDelete(NULL);
+    }
+
+    log_opcua_heap("UA_Server_new completed");
     config = UA_Server_getConfig(server);
     status = UA_ServerConfig_setMinimalCustomBuffer(config,
                                                     g_model_config.port,
@@ -1292,30 +1371,120 @@ void opcua_model_task(void *argument)
                                                     OPCUA_RECV_BUFFER_SIZE);
     if (status != UA_STATUSCODE_GOOD)
     {
-        printf("[OPC UA]\tUA_ServerConfig_setMinimalCustomBuffer failed: 0x%x\n", status);
+        printf("[OPC UA]\tUA_ServerConfig_setMinimalCustomBuffer failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
         UA_Server_delete(server);
         vTaskDelete(NULL);
     }
 
+    log_opcua_heap("Network layer configured");
+
+    /* Embedded profile: keep the default server configuration modest.
+       This avoids spending heap on limits that are irrelevant for a single
+       local device endpoint. */
+    config->maxSecureChannels = 2;
+    config->maxSessions = 4;
+    config->maxSubscriptions = 8;
+    config->maxSubscriptionsPerSession = 4;
+    config->maxMonitoredItems = 64;
+    config->maxMonitoredItemsPerSubscription = 32;
+    config->maxNotificationsPerPublish = 32;
+    config->enableRetransmissionQueue = false;
+
+    if (config->accessControl.clear != NULL)
+    {
+        config->accessControl.clear(&config->accessControl);
+        memset(&config->accessControl, 0, sizeof(config->accessControl));
+    }
+
+    status = UA_AccessControl_default(config,
+                                      true,
+                                      NULL,
+                                      &UA_SECURITY_POLICY_NONE_URI,
+                                      0,
+                                      NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tUA_AccessControl_default failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+        UA_Server_delete(server);
+        vTaskDelete(NULL);
+    }
+
+    log_opcua_heap("Access control configured");
+
     if (g_model_config.hostname != NULL && g_model_config.hostname[0] != '\0')
     {
-        UA_String hostname = UA_STRING((char *)g_model_config.hostname);
+        network_manager_status_t network_status = {0};
+        const char *hostname_text = g_model_config.hostname;
+
+        network_manager_get_status(&network_status);
+        if (network_status.has_ipv4 && network_status.ipv4_address[0] != '\0')
+        {
+            hostname_text = network_status.ipv4_address;
+        }
+
+        UA_String hostname = UA_STRING((char *)hostname_text);
         UA_String_clear(&config->customHostname);
         UA_String_copy(&hostname, &config->customHostname);
+        printf("[OPC UA]\tUsing endpoint host %s\n", hostname_text);
+        fflush(stdout);
     }
 
     status = model_build_address_space(server);
     if (status != UA_STATUSCODE_GOOD)
     {
-        printf("[OPC UA]\tFailed to build address space: 0x%x\n", status);
+        printf("[OPC UA]\tFailed to build address space: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
         UA_Server_delete(server);
         vTaskDelete(NULL);
     }
 
-    status = UA_Server_run(server, &running);
+    log_opcua_heap("Address space ready");
+    printf("[OPC UA]\tStarting server on port %u\n", (unsigned)g_model_config.port);
+    fflush(stdout);
+
+    status = UA_Server_run_startup(server);
     if (status != UA_STATUSCODE_GOOD)
     {
-        printf("[OPC UA]\tUA_Server_run failed: 0x%x\n", status);
+        printf("[OPC UA]\tUA_Server_run_startup failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+        UA_Server_delete(server);
+        vTaskDelete(NULL);
+    }
+
+    log_opcua_heap("Server startup complete");
+
+    while (1)
+    {
+        UA_UInt16 wait_ms = UA_Server_run_iterate(server, false);
+        if (wait_ms == 0u)
+        {
+            wait_ms = 10u;
+        }
+        else if (wait_ms > 100u)
+        {
+            wait_ms = 100u;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(wait_ms));
+    }
+
+    status = UA_Server_run_shutdown(server);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tUA_Server_run_shutdown failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
     }
 
     UA_Server_delete(server);
