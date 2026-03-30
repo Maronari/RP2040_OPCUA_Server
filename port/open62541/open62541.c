@@ -709,6 +709,7 @@ extern "C" {
 #endif
 
 extern uint32_t get_system_time(void);
+extern int16_t get_system_timezone_offset_minutes(void);
 typedef struct pcg_state_setseq_64 {
     uint64_t state;  /* RNG state.  All values are possible. */
     uint64_t inc;    /* Controls which RNG sequence (stream) is selected. Must
@@ -66211,7 +66212,7 @@ UA_DateTime UA_DateTime_now(void) {
 
 /* Offset between local time and UTC time */
 UA_Int64 UA_DateTime_localTimeUtcOffset(void) {
-  return 0; //TODO: this is set to zero since UA_DateTime_now() is just the local time, and not UTC.
+  return (UA_Int64)get_system_timezone_offset_minutes() * 60 * UA_DATETIME_SEC;
 }
 
 #endif /* UA_ARCHITECTURE_FREERTOSLWIP_POSIX_CLOCK */

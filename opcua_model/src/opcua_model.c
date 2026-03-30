@@ -49,6 +49,7 @@ typedef enum
     MODEL_NODE_TIME_NTP_SERVER,
     MODEL_NODE_TIME_LAST_SYNC_EPOCH,
     MODEL_NODE_TIME_CLOCK_QUALITY,
+    MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES,
     MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS,
     MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS,
     MODEL_NODE_CONFIG_TEMP_OFFSET,
@@ -62,6 +63,12 @@ typedef struct
     model_node_kind_t kind;
     const char *task_name;
 } model_node_context_t;
+
+typedef struct
+{
+    bool reboot_pending;
+    TickType_t reboot_due_tick;
+} model_pending_actions_t;
 
 enum
 {
@@ -97,6 +104,7 @@ enum
     FIXED_CTX_TIME_NTP_SERVER,
     FIXED_CTX_TIME_LAST_SYNC_EPOCH,
     FIXED_CTX_TIME_CLOCK_QUALITY,
+    FIXED_CTX_TIME_TIMEZONE_OFFSET_MINUTES,
     FIXED_CTX_CONFIG_SAMPLING_PERIOD_MS,
     FIXED_CTX_CONFIG_PUBLISH_PERIOD_MS,
     FIXED_CTX_CONFIG_TEMP_OFFSET,
@@ -120,6 +128,7 @@ static void log_opcua_heap(const char *stage)
 
 static opcua_model_config_t g_model_config;
 static bool g_model_initialized = false;
+static model_pending_actions_t g_pending_actions = {false, 0};
 static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_IDENT_MANUFACTURER, NULL},
     {MODEL_NODE_IDENT_MODEL, NULL},
@@ -153,6 +162,7 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_TIME_NTP_SERVER, NULL},
     {MODEL_NODE_TIME_LAST_SYNC_EPOCH, NULL},
     {MODEL_NODE_TIME_CLOCK_QUALITY, NULL},
+    {MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES, NULL},
     {MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS, NULL},
     {MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS, NULL},
     {MODEL_NODE_CONFIG_TEMP_OFFSET, NULL},
@@ -264,6 +274,15 @@ static UA_StatusCode model_set_boolean_value(UA_DataValue *value, UA_Boolean dat
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_set_int16_value(UA_DataValue *value, UA_Int16 data, UA_StatusCode status)
+{
+    UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_INT16]);
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = status;
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_set_string_value(UA_DataValue *value, const char *data, UA_StatusCode status)
 {
     UA_String string_value = UA_STRING((char *)(data != NULL ? data : ""));
@@ -296,6 +315,13 @@ static void model_set_default_variant_value(UA_VariableAttributes *attributes, U
     {
         UA_UInt32 default_value = 0u;
         UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_UINT32]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_INT16].typeId))
+    {
+        UA_Int16 default_value = 0;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_INT16]);
         return;
     }
 
@@ -505,6 +531,9 @@ static UA_StatusCode model_read_value(UA_Server *server,
                                       model_quality_to_string(status.quality),
                                       model_quality_to_status(status.quality));
     }
+    case MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_int16_value(value, (UA_Int16)config->timezone_offset_minutes, UA_STATUSCODE_GOOD);
     case MODEL_NODE_DIAG_FREE_HEAP:
     {
         diag_service_heap_stats_t stats = {0};
@@ -585,6 +614,132 @@ static UA_StatusCode model_read_value(UA_Server *server,
     }
 }
 
+static UA_StatusCode model_write_value(UA_Server *server,
+                                       const UA_NodeId *session_id,
+                                       void *session_context,
+                                       const UA_NodeId *node_id,
+                                       void *node_context,
+                                       const UA_NumericRange *range,
+                                       const UA_DataValue *value)
+{
+    model_node_context_t *context = (model_node_context_t *)node_context;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)node_id;
+
+    if (context == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    if (range != NULL)
+    {
+        return UA_STATUSCODE_BADINDEXRANGEINVALID;
+    }
+
+    if (value == NULL || !value->hasValue)
+    {
+        return UA_STATUSCODE_BADNODATA;
+    }
+
+    switch (context->kind)
+    {
+    case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
+    case MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_UINT32]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_sampling_period_ms(*(const UA_UInt32 *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_UINT32]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_publish_period_ms(*(const UA_UInt32 *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_INT16]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_timezone_offset_minutes(*(const UA_Int16 *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_TEMP_OFFSET:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_temp_offset_c(*(const UA_Float *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_TEMP_SCALE:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_temp_scale(*(const UA_Float *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_HIGH_ALARM:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_high_temperature_threshold_c(*(const UA_Float *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_HIGH_HIGH_ALARM:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_high_high_temperature_threshold_c(*(const UA_Float *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    default:
+        return UA_STATUSCODE_BADNOTWRITABLE;
+    }
+
+    (void)config_service_save();
+    return UA_STATUSCODE_GOOD;
+}
+
+static void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result)
+{
+    if (output_size > 0)
+    {
+        UA_Variant_setScalarCopy(&output[0], &result, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    }
+}
+
+static void model_schedule_reboot(uint32_t delay_ms)
+{
+    const TickType_t delay_ticks = pdMS_TO_TICKS(delay_ms > 0u ? delay_ms : 1u);
+
+    g_pending_actions.reboot_pending = true;
+    g_pending_actions.reboot_due_tick = xTaskGetTickCount() + delay_ticks;
+}
+
 static UA_StatusCode model_acknowledge_alarms(UA_Server *server,
                                               const UA_NodeId *session_id,
                                               void *session_context,
@@ -609,12 +764,105 @@ static UA_StatusCode model_acknowledge_alarms(UA_Server *server,
     (void)input;
 
     alarm_service_acknowledge_all();
+    model_set_boolean_method_output(output_size, output, result);
 
-    if (output_size > 0)
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_request_reboot(UA_Server *server,
+                                          const UA_NodeId *session_id,
+                                          void *session_context,
+                                          const UA_NodeId *method_id,
+                                          void *method_context,
+                                          const UA_NodeId *object_id,
+                                          void *object_context,
+                                          size_t input_size,
+                                          const UA_Variant *input,
+                                          size_t output_size,
+                                          UA_Variant *output)
+{
+    UA_Boolean result = true;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    model_schedule_reboot(250u);
+    printf("[OPC UA]\tReboot requested\n");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_factory_reset(UA_Server *server,
+                                         const UA_NodeId *session_id,
+                                         void *session_context,
+                                         const UA_NodeId *method_id,
+                                         void *method_context,
+                                         const UA_NodeId *object_id,
+                                         void *object_context,
+                                         size_t input_size,
+                                         const UA_Variant *input,
+                                         size_t output_size,
+                                         UA_Variant *output)
+{
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    result = config_service_reset_to_defaults();
+    if (result)
     {
-        UA_Variant_setScalarCopy(&output[0], &result, &UA_TYPES[UA_TYPES_BOOLEAN]);
+        (void)config_service_save();
+        model_schedule_reboot(250u);
+        printf("[OPC UA]\tFactory reset requested\n");
+        fflush(stdout);
     }
 
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_sync_time_now(UA_Server *server,
+                                         const UA_NodeId *session_id,
+                                         void *session_context,
+                                         const UA_NodeId *method_id,
+                                         void *method_context,
+                                         const UA_NodeId *object_id,
+                                         void *object_context,
+                                         size_t input_size,
+                                         const UA_Variant *input,
+                                         size_t output_size,
+                                         UA_Variant *output)
+{
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    result = time_service_request_sync_now();
+    printf("[OPC UA]\tTime sync request %s\n", result ? "accepted" : "rejected");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
 
@@ -696,35 +944,121 @@ static UA_StatusCode model_add_readonly_variable(UA_Server *server,
     return UA_Server_setVariableNode_dataSource(server, created_node_id, data_source);
 }
 
-static UA_StatusCode model_add_alarm_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+static UA_StatusCode model_add_writable_variable(UA_Server *server,
+                                                 const char *node_id,
+                                                 const char *display_name,
+                                                 UA_NodeId parent_node_id,
+                                                 UA_NodeId data_type,
+                                                 model_node_context_t *context)
+{
+    UA_VariableAttributes attributes = UA_VariableAttributes_default;
+    UA_DataSource data_source;
+    UA_NodeId created_node_id = UA_NODEID_NULL;
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+
+    memset(&data_source, 0, sizeof(data_source));
+    data_source.read = model_read_value;
+    data_source.write = model_write_value;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)display_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)display_name);
+    attributes.dataType = data_type;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
+    attributes.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    model_set_default_variant_value(&attributes, data_type);
+
+    status = UA_Server_addVariableNode(server,
+                                       UA_NODEID_STRING(1, (char *)node_id),
+                                       parent_node_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                       UA_QUALIFIEDNAME(1, (char *)display_name),
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+                                       attributes,
+                                       context,
+                                       &created_node_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return UA_Server_setVariableNode_dataSource(server, created_node_id, data_source);
+}
+
+static UA_StatusCode model_add_boolean_method_node(UA_Server *server,
+                                                   UA_NodeId maintenance_folder_id,
+                                                   const char *node_id,
+                                                   const char *method_name,
+                                                   const char *description,
+                                                   UA_MethodCallback callback)
 {
     UA_MethodAttributes attributes = UA_MethodAttributes_default;
     UA_Argument output_argument;
 
     UA_Argument_init(&output_argument);
     output_argument.name = UA_STRING((char *)"Success");
-    output_argument.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"True when alarms are acknowledged");
+    output_argument.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"True when the method was accepted");
     output_argument.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
     output_argument.valueRank = UA_VALUERANK_SCALAR;
 
-    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"AcknowledgeAllAlarms");
-    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Acknowledges all active alarms");
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)method_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)description);
     attributes.executable = true;
     attributes.userExecutable = true;
 
     return UA_Server_addMethodNode(server,
-                                   UA_NODEID_STRING(1, (char *)"Device.Maintenance.AcknowledgeAllAlarms"),
+                                   UA_NODEID_STRING(1, (char *)node_id),
                                    maintenance_folder_id,
                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-                                   UA_QUALIFIEDNAME(1, (char *)"AcknowledgeAllAlarms"),
+                                   UA_QUALIFIEDNAME(1, (char *)method_name),
                                    attributes,
-                                   model_acknowledge_alarms,
+                                   callback,
                                    0,
                                    NULL,
                                    1,
                                    &output_argument,
                                    NULL,
                                    NULL);
+}
+
+static UA_StatusCode model_add_alarm_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.AcknowledgeAllAlarms",
+                                         "AcknowledgeAllAlarms",
+                                         "Acknowledges all active alarms",
+                                         model_acknowledge_alarms);
+}
+
+static UA_StatusCode model_add_reboot_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.Reboot",
+                                         "Reboot",
+                                         "Schedules a software reboot",
+                                         model_request_reboot);
+}
+
+static UA_StatusCode model_add_factory_reset_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.FactoryReset",
+                                         "FactoryReset",
+                                         "Restores profile defaults and reboots the device",
+                                         model_factory_reset);
+}
+
+static UA_StatusCode model_add_sync_time_now_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.SyncTimeNow",
+                                         "SyncTimeNow",
+                                         "Forces immediate SNTP resynchronization",
+                                         model_sync_time_now);
 }
 
 static UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
@@ -972,7 +1306,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
+    status = model_add_writable_variable(server,
                                          "Device.ProcessValues.Temperature1.UpdatePeriodMs",
                                          "UpdatePeriodMs",
                                          temperature1_id,
@@ -1234,7 +1568,18 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
+    status = model_add_writable_variable(server,
+                                         "Device.Time.TimeZoneOffsetMinutes",
+                                         "TimeZoneOffsetMinutes",
+                                         time_id,
+                                         UA_TYPES[UA_TYPES_INT16].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_TIME_TIMEZONE_OFFSET_MINUTES]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_writable_variable(server,
                                          "Device.Configuration.SamplingPeriodMs",
                                          "SamplingPeriodMs",
                                          configuration_id,
@@ -1245,7 +1590,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
+    status = model_add_writable_variable(server,
                                          "Device.Configuration.PublishPeriodMs",
                                          "PublishPeriodMs",
                                          configuration_id,
@@ -1256,7 +1601,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
+    status = model_add_writable_variable(server,
                                          "Device.Configuration.TempOffset",
                                          "TempOffset",
                                          configuration_id,
@@ -1267,7 +1612,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
+    status = model_add_writable_variable(server,
                                          "Device.Configuration.TempScale",
                                          "TempScale",
                                          configuration_id,
@@ -1278,7 +1623,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
+    status = model_add_writable_variable(server,
                                          "Device.Configuration.HighAlarm",
                                          "HighAlarm",
                                          configuration_id,
@@ -1289,7 +1634,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
+    status = model_add_writable_variable(server,
                                          "Device.Configuration.HighHighAlarm",
                                          "HighHighAlarm",
                                          configuration_id,
@@ -1307,6 +1652,24 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         {
             return status;
         }
+
+        status = model_add_reboot_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_factory_reset_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_sync_time_now_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
     }
 
     return UA_STATUSCODE_GOOD;
@@ -1320,6 +1683,8 @@ bool opcua_model_init(const opcua_model_config_t *config)
     }
 
     g_model_config = *config;
+    g_pending_actions.reboot_pending = false;
+    g_pending_actions.reboot_due_tick = 0;
     g_model_initialized = true;
     return true;
 }
@@ -1465,6 +1830,12 @@ void opcua_model_task(void *argument)
 
     while (1)
     {
+        if (g_pending_actions.reboot_pending &&
+            xTaskGetTickCount() >= g_pending_actions.reboot_due_tick)
+        {
+            break;
+        }
+
         UA_UInt16 wait_ms = UA_Server_run_iterate(server, false);
         if (wait_ms == 0u)
         {
@@ -1488,6 +1859,18 @@ void opcua_model_task(void *argument)
     }
 
     UA_Server_delete(server);
+
+    if (g_pending_actions.reboot_pending)
+    {
+        printf("[OPC UA]\tExecuting scheduled reboot\n");
+        fflush(stdout);
+        diag_service_reboot(10u);
+        while (1)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
     vTaskDelete(NULL);
 }
 
