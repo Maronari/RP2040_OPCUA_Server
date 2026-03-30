@@ -16,8 +16,16 @@ if(NOT DEFINED PICO_SDK_PATH)
     message(STATUS "PICO_SDK_PATH = ${PICO_SDK_PATH}")
 endif()
 
+if(NOT DEFINED PICO_BOARD_HEADER_DIRS)
+    set(PICO_BOARD_HEADER_DIRS ${CMAKE_SOURCE_DIR}/boards/include/boards CACHE STRING "Additional Pico board header directories")
+else()
+    list(APPEND PICO_BOARD_HEADER_DIRS ${CMAKE_SOURCE_DIR}/boards/include/boards)
+    list(REMOVE_DUPLICATES PICO_BOARD_HEADER_DIRS)
+    set(PICO_BOARD_HEADER_DIRS ${PICO_BOARD_HEADER_DIRS} CACHE STRING "Additional Pico board header directories" FORCE)
+endif()
+
 if(NOT DEFINED PICO_BOARD)
-    set(PICO_BOARD pico2 CACHE STRING "Pico board")
+    set(PICO_BOARD weact_studio_rp2350a_16mb CACHE STRING "Pico board")
 endif()
 
 if(NOT DEFINED WIZNET_CHIP)

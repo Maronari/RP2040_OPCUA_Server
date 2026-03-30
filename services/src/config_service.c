@@ -3,10 +3,25 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <FreeRTOS.h>
+#include <task.h>
+
 #include "drivers/flash_storage_driver.h"
 #include "pico/unique_id.h"
 
 static device_profile_config_t g_config;
+static device_profile_config_t g_default_config;
+static bool g_default_config_valid = false;
+
+static bool config_service_is_valid_float(float value)
+{
+    return value == value;
+}
+
+static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
+{
+    return value >= -720 && value <= 840;
+}
 
 static void config_service_populate_serial_number(device_profile_config_t *config)
 {
@@ -51,6 +66,11 @@ static void config_service_normalize(device_profile_config_t *config)
         config->publish_period_ms = 1000u;
     }
 
+    if (!config_service_is_valid_timezone_offset_minutes(config->timezone_offset_minutes))
+    {
+        config->timezone_offset_minutes = 0;
+    }
+
     if (config->temp_scale == 0.0f)
     {
         config->temp_scale = 1.0f;
@@ -80,10 +100,14 @@ static void config_service_normalize(device_profile_config_t *config)
 void config_service_init(const device_profile_config_t *defaults)
 {
     memset(&g_config, 0, sizeof(g_config));
+    memset(&g_default_config, 0, sizeof(g_default_config));
+    g_default_config_valid = false;
 
     if (defaults != NULL)
     {
         g_config = *defaults;
+        g_default_config = *defaults;
+        g_default_config_valid = true;
     }
 
     device_profile_config_t persisted = {0};
@@ -93,11 +117,119 @@ void config_service_init(const device_profile_config_t *defaults)
     }
 
     config_service_normalize(&g_config);
+    if (g_default_config_valid)
+    {
+        config_service_normalize(&g_default_config);
+    }
 }
 
 const device_profile_config_t *config_service_get(void)
 {
     return &g_config;
+}
+
+bool config_service_reset_to_defaults(void)
+{
+    if (!g_default_config_valid)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config = g_default_config;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_sampling_period_ms(uint32_t value)
+{
+    if (value == 0u)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.sampling_period_ms = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_publish_period_ms(uint32_t value)
+{
+    if (value == 0u)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.publish_period_ms = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_timezone_offset_minutes(int16_t value)
+{
+    if (!config_service_is_valid_timezone_offset_minutes(value))
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.timezone_offset_minutes = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_temp_offset_c(float value)
+{
+    if (!config_service_is_valid_float(value))
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.temp_offset_c = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_temp_scale(float value)
+{
+    if (!config_service_is_valid_float(value) || value == 0.0f)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.temp_scale = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_high_temperature_threshold_c(float value)
+{
+    if (!config_service_is_valid_float(value) || value > g_config.high_high_temperature_threshold_c)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.high_temperature_threshold_c = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_high_high_temperature_threshold_c(float value)
+{
+    if (!config_service_is_valid_float(value) || value < g_config.high_temperature_threshold_c)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.high_high_temperature_threshold_c = value;
+    taskEXIT_CRITICAL();
+    return true;
 }
 
 bool config_service_save(void)

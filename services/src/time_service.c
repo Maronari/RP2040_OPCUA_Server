@@ -53,6 +53,11 @@ uint32_t get_system_time(void)
     return rtc_driver_get_unix_time();
 }
 
+int16_t get_system_timezone_offset_minutes(void)
+{
+    return config_service_get()->timezone_offset_minutes;
+}
+
 void time_service_task(void *argument)
 {
     (void)argument;
@@ -103,4 +108,22 @@ void time_service_get_status(time_service_status_t *out_status)
     taskENTER_CRITICAL();
     *out_status = g_status;
     taskEXIT_CRITICAL();
+}
+
+bool time_service_request_sync_now(void)
+{
+    time_service_status_t status = {0};
+
+    if (!g_initialized || !network_manager_is_ready())
+    {
+        return false;
+    }
+
+    time_service_get_status(&status);
+    sntp_stop();
+    sntp_setservername(0, status.ntp_server);
+    sntp_init();
+    status.sntp_started = true;
+    time_service_set_status(&status);
+    return true;
 }

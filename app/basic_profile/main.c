@@ -74,6 +74,7 @@ static const device_profile_config_t g_basic_profile = {
     .enable_task_diagnostics = true,
     .enable_alarm_ack_method = true,
     .opcua_port = 4840,
+    .timezone_offset_minutes = 0,
     .watchdog_timeout_ms = 0,
     .sampling_period_ms = 1000,
     .publish_period_ms = 1000,
