@@ -25,6 +25,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "open62541config.h"
+#include "ua_port_alloc.h"
 
 /**
  * open62541 Version
@@ -967,10 +968,10 @@ UA_atomic_subSize(volatile size_t *addr, size_t decrease) {
 #define UA_sleep_ms(X) vTaskDelay(pdMS_TO_TICKS(X))
 
 #ifdef OPEN62541_FEERTOS_USE_OWN_MEM
-# define UA_free vPortFree
-# define UA_malloc pvPortMalloc
-# define UA_calloc pvPortCalloc
-# define UA_realloc pvPortRealloc
+# define UA_free ua_port_free
+# define UA_malloc ua_port_malloc
+# define UA_calloc ua_port_calloc
+# define UA_realloc ua_port_realloc
 #else
 # define UA_free free
 # define UA_malloc malloc

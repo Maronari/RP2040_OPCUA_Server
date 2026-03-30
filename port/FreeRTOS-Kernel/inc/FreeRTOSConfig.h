@@ -1,6 +1,10 @@
 #ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
 
+#include <stddef.h>
+#include <stdint.h>
+#include "hardware/platform_defs.h"
+
 /* Use Pico SDK ISR handlers */
 #define vPortSVCHandler isr_svcall
 #define xPortPendSVHandler isr_pendsv
@@ -9,12 +13,16 @@
 #define configUSE_PREEMPTION                    1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION 0
 #define configUSE_TICKLESS_IDLE                 0
-#define configCPU_CLOCK_HZ                      133000000
-#define configTICK_RATE_HZ                      ( ( TickType_t ) 1000 )
+#define configCPU_CLOCK_HZ                      SYS_CLK_HZ
+#define configTICK_RATE_HZ                      1000
 #define configMAX_PRIORITIES                    10
-#define configMINIMAL_STACK_SIZE                ( configSTACK_DEPTH_TYPE ) 256
-#define configTOTAL_HEAP_SIZE                   (128 * 1024)
-#define configMAX_TASK_NAME_LEN                 16
+#define configMINIMAL_STACK_SIZE                256
+#if PICO_RP2350
+#define configTOTAL_HEAP_SIZE                   (192 * 1024)
+#else
+#define configTOTAL_HEAP_SIZE                   (100 * 1024)
+#endif
+#define configMAX_TASK_NAME_LEN                 32
 #define configUSE_16_BIT_TICKS                  0
 #define configIDLE_SHOULD_YIELD                 1
 #define configUSE_TASK_NOTIFICATIONS            1
@@ -34,12 +42,13 @@
 #define configMESSAGE_BUFFER_LENGTH_TYPE        size_t
 
 /* SMP port only */
-#define configNUM_CORES                         1
+#define configNUMBER_OF_CORES                   1
+#define configNUM_CORES                         configNUMBER_OF_CORES
 #define configTICK_CORE                         0
 #define configRUN_MULTIPLE_PRIORITIES           0
 #define configUSE_CORE_AFFINITY                 0
 
-/* RP2040 specific */
+/* RP2 specific */
 #define configSUPPORT_PICO_SYNC_INTEROP         1
 #define configSUPPORT_PICO_TIME_INTEROP         1
 
@@ -70,15 +79,20 @@
 #define configTIMER_QUEUE_LENGTH                10
 #define configTIMER_TASK_STACK_DEPTH            1024
 
-#include <assert.h>
-/* Define to trap errors during development. */
-#define configASSERT(x)                         assert(x)
+void app_assert_handler(const char *file, unsigned line);
+/* Define to trap errors during development without relying on libc assert/panic paths. */
+#define configASSERT(x)                         do { if (!(x)) app_assert_handler(__FILE__, __LINE__); } while (0)
 
 /* Interrupt nesting behaviour configuration. */
 #define configPRIO_BITS 4
 #define configKERNEL_INTERRUPT_PRIORITY         0
+#if PICO_RP2350
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY    16
+#define configMAX_API_CALL_INTERRUPT_PRIORITY   16
+#else
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY    1
 #define configMAX_API_CALL_INTERRUPT_PRIORITY   1
+#endif
 
 /* Optional functions - most linkers will remove unused functions anyway. */
 #define INCLUDE_vTaskPrioritySet                1
@@ -94,13 +108,20 @@
 #define INCLUDE_xTaskGetIdleTaskHandle          0
 #define INCLUDE_eTaskGetState                   1
 #define INCLUDE_xEventGroupSetBitFromISR        1
-#define INCLUDE_xTimerPendFunctionCall          0
+#define INCLUDE_xTimerPendFunctionCall          1
 #define INCLUDE_xTaskAbortDelay                 0
 #define INCLUDE_xTaskGetHandle                  1
 #define INCLUDE_xTaskResumeFromISR              1
 #define INCLUDE_xQueueGetMutexHolder            1
 
-#define configENABLE_MPU                        1
+#if PICO_RP2350
+#define configENABLE_FPU                        1
+#else
+#define configENABLE_FPU                        0
+#endif
+#define configENABLE_MPU                        0
+#define configENABLE_TRUSTZONE                  0
+#define configRUN_FREERTOS_SECURE_ONLY          1
 #define configSYSTEM_CALL_STACK_SIZE            256
 
 #define configRECORD_STACK_HIGH_ADDRESS         1
@@ -108,11 +129,5 @@
 extern uint64_t                                 time_us_64(void);				                // "hardware/timer.h"
 #define RUN_TIME_STAT_time_us_64Divider         1000			                                // stat granularity is mS
 #define portGET_RUN_TIME_COUNTER_VALUE()        (time_us_64()/RUN_TIME_STAT_time_us_64Divider)	// runtime counter in mS     /* Define this to sample the timer/counter */
-
-#define portGET_CORE_ID()                       get_core_num()
-#define portCHECK_IF_IN_ISR()                   ({ \
-                                                uint32_t ulIPSR; \
-                                                __asm volatile ("mrs %0, IPSR" : "=r" (ulIPSR)::); \
-                                                ((uint8_t)ulIPSR)>0;})
 
 #endif /* FREERTOS_CONFIG_H */

@@ -18,10 +18,10 @@ target_include_directories(FIRMWARE_DRIVERS PUBLIC
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC
         pico_stdlib
+        pico_aon_timer
         hardware_adc
         hardware_clocks
         hardware_dma
-        hardware_rtc
         hardware_spi
         hardware_watchdog
         pico_async_context_freertos
