@@ -23,6 +23,11 @@ static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
     return value >= -720 && value <= 840;
 }
 
+static bool config_service_is_valid_temperature_history_interval_ms(uint32_t value)
+{
+    return value <= 86400000u;
+}
+
 static void config_service_populate_serial_number(device_profile_config_t *config)
 {
     pico_unique_board_id_t board_id;
@@ -64,6 +69,11 @@ static void config_service_normalize(device_profile_config_t *config)
     if (config->publish_period_ms == 0u)
     {
         config->publish_period_ms = 1000u;
+    }
+
+    if (!config_service_is_valid_temperature_history_interval_ms(config->temperature_history_interval_ms))
+    {
+        config->temperature_history_interval_ms = config->sampling_period_ms;
     }
 
     if (!config_service_is_valid_timezone_offset_minutes(config->timezone_offset_minutes))
@@ -150,6 +160,19 @@ bool config_service_set_sampling_period_ms(uint32_t value)
 
     taskENTER_CRITICAL();
     g_config.sampling_period_ms = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_temperature_history_interval_ms(uint32_t value)
+{
+    if (!config_service_is_valid_temperature_history_interval_ms(value))
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_config.temperature_history_interval_ms = value;
     taskEXIT_CRITICAL();
     return true;
 }

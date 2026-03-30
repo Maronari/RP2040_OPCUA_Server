@@ -10,6 +10,7 @@
 #include "services/alarm_service.h"
 #include "services/config_service.h"
 #include "services/diag_service.h"
+#include "services/history_service.h"
 #include "services/network_manager.h"
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
@@ -29,6 +30,7 @@ typedef enum
     MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
     MODEL_NODE_PROCESS_TEMPERATURE_UNITS,
     MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS,
+    MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS,
     MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE,
     MODEL_NODE_DIAG_UPTIME_SEC,
     MODEL_NODE_DIAG_RESET_CAUSE,
@@ -85,6 +87,7 @@ enum
     FIXED_CTX_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
     FIXED_CTX_PROCESS_TEMPERATURE_UNITS,
     FIXED_CTX_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS,
+    FIXED_CTX_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS,
     FIXED_CTX_PROCESS_TEMPERATURE_ALARM_STATE,
     FIXED_CTX_DIAG_UPTIME_SEC,
     FIXED_CTX_DIAG_RESET_CAUSE,
@@ -129,6 +132,7 @@ static void log_opcua_heap(const char *stage)
 static opcua_model_config_t g_model_config;
 static bool g_model_initialized = false;
 static model_pending_actions_t g_pending_actions = {false, 0};
+static uint8_t g_history_backend_context = 0u;
 static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_IDENT_MANUFACTURER, NULL},
     {MODEL_NODE_IDENT_MODEL, NULL},
@@ -143,6 +147,7 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_UNITS, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS, NULL},
+    {MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE, NULL},
     {MODEL_NODE_DIAG_UPTIME_SEC, NULL},
     {MODEL_NODE_DIAG_RESET_CAUSE, NULL},
@@ -346,6 +351,153 @@ static void model_set_default_variant_value(UA_VariableAttributes *attributes, U
     }
 }
 
+#ifdef UA_ENABLE_HISTORIZING
+static bool model_is_temperature_history_node(const UA_NodeId *node_id)
+{
+    UA_NodeId temperature_value_node = UA_NODEID_STRING(1, (char *)"Device.ProcessValues.Temperature1.Value");
+    return node_id != NULL && UA_NodeId_equal(node_id, &temperature_value_node);
+}
+
+static uint32_t model_datetime_to_epoch_seconds(UA_DateTime value)
+{
+    if (value <= 0)
+    {
+        return 0u;
+    }
+
+    return (uint32_t)UA_DateTime_toUnixTime(value);
+}
+
+static void model_fill_history_data_value(const history_service_temperature_sample_t *sample,
+                                          UA_TimestampsToReturn timestamps_to_return,
+                                          UA_DataValue *value)
+{
+    const UA_DateTime timestamp = UA_DateTime_fromUnixTime((UA_Int64)sample->source_timestamp_epoch_s);
+
+    UA_DataValue_init(value);
+    UA_Variant_setScalarCopy(&value->value, &sample->value, &UA_TYPES[UA_TYPES_FLOAT]);
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = model_quality_to_status(sample->quality);
+
+    if (timestamps_to_return == UA_TIMESTAMPSTORETURN_SOURCE ||
+        timestamps_to_return == UA_TIMESTAMPSTORETURN_BOTH)
+    {
+        value->hasSourceTimestamp = true;
+        value->sourceTimestamp = timestamp;
+    }
+
+    if (timestamps_to_return == UA_TIMESTAMPSTORETURN_SERVER ||
+        timestamps_to_return == UA_TIMESTAMPSTORETURN_BOTH)
+    {
+        value->hasServerTimestamp = true;
+        value->serverTimestamp = timestamp;
+    }
+}
+
+static void model_history_database_clear(UA_HistoryDatabase *history_database)
+{
+    (void)history_database;
+}
+
+static void model_history_read_raw(UA_Server *server,
+                                   void *history_database_context,
+                                   const UA_NodeId *session_id,
+                                   void *session_context,
+                                   const UA_RequestHeader *request_header,
+                                   const UA_ReadRawModifiedDetails *history_read_details,
+                                   UA_TimestampsToReturn timestamps_to_return,
+                                   UA_Boolean release_continuation_points,
+                                   size_t nodes_to_read_size,
+                                   const UA_HistoryReadValueId *nodes_to_read,
+                                   UA_HistoryReadResponse *response,
+                                   UA_HistoryData *const *const history_data)
+{
+    history_service_temperature_sample_t sample_buffer[HISTORY_SERVICE_TEMPERATURE_CAPACITY];
+    const uint32_t start_epoch_s = history_read_details != NULL
+                                       ? model_datetime_to_epoch_seconds(history_read_details->startTime)
+                                       : 0u;
+    const uint32_t end_epoch_s = history_read_details != NULL
+                                     ? model_datetime_to_epoch_seconds(history_read_details->endTime)
+                                     : 0u;
+    const bool descending = history_read_details != NULL &&
+                            history_read_details->startTime > history_read_details->endTime;
+    const size_t max_values_per_node = (history_read_details == NULL ||
+                                        history_read_details->numValuesPerNode == 0u ||
+                                        history_read_details->numValuesPerNode > HISTORY_SERVICE_TEMPERATURE_CAPACITY)
+                                           ? HISTORY_SERVICE_TEMPERATURE_CAPACITY
+                                           : (size_t)history_read_details->numValuesPerNode;
+    (void)server;
+    (void)history_database_context;
+    (void)session_id;
+    (void)session_context;
+    (void)request_header;
+    (void)release_continuation_points;
+
+    for (size_t index = 0u; index < nodes_to_read_size; ++index)
+    {
+        UA_HistoryData *result_history_data = history_data[index];
+        size_t sample_count = 0u;
+        bool truncated = false;
+
+        if (result_history_data == NULL)
+        {
+            response->results[index].statusCode = UA_STATUSCODE_BADOUTOFMEMORY;
+            continue;
+        }
+
+        if (nodes_to_read[index].continuationPoint.length > 0u)
+        {
+            response->results[index].statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
+            continue;
+        }
+
+        if (nodes_to_read[index].indexRange.length > 0u)
+        {
+            response->results[index].statusCode = UA_STATUSCODE_BADINDEXRANGENODATA;
+            continue;
+        }
+
+        if (!model_is_temperature_history_node(&nodes_to_read[index].nodeId))
+        {
+            response->results[index].statusCode = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
+            continue;
+        }
+
+        sample_count = history_service_read_temperature_samples(start_epoch_s,
+                                                                end_epoch_s,
+                                                                descending,
+                                                                max_values_per_node,
+                                                                sample_buffer,
+                                                                HISTORY_SERVICE_TEMPERATURE_CAPACITY,
+                                                                &truncated);
+
+        if (sample_count > 0u)
+        {
+            result_history_data->dataValues =
+                (UA_DataValue *)UA_Array_new(sample_count, &UA_TYPES[UA_TYPES_DATAVALUE]);
+            if (result_history_data->dataValues == NULL)
+            {
+                response->results[index].statusCode = UA_STATUSCODE_BADOUTOFMEMORY;
+                result_history_data->dataValuesSize = 0u;
+                continue;
+            }
+
+            result_history_data->dataValuesSize = sample_count;
+            for (size_t sample_index = 0u; sample_index < sample_count; ++sample_index)
+            {
+                model_fill_history_data_value(&sample_buffer[sample_index],
+                                              timestamps_to_return,
+                                              &result_history_data->dataValues[sample_index]);
+            }
+        }
+
+        (void)truncated;
+        response->results[index].statusCode = UA_STATUSCODE_GOOD;
+    }
+}
+#endif
+
 static UA_StatusCode model_read_value(UA_Server *server,
                                       const UA_NodeId *session_id,
                                       void *session_context,
@@ -436,6 +588,9 @@ static UA_StatusCode model_read_value(UA_Server *server,
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_uint32_value(value, config->sampling_period_ms, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value, config->temperature_history_interval_ms, UA_STATUSCODE_GOOD);
     case MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE:
     {
         alarm_service_status_t status = {0};
@@ -652,6 +807,16 @@ static UA_StatusCode model_write_value(UA_Server *server,
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
         if (!config_service_set_sampling_period_ms(*(const UA_UInt32 *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_UINT32]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_temperature_history_interval_ms(*(const UA_UInt32 *)value->value.data))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -903,12 +1068,14 @@ static UA_StatusCode model_add_folder(UA_Server *server,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE));
 }
 
-static UA_StatusCode model_add_readonly_variable(UA_Server *server,
-                                                 const char *node_id,
-                                                 const char *display_name,
-                                                 UA_NodeId parent_node_id,
-                                                 UA_NodeId data_type,
-                                                 model_node_context_t *context)
+static UA_StatusCode model_add_readonly_variable_ex(UA_Server *server,
+                                                    const char *node_id,
+                                                    const char *display_name,
+                                                    UA_NodeId parent_node_id,
+                                                    UA_NodeId data_type,
+                                                    model_node_context_t *context,
+                                                    UA_Byte access_level,
+                                                    UA_Boolean historizing)
 {
     UA_VariableAttributes attributes = UA_VariableAttributes_default;
     UA_DataSource data_source;
@@ -923,8 +1090,9 @@ static UA_StatusCode model_add_readonly_variable(UA_Server *server,
     attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)display_name);
     attributes.dataType = data_type;
     attributes.valueRank = UA_VALUERANK_SCALAR;
-    attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
-    attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    attributes.accessLevel = access_level;
+    attributes.userAccessLevel = access_level;
+    attributes.historizing = historizing;
     model_set_default_variant_value(&attributes, data_type);
 
     status = UA_Server_addVariableNode(server,
@@ -942,6 +1110,23 @@ static UA_StatusCode model_add_readonly_variable(UA_Server *server,
     }
 
     return UA_Server_setVariableNode_dataSource(server, created_node_id, data_source);
+}
+
+static UA_StatusCode model_add_readonly_variable(UA_Server *server,
+                                                 const char *node_id,
+                                                 const char *display_name,
+                                                 UA_NodeId parent_node_id,
+                                                 UA_NodeId data_type,
+                                                 model_node_context_t *context)
+{
+    return model_add_readonly_variable_ex(server,
+                                          node_id,
+                                          display_name,
+                                          parent_node_id,
+                                          data_type,
+                                          context,
+                                          UA_ACCESSLEVELMASK_READ,
+                                          false);
 }
 
 static UA_StatusCode model_add_writable_variable(UA_Server *server,
@@ -1262,12 +1447,14 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.ProcessValues.Temperature1.Value",
-                                         "Value",
-                                         temperature1_id,
-                                         UA_TYPES[UA_TYPES_FLOAT].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_VALUE]);
+    status = model_add_readonly_variable_ex(server,
+                                            "Device.ProcessValues.Temperature1.Value",
+                                            "Value",
+                                            temperature1_id,
+                                            UA_TYPES[UA_TYPES_FLOAT].typeId,
+                                            &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_VALUE],
+                                            UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_HISTORYREAD,
+                                            true);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -1312,6 +1499,17 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
                                          temperature1_id,
                                          UA_TYPES[UA_TYPES_UINT32].typeId,
                                          &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_writable_variable(server,
+                                         "Device.ProcessValues.Temperature1.HistoryIntervalMs",
+                                         "HistoryIntervalMs",
+                                         temperature1_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS]);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -1781,6 +1979,20 @@ void opcua_model_task(void *argument)
     }
 
     log_opcua_heap("Access control configured");
+
+#ifdef UA_ENABLE_HISTORIZING
+    if (config->historyDatabase.clear != NULL)
+    {
+        config->historyDatabase.clear(&config->historyDatabase);
+    }
+    memset(&config->historyDatabase, 0, sizeof(config->historyDatabase));
+    config->historyDatabase.context = &g_history_backend_context;
+    config->historyDatabase.clear = model_history_database_clear;
+    config->historyDatabase.readRaw = model_history_read_raw;
+    config->accessHistoryDataCapability = true;
+    config->maxReturnDataValues = HISTORY_SERVICE_TEMPERATURE_CAPACITY;
+    log_opcua_heap("Historizing configured");
+#endif
 
     if (g_model_config.hostname != NULL && g_model_config.hostname[0] != '\0')
     {

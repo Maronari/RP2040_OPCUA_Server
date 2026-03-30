@@ -116,6 +116,11 @@ static uint32_t rtc_driver_read_unix_time(void)
 
     return calendar_tm_to_unix(&calendar_time);
 }
+
+static uint64_t rtc_driver_read_unix_time_us(void)
+{
+    return (uint64_t)rtc_driver_read_unix_time() * 1000000ull;
+}
 #else
 static bool rtc_driver_apply_unix_time(uint32_t seconds)
 {
@@ -146,6 +151,19 @@ static uint32_t rtc_driver_read_unix_time(void)
     }
 
     return (uint32_t)current_time.tv_sec;
+}
+
+static uint64_t rtc_driver_read_unix_time_us(void)
+{
+    struct timespec current_time = {0};
+
+    if (!aon_timer_get_time(&current_time) || current_time.tv_sec < 0)
+    {
+        return 0;
+    }
+
+    return ((uint64_t)current_time.tv_sec * 1000000ull) +
+           ((uint64_t)current_time.tv_nsec / 1000ull);
 }
 #endif
 
@@ -179,4 +197,14 @@ uint32_t rtc_driver_get_unix_time(void)
     }
 
     return rtc_driver_read_unix_time();
+}
+
+uint64_t rtc_driver_get_unix_time_us(void)
+{
+    if (!rtc_driver_is_valid())
+    {
+        return 0;
+    }
+
+    return rtc_driver_read_unix_time_us();
 }
