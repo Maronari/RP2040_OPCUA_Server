@@ -1,5 +1,5 @@
 # CMake minimum required version
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.13)
 
 if(POLICY CMP0077)
     cmake_policy(SET CMP0077 NEW)
@@ -17,7 +17,7 @@ if(NOT DEFINED PICO_SDK_PATH)
 endif()
 
 if(NOT DEFINED PICO_BOARD)
-    set(PICO_BOARD pico CACHE STRING "Pico board")
+    set(PICO_BOARD pico2 CACHE STRING "Pico board")
 endif()
 
 if(NOT DEFINED WIZNET_CHIP)
@@ -36,7 +36,7 @@ include(rp2040_hat_lwip_c_sdk_version.cmake)
 include(rp2040_hat_freertos_c_sdk_version.cmake)
 
 # Set project name
-set(PROJECT_NAME RP2040-HAT-LWIP-C)
+set(PROJECT_NAME RP2-HAT-LWIP-C)
 
 # Set project informations
 project(${PROJECT_NAME} C CXX ASM)
