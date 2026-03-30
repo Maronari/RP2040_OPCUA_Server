@@ -14,6 +14,7 @@
 #include "services/alarm_service.h"
 #include "services/config_service.h"
 #include "services/diag_service.h"
+#include "services/history_service.h"
 #include "services/network_manager.h"
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
@@ -77,6 +78,7 @@ static const device_profile_config_t g_basic_profile = {
     .timezone_offset_minutes = 0,
     .watchdog_timeout_ms = 0,
     .sampling_period_ms = 1000,
+    .temperature_history_interval_ms = 1000,
     .publish_period_ms = 1000,
     .temp_offset_c = 0.0f,
     .temp_scale = 1.0f,
@@ -219,6 +221,11 @@ static void app_init_task(void *argument)
     if (!sensor_manager_init())
     {
         printf("[APP]\t\tSensor manager init failed\n");
+    }
+
+    if (!history_service_init())
+    {
+        printf("[APP]\t\tHistory service init failed\n");
     }
 
     if (!time_service_init())

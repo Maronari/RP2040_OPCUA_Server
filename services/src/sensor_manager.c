@@ -7,6 +7,7 @@
 
 #include "drivers/temp_sensor_driver.h"
 #include "services/config_service.h"
+#include "services/history_service.h"
 #include "services/time_service.h"
 
 static sensor_manager_snapshot_t g_snapshot;
@@ -69,6 +70,9 @@ void sensor_manager_task(void *argument)
             snapshot.sample_count++;
             snapshot.quality = SERVICE_QUALITY_GOOD;
             snapshot.last_update_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+            history_service_record_temperature_sample(snapshot.temperature_c,
+                                                      snapshot.quality,
+                                                      snapshot.source_timestamp_epoch_s);
         }
         else
         {

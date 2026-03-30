@@ -18,7 +18,7 @@
 #define configMAX_PRIORITIES                    10
 #define configMINIMAL_STACK_SIZE                256
 #if PICO_RP2350
-#define configTOTAL_HEAP_SIZE                   (192 * 1024)
+#define configTOTAL_HEAP_SIZE                   (384 * 1024)
 #else
 #define configTOTAL_HEAP_SIZE                   (100 * 1024)
 #endif

@@ -39,7 +39,7 @@ static void *ua_port_payload_from_header(ua_port_alloc_header_t *header)
     return (void *)(header + 1);
 }
 
-static void *ua_port_alloc_raw(size_t size, bool zero_init)
+static void *ua_port_alloc_raw(size_t size, bool zero_init, const void *caller_pc)
 {
     ua_port_alloc_header_t *header = NULL;
     const size_t total_size = sizeof(*header) + size;
@@ -52,9 +52,19 @@ static void *ua_port_alloc_raw(size_t size, bool zero_init)
     header = (ua_port_alloc_header_t *)pvPortMalloc(total_size);
     if (header == NULL)
     {
-        printf("[ALLOC]\t\tallocation failed, size=%u\n", (unsigned)size);
+        printf("[ALLOC]\t\tallocation failed, size=%u, caller=%p\n",
+               (unsigned)size,
+               caller_pc);
         fflush(stdout);
         return NULL;
+    }
+
+    if (size >= 50000u)
+    {
+        printf("[ALLOC]\t\tlarge allocation, size=%u, caller=%p\n",
+               (unsigned)size,
+               caller_pc);
+        fflush(stdout);
     }
 
     header->meta.size = size;
@@ -70,7 +80,7 @@ static void *ua_port_alloc_raw(size_t size, bool zero_init)
 
 void *ua_port_malloc(size_t size)
 {
-    return ua_port_alloc_raw(size, false);
+    return ua_port_alloc_raw(size, false, __builtin_return_address(0));
 }
 
 void *ua_port_calloc(size_t num, size_t size)
@@ -92,7 +102,7 @@ void *ua_port_calloc(size_t num, size_t size)
     }
 
     total_size = num * size;
-    return ua_port_alloc_raw(total_size, true);
+    return ua_port_alloc_raw(total_size, true, __builtin_return_address(0));
 }
 
 void ua_port_free(void *mem)
@@ -128,7 +138,7 @@ void *ua_port_realloc(void *mem, size_t new_size)
 
     configASSERT(header->meta.magic == UA_PORT_ALLOC_MAGIC);
 
-    new_mem = ua_port_malloc(new_size);
+    new_mem = ua_port_alloc_raw(new_size, false, __builtin_return_address(0));
     if (new_mem == NULL)
     {
         return NULL;

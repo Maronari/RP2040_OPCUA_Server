@@ -28,6 +28,7 @@ typedef struct
     int16_t timezone_offset_minutes;
     uint32_t watchdog_timeout_ms;
     uint32_t sampling_period_ms;
+    uint32_t temperature_history_interval_ms;
     uint32_t publish_period_ms;
     float temp_offset_c;
     float temp_scale;
@@ -45,6 +46,7 @@ void config_service_init(const device_profile_config_t *defaults);
 const device_profile_config_t *config_service_get(void);
 bool config_service_reset_to_defaults(void);
 bool config_service_set_sampling_period_ms(uint32_t value);
+bool config_service_set_temperature_history_interval_ms(uint32_t value);
 bool config_service_set_publish_period_ms(uint32_t value);
 bool config_service_set_timezone_offset_minutes(int16_t value);
 bool config_service_set_temp_offset_c(float value);

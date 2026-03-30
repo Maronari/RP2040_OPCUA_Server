@@ -53,6 +53,11 @@ uint32_t get_system_time(void)
     return rtc_driver_get_unix_time();
 }
 
+uint64_t get_system_time_us(void)
+{
+    return rtc_driver_get_unix_time_us();
+}
+
 int16_t get_system_timezone_offset_minutes(void)
 {
     return config_service_get()->timezone_offset_minutes;

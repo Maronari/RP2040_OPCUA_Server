@@ -26,6 +26,7 @@ void time_service_task(void *argument);
 void time_service_get_status(time_service_status_t *out_status);
 bool time_service_request_sync_now(void);
 uint32_t get_system_time(void);
+uint64_t get_system_time_us(void);
 int16_t get_system_timezone_offset_minutes(void);
 void set_system_time(uint32_t seconds);
 
