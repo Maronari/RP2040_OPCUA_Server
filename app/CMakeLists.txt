@@ -1,1 +1,5 @@
 add_subdirectory(basic_profile)
+add_subdirectory(freertos_smoke)
+add_subdirectory(fullstack_smoke)
+add_subdirectory(network_smoke)
+add_subdirectory(usb_smoke)
