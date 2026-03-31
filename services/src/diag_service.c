@@ -223,6 +223,11 @@ void diag_service_set_last_fault_code(diag_fault_code_t fault_code)
     taskEXIT_CRITICAL();
 }
 
+void diag_service_clear(void)
+{
+    diag_service_set_last_fault_code(DIAG_FAULT_CODE_NONE);
+}
+
 void diag_service_reboot(uint32_t delay_ms)
 {
     watchdog_reboot(0, 0, delay_ms);

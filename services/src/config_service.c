@@ -151,6 +151,22 @@ bool config_service_reset_to_defaults(void)
     return true;
 }
 
+bool config_service_apply(void)
+{
+    device_profile_config_t normalized_config;
+
+    taskENTER_CRITICAL();
+    normalized_config = g_config;
+    taskEXIT_CRITICAL();
+
+    config_service_normalize(&normalized_config);
+
+    taskENTER_CRITICAL();
+    g_config = normalized_config;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
 bool config_service_set_sampling_period_ms(uint32_t value)
 {
     if (value == 0u)

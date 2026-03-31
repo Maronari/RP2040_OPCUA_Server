@@ -6,6 +6,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 
+#include "drivers/led_driver.h"
 #include "open62541.h"
 #include "services/alarm_service.h"
 #include "services/config_service.h"
@@ -70,6 +71,10 @@ typedef struct
 {
     bool reboot_pending;
     TickType_t reboot_due_tick;
+    bool identify_blink_active;
+    TickType_t identify_next_tick;
+    uint8_t identify_toggles_remaining;
+    bool identify_led_on;
 } model_pending_actions_t;
 
 enum
@@ -131,7 +136,7 @@ static void log_opcua_heap(const char *stage)
 
 static opcua_model_config_t g_model_config;
 static bool g_model_initialized = false;
-static model_pending_actions_t g_pending_actions = {false, 0};
+static model_pending_actions_t g_pending_actions = {false, 0, false, 0, 0, false};
 static uint8_t g_history_backend_context = 0u;
 static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_IDENT_MANUFACTURER, NULL},
@@ -905,6 +910,31 @@ static void model_schedule_reboot(uint32_t delay_ms)
     g_pending_actions.reboot_due_tick = xTaskGetTickCount() + delay_ticks;
 }
 
+static void model_schedule_identify_blink(uint8_t blink_count, uint32_t period_ms)
+{
+    TickType_t delay_ticks;
+
+    if (blink_count == 0u)
+    {
+        g_pending_actions.identify_blink_active = false;
+        g_pending_actions.identify_toggles_remaining = 0u;
+        g_pending_actions.identify_led_on = false;
+        led_driver_set(false);
+        return;
+    }
+
+    delay_ticks = pdMS_TO_TICKS(period_ms > 0u ? period_ms : 1u);
+    if (delay_ticks == 0)
+    {
+        delay_ticks = 1;
+    }
+
+    g_pending_actions.identify_blink_active = true;
+    g_pending_actions.identify_next_tick = xTaskGetTickCount();
+    g_pending_actions.identify_toggles_remaining = (uint8_t)(blink_count * 2u);
+    g_pending_actions.identify_led_on = false;
+}
+
 static UA_StatusCode model_acknowledge_alarms(UA_Server *server,
                                               const UA_NodeId *session_id,
                                               void *session_context,
@@ -1026,6 +1056,192 @@ static UA_StatusCode model_sync_time_now(UA_Server *server,
 
     result = time_service_request_sync_now();
     printf("[OPC UA]\tTime sync request %s\n", result ? "accepted" : "rejected");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_blink_identify(UA_Server *server,
+                                          const UA_NodeId *session_id,
+                                          void *session_context,
+                                          const UA_NodeId *method_id,
+                                          void *method_context,
+                                          const UA_NodeId *object_id,
+                                          void *object_context,
+                                          size_t input_size,
+                                          const UA_Variant *input,
+                                          size_t output_size,
+                                          UA_Variant *output)
+{
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    if (led_driver_is_initialized())
+    {
+        model_schedule_identify_blink(5u, 200u);
+        result = true;
+        printf("[OPC UA]\tIdentify blink requested\n");
+        fflush(stdout);
+    }
+
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_apply_config(UA_Server *server,
+                                        const UA_NodeId *session_id,
+                                        void *session_context,
+                                        const UA_NodeId *method_id,
+                                        void *method_context,
+                                        const UA_NodeId *object_id,
+                                        void *object_context,
+                                        size_t input_size,
+                                        const UA_Variant *input,
+                                        size_t output_size,
+                                        UA_Variant *output)
+{
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    result = config_service_apply();
+    printf("[OPC UA]\tApplyConfig %s\n", result ? "succeeded" : "failed");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_save_config(UA_Server *server,
+                                       const UA_NodeId *session_id,
+                                       void *session_context,
+                                       const UA_NodeId *method_id,
+                                       void *method_context,
+                                       const UA_NodeId *object_id,
+                                       void *object_context,
+                                       size_t input_size,
+                                       const UA_Variant *input,
+                                       size_t output_size,
+                                       UA_Variant *output)
+{
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    result = config_service_save();
+    printf("[OPC UA]\tSaveConfig %s\n", result ? "succeeded" : "failed");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_self_test(UA_Server *server,
+                                     const UA_NodeId *session_id,
+                                     void *session_context,
+                                     const UA_NodeId *method_id,
+                                     void *method_context,
+                                     const UA_NodeId *object_id,
+                                     void *object_context,
+                                     size_t input_size,
+                                     const UA_Variant *input,
+                                     size_t output_size,
+                                     UA_Variant *output)
+{
+    UA_Boolean result = true;
+    network_manager_status_t network_status = {0};
+    time_service_status_t time_status = {0};
+    sensor_manager_snapshot_t sensor_snapshot = {0};
+    const device_profile_config_t *config = NULL;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    config = config_service_get();
+    if (config == NULL || config->opcua_port == 0u || config->device_name[0] == '\0')
+    {
+        result = false;
+    }
+
+    network_manager_get_status(&network_status);
+    if (!network_status.initialized)
+    {
+        result = false;
+    }
+
+    time_service_get_status(&time_status);
+    if (time_status.quality == SERVICE_QUALITY_BAD)
+    {
+        result = false;
+    }
+
+    if (config != NULL && config->enable_temperature_sensor)
+    {
+        sensor_manager_get_snapshot(&sensor_snapshot);
+        if (!sensor_snapshot.enabled)
+        {
+            result = false;
+        }
+    }
+
+    diag_service_set_last_fault_code(result ? DIAG_FAULT_CODE_NONE : DIAG_FAULT_CODE_SELF_TEST_FAILED);
+    printf("[OPC UA]\tSelfTest %s\n", result ? "passed" : "failed");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_clear_diagnostics(UA_Server *server,
+                                             const UA_NodeId *session_id,
+                                             void *session_context,
+                                             const UA_NodeId *method_id,
+                                             void *method_context,
+                                             const UA_NodeId *object_id,
+                                             void *object_context,
+                                             size_t input_size,
+                                             const UA_Variant *input,
+                                             size_t output_size,
+                                             UA_Variant *output)
+{
+    UA_Boolean result = true;
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    diag_service_clear();
+    printf("[OPC UA]\tDiagnostics cleared\n");
     fflush(stdout);
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
@@ -1244,6 +1460,56 @@ static UA_StatusCode model_add_sync_time_now_method_node(UA_Server *server, UA_N
                                          "SyncTimeNow",
                                          "Forces immediate SNTP resynchronization",
                                          model_sync_time_now);
+}
+
+static UA_StatusCode model_add_blink_identify_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.BlinkIdentify",
+                                         "BlinkIdentify",
+                                         "Blinks the onboard identify LED",
+                                         model_blink_identify);
+}
+
+static UA_StatusCode model_add_apply_config_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.ApplyConfig",
+                                         "ApplyConfig",
+                                         "Applies the current runtime configuration",
+                                         model_apply_config);
+}
+
+static UA_StatusCode model_add_save_config_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.SaveConfig",
+                                         "SaveConfig",
+                                         "Persists the current configuration to flash",
+                                         model_save_config);
+}
+
+static UA_StatusCode model_add_self_test_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.SelfTest",
+                                         "SelfTest",
+                                         "Runs a basic service health check",
+                                         model_self_test);
+}
+
+static UA_StatusCode model_add_clear_diagnostics_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         "Device.Maintenance.ClearDiagnostics",
+                                         "ClearDiagnostics",
+                                         "Clears software diagnostic fault state",
+                                         model_clear_diagnostics);
 }
 
 static UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
@@ -1868,6 +2134,36 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         {
             return status;
         }
+
+        status = model_add_blink_identify_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_apply_config_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_save_config_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_self_test_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_clear_diagnostics_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
     }
 
     return UA_STATUSCODE_GOOD;
@@ -1883,6 +2179,10 @@ bool opcua_model_init(const opcua_model_config_t *config)
     g_model_config = *config;
     g_pending_actions.reboot_pending = false;
     g_pending_actions.reboot_due_tick = 0;
+    g_pending_actions.identify_blink_active = false;
+    g_pending_actions.identify_next_tick = 0;
+    g_pending_actions.identify_toggles_remaining = 0u;
+    g_pending_actions.identify_led_on = false;
     g_model_initialized = true;
     return true;
 }
@@ -2046,6 +2346,29 @@ void opcua_model_task(void *argument)
             xTaskGetTickCount() >= g_pending_actions.reboot_due_tick)
         {
             break;
+        }
+
+        if (g_pending_actions.identify_blink_active &&
+            xTaskGetTickCount() >= g_pending_actions.identify_next_tick)
+        {
+            g_pending_actions.identify_led_on = !g_pending_actions.identify_led_on;
+            led_driver_set(g_pending_actions.identify_led_on);
+
+            if (g_pending_actions.identify_toggles_remaining > 0u)
+            {
+                g_pending_actions.identify_toggles_remaining--;
+            }
+
+            if (g_pending_actions.identify_toggles_remaining == 0u)
+            {
+                g_pending_actions.identify_blink_active = false;
+                g_pending_actions.identify_led_on = false;
+                led_driver_set(false);
+            }
+            else
+            {
+                g_pending_actions.identify_next_tick = xTaskGetTickCount() + pdMS_TO_TICKS(200u);
+            }
         }
 
         UA_UInt16 wait_ms = UA_Server_run_iterate(server, false);

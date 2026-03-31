@@ -45,6 +45,7 @@ typedef struct
 void config_service_init(const device_profile_config_t *defaults);
 const device_profile_config_t *config_service_get(void);
 bool config_service_reset_to_defaults(void);
+bool config_service_apply(void);
 bool config_service_set_sampling_period_ms(uint32_t value);
 bool config_service_set_temperature_history_interval_ms(uint32_t value);
 bool config_service_set_publish_period_ms(uint32_t value);

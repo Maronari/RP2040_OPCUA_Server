@@ -16,7 +16,8 @@ typedef enum
 {
     DIAG_FAULT_CODE_NONE = 0,
     DIAG_FAULT_CODE_MALLOC_FAILED = 1,
-    DIAG_FAULT_CODE_STACK_OVERFLOW = 2
+    DIAG_FAULT_CODE_STACK_OVERFLOW = 2,
+    DIAG_FAULT_CODE_SELF_TEST_FAILED = 3
 } diag_fault_code_t;
 
 typedef struct
@@ -57,6 +58,7 @@ bool diag_service_get_task_info_by_name(const char *name, diag_service_task_info
 void diag_service_get_heap_stats(diag_service_heap_stats_t *out_stats);
 void diag_service_get_system_stats(diag_service_system_stats_t *out_stats);
 void diag_service_set_last_fault_code(diag_fault_code_t fault_code);
+void diag_service_clear(void);
 void diag_service_reboot(uint32_t delay_ms);
 
 #endif
