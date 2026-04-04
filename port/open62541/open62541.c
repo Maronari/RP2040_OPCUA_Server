@@ -35490,7 +35490,7 @@ addReferenceDescription(UA_Server *server, RefResult *rr,
 
 /* Returns whether the node / continuationpoint is done */
 static UA_StatusCode
-browseReferences(UA_Server *server, const UA_NodeHead *head,
+browseReferences(UA_Server *server, UA_Session *session, const UA_NodeHead *head,
                  ContinuationPoint *cp, RefResult *rr, UA_Boolean *done) {
     UA_assert(cp);
     const UA_BrowseDescription *bd = &cp->browseDescription;
@@ -35555,6 +35555,15 @@ browseReferences(UA_Server *server, const UA_NodeHead *head,
             /* Get the node if it is not a remote reference */
             const UA_Node *target =
                 UA_NODESTORE_GETFROMREF(server, ref->targetId);
+
+            if(target && session != &server->adminSession &&
+               !server->config.accessControl.
+                 allowBrowseNode(server, &server->config.accessControl,
+                                 &session->sessionId, session->sessionHandle,
+                                 &target->head.nodeId, target->head.context)) {
+                UA_NODESTORE_RELEASE(server, target);
+                continue;
+            }
 
             /* Test if the node class matches */
             if(target && !matchClassMask(target, bd->nodeClassMask)) {
@@ -35651,7 +35660,7 @@ browseWithContinuation(UA_Server *server, UA_Session *session,
 
     /* Browse the references */
     UA_Boolean done = false;
-    result->statusCode = browseReferences(server, &node->head, cp, &rr, &done);
+    result->statusCode = browseReferences(server, session, &node->head, cp, &rr, &done);
     UA_NODESTORE_RELEASE(server, node);
     if(result->statusCode != UA_STATUSCODE_GOOD) {
         RefResult_clear(&rr);
@@ -38036,6 +38045,16 @@ ReadWithNode(const UA_Node *node, UA_Server *server, UA_Session *session,
         return;
     }
 
+    if(session != &server->adminSession &&
+       !server->config.accessControl.
+         allowBrowseNode(server, &server->config.accessControl,
+                         &session->sessionId, session->sessionHandle,
+                         &node->head.nodeId, node->head.context)) {
+        v->hasStatus = true;
+        v->status = UA_STATUSCODE_BADUSERACCESSDENIED;
+        return;
+    }
+
     /* Read the attribute */
     UA_StatusCode retval = UA_STATUSCODE_GOOD;
     switch(id->attributeId) {
@@ -39794,6 +39813,9 @@ void Service_FindServers(UA_Server *server, UA_Session *session,
                          UA_FindServersResponse *response) {
     UA_LOG_DEBUG_SESSION(&server->config.logger, session, "Processing FindServersRequest");
     UA_LOCK_ASSERT(&server->serviceMutex, 1);
+    printf("[DISCOVERY]\tFindServers request serverUris=%u\n",
+           (unsigned)request->serverUrisSize);
+    fflush(stdout);
 
     /* Return the server itself? */
     UA_Boolean foundSelf = false;
@@ -39866,6 +39888,23 @@ void Service_FindServers(UA_Server *server, UA_Session *session,
     /* Set the final size */
     if(pos > 0) {
         response->serversSize = pos;
+        printf("[DISCOVERY]\tFindServers response servers=%u\n",
+               (unsigned)response->serversSize);
+        for(size_t i = 0; i < response->serversSize; ++i) {
+            const UA_ApplicationDescription *ad = &response->servers[i];
+            printf("[DISCOVERY]\t server[%u] uri=%.*s discoveryUrls=%u",
+                   (unsigned)i,
+                   (int)ad->applicationUri.length,
+                   ad->applicationUri.data,
+                   (unsigned)ad->discoveryUrlsSize);
+            if(ad->discoveryUrlsSize > 0 && ad->discoveryUrls != NULL) {
+                printf(" first=%.*s",
+                       (int)ad->discoveryUrls[0].length,
+                       ad->discoveryUrls[0].data);
+            }
+            printf("\n");
+        }
+        fflush(stdout);
     } else {
         UA_free(response->servers);
         response->servers = NULL;
@@ -39878,6 +39917,11 @@ Service_GetEndpoints(UA_Server *server, UA_Session *session,
                      const UA_GetEndpointsRequest *request,
                      UA_GetEndpointsResponse *response) {
     UA_LOCK_ASSERT(&server->serviceMutex, 1);
+    printf("[DISCOVERY]\tGetEndpoints request endpointUrl=%.*s profiles=%u\n",
+           (int)request->endpointUrl.length,
+           request->endpointUrl.data,
+           (unsigned)request->profileUrisSize);
+    fflush(stdout);
 
     /* If the client expects to see a specific endpointurl, mirror it back. If
      * not, clone the endpoints with the discovery url of all networklayers. */
@@ -39952,10 +39996,45 @@ Service_GetEndpoints(UA_Server *server, UA_Session *session,
     response->endpointsSize = pos;
 
     /* Clean up the memory of there are no usable results */
-    if(pos > 0)
+    if(pos > 0) {
+        printf("[DISCOVERY]\tGetEndpoints response endpoints=%u\n",
+               (unsigned)response->endpointsSize);
+        for(size_t i = 0; i < response->endpointsSize; ++i) {
+            const UA_EndpointDescription *ep = &response->endpoints[i];
+            printf("[DISCOVERY]\t endpoint[%u] mode=%u policy=%.*s url=%.*s cert=%u",
+                   (unsigned)i,
+                   (unsigned)ep->securityMode,
+                   (int)ep->securityPolicyUri.length,
+                   ep->securityPolicyUri.data,
+                   (int)ep->endpointUrl.length,
+                   ep->endpointUrl.data,
+                   (unsigned)ep->serverCertificate.length);
+            if(ep->server.discoveryUrlsSize > 0 && ep->server.discoveryUrls != NULL) {
+                printf(" discovery=%.*s",
+                       (int)ep->server.discoveryUrls[0].length,
+                       ep->server.discoveryUrls[0].data);
+            }
+            printf("\n");
+            for(size_t j = 0; j < ep->userIdentityTokensSize; ++j) {
+                const UA_UserTokenPolicy *utp = &ep->userIdentityTokens[j];
+                printf("[DISCOVERY]\t  token[%u] type=%u policyId=%.*s secPolicy=%.*s\n",
+                       (unsigned)j,
+                       (unsigned)utp->tokenType,
+                       (int)utp->policyId.length,
+                       utp->policyId.data,
+                       (int)utp->securityPolicyUri.length,
+                       utp->securityPolicyUri.data);
+            }
+        }
+        fflush(stdout);
         return;
+    }
 
 error:
+    printf("[DISCOVERY]\tGetEndpoints failed status=0x%x (%s)\n",
+           retval,
+           UA_StatusCode_name(retval));
+    fflush(stdout);
     response->responseHeader.serviceResult = retval;
     UA_Array_delete(response->endpoints, response->endpointsSize,
                     &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);

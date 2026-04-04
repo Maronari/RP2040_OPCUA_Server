@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 
 #include <FreeRTOS.h>
 #include <task.h>
@@ -16,8 +17,10 @@
 #include "services/diag_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
+#include "services/security_service.h"
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
+#include "device_identity_provisioning.h"
 
 #define STACK_DEPTH_BYTES(byte_count) ((configSTACK_DEPTH_TYPE)(((byte_count) + sizeof(StackType_t) - 1u) / sizeof(StackType_t)))
 
@@ -186,6 +189,48 @@ static bool create_task(TaskFunction_t entry_point,
     return true;
 }
 
+static bool provision_device_identity_if_configured(void)
+{
+#if DEVICE_IDENTITY_PROVISIONING_ENABLED
+    security_service_blob_view_t current_certificate = {0};
+    security_service_blob_view_t current_private_key = {0};
+    const bool have_same_certificate =
+        security_service_get_device_certificate(&current_certificate) &&
+        current_certificate.length == g_provisioned_device_certificate_length &&
+        memcmp(current_certificate.data,
+               g_provisioned_device_certificate,
+               g_provisioned_device_certificate_length) == 0;
+    const bool have_same_private_key =
+        security_service_get_device_private_key(&current_private_key) &&
+        current_private_key.length == g_provisioned_device_private_key_length &&
+        memcmp(current_private_key.data,
+               g_provisioned_device_private_key,
+               g_provisioned_device_private_key_length) == 0;
+
+    if (have_same_certificate && have_same_private_key)
+    {
+        printf("[APP]\t\tDevice identity already matches provisioned build assets\n");
+        fflush(stdout);
+        return true;
+    }
+
+    if (!security_service_set_device_identity(g_provisioned_device_certificate,
+                                              g_provisioned_device_certificate_length,
+                                              g_provisioned_device_private_key,
+                                              g_provisioned_device_private_key_length))
+    {
+        printf("[APP]\t\tDevice identity provisioning failed\n");
+        fflush(stdout);
+        return false;
+    }
+
+    printf("[APP]\t\tProvisioned device identity from build assets\n");
+    fflush(stdout);
+#endif
+
+    return true;
+}
+
 static void watchdog_task(void *argument)
 {
     const uint32_t timeout_ms = *(const uint32_t *)argument;
@@ -226,6 +271,15 @@ static void app_init_task(void *argument)
     if (!history_service_init())
     {
         printf("[APP]\t\tHistory service init failed\n");
+    }
+
+    if (!security_service_init())
+    {
+        printf("[APP]\t\tSecurity service init failed\n");
+    }
+    else if (!provision_device_identity_if_configured())
+    {
+        printf("[APP]\t\tProvisioned device identity could not be stored\n");
     }
 
     if (!time_service_init())

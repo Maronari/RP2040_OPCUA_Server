@@ -34,7 +34,9 @@ endif()
 set_property(CACHE WIZNET_CHIP PROPERTY STRINGS W5100S W5500)
 
 if(NOT DEFINED PICO_DEOPTIMIZED_DEBUG AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(PICO_DEOPTIMIZED_DEBUG ON)
+    # Fully de-optimized Debug is too slow for OPC UA Basic256Sha256
+    # handshakes on RP2350: UaExpert times out during OpenSecureChannel.
+    set(PICO_DEOPTIMIZED_DEBUG OFF)
 endif()
 
 option(BUILD_LEGACY_EXAMPLES "Build legacy example targets" OFF)
@@ -54,6 +56,15 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Initialize the SDK
 pico_sdk_init()
+
+set(DEVICE_IDENTITY_CERT_DER_FILE
+    "${CMAKE_SOURCE_DIR}/static/certs/server.crt.der"
+    CACHE FILEPATH "DER-encoded OPC UA device certificate to provision into flash"
+    FORCE)
+set(DEVICE_IDENTITY_PRIVATE_KEY_FILE
+    "${CMAKE_SOURCE_DIR}/static/certs/server.key.pem"
+    CACHE FILEPATH "PEM or DER OPC UA private key to provision into flash"
+    FORCE)
 
 if(${WIZNET_CHIP} STREQUAL W5100S)
     add_definitions(-D_WIZCHIP_=W5100S)
@@ -76,11 +87,6 @@ if(NOT DEFINED WIZNET_DIR)
     message(STATUS "WIZNET_DIR = ${WIZNET_DIR}")
 endif()
 
-if(NOT DEFINED MBEDTLS_DIR)
-    set(MBEDTLS_DIR ${CMAKE_SOURCE_DIR}/libraries/mbedtls)
-    message(STATUS "MBEDTLS_DIR = ${MBEDTLS_DIR}")
-endif()
-
 if(NOT DEFINED PORT_DIR)
     set(PORT_DIR ${CMAKE_SOURCE_DIR}/port)
     message(STATUS "PORT_DIR = ${PORT_DIR}")
@@ -93,10 +99,6 @@ endif()
 
 add_definitions(-DUA_ARCHITECTURE_FREERTOSLWIP)
 
-# Turn off mbedtls test mode
-set(ENABLE_PROGRAMS OFF CACHE BOOL "Build mbedtls programs")
-set(ENABLE_TESTING OFF CACHE BOOL "Build mbedtls testing")
-add_definitions(-DMBEDTLS_CONFIG_FILE="${PORT_DIR}/mbedtls/inc/ssl_config.h")
 add_definitions(-DSET_TRUSTED_CERT_IN_SAMPLES)
 
 # Add libraries in subdirectories

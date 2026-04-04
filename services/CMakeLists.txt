@@ -4,6 +4,7 @@ add_library(FIRMWARE_SERVICES STATIC
         src/diag_service.c
         src/history_service.c
         src/network_manager.c
+        src/security_service.c
         src/sensor_manager.c
         src/time_service.c
         )
@@ -19,6 +20,7 @@ target_include_directories(FIRMWARE_SERVICES PUBLIC
 target_link_libraries(FIRMWARE_SERVICES PUBLIC
         FIRMWARE_DRIVERS
         FREERTOS_FILES
+        pico_sha256
         pico_lwip_sntp
         pico_unique_id
         pico_stdlib

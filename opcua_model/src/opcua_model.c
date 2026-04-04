@@ -13,8 +13,13 @@
 #include "services/diag_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
+#include "services/security_service.h"
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
+
+#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+#include "test_certs.h"
+#endif
 
 typedef enum
 {
@@ -77,6 +82,55 @@ typedef struct
     bool identify_led_on;
 } model_pending_actions_t;
 
+typedef struct
+{
+    void *base_context;
+    bool secure_channel;
+} model_session_context_t;
+
+typedef UA_StatusCode (*model_activate_session_fn)(UA_Server *server,
+                                                   UA_AccessControl *ac,
+                                                   const UA_EndpointDescription *endpoint_description,
+                                                   const UA_ByteString *secure_channel_remote_certificate,
+                                                   const UA_NodeId *session_id,
+                                                   const UA_ExtensionObject *user_identity_token,
+                                                   void **session_context);
+
+typedef void (*model_close_session_fn)(UA_Server *server,
+                                       UA_AccessControl *ac,
+                                       const UA_NodeId *session_id,
+                                       void *session_context);
+
+typedef UA_Boolean (*model_get_user_executable_fn)(UA_Server *server,
+                                                   UA_AccessControl *ac,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context);
+
+typedef UA_Boolean (*model_get_user_executable_on_object_fn)(UA_Server *server,
+                                                             UA_AccessControl *ac,
+                                                             const UA_NodeId *session_id,
+                                                             void *session_context,
+                                                             const UA_NodeId *method_id,
+                                                             void *method_context,
+                                                             const UA_NodeId *object_id,
+                                                             void *object_context);
+
+typedef UA_Byte (*model_get_user_access_level_fn)(UA_Server *server,
+                                                  UA_AccessControl *ac,
+                                                  const UA_NodeId *session_id,
+                                                  void *session_context,
+                                                  const UA_NodeId *node_id,
+                                                  void *node_context);
+
+typedef UA_Boolean (*model_allow_browse_node_fn)(UA_Server *server,
+                                                 UA_AccessControl *ac,
+                                                 const UA_NodeId *session_id,
+                                                 void *session_context,
+                                                 const UA_NodeId *node_id,
+                                                 void *node_context);
+
 enum
 {
     FIXED_CTX_IDENT_MANUFACTURER = 0,
@@ -122,8 +176,32 @@ enum
     FIXED_CTX_COUNT
 };
 
-#define OPCUA_SEND_BUFFER_SIZE 8192u
-#define OPCUA_RECV_BUFFER_SIZE 8192u
+/* Secure OpenSecureChannel handshakes with X.509 client certificates are
+   noticeably larger than plain SecurityPolicy#None traffic. 8 KiB is enough
+   for discovery, but too small for UaExpert/Prosys secure channel setup. */
+#define OPCUA_SEND_BUFFER_SIZE 32768u
+#define OPCUA_RECV_BUFFER_SIZE 32768u
+#define MODEL_METHOD_ADD_USER "Device.Maintenance.AddUser"
+#define MODEL_METHOD_CHANGE_PASSWORD "Device.Maintenance.ChangePassword"
+#define MODEL_METHOD_SET_ROLE "Device.Maintenance.SetRole"
+#define MODEL_METHOD_DISABLE_USER "Device.Maintenance.DisableUser"
+#define MODEL_METHOD_DELETE_USER "Device.Maintenance.DeleteUser"
+
+#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+static const uint8_t g_bootstrap_device_certificate[] = TEST_SRV_CRT_RSA_SHA256_DER;
+static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
+#endif
+
+static opcua_model_config_t g_model_config;
+static bool g_model_initialized = false;
+static model_pending_actions_t g_pending_actions = {false, 0, false, 0, 0, false};
+static model_activate_session_fn g_default_activate_session = NULL;
+static model_close_session_fn g_default_close_session = NULL;
+static model_get_user_executable_fn g_default_get_user_executable = NULL;
+static model_get_user_executable_on_object_fn g_default_get_user_executable_on_object = NULL;
+static model_get_user_access_level_fn g_default_get_user_access_level = NULL;
+static model_allow_browse_node_fn g_default_allow_browse_node = NULL;
+static uint8_t g_history_backend_context = 0u;
 
 static void log_opcua_heap(const char *stage)
 {
@@ -134,10 +212,491 @@ static void log_opcua_heap(const char *stage)
     fflush(stdout);
 }
 
-static opcua_model_config_t g_model_config;
-static bool g_model_initialized = false;
-static model_pending_actions_t g_pending_actions = {false, 0, false, 0, 0, false};
-static uint8_t g_history_backend_context = 0u;
+static void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result);
+static const UA_ByteString *model_session_get_username_bytes(const void *session_context);
+static bool model_copy_session_username(const void *session_context, char *buffer, size_t buffer_size);
+static bool model_is_admin_only_method(const UA_NodeId *method_id);
+
+static bool model_session_is_secure(const void *session_context)
+{
+    const model_session_context_t *context = (const model_session_context_t *)session_context;
+    return context != NULL && context->secure_channel;
+}
+
+static bool model_nodeid_string_has_prefix(const UA_NodeId *node_id, const char *prefix)
+{
+    const size_t prefix_length = strlen(prefix);
+
+    return node_id != NULL &&
+           prefix != NULL &&
+           node_id->namespaceIndex == 1u &&
+           node_id->identifierType == UA_NODEIDTYPE_STRING &&
+           node_id->identifier.string.data != NULL &&
+           node_id->identifier.string.length >= prefix_length &&
+           memcmp(node_id->identifier.string.data, prefix, prefix_length) == 0;
+}
+
+static bool model_session_is_anonymous(const void *session_context)
+{
+    const UA_ByteString *username = model_session_get_username_bytes(session_context);
+    return username == NULL || username->data == NULL || username->length == 0u;
+}
+
+static bool model_node_is_anonymous_hidden(const UA_NodeId *node_id)
+{
+    return model_nodeid_string_has_prefix(node_id, "Device.Maintenance") ||
+           model_nodeid_string_has_prefix(node_id, "Device.Identification");
+}
+
+static bool model_node_is_maintenance_method(const UA_NodeId *method_id)
+{
+    return model_nodeid_string_has_prefix(method_id, "Device.Maintenance");
+}
+
+static UA_Byte model_strip_anonymous_write_access(UA_Byte access_level)
+{
+    return access_level &
+           (UA_Byte)~(UA_ACCESSLEVELMASK_WRITE |
+                      UA_ACCESSLEVELMASK_HISTORYWRITE |
+                      UA_ACCESSLEVELMASK_STATUSWRITE |
+                      UA_ACCESSLEVELMASK_TIMESTAMPWRITE);
+}
+
+static const UA_ByteString *model_session_get_username_bytes(const void *session_context)
+{
+    const model_session_context_t *context = (const model_session_context_t *)session_context;
+
+    if (context == NULL || context->base_context == NULL)
+    {
+        return NULL;
+    }
+
+    return (const UA_ByteString *)context->base_context;
+}
+
+static bool model_copy_session_username(const void *session_context, char *buffer, size_t buffer_size)
+{
+    const UA_ByteString *username = model_session_get_username_bytes(session_context);
+
+    if (username == NULL || buffer == NULL || buffer_size == 0u || username->length >= buffer_size)
+    {
+        return false;
+    }
+
+    memcpy(buffer, username->data, username->length);
+    buffer[username->length] = '\0';
+    return true;
+}
+
+static bool model_session_has_role(const void *session_context, security_user_role_t required_role)
+{
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    security_user_role_t current_role = SECURITY_ROLE_VIEWER;
+
+    if (!model_copy_session_username(session_context, username, sizeof(username)))
+    {
+        return false;
+    }
+
+    if (!security_service_get_role(username, &current_role))
+    {
+        return false;
+    }
+
+    return current_role >= required_role;
+}
+
+static bool model_session_get_role(const void *session_context, security_user_role_t *out_role)
+{
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+
+    if (out_role == NULL)
+    {
+        return false;
+    }
+
+    if (!model_copy_session_username(session_context, username, sizeof(username)))
+    {
+        return false;
+    }
+
+    return security_service_get_role(username, out_role);
+}
+
+static UA_StatusCode model_require_session_role(void *session_context,
+                                                security_user_role_t required_role,
+                                                size_t output_size,
+                                                UA_Variant *output)
+{
+    security_user_role_t current_role = SECURITY_ROLE_VIEWER;
+
+    if (required_role > SECURITY_ROLE_VIEWER && !model_session_is_secure(session_context))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADSECURITYMODEINSUFFICIENT;
+    }
+
+    if (!model_session_get_role(session_context, &current_role) || current_role < required_role)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    }
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_require_admin_session(void *session_context,
+                                                 size_t output_size,
+                                                 UA_Variant *output)
+{
+    return model_require_session_role(session_context,
+                                      SECURITY_ROLE_ADMIN,
+                                      output_size,
+                                      output);
+}
+
+static security_user_role_t model_required_role_for_method(const UA_NodeId *method_id)
+{
+    if (method_id == NULL)
+    {
+        return SECURITY_ROLE_ADMIN;
+    }
+
+    if (model_is_admin_only_method(method_id))
+    {
+        return SECURITY_ROLE_ADMIN;
+    }
+
+    if (model_nodeid_string_has_prefix(method_id, "Device.Maintenance.AcknowledgeAllAlarms") ||
+        model_nodeid_string_has_prefix(method_id, "Device.Maintenance.ApplyConfig") ||
+        model_nodeid_string_has_prefix(method_id, "Device.Maintenance.SaveConfig"))
+    {
+        return SECURITY_ROLE_OPERATOR;
+    }
+
+    if (model_node_is_maintenance_method(method_id))
+    {
+        return SECURITY_ROLE_SERVICE;
+    }
+
+    return SECURITY_ROLE_VIEWER;
+}
+
+static security_user_role_t model_required_role_for_write_kind(model_node_kind_t kind)
+{
+    switch (kind)
+    {
+    case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
+    case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
+    case MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES:
+    case MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS:
+    case MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS:
+    case MODEL_NODE_CONFIG_TEMP_OFFSET:
+    case MODEL_NODE_CONFIG_TEMP_SCALE:
+    case MODEL_NODE_CONFIG_HIGH_ALARM:
+    case MODEL_NODE_CONFIG_HIGH_HIGH_ALARM:
+        return SECURITY_ROLE_OPERATOR;
+    default:
+        return SECURITY_ROLE_ADMIN;
+    }
+}
+
+static UA_StatusCode model_require_method_role(void *session_context,
+                                               const UA_NodeId *method_id,
+                                               size_t output_size,
+                                               UA_Variant *output)
+{
+    return model_require_session_role(session_context,
+                                      model_required_role_for_method(method_id),
+                                      output_size,
+                                      output);
+}
+
+static bool model_is_admin_only_method(const UA_NodeId *method_id)
+{
+    const UA_NodeId add_user = UA_NODEID_STRING(1, (char *)MODEL_METHOD_ADD_USER);
+    const UA_NodeId change_password = UA_NODEID_STRING(1, (char *)MODEL_METHOD_CHANGE_PASSWORD);
+    const UA_NodeId set_role = UA_NODEID_STRING(1, (char *)MODEL_METHOD_SET_ROLE);
+    const UA_NodeId disable_user = UA_NODEID_STRING(1, (char *)MODEL_METHOD_DISABLE_USER);
+    const UA_NodeId delete_user = UA_NODEID_STRING(1, (char *)MODEL_METHOD_DELETE_USER);
+
+    return method_id != NULL &&
+           (UA_NodeId_equal(method_id, &add_user) ||
+            UA_NodeId_equal(method_id, &change_password) ||
+            UA_NodeId_equal(method_id, &set_role) ||
+            UA_NodeId_equal(method_id, &disable_user) ||
+            UA_NodeId_equal(method_id, &delete_user));
+}
+
+static bool model_copy_input_string(const UA_Variant *value, char *buffer, size_t buffer_size)
+{
+    const UA_String *input_string = NULL;
+
+    if (value == NULL || buffer == NULL || buffer_size == 0u ||
+        !UA_Variant_hasScalarType(value, &UA_TYPES[UA_TYPES_STRING]))
+    {
+        return false;
+    }
+
+    input_string = (const UA_String *)value->data;
+    if (input_string == NULL || input_string->length >= buffer_size)
+    {
+        return false;
+    }
+
+    memcpy(buffer, input_string->data, input_string->length);
+    buffer[input_string->length] = '\0';
+    return true;
+}
+
+static bool model_get_input_ua_string(const UA_Variant *value, const UA_String **out_string)
+{
+    if (value == NULL || out_string == NULL ||
+        !UA_Variant_hasScalarType(value, &UA_TYPES[UA_TYPES_STRING]) ||
+        value->data == NULL)
+    {
+        return false;
+    }
+
+    *out_string = (const UA_String *)value->data;
+    return true;
+}
+
+static UA_StatusCode model_login_callback(const UA_String *user_name,
+                                          const UA_ByteString *password,
+                                          size_t username_password_login_size,
+                                          const UA_UsernamePasswordLogin *username_password_login,
+                                          void **session_context,
+                                          void *login_context)
+{
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    (void)username_password_login_size;
+    (void)username_password_login;
+    (void)session_context;
+    (void)login_context;
+
+    if (user_name == NULL || password == NULL || user_name->length >= sizeof(username))
+    {
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    }
+
+    memcpy(username, user_name->data, user_name->length);
+    username[user_name->length] = '\0';
+
+    if (!security_service_verify_password(username, password->data, password->length))
+    {
+        printf("[OPC UA]\tLogin rejected for user '%s'\n", username);
+        fflush(stdout);
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    }
+
+    printf("[OPC UA]\tLogin accepted for user '%s'\n", username);
+    fflush(stdout);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_activate_session_secure_wrapper(UA_Server *server,
+                                                           UA_AccessControl *ac,
+                                                           const UA_EndpointDescription *endpoint_description,
+                                                           const UA_ByteString *secure_channel_remote_certificate,
+                                                           const UA_NodeId *session_id,
+                                                           const UA_ExtensionObject *user_identity_token,
+                                                           void **session_context)
+{
+    model_session_context_t *wrapped_context = NULL;
+    void *base_context = NULL;
+    UA_StatusCode status;
+
+    if (g_default_activate_session == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    status = g_default_activate_session(server,
+                                        ac,
+                                        endpoint_description,
+                                        secure_channel_remote_certificate,
+                                        session_id,
+                                        user_identity_token,
+                                        &base_context);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tActivateSession rejected: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+        return status;
+    }
+
+    wrapped_context = (model_session_context_t *)UA_calloc(1u, sizeof(model_session_context_t));
+    if (wrapped_context == NULL)
+    {
+        if (base_context != NULL && g_default_close_session != NULL)
+        {
+            g_default_close_session(server, ac, session_id, base_context);
+        }
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+
+    wrapped_context->base_context = base_context;
+    wrapped_context->secure_channel = endpoint_description != NULL &&
+                                      endpoint_description->securityMode != UA_MESSAGESECURITYMODE_NONE &&
+                                      !UA_ByteString_equal(&endpoint_description->securityPolicyUri,
+                                                           &UA_SECURITY_POLICY_NONE_URI);
+    *session_context = wrapped_context;
+    return UA_STATUSCODE_GOOD;
+}
+
+static void model_close_session_secure_wrapper(UA_Server *server,
+                                               UA_AccessControl *ac,
+                                               const UA_NodeId *session_id,
+                                               void *session_context)
+{
+    model_session_context_t *wrapped_context = (model_session_context_t *)session_context;
+
+    if (wrapped_context != NULL && g_default_close_session != NULL)
+    {
+        g_default_close_session(server, ac, session_id, wrapped_context->base_context);
+    }
+
+    UA_free(wrapped_context);
+}
+
+static UA_Boolean model_get_user_executable_wrapper(UA_Server *server,
+                                                    UA_AccessControl *ac,
+                                                    const UA_NodeId *session_id,
+                                                    void *session_context,
+                                                    const UA_NodeId *method_id,
+                                                    void *method_context)
+{
+    model_session_context_t *wrapped_context = (model_session_context_t *)session_context;
+    const UA_Boolean base_allowed =
+        g_default_get_user_executable != NULL
+            ? g_default_get_user_executable(server,
+                                            ac,
+                                            session_id,
+                                            wrapped_context != NULL ? wrapped_context->base_context : NULL,
+                                            method_id,
+                                            method_context)
+            : true;
+
+    if (!base_allowed)
+    {
+        return false;
+    }
+
+    if (model_session_is_anonymous(session_context) && model_node_is_maintenance_method(method_id))
+    {
+        return false;
+    }
+
+    return model_session_has_role(session_context, model_required_role_for_method(method_id));
+}
+
+static UA_Boolean model_get_user_executable_on_object_wrapper(UA_Server *server,
+                                                              UA_AccessControl *ac,
+                                                              const UA_NodeId *session_id,
+                                                              void *session_context,
+                                                              const UA_NodeId *method_id,
+                                                              void *method_context,
+                                                              const UA_NodeId *object_id,
+                                                              void *object_context)
+{
+    model_session_context_t *wrapped_context = (model_session_context_t *)session_context;
+    const UA_Boolean base_allowed =
+        g_default_get_user_executable_on_object != NULL
+            ? g_default_get_user_executable_on_object(server,
+                                                      ac,
+                                                      session_id,
+                                                      wrapped_context != NULL ? wrapped_context->base_context : NULL,
+                                                      method_id,
+                                                      method_context,
+                                                      object_id,
+                                                      object_context)
+            : true;
+
+    if (!base_allowed)
+    {
+        return false;
+    }
+
+    if (model_session_is_anonymous(session_context) && model_node_is_maintenance_method(method_id))
+    {
+        return false;
+    }
+
+    return model_session_has_role(session_context, model_required_role_for_method(method_id));
+}
+
+static UA_Byte model_get_user_access_level_wrapper(UA_Server *server,
+                                                   UA_AccessControl *ac,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *node_id,
+                                                   void *node_context)
+{
+    model_session_context_t *wrapped_context = (model_session_context_t *)session_context;
+    const UA_Byte base_access =
+        g_default_get_user_access_level != NULL
+            ? g_default_get_user_access_level(server,
+                                              ac,
+                                              session_id,
+                                              wrapped_context != NULL ? wrapped_context->base_context : NULL,
+                                              node_id,
+                                              node_context)
+            : 0u;
+
+    if (model_session_is_anonymous(session_context))
+    {
+        if (model_node_is_anonymous_hidden(node_id))
+        {
+            return 0u;
+        }
+
+        return model_strip_anonymous_write_access(base_access);
+    }
+
+    if (node_context != NULL &&
+        !model_session_has_role(session_context,
+                                model_required_role_for_write_kind(((const model_node_context_t *)node_context)->kind)))
+    {
+        return model_strip_anonymous_write_access(base_access);
+    }
+
+    return base_access;
+}
+
+static UA_Boolean model_allow_browse_node_wrapper(UA_Server *server,
+                                                  UA_AccessControl *ac,
+                                                  const UA_NodeId *session_id,
+                                                  void *session_context,
+                                                  const UA_NodeId *node_id,
+                                                  void *node_context)
+{
+    model_session_context_t *wrapped_context = (model_session_context_t *)session_context;
+    const UA_Boolean base_allowed =
+        g_default_allow_browse_node != NULL
+            ? g_default_allow_browse_node(server,
+                                          ac,
+                                          session_id,
+                                          wrapped_context != NULL ? wrapped_context->base_context : NULL,
+                                          node_id,
+                                          node_context)
+            : true;
+
+    if (!base_allowed)
+    {
+        return false;
+    }
+
+    if (model_session_is_anonymous(session_context) && model_node_is_anonymous_hidden(node_id))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_IDENT_MANUFACTURER, NULL},
     {MODEL_NODE_IDENT_MODEL, NULL},
@@ -533,6 +1092,13 @@ static UA_StatusCode model_read_value(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
+    if (model_session_is_anonymous(session_context) && model_node_is_anonymous_hidden(node_id))
+    {
+        value->hasStatus = true;
+        value->status = UA_STATUSCODE_BADUSERACCESSDENIED;
+        return UA_STATUSCODE_GOOD;
+    }
+
     switch (context->kind)
     {
     case MODEL_NODE_IDENT_MANUFACTURER:
@@ -803,6 +1369,16 @@ static UA_StatusCode model_write_value(UA_Server *server,
         return UA_STATUSCODE_BADNODATA;
     }
 
+    if (model_session_is_anonymous(session_context))
+    {
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    }
+
+    if (!model_session_has_role(session_context, model_required_role_for_write_kind(context->kind)))
+    {
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    }
+
     switch (context->kind)
     {
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
@@ -947,16 +1523,21 @@ static UA_StatusCode model_acknowledge_alarms(UA_Server *server,
                                               size_t output_size,
                                               UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = true;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     alarm_service_acknowledge_all();
     model_set_boolean_method_output(output_size, output, result);
@@ -976,16 +1557,21 @@ static UA_StatusCode model_request_reboot(UA_Server *server,
                                           size_t output_size,
                                           UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = true;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     model_schedule_reboot(250u);
     printf("[OPC UA]\tReboot requested\n");
@@ -1007,16 +1593,21 @@ static UA_StatusCode model_factory_reset(UA_Server *server,
                                          size_t output_size,
                                          UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = false;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     result = config_service_reset_to_defaults();
     if (result)
@@ -1043,16 +1634,21 @@ static UA_StatusCode model_sync_time_now(UA_Server *server,
                                          size_t output_size,
                                          UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = false;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     result = time_service_request_sync_now();
     printf("[OPC UA]\tTime sync request %s\n", result ? "accepted" : "rejected");
@@ -1073,16 +1669,21 @@ static UA_StatusCode model_blink_identify(UA_Server *server,
                                           size_t output_size,
                                           UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = false;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     if (led_driver_is_initialized())
     {
@@ -1108,16 +1709,21 @@ static UA_StatusCode model_apply_config(UA_Server *server,
                                         size_t output_size,
                                         UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = false;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     result = config_service_apply();
     printf("[OPC UA]\tApplyConfig %s\n", result ? "succeeded" : "failed");
@@ -1138,16 +1744,21 @@ static UA_StatusCode model_save_config(UA_Server *server,
                                        size_t output_size,
                                        UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = false;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     result = config_service_save();
     printf("[OPC UA]\tSaveConfig %s\n", result ? "succeeded" : "failed");
@@ -1168,6 +1779,7 @@ static UA_StatusCode model_self_test(UA_Server *server,
                                      size_t output_size,
                                      UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = true;
     network_manager_status_t network_status = {0};
     time_service_status_t time_status = {0};
@@ -1175,13 +1787,17 @@ static UA_StatusCode model_self_test(UA_Server *server,
     const device_profile_config_t *config = NULL;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     config = config_service_get();
     if (config == NULL || config->opcua_port == 0u || config->device_name[0] == '\0')
@@ -1229,19 +1845,271 @@ static UA_StatusCode model_clear_diagnostics(UA_Server *server,
                                              size_t output_size,
                                              UA_Variant *output)
 {
+    UA_StatusCode status;
     UA_Boolean result = true;
     (void)server;
     (void)session_id;
-    (void)session_context;
-    (void)method_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
     (void)input_size;
     (void)input;
 
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
     diag_service_clear();
     printf("[OPC UA]\tDiagnostics cleared\n");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_add_user(UA_Server *server,
+                                    const UA_NodeId *session_id,
+                                    void *session_context,
+                                    const UA_NodeId *method_id,
+                                    void *method_context,
+                                    const UA_NodeId *object_id,
+                                    void *object_context,
+                                    size_t input_size,
+                                    const UA_Variant *input,
+                                    size_t output_size,
+                                    UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    char role_text[16];
+    const UA_String *password = NULL;
+    security_user_role_t role = SECURITY_ROLE_VIEWER;
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_admin_session(session_context, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 3u ||
+        !model_copy_input_string(&input[0], username, sizeof(username)) ||
+        !model_get_input_ua_string(&input[1], &password) ||
+        !model_copy_input_string(&input[2], role_text, sizeof(role_text)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    if (!security_service_role_from_string(role_text, &role))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
+
+    result = security_service_add_user(username, password->data, password->length, role);
+    printf("[OPC UA]\tAddUser %s for %s\n",
+           result ? "succeeded" : "failed",
+           username);
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_change_password(UA_Server *server,
+                                           const UA_NodeId *session_id,
+                                           void *session_context,
+                                           const UA_NodeId *method_id,
+                                           void *method_context,
+                                           const UA_NodeId *object_id,
+                                           void *object_context,
+                                           size_t input_size,
+                                           const UA_Variant *input,
+                                           size_t output_size,
+                                           UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    const UA_String *old_password = NULL;
+    const UA_String *new_password = NULL;
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_admin_session(session_context, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 3u ||
+        !model_copy_input_string(&input[0], username, sizeof(username)) ||
+        !model_get_input_ua_string(&input[1], &old_password) ||
+        !model_get_input_ua_string(&input[2], &new_password))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    result = security_service_change_password(username,
+                                              old_password->data,
+                                              old_password->length,
+                                              new_password->data,
+                                              new_password->length);
+    printf("[OPC UA]\tChangePassword %s for %s\n",
+           result ? "succeeded" : "failed",
+           username);
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_set_role(UA_Server *server,
+                                    const UA_NodeId *session_id,
+                                    void *session_context,
+                                    const UA_NodeId *method_id,
+                                    void *method_context,
+                                    const UA_NodeId *object_id,
+                                    void *object_context,
+                                    size_t input_size,
+                                    const UA_Variant *input,
+                                    size_t output_size,
+                                    UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    char role_text[16];
+    security_user_role_t role = SECURITY_ROLE_VIEWER;
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_admin_session(session_context, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 2u ||
+        !model_copy_input_string(&input[0], username, sizeof(username)) ||
+        !model_copy_input_string(&input[1], role_text, sizeof(role_text)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    if (!security_service_role_from_string(role_text, &role))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
+
+    result = security_service_set_role(username, role);
+    printf("[OPC UA]\tSetRole %s for %s -> %s\n",
+           result ? "succeeded" : "failed",
+           username,
+           security_service_role_to_string(role));
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_disable_user(UA_Server *server,
+                                        const UA_NodeId *session_id,
+                                        void *session_context,
+                                        const UA_NodeId *method_id,
+                                        void *method_context,
+                                        const UA_NodeId *object_id,
+                                        void *object_context,
+                                        size_t input_size,
+                                        const UA_Variant *input,
+                                        size_t output_size,
+                                        UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_admin_session(session_context, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 1u || !model_copy_input_string(&input[0], username, sizeof(username)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    result = security_service_disable_user(username);
+    printf("[OPC UA]\tDisableUser %s for %s\n",
+           result ? "succeeded" : "failed",
+           username);
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_delete_user(UA_Server *server,
+                                       const UA_NodeId *session_id,
+                                       void *session_context,
+                                       const UA_NodeId *method_id,
+                                       void *method_context,
+                                       const UA_NodeId *object_id,
+                                       void *object_context,
+                                       size_t input_size,
+                                       const UA_Variant *input,
+                                       size_t output_size,
+                                       UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_admin_session(session_context, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 1u || !model_copy_input_string(&input[0], username, sizeof(username)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    result = security_service_delete_user(username);
+    printf("[OPC UA]\tDeleteUser %s for %s\n",
+           result ? "succeeded" : "failed",
+           username);
     fflush(stdout);
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
@@ -1386,12 +2254,26 @@ static UA_StatusCode model_add_writable_variable(UA_Server *server,
     return UA_Server_setVariableNode_dataSource(server, created_node_id, data_source);
 }
 
-static UA_StatusCode model_add_boolean_method_node(UA_Server *server,
-                                                   UA_NodeId maintenance_folder_id,
-                                                   const char *node_id,
-                                                   const char *method_name,
-                                                   const char *description,
-                                                   UA_MethodCallback callback)
+static void model_fill_string_argument(UA_Argument *argument,
+                                       const char *name,
+                                       const char *description)
+{
+    UA_Argument_init(argument);
+    argument->name = UA_STRING((char *)(name != NULL ? name : ""));
+    argument->description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                             (char *)(description != NULL ? description : ""));
+    argument->dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    argument->valueRank = UA_VALUERANK_SCALAR;
+}
+
+static UA_StatusCode model_add_method_node_with_boolean_result(UA_Server *server,
+                                                               UA_NodeId maintenance_folder_id,
+                                                               const char *node_id,
+                                                               const char *method_name,
+                                                               const char *description,
+                                                               UA_MethodCallback callback,
+                                                               size_t input_size,
+                                                               UA_Argument *input_arguments)
 {
     UA_MethodAttributes attributes = UA_MethodAttributes_default;
     UA_Argument output_argument;
@@ -1414,12 +2296,29 @@ static UA_StatusCode model_add_boolean_method_node(UA_Server *server,
                                    UA_QUALIFIEDNAME(1, (char *)method_name),
                                    attributes,
                                    callback,
-                                   0,
-                                   NULL,
+                                   input_size,
+                                   input_arguments,
                                    1,
                                    &output_argument,
                                    NULL,
                                    NULL);
+}
+
+static UA_StatusCode model_add_boolean_method_node(UA_Server *server,
+                                                   UA_NodeId maintenance_folder_id,
+                                                   const char *node_id,
+                                                   const char *method_name,
+                                                   const char *description,
+                                                   UA_MethodCallback callback)
+{
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     node_id,
+                                                     method_name,
+                                                     description,
+                                                     callback,
+                                                     0u,
+                                                     NULL);
 }
 
 static UA_StatusCode model_add_alarm_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
@@ -1510,6 +2409,89 @@ static UA_StatusCode model_add_clear_diagnostics_method_node(UA_Server *server, 
                                          "ClearDiagnostics",
                                          "Clears software diagnostic fault state",
                                          model_clear_diagnostics);
+}
+
+static UA_StatusCode model_add_add_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[3];
+
+    model_fill_string_argument(&input_arguments[0], "Username", "Name of the user to create");
+    model_fill_string_argument(&input_arguments[1], "Password", "Initial password");
+    model_fill_string_argument(&input_arguments[2], "Role", "One of Viewer, Operator, Service or Admin");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_ADD_USER,
+                                                     "AddUser",
+                                                     "Creates a new local user",
+                                                     model_add_user,
+                                                     3u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_change_password_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[3];
+
+    model_fill_string_argument(&input_arguments[0], "Username", "Name of the user");
+    model_fill_string_argument(&input_arguments[1], "OldPassword", "Current password");
+    model_fill_string_argument(&input_arguments[2], "NewPassword", "Replacement password");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_CHANGE_PASSWORD,
+                                                     "ChangePassword",
+                                                     "Changes an existing local user password",
+                                                     model_change_password,
+                                                     3u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_set_role_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[2];
+
+    model_fill_string_argument(&input_arguments[0], "Username", "Name of the user");
+    model_fill_string_argument(&input_arguments[1], "Role", "One of Viewer, Operator, Service or Admin");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_SET_ROLE,
+                                                     "SetRole",
+                                                     "Updates the local role assignment of a user",
+                                                     model_set_role,
+                                                     2u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_disable_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_string_argument(&input_argument, "Username", "Name of the user to disable");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_DISABLE_USER,
+                                                     "DisableUser",
+                                                     "Disables an existing local user",
+                                                     model_disable_user,
+                                                     1u,
+                                                     &input_argument);
+}
+
+static UA_StatusCode model_add_delete_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_string_argument(&input_argument, "Username", "Name of the user to delete");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_DELETE_USER,
+                                                     "DeleteUser",
+                                                     "Deletes an existing local user",
+                                                     model_delete_user,
+                                                     1u,
+                                                     &input_argument);
 }
 
 static UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
@@ -2164,6 +3146,38 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         {
             return status;
         }
+
+#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+        status = model_add_add_user_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_change_password_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_set_role_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_disable_user_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_delete_user_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+#endif
     }
 
     return UA_STATUSCODE_GOOD;
@@ -2186,6 +3200,353 @@ bool opcua_model_init(const opcua_model_config_t *config)
     g_model_initialized = true;
     return true;
 }
+
+#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+static bool model_certificate_view_is_pem(const security_service_blob_view_t *certificate)
+{
+    static const char pem_prefix[] = "-----BEGIN CERTIFICATE-----";
+
+    return certificate != NULL &&
+           certificate->data != NULL &&
+           certificate->length >= (sizeof(pem_prefix) - 1u) &&
+           memcmp(certificate->data, pem_prefix, sizeof(pem_prefix) - 1u) == 0;
+}
+
+static void model_clear_runtime_security_config(UA_ServerConfig *config)
+{
+    if (config == NULL)
+    {
+        return;
+    }
+
+    if (config->accessControl.clear != NULL)
+    {
+        config->accessControl.clear(&config->accessControl);
+        memset(&config->accessControl, 0, sizeof(config->accessControl));
+    }
+
+    if (config->certificateVerification.clear != NULL)
+    {
+        config->certificateVerification.clear(&config->certificateVerification);
+        memset(&config->certificateVerification, 0, sizeof(config->certificateVerification));
+    }
+
+    for (size_t i = 0u; i < config->endpointsSize; ++i)
+    {
+        UA_EndpointDescription_clear(&config->endpoints[i]);
+    }
+    UA_free(config->endpoints);
+    config->endpoints = NULL;
+    config->endpointsSize = 0u;
+
+    for (size_t i = 0u; i < config->securityPoliciesSize; ++i)
+    {
+        config->securityPolicies[i].clear(&config->securityPolicies[i]);
+    }
+    UA_free(config->securityPolicies);
+    config->securityPolicies = NULL;
+    config->securityPoliciesSize = 0u;
+}
+
+static UA_StatusCode model_seed_bootstrap_identity_if_needed(void)
+{
+    security_service_blob_view_t existing_certificate = {0};
+
+    if (security_service_has_device_identity())
+    {
+        if (security_service_get_device_certificate(&existing_certificate) &&
+            model_certificate_view_is_pem(&existing_certificate))
+        {
+            if (!security_service_set_device_identity(g_bootstrap_device_certificate,
+                                                      sizeof(g_bootstrap_device_certificate),
+                                                      g_bootstrap_device_private_key,
+                                                      sizeof(g_bootstrap_device_private_key) - 1u))
+            {
+                return UA_STATUSCODE_BADINTERNALERROR;
+            }
+
+            printf("[OPC UA]\tMigrated legacy PEM bootstrap certificate to DER\n");
+            fflush(stdout);
+        }
+
+        return UA_STATUSCODE_GOOD;
+    }
+
+    if (!security_service_seed_device_identity_if_missing(g_bootstrap_device_certificate,
+                                                          sizeof(g_bootstrap_device_certificate),
+                                                          g_bootstrap_device_private_key,
+                                                          sizeof(g_bootstrap_device_private_key) - 1u))
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    printf("[OPC UA]\tSeeded bootstrap device certificate into security store\n");
+    fflush(stdout);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_configure_secure_access_control(UA_ServerConfig *config)
+{
+    UA_UsernamePasswordLogin placeholder_login;
+    UA_StatusCode status;
+    const UA_String *username_policy_uri = &UA_SECURITY_POLICY_NONE_URI;
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    placeholder_login.username = UA_STRING((char *)"bootstrap");
+    placeholder_login.password = UA_STRING((char *)"bootstrap");
+
+    status = UA_AccessControl_defaultWithLoginCallback(config,
+                                                       true,
+                                                       NULL,
+                                                       username_policy_uri,
+                                                       1u,
+                                                       &placeholder_login,
+                                                       model_login_callback,
+                                                       NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    g_default_activate_session = config->accessControl.activateSession;
+    g_default_close_session = config->accessControl.closeSession;
+    g_default_get_user_executable = config->accessControl.getUserExecutable;
+    g_default_get_user_executable_on_object = config->accessControl.getUserExecutableOnObject;
+    g_default_get_user_access_level = config->accessControl.getUserAccessLevel;
+    g_default_allow_browse_node = config->accessControl.allowBrowseNode;
+
+    config->accessControl.activateSession = model_activate_session_secure_wrapper;
+    config->accessControl.closeSession = model_close_session_secure_wrapper;
+    config->accessControl.getUserExecutable = model_get_user_executable_wrapper;
+    config->accessControl.getUserExecutableOnObject = model_get_user_executable_on_object_wrapper;
+    config->accessControl.getUserAccessLevel = model_get_user_access_level_wrapper;
+    config->accessControl.allowBrowseNode = model_allow_browse_node_wrapper;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_keep_only_none_and_signandencrypt_endpoints(UA_ServerConfig *config)
+{
+    UA_EndpointDescription *filtered = NULL;
+    size_t keep_count = 0u;
+    size_t out_index = 0u;
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    for (size_t i = 0; i < config->endpointsSize; ++i)
+    {
+        const UA_EndpointDescription *endpoint = &config->endpoints[i];
+        if (endpoint->securityMode == UA_MESSAGESECURITYMODE_NONE ||
+            endpoint->securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT)
+        {
+            ++keep_count;
+        }
+    }
+
+    if (keep_count == 0u || keep_count == config->endpointsSize)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    filtered = (UA_EndpointDescription *)UA_Array_new(keep_count,
+                                                      &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
+    if (filtered == NULL)
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+
+    for (size_t i = 0; i < config->endpointsSize; ++i)
+    {
+        const UA_EndpointDescription *endpoint = &config->endpoints[i];
+        UA_StatusCode status;
+
+        if (endpoint->securityMode != UA_MESSAGESECURITYMODE_NONE &&
+            endpoint->securityMode != UA_MESSAGESECURITYMODE_SIGNANDENCRYPT)
+        {
+            continue;
+        }
+
+        status = UA_EndpointDescription_copy(endpoint, &filtered[out_index]);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            UA_Array_delete(filtered, keep_count, &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
+            return status;
+        }
+        ++out_index;
+    }
+
+    for (size_t i = 0; i < config->endpointsSize; ++i)
+    {
+        UA_EndpointDescription_clear(&config->endpoints[i]);
+    }
+    UA_free(config->endpoints);
+    config->endpoints = filtered;
+    config->endpointsSize = keep_count;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_limit_insecure_endpoints_to_anonymous(UA_ServerConfig *config)
+{
+    size_t endpoint_index;
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    for (endpoint_index = 0; endpoint_index < config->endpointsSize; ++endpoint_index)
+    {
+        UA_EndpointDescription *endpoint = &config->endpoints[endpoint_index];
+        size_t token_index;
+        UA_UserTokenPolicy *anonymous_only = NULL;
+        UA_StatusCode status;
+
+        if (endpoint->securityMode != UA_MESSAGESECURITYMODE_NONE)
+        {
+            continue;
+        }
+
+        for (token_index = 0; token_index < endpoint->userIdentityTokensSize; ++token_index)
+        {
+            if (endpoint->userIdentityTokens[token_index].tokenType == UA_USERTOKENTYPE_ANONYMOUS)
+            {
+                break;
+            }
+        }
+
+        if (token_index >= endpoint->userIdentityTokensSize || endpoint->userIdentityTokensSize == 1u)
+        {
+            continue;
+        }
+
+        anonymous_only = (UA_UserTokenPolicy *)UA_Array_new(1u, &UA_TYPES[UA_TYPES_USERTOKENPOLICY]);
+        if (anonymous_only == NULL)
+        {
+            return UA_STATUSCODE_BADOUTOFMEMORY;
+        }
+
+        status = UA_UserTokenPolicy_copy(&endpoint->userIdentityTokens[token_index], &anonymous_only[0]);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            UA_Array_delete(anonymous_only, 1u, &UA_TYPES[UA_TYPES_USERTOKENPOLICY]);
+            return status;
+        }
+
+        UA_Array_delete(endpoint->userIdentityTokens,
+                        endpoint->userIdentityTokensSize,
+                        &UA_TYPES[UA_TYPES_USERTOKENPOLICY]);
+        endpoint->userIdentityTokens = anonymous_only;
+        endpoint->userIdentityTokensSize = 1u;
+
+        /* Keep the compatibility discovery endpoint strictly "None":
+           some clients are sensitive to a non-empty serverCertificate
+           on SecurityPolicy#None / MessageSecurityMode=None. */
+        UA_ByteString_clear(&endpoint->serverCertificate);
+    }
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
+{
+    security_service_blob_view_t certificate = {0};
+    security_service_blob_view_t private_key = {0};
+    security_service_blob_view_t trust_list = {0};
+    UA_ByteString local_certificate = UA_BYTESTRING_NULL;
+    UA_ByteString local_private_key = UA_BYTESTRING_NULL;
+    UA_ByteString trust_list_entry = UA_BYTESTRING_NULL;
+    UA_StatusCode status;
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    status = model_seed_bootstrap_identity_if_needed();
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (!security_service_get_device_certificate(&certificate) ||
+        !security_service_get_device_private_key(&private_key))
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    local_certificate.data = (UA_Byte *)certificate.data;
+    local_certificate.length = certificate.length;
+    local_private_key.data = (UA_Byte *)private_key.data;
+    local_private_key.length = private_key.length;
+
+    model_clear_runtime_security_config(config);
+
+    if (security_service_get_trust_list(&trust_list))
+    {
+        trust_list_entry.data = (UA_Byte *)trust_list.data;
+        trust_list_entry.length = trust_list.length;
+        status = UA_CertificateVerification_Trustlist(&config->certificateVerification,
+                                                      &trust_list_entry,
+                                                      1u,
+                                                      NULL,
+                                                      0u,
+                                                      NULL,
+                                                      0u);
+    }
+    else
+    {
+        UA_CertificateVerification_AcceptAll(&config->certificateVerification);
+        status = UA_STATUSCODE_GOOD;
+        printf("[OPC UA]\tSecure endpoint uses AcceptAll client certificate verification\n");
+        fflush(stdout);
+    }
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = UA_ServerConfig_addSecurityPolicyBasic256Sha256(config,
+                                                             &local_certificate,
+                                                             &local_private_key);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_configure_secure_access_control(config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = UA_ServerConfig_addSecurityPolicyNone(config, &local_certificate);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = UA_ServerConfig_addAllEndpoints(config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_keep_only_none_and_signandencrypt_endpoints(config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return model_limit_insecure_endpoints_to_anonymous(config);
+}
+#endif
 
 void opcua_model_task(void *argument)
 {
@@ -2256,6 +3617,19 @@ void opcua_model_task(void *argument)
     config->maxNotificationsPerPublish = 32;
     config->enableRetransmissionQueue = false;
 
+#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+    status = model_configure_secure_server(config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tSecure server configuration failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+        UA_Server_delete(server);
+        vTaskDelete(NULL);
+    }
+    log_opcua_heap("Secure policies and access control configured");
+#else
     if (config->accessControl.clear != NULL)
     {
         config->accessControl.clear(&config->accessControl);
@@ -2279,6 +3653,7 @@ void opcua_model_task(void *argument)
     }
 
     log_opcua_heap("Access control configured");
+#endif
 
 #ifdef UA_ENABLE_HISTORIZING
     if (config->historyDatabase.clear != NULL)
