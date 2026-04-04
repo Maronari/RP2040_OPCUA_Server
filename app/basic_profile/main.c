@@ -231,6 +231,39 @@ static bool provision_device_identity_if_configured(void)
     return true;
 }
 
+static bool provision_trust_list_if_configured(void)
+{
+#if DEVICE_TRUST_LIST_PROVISIONING_ENABLED
+    security_service_blob_view_t current_trust_list = {0};
+    const bool have_same_trust_list =
+        security_service_get_trust_list(&current_trust_list) &&
+        current_trust_list.length == g_provisioned_trust_list_length &&
+        memcmp(current_trust_list.data,
+               g_provisioned_trust_list,
+               g_provisioned_trust_list_length) == 0;
+
+    if (have_same_trust_list)
+    {
+        printf("[APP]\t\tTrust list already matches provisioned build assets\n");
+        fflush(stdout);
+        return true;
+    }
+
+    if (!security_service_set_trust_list(g_provisioned_trust_list,
+                                         g_provisioned_trust_list_length))
+    {
+        printf("[APP]\t\tTrust list provisioning failed\n");
+        fflush(stdout);
+        return false;
+    }
+
+    printf("[APP]\t\tProvisioned trust list from build assets\n");
+    fflush(stdout);
+#endif
+
+    return true;
+}
+
 static void watchdog_task(void *argument)
 {
     const uint32_t timeout_ms = *(const uint32_t *)argument;
@@ -280,6 +313,10 @@ static void app_init_task(void *argument)
     else if (!provision_device_identity_if_configured())
     {
         printf("[APP]\t\tProvisioned device identity could not be stored\n");
+    }
+    else if (!provision_trust_list_if_configured())
+    {
+        printf("[APP]\t\tProvisioned trust list could not be stored\n");
     }
 
     if (!time_service_init())

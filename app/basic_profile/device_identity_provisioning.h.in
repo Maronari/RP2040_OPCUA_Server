@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #define DEVICE_IDENTITY_PROVISIONING_ENABLED @DEVICE_IDENTITY_PROVISIONING_ENABLED@
+#define DEVICE_TRUST_LIST_PROVISIONING_ENABLED @DEVICE_TRUST_LIST_PROVISIONING_ENABLED@
 
 #if DEVICE_IDENTITY_PROVISIONING_ENABLED
 static const uint8_t g_provisioned_device_certificate[] = {@DEVICE_IDENTITY_CERTIFICATE_BYTES@};
@@ -18,6 +19,14 @@ static const size_t g_provisioned_device_certificate_length = 0u;
 
 static const uint8_t g_provisioned_device_private_key[] = {0u};
 static const size_t g_provisioned_device_private_key_length = 0u;
+#endif
+
+#if DEVICE_TRUST_LIST_PROVISIONING_ENABLED
+static const uint8_t g_provisioned_trust_list[] = {@DEVICE_TRUST_LIST_BYTES@};
+static const size_t g_provisioned_trust_list_length = @DEVICE_TRUST_LIST_LENGTH@u;
+#else
+static const uint8_t g_provisioned_trust_list[] = {0u};
+static const size_t g_provisioned_trust_list_length = 0u;
 #endif
 
 #endif

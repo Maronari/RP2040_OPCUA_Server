@@ -58,6 +58,15 @@ typedef enum
     MODEL_NODE_TIME_LAST_SYNC_EPOCH,
     MODEL_NODE_TIME_CLOCK_QUALITY,
     MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES,
+    MODEL_NODE_SECURITY_MODE,
+    MODEL_NODE_SECURITY_COMMISSIONING_MODE,
+    MODEL_NODE_SECURITY_TRUST_LIST_VERSION,
+    MODEL_NODE_SECURITY_TRUSTED_CLIENT_COUNT,
+    MODEL_NODE_SECURITY_LAST_AUTH_FAILURE,
+    MODEL_NODE_SECURITY_FAILED_LOGIN_COUNT,
+    MODEL_NODE_SECURITY_CERT_THUMBPRINT,
+    MODEL_NODE_SECURITY_CERT_NOT_AFTER,
+    MODEL_NODE_SECURITY_CURRENT_USER_ROLE,
     MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS,
     MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS,
     MODEL_NODE_CONFIG_TEMP_OFFSET,
@@ -167,6 +176,15 @@ enum
     FIXED_CTX_TIME_LAST_SYNC_EPOCH,
     FIXED_CTX_TIME_CLOCK_QUALITY,
     FIXED_CTX_TIME_TIMEZONE_OFFSET_MINUTES,
+    FIXED_CTX_SECURITY_MODE,
+    FIXED_CTX_SECURITY_COMMISSIONING_MODE,
+    FIXED_CTX_SECURITY_TRUST_LIST_VERSION,
+    FIXED_CTX_SECURITY_TRUSTED_CLIENT_COUNT,
+    FIXED_CTX_SECURITY_LAST_AUTH_FAILURE,
+    FIXED_CTX_SECURITY_FAILED_LOGIN_COUNT,
+    FIXED_CTX_SECURITY_CERT_THUMBPRINT,
+    FIXED_CTX_SECURITY_CERT_NOT_AFTER,
+    FIXED_CTX_SECURITY_CURRENT_USER_ROLE,
     FIXED_CTX_CONFIG_SAMPLING_PERIOD_MS,
     FIXED_CTX_CONFIG_PUBLISH_PERIOD_MS,
     FIXED_CTX_CONFIG_TEMP_OFFSET,
@@ -186,6 +204,8 @@ enum
 #define MODEL_METHOD_SET_ROLE "Device.Maintenance.SetRole"
 #define MODEL_METHOD_DISABLE_USER "Device.Maintenance.DisableUser"
 #define MODEL_METHOD_DELETE_USER "Device.Maintenance.DeleteUser"
+#define MODEL_METHOD_ENTER_COMMISSIONING "Device.Security.EnterCommissioningMode"
+#define MODEL_METHOD_EXIT_COMMISSIONING "Device.Security.ExitCommissioningMode"
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
 static const uint8_t g_bootstrap_device_certificate[] = TEST_SRV_CRT_RSA_SHA256_DER;
@@ -245,7 +265,8 @@ static bool model_session_is_anonymous(const void *session_context)
 static bool model_node_is_anonymous_hidden(const UA_NodeId *node_id)
 {
     return model_nodeid_string_has_prefix(node_id, "Device.Maintenance") ||
-           model_nodeid_string_has_prefix(node_id, "Device.Identification");
+           model_nodeid_string_has_prefix(node_id, "Device.Identification") ||
+           model_nodeid_string_has_prefix(node_id, "Device.Security");
 }
 
 static bool model_node_is_maintenance_method(const UA_NodeId *method_id)
@@ -323,6 +344,48 @@ static bool model_session_get_role(const void *session_context, security_user_ro
     return security_service_get_role(username, out_role);
 }
 
+static const char *model_session_role_to_string(const void *session_context)
+{
+    security_user_role_t role = SECURITY_ROLE_VIEWER;
+
+    if (model_session_is_anonymous(session_context))
+    {
+        return "Anonymous";
+    }
+
+    if (!model_session_get_role(session_context, &role))
+    {
+        return "Unknown";
+    }
+
+    return security_service_role_to_string(role);
+}
+
+static const char *model_session_actor_name(void *session_context, char *buffer, size_t buffer_size)
+{
+    if (model_copy_session_username(session_context, buffer, buffer_size))
+    {
+        return buffer;
+    }
+
+    return model_session_is_anonymous(session_context) ? "anonymous" : "system";
+}
+
+static void model_audit_session_event(void *session_context,
+                                      const char *event,
+                                      const char *subject,
+                                      bool success,
+                                      const char *details)
+{
+    char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+
+    security_service_audit_log(event,
+                               model_session_actor_name(session_context, actor, sizeof(actor)),
+                               subject,
+                               success,
+                               details);
+}
+
 static UA_StatusCode model_require_session_role(void *session_context,
                                                 security_user_role_t required_role,
                                                 size_t output_size,
@@ -363,6 +426,11 @@ static security_user_role_t model_required_role_for_method(const UA_NodeId *meth
     }
 
     if (model_is_admin_only_method(method_id))
+    {
+        return SECURITY_ROLE_ADMIN;
+    }
+
+    if (model_nodeid_string_has_prefix(method_id, "Device.Security"))
     {
         return SECURITY_ROLE_ADMIN;
     }
@@ -470,6 +538,9 @@ static UA_StatusCode model_login_callback(const UA_String *user_name,
                                           void *login_context)
 {
     char username[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    security_user_role_t role = SECURITY_ROLE_VIEWER;
+    uint32_t retry_after_ms = 0u;
+    security_auth_result_t auth_result;
     (void)username_password_login_size;
     (void)username_password_login;
     (void)session_context;
@@ -483,14 +554,30 @@ static UA_StatusCode model_login_callback(const UA_String *user_name,
     memcpy(username, user_name->data, user_name->length);
     username[user_name->length] = '\0';
 
-    if (!security_service_verify_password(username, password->data, password->length))
+    auth_result = security_service_authenticate_user(username,
+                                                     password->data,
+                                                     password->length,
+                                                     &role,
+                                                     &retry_after_ms);
+    if (auth_result != SECURITY_AUTH_RESULT_SUCCESS)
     {
-        printf("[OPC UA]\tLogin rejected for user '%s'\n", username);
+        if (auth_result == SECURITY_AUTH_RESULT_LOCKED_OUT)
+        {
+            printf("[OPC UA]\tLogin rejected for user '%s': locked retry_after_ms=%u\n",
+                   username,
+                   (unsigned)retry_after_ms);
+        }
+        else
+        {
+            printf("[OPC UA]\tLogin rejected for user '%s'\n", username);
+        }
         fflush(stdout);
         return UA_STATUSCODE_BADUSERACCESSDENIED;
     }
 
-    printf("[OPC UA]\tLogin accepted for user '%s'\n", username);
+    printf("[OPC UA]\tLogin accepted for user '%s' as %s\n",
+           username,
+           security_service_role_to_string(role));
     fflush(stdout);
     return UA_STATUSCODE_GOOD;
 }
@@ -732,6 +819,15 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_TIME_LAST_SYNC_EPOCH, NULL},
     {MODEL_NODE_TIME_CLOCK_QUALITY, NULL},
     {MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES, NULL},
+    {MODEL_NODE_SECURITY_MODE, NULL},
+    {MODEL_NODE_SECURITY_COMMISSIONING_MODE, NULL},
+    {MODEL_NODE_SECURITY_TRUST_LIST_VERSION, NULL},
+    {MODEL_NODE_SECURITY_TRUSTED_CLIENT_COUNT, NULL},
+    {MODEL_NODE_SECURITY_LAST_AUTH_FAILURE, NULL},
+    {MODEL_NODE_SECURITY_FAILED_LOGIN_COUNT, NULL},
+    {MODEL_NODE_SECURITY_CERT_THUMBPRINT, NULL},
+    {MODEL_NODE_SECURITY_CERT_NOT_AFTER, NULL},
+    {MODEL_NODE_SECURITY_CURRENT_USER_ROLE, NULL},
     {MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS, NULL},
     {MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS, NULL},
     {MODEL_NODE_CONFIG_TEMP_OFFSET, NULL},
@@ -785,6 +881,11 @@ static const char *model_alarm_state_to_string(temperature_alarm_state_t alarm_s
     default:
         return "Invalid";
     }
+}
+
+static const char *model_security_mode_to_string(void)
+{
+    return security_service_is_commissioning_mode() ? "Commissioning" : "Strict";
 }
 
 static void model_apply_now_source_timestamp(UA_Boolean include_source_timestamp, UA_DataValue *value)
@@ -1260,6 +1361,71 @@ static UA_StatusCode model_read_value(UA_Server *server,
     case MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_int16_value(value, (UA_Int16)config->timezone_offset_minutes, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_SECURITY_MODE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, model_security_mode_to_string(), UA_STATUSCODE_GOOD);
+    case MODEL_NODE_SECURITY_COMMISSIONING_MODE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_boolean_value(value,
+                                       security_service_is_commissioning_mode(),
+                                       UA_STATUSCODE_GOOD);
+    case MODEL_NODE_SECURITY_TRUST_LIST_VERSION:
+    {
+        uint32_t trust_list_version = 0u;
+        (void)security_service_get_trust_list_version(&trust_list_version);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value, trust_list_version, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_TRUSTED_CLIENT_COUNT:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value,
+                                      security_service_get_trusted_client_count(),
+                                      UA_STATUSCODE_GOOD);
+    case MODEL_NODE_SECURITY_LAST_AUTH_FAILURE:
+    {
+        uint32_t last_auth_failure_epoch_s = 0u;
+        UA_DateTime timestamp = 0;
+        if (security_service_get_last_auth_failure(&last_auth_failure_epoch_s))
+        {
+            timestamp = UA_DateTime_fromUnixTime((UA_Int64)last_auth_failure_epoch_s);
+        }
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_datetime_value(value, timestamp, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_FAILED_LOGIN_COUNT:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value,
+                                      security_service_get_failed_login_count(),
+                                      UA_STATUSCODE_GOOD);
+    case MODEL_NODE_SECURITY_CERT_THUMBPRINT:
+    {
+        char thumbprint[SECURITY_SERVICE_CERT_THUMBPRINT_LEN + 1u];
+        const char *value_text = "";
+
+        if (security_service_get_device_certificate_thumbprint(thumbprint, sizeof(thumbprint)))
+        {
+            value_text = thumbprint;
+        }
+
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, value_text, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_CERT_NOT_AFTER:
+    {
+        uint32_t not_after_epoch_s = 0u;
+        UA_DateTime timestamp = 0;
+        if (security_service_get_device_certificate_not_after(&not_after_epoch_s))
+        {
+            timestamp = UA_DateTime_fromUnixTime((UA_Int64)not_after_epoch_s);
+        }
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_datetime_value(value, timestamp, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_CURRENT_USER_ROLE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value,
+                                      model_session_role_to_string(session_context),
+                                      UA_STATUSCODE_GOOD);
     case MODEL_NODE_DIAG_FREE_HEAP:
     {
         diag_service_heap_stats_t stats = {0};
@@ -1576,6 +1742,7 @@ static UA_StatusCode model_request_reboot(UA_Server *server,
     model_schedule_reboot(250u);
     printf("[OPC UA]\tReboot requested\n");
     fflush(stdout);
+    model_audit_session_event(session_context, "reboot", "device", true, "reboot scheduled");
     model_set_boolean_method_output(output_size, output, result);
 
     return UA_STATUSCODE_GOOD;
@@ -1617,6 +1784,12 @@ static UA_StatusCode model_factory_reset(UA_Server *server,
         printf("[OPC UA]\tFactory reset requested\n");
         fflush(stdout);
     }
+
+    model_audit_session_event(session_context,
+                              "factory-reset",
+                              "device",
+                              result,
+                              result ? "factory reset scheduled" : "factory reset failed");
 
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
@@ -1868,6 +2041,108 @@ static UA_StatusCode model_clear_diagnostics(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_enter_commissioning_mode(UA_Server *server,
+                                                    const UA_NodeId *session_id,
+                                                    void *session_context,
+                                                    const UA_NodeId *method_id,
+                                                    void *method_context,
+                                                    const UA_NodeId *object_id,
+                                                    void *object_context,
+                                                    size_t input_size,
+                                                    const UA_Variant *input,
+                                                    size_t output_size,
+                                                    UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    result = security_service_set_commissioning_mode(true);
+    if (result)
+    {
+        model_schedule_reboot(250u);
+    }
+    printf("[OPC UA]\tEnterCommissioningMode %s\n", result ? "succeeded" : "failed");
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "commissioning-enter",
+                              "device-security",
+                              result,
+                              result ? "commissioning mode enabled" : "commissioning enable failed");
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_exit_commissioning_mode(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context,
+                                                   const UA_NodeId *object_id,
+                                                   void *object_context,
+                                                   size_t input_size,
+                                                   const UA_Variant *input,
+                                                   size_t output_size,
+                                                   UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    security_service_blob_view_t trust_list = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (!security_service_get_trust_list(&trust_list) || trust_list.length == 0u)
+    {
+        printf("[OPC UA]\tExitCommissioningMode failed: trust list is empty\n");
+        fflush(stdout);
+        model_audit_session_event(session_context,
+                                  "commissioning-exit",
+                                  "device-security",
+                                  false,
+                                  "trust list is empty");
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_GOOD;
+    }
+
+    result = security_service_set_commissioning_mode(false);
+    if (result)
+    {
+        model_schedule_reboot(250u);
+    }
+    printf("[OPC UA]\tExitCommissioningMode %s\n", result ? "succeeded" : "failed");
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "commissioning-exit",
+                              "device-security",
+                              result,
+                              result ? "strict mode scheduled after reboot" : "commissioning disable failed");
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_add_user(UA_Server *server,
                                     const UA_NodeId *session_id,
                                     void *session_context,
@@ -1971,6 +2246,11 @@ static UA_StatusCode model_change_password(UA_Server *server,
            result ? "succeeded" : "failed",
            username);
     fflush(stdout);
+    model_audit_session_event(session_context,
+                              "password-change",
+                              username,
+                              result,
+                              result ? "password updated" : "password update failed");
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2025,6 +2305,11 @@ static UA_StatusCode model_set_role(UA_Server *server,
            username,
            security_service_role_to_string(role));
     fflush(stdout);
+    model_audit_session_event(session_context,
+                              "role-change",
+                              username,
+                              result,
+                              security_service_role_to_string(role));
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2411,6 +2696,26 @@ static UA_StatusCode model_add_clear_diagnostics_method_node(UA_Server *server, 
                                          model_clear_diagnostics);
 }
 
+static UA_StatusCode model_add_enter_commissioning_method_node(UA_Server *server, UA_NodeId security_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         security_folder_id,
+                                         MODEL_METHOD_ENTER_COMMISSIONING,
+                                         "EnterCommissioningMode",
+                                         "Temporarily enables commissioning mode with weakened certificate checks",
+                                         model_enter_commissioning_mode);
+}
+
+static UA_StatusCode model_add_exit_commissioning_method_node(UA_Server *server, UA_NodeId security_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         security_folder_id,
+                                         MODEL_METHOD_EXIT_COMMISSIONING,
+                                         "ExitCommissioningMode",
+                                         "Disables commissioning mode and requires a provisioned trust list",
+                                         model_exit_commissioning_mode);
+}
+
 static UA_StatusCode model_add_add_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
 {
     UA_Argument input_arguments[3];
@@ -2537,6 +2842,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     UA_NodeId task_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.Task");
     UA_NodeId network_id = UA_NODEID_STRING(1, (char *)"Device.Network");
     UA_NodeId time_id = UA_NODEID_STRING(1, (char *)"Device.Time");
+    UA_NodeId security_id = UA_NODEID_STRING(1, (char *)"Device.Security");
     UA_NodeId configuration_id = UA_NODEID_STRING(1, (char *)"Device.Configuration");
     UA_NodeId maintenance_id = UA_NODEID_STRING(1, (char *)"Device.Maintenance");
     UA_StatusCode status = UA_STATUSCODE_GOOD;
@@ -2578,6 +2884,12 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 
     status = model_add_folder(server, "Device.Time", "Time", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server, "Device.Security", "Security", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -3025,6 +3337,105 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.SecurityMode",
+                                         "SecurityMode",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_MODE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.CommissioningMode",
+                                         "CommissioningMode",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_BOOLEAN].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_COMMISSIONING_MODE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.TrustListVersion",
+                                         "TrustListVersion",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_TRUST_LIST_VERSION]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.TrustedClientCount",
+                                         "TrustedClientCount",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_TRUSTED_CLIENT_COUNT]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.LastAuthFailure",
+                                         "LastAuthFailure",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_LAST_AUTH_FAILURE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.FailedLoginCount",
+                                         "FailedLoginCount",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_FAILED_LOGIN_COUNT]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.CertThumbprint",
+                                         "CertThumbprint",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_CERT_THUMBPRINT]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.CertNotAfter",
+                                         "CertNotAfter",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_CERT_NOT_AFTER]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.CurrentUserRole",
+                                         "CurrentUserRole",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_CURRENT_USER_ROLE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
     status = model_add_writable_variable(server,
                                          "Device.Configuration.SamplingPeriodMs",
                                          "SamplingPeriodMs",
@@ -3142,6 +3553,18 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
         status = model_add_clear_diagnostics_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_enter_commissioning_method_node(server, security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_exit_commissioning_method_node(server, security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
@@ -3391,6 +3814,65 @@ static UA_StatusCode model_keep_only_none_and_signandencrypt_endpoints(UA_Server
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_keep_only_signandencrypt_endpoints(UA_ServerConfig *config)
+{
+    UA_EndpointDescription *filtered = NULL;
+    size_t keep_count = 0u;
+    size_t out_index = 0u;
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    for (size_t i = 0; i < config->endpointsSize; ++i)
+    {
+        if (config->endpoints[i].securityMode == UA_MESSAGESECURITYMODE_SIGNANDENCRYPT)
+        {
+            ++keep_count;
+        }
+    }
+
+    if (keep_count == 0u || keep_count == config->endpointsSize)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    filtered = (UA_EndpointDescription *)UA_Array_new(keep_count,
+                                                      &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
+    if (filtered == NULL)
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+
+    for (size_t i = 0; i < config->endpointsSize; ++i)
+    {
+        UA_StatusCode status;
+
+        if (config->endpoints[i].securityMode != UA_MESSAGESECURITYMODE_SIGNANDENCRYPT)
+        {
+            continue;
+        }
+
+        status = UA_EndpointDescription_copy(&config->endpoints[i], &filtered[out_index]);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            UA_Array_delete(filtered, keep_count, &UA_TYPES[UA_TYPES_ENDPOINTDESCRIPTION]);
+            return status;
+        }
+        ++out_index;
+    }
+
+    for (size_t i = 0; i < config->endpointsSize; ++i)
+    {
+        UA_EndpointDescription_clear(&config->endpoints[i]);
+    }
+    UA_free(config->endpoints);
+    config->endpoints = filtered;
+    config->endpointsSize = keep_count;
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_limit_insecure_endpoints_to_anonymous(UA_ServerConfig *config)
 {
     size_t endpoint_index;
@@ -3458,6 +3940,8 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     security_service_blob_view_t certificate = {0};
     security_service_blob_view_t private_key = {0};
     security_service_blob_view_t trust_list = {0};
+    const bool commissioning_mode = security_service_is_commissioning_mode();
+    const bool have_trust_list = security_service_get_trust_list(&trust_list);
     UA_ByteString local_certificate = UA_BYTESTRING_NULL;
     UA_ByteString local_private_key = UA_BYTESTRING_NULL;
     UA_ByteString trust_list_entry = UA_BYTESTRING_NULL;
@@ -3487,7 +3971,14 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
 
     model_clear_runtime_security_config(config);
 
-    if (security_service_get_trust_list(&trust_list))
+    if (!commissioning_mode && !have_trust_list)
+    {
+        printf("[OPC UA]\tStrict security mode requires a provisioned trust list\n");
+        fflush(stdout);
+        return UA_STATUSCODE_BADCONFIGURATIONERROR;
+    }
+
+    if (!commissioning_mode && have_trust_list)
     {
         trust_list_entry.data = (UA_Byte *)trust_list.data;
         trust_list_entry.length = trust_list.length;
@@ -3503,7 +3994,7 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     {
         UA_CertificateVerification_AcceptAll(&config->certificateVerification);
         status = UA_STATUSCODE_GOOD;
-        printf("[OPC UA]\tSecure endpoint uses AcceptAll client certificate verification\n");
+        printf("[OPC UA]\tCommissioning mode enabled: using AcceptAll client certificate verification\n");
         fflush(stdout);
     }
 
@@ -3526,10 +4017,13 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
         return status;
     }
 
-    status = UA_ServerConfig_addSecurityPolicyNone(config, &local_certificate);
-    if (status != UA_STATUSCODE_GOOD)
+    if (commissioning_mode)
     {
-        return status;
+        status = UA_ServerConfig_addSecurityPolicyNone(config, &local_certificate);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
     }
 
     status = UA_ServerConfig_addAllEndpoints(config);
@@ -3538,13 +4032,33 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
         return status;
     }
 
-    status = model_keep_only_none_and_signandencrypt_endpoints(config);
-    if (status != UA_STATUSCODE_GOOD)
+    if (commissioning_mode)
     {
-        return status;
+        status = model_keep_only_none_and_signandencrypt_endpoints(config);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_limit_insecure_endpoints_to_anonymous(config);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+    else
+    {
+        status = model_keep_only_signandencrypt_endpoints(config);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
     }
 
-    return model_limit_insecure_endpoints_to_anonymous(config);
+    printf("[OPC UA]\tSecurity mode: %s\n",
+           commissioning_mode ? "Commissioning" : "Strict");
+    fflush(stdout);
+    return UA_STATUSCODE_GOOD;
 }
 #endif
 

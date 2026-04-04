@@ -1,7 +1,15 @@
 #ifndef PORT_MBEDTLS_SSL_CONFIG_H
 #define PORT_MBEDTLS_SSL_CONFIG_H
 
+#include <stddef.h>
+
+void *mbedtls_port_calloc(size_t count, size_t size);
+void mbedtls_port_free(void *ptr);
+
 #define MBEDTLS_PLATFORM_C
+#define MBEDTLS_PLATFORM_MEMORY
+#define MBEDTLS_PLATFORM_CALLOC_MACRO mbedtls_port_calloc
+#define MBEDTLS_PLATFORM_FREE_MACRO mbedtls_port_free
 
 #define MBEDTLS_HAVE_TIME
 

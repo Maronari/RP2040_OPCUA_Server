@@ -81,6 +81,7 @@ add_library(OPEN62541_FILES STATIC)
 
 target_sources(OPEN62541_FILES PRIVATE
         ${PORT_DIR}/open62541/open62541.c
+        ${PORT_DIR}/mbedtls/mbedtls_alt_alloc.c
         ${PORT_DIR}/mbedtls/mbedtls_alt_time.c
         )
 

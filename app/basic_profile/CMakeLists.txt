@@ -13,6 +13,7 @@ endif()
 
 set(DEVICE_IDENTITY_CERT_DER_FILE "" CACHE FILEPATH "DER-encoded OPC UA device certificate to provision into flash")
 set(DEVICE_IDENTITY_PRIVATE_KEY_FILE "" CACHE FILEPATH "PEM or DER private key to provision into flash")
+set(DEVICE_TRUST_LIST_FILE "" CACHE FILEPATH "DER-encoded trusted client certificate to provision into flash")
 
 function(file_to_c_array input_file output_bytes_var output_length_var)
     if(NOT EXISTS "${input_file}")
@@ -46,6 +47,9 @@ set(DEVICE_IDENTITY_CERTIFICATE_BYTES "0x00")
 set(DEVICE_IDENTITY_CERTIFICATE_LENGTH 0)
 set(DEVICE_IDENTITY_PRIVATE_KEY_BYTES "0x00")
 set(DEVICE_IDENTITY_PRIVATE_KEY_LENGTH 0)
+set(DEVICE_TRUST_LIST_PROVISIONING_ENABLED 0)
+set(DEVICE_TRUST_LIST_BYTES "0x00")
+set(DEVICE_TRUST_LIST_LENGTH 0)
 
 if(DEVICE_IDENTITY_CERT_DER_FILE OR DEVICE_IDENTITY_PRIVATE_KEY_FILE)
     if(NOT DEVICE_IDENTITY_CERT_DER_FILE OR NOT DEVICE_IDENTITY_PRIVATE_KEY_FILE)
@@ -63,6 +67,16 @@ if(DEVICE_IDENTITY_CERT_DER_FILE OR DEVICE_IDENTITY_PRIVATE_KEY_FILE)
     message(STATUS "Device identity provisioning enabled")
     message(STATUS "  Certificate: ${DEVICE_IDENTITY_CERT_DER_FILE}")
     message(STATUS "  Private key: ${DEVICE_IDENTITY_PRIVATE_KEY_FILE}")
+endif()
+
+if(DEVICE_TRUST_LIST_FILE)
+    set(DEVICE_TRUST_LIST_PROVISIONING_ENABLED 1)
+    file_to_c_array("${DEVICE_TRUST_LIST_FILE}"
+                    DEVICE_TRUST_LIST_BYTES
+                    DEVICE_TRUST_LIST_LENGTH)
+
+    message(STATUS "Device trust list provisioning enabled")
+    message(STATUS "  Trust list: ${DEVICE_TRUST_LIST_FILE}")
 endif()
 
 configure_file(${CMAKE_CURRENT_LIST_DIR}/device_identity_provisioning.h.in
