@@ -35,6 +35,13 @@ typedef struct
     size_t length;
 } security_service_blob_view_t;
 
+typedef void (*security_service_audit_callback_t)(const char *event,
+                                                  const char *actor,
+                                                  const char *subject,
+                                                  bool success,
+                                                  const char *details,
+                                                  void *context);
+
 bool security_service_init(void);
 
 bool security_service_has_device_identity(void);
@@ -84,6 +91,7 @@ bool security_service_delete_user(const char *username);
 
 bool security_service_role_from_string(const char *text, security_user_role_t *out_role);
 const char *security_service_role_to_string(security_user_role_t role);
+void security_service_set_audit_callback(security_service_audit_callback_t callback, void *context);
 void security_service_audit_log(const char *event,
                                 const char *actor,
                                 const char *subject,

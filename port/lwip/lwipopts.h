@@ -105,7 +105,7 @@ extern void set_system_time(uint32_t sec);
 
 #define DEFAULT_RAW_RECVMBOX_SIZE   8
 #define MEMP_NUM_NETCONN            10
-#define PBUF_POOL_SIZE              24
+#define PBUF_POOL_SIZE              12
 #define MEMP_NUM_PBUF               16
 #define MEMP_NUM_TCP_SEG            32
 #define MEMP_NUM_TCP_WND            6

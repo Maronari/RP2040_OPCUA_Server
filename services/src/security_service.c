@@ -71,6 +71,8 @@ static security_service_auth_runtime_t g_user_auth_runtime[SECURITY_SERVICE_MAX_
 static security_service_auth_runtime_t g_unknown_auth_runtime = {0u, 0u};
 static uint32_t g_failed_login_count = 0u;
 static uint32_t g_last_auth_failure_epoch_s = 0u;
+static security_service_audit_callback_t g_audit_callback = NULL;
+static void *g_audit_callback_context = NULL;
 
 _Static_assert(sizeof(security_service_store_t) <= SECURITY_SERVICE_STORE_REGION_SIZE,
                "Security store does not fit into the reserved flash region");
@@ -228,6 +230,17 @@ void security_service_audit_log(const char *event,
 
     printf("\n");
     fflush(stdout);
+
+    if (g_audit_callback != NULL)
+    {
+        g_audit_callback(event, actor, subject, success, details, g_audit_callback_context);
+    }
+}
+
+void security_service_set_audit_callback(security_service_audit_callback_t callback, void *context)
+{
+    g_audit_callback = callback;
+    g_audit_callback_context = context;
 }
 
 static int64_t security_service_days_from_civil(int32_t year, uint32_t month, uint32_t day)

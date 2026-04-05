@@ -67,6 +67,10 @@ typedef enum
     MODEL_NODE_SECURITY_CERT_THUMBPRINT,
     MODEL_NODE_SECURITY_CERT_NOT_AFTER,
     MODEL_NODE_SECURITY_CURRENT_USER_ROLE,
+    MODEL_NODE_SECURITY_LAST_EVENT_ID,
+    MODEL_NODE_NETWORK_LAST_NETWORK_CHANGE,
+    MODEL_NODE_DIAG_LAST_FAULT,
+    MODEL_NODE_CONFIG_LAST_CONFIG_CHANGE,
     MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS,
     MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS,
     MODEL_NODE_CONFIG_TEMP_OFFSET,
@@ -96,6 +100,113 @@ typedef struct
     void *base_context;
     bool secure_channel;
 } model_session_context_t;
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+typedef struct
+{
+    bool initialized;
+    network_manager_status_t network_status;
+    sensor_manager_snapshot_t sensor_snapshot;
+    alarm_service_status_t alarm_status;
+} model_event_runtime_state_t;
+
+typedef enum
+{
+    MODEL_EVENT_LAST_KIND_GENERIC = 0,
+    MODEL_EVENT_LAST_KIND_CONFIG = 1,
+    MODEL_EVENT_LAST_KIND_NETWORK = 2,
+    MODEL_EVENT_LAST_KIND_FAULT = 3
+} model_event_last_kind_t;
+
+typedef struct
+{
+    char last_event_id[33];
+    char last_config_change[160];
+    char last_fault[160];
+    char last_network_change[160];
+} model_last_event_state_t;
+
+typedef struct
+{
+    char event[32];
+    char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    char subject[64];
+    char details[160];
+    bool success;
+} model_pending_audit_event_t;
+
+typedef struct
+{
+    const char *changed_section;
+    const char *changed_key;
+    const char *actor;
+} model_config_event_fields_t;
+
+typedef struct
+{
+    const char *old_ip;
+    const char *new_ip;
+    bool dhcp_enabled;
+    bool link_up;
+} model_network_event_fields_t;
+
+typedef struct
+{
+    const char *sensor_id;
+    uint32_t fault_code;
+    const char *quality;
+    float measured_value;
+} model_sensor_fault_event_fields_t;
+
+typedef struct
+{
+    const char *operation;
+    uint32_t result_code;
+    const char *actor;
+} model_maintenance_event_fields_t;
+
+typedef struct
+{
+    const char *version;
+    const char *build_time;
+    const char *git_hash;
+} model_firmware_event_fields_t;
+
+typedef struct
+{
+    const char *actor;
+    const char *subject;
+    const char *details;
+    bool result;
+} model_audit_event_fields_t;
+
+typedef struct
+{
+    const char *changed_section;
+    const char *changed_key;
+} model_audit_config_event_fields_t;
+
+typedef struct
+{
+    const char *operation;
+} model_audit_security_event_fields_t;
+
+typedef struct
+{
+    model_audit_event_fields_t audit;
+    model_audit_config_event_fields_t config;
+} model_audit_config_emit_fields_t;
+
+typedef struct
+{
+    model_audit_event_fields_t audit;
+    model_audit_security_event_fields_t security;
+} model_audit_security_emit_fields_t;
+
+typedef UA_StatusCode (*model_event_fields_writer_t)(UA_Server *server,
+                                                     const UA_NodeId event_node_id,
+                                                     const void *fields_context);
+#endif
 
 typedef UA_StatusCode (*model_activate_session_fn)(UA_Server *server,
                                                    UA_AccessControl *ac,
@@ -185,6 +296,10 @@ enum
     FIXED_CTX_SECURITY_CERT_THUMBPRINT,
     FIXED_CTX_SECURITY_CERT_NOT_AFTER,
     FIXED_CTX_SECURITY_CURRENT_USER_ROLE,
+    FIXED_CTX_SECURITY_LAST_EVENT_ID,
+    FIXED_CTX_NETWORK_LAST_NETWORK_CHANGE,
+    FIXED_CTX_DIAG_LAST_FAULT,
+    FIXED_CTX_CONFIG_LAST_CONFIG_CHANGE,
     FIXED_CTX_CONFIG_SAMPLING_PERIOD_MS,
     FIXED_CTX_CONFIG_PUBLISH_PERIOD_MS,
     FIXED_CTX_CONFIG_TEMP_OFFSET,
@@ -195,10 +310,12 @@ enum
 };
 
 /* Secure OpenSecureChannel handshakes with X.509 client certificates are
-   noticeably larger than plain SecurityPolicy#None traffic. 8 KiB is enough
-   for discovery, but too small for UaExpert/Prosys secure channel setup. */
-#define OPCUA_SEND_BUFFER_SIZE 32768u
-#define OPCUA_RECV_BUFFER_SIZE 32768u
+   noticeably larger than plain SecurityPolicy#None traffic. 8 KiB is too
+   small for UaExpert/Prosys, while 32 KiB per direction is too expensive for
+   the current RP2350 RAM budget once security/events are enabled. 16 KiB
+   keeps secure setup working and avoids per-connection heap spikes. */
+#define OPCUA_SEND_BUFFER_SIZE 8192u
+#define OPCUA_RECV_BUFFER_SIZE 16384u
 #define MODEL_METHOD_ADD_USER "Device.Maintenance.AddUser"
 #define MODEL_METHOD_CHANGE_PASSWORD "Device.Maintenance.ChangePassword"
 #define MODEL_METHOD_SET_ROLE "Device.Maintenance.SetRole"
@@ -206,6 +323,18 @@ enum
 #define MODEL_METHOD_DELETE_USER "Device.Maintenance.DeleteUser"
 #define MODEL_METHOD_ENTER_COMMISSIONING "Device.Security.EnterCommissioningMode"
 #define MODEL_METHOD_EXIT_COMMISSIONING "Device.Security.ExitCommissioningMode"
+#define MODEL_EVENT_TYPE_DEVICE "Types.Events.DeviceEvent"
+#define MODEL_EVENT_TYPE_CONFIG_CHANGED "Types.Events.ConfigChangedEvent"
+#define MODEL_EVENT_TYPE_NETWORK "Types.Events.NetworkEvent"
+#define MODEL_EVENT_TYPE_SENSOR_FAULT "Types.Events.SensorFaultEvent"
+#define MODEL_EVENT_TYPE_MAINTENANCE "Types.Events.MaintenanceEvent"
+#define MODEL_EVENT_TYPE_FIRMWARE "Types.Events.FirmwareEvent"
+#define MODEL_EVENT_TYPE_AUDIT "Types.Events.AuditEvent"
+#define MODEL_EVENT_TYPE_AUDIT_LOGIN_SUCCESS "Types.Events.AuditLoginSuccessEvent"
+#define MODEL_EVENT_TYPE_AUDIT_LOGIN_FAILURE "Types.Events.AuditLoginFailureEvent"
+#define MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE "Types.Events.AuditConfigChangeEvent"
+#define MODEL_EVENT_TYPE_AUDIT_SECURITY_CHANGE "Types.Events.AuditSecurityChangeEvent"
+#define MODEL_AUDIT_QUEUE_CAPACITY 8u
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
 static const uint8_t g_bootstrap_device_certificate[] = TEST_SRV_CRT_RSA_SHA256_DER;
@@ -222,6 +351,12 @@ static model_get_user_executable_on_object_fn g_default_get_user_executable_on_o
 static model_get_user_access_level_fn g_default_get_user_access_level = NULL;
 static model_allow_browse_node_fn g_default_allow_browse_node = NULL;
 static uint8_t g_history_backend_context = 0u;
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+static model_last_event_state_t g_last_event_state = {{0}};
+static model_pending_audit_event_t g_pending_audit_events[MODEL_AUDIT_QUEUE_CAPACITY] = {{0}};
+static size_t g_pending_audit_event_head = 0u;
+static size_t g_pending_audit_event_count = 0u;
+#endif
 
 static void log_opcua_heap(const char *stage)
 {
@@ -233,6 +368,7 @@ static void log_opcua_heap(const char *stage)
 }
 
 static void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result);
+static void model_set_default_variant_value(UA_VariableAttributes *attributes, UA_NodeId data_type);
 static const UA_ByteString *model_session_get_username_bytes(const void *session_context);
 static bool model_copy_session_username(const void *session_context, char *buffer, size_t buffer_size);
 static bool model_is_admin_only_method(const UA_NodeId *method_id);
@@ -828,6 +964,10 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_SECURITY_CERT_THUMBPRINT, NULL},
     {MODEL_NODE_SECURITY_CERT_NOT_AFTER, NULL},
     {MODEL_NODE_SECURITY_CURRENT_USER_ROLE, NULL},
+    {MODEL_NODE_SECURITY_LAST_EVENT_ID, NULL},
+    {MODEL_NODE_NETWORK_LAST_NETWORK_CHANGE, NULL},
+    {MODEL_NODE_DIAG_LAST_FAULT, NULL},
+    {MODEL_NODE_CONFIG_LAST_CONFIG_CHANGE, NULL},
     {MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS, NULL},
     {MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS, NULL},
     {MODEL_NODE_CONFIG_TEMP_OFFSET, NULL},
@@ -887,6 +1027,1021 @@ static const char *model_security_mode_to_string(void)
 {
     return security_service_is_commissioning_mode() ? "Commissioning" : "Strict";
 }
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+static UA_NodeId model_device_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)"Device");
+}
+
+static UA_NodeId model_network_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)"Device.Network");
+}
+
+static UA_NodeId model_temperature_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)"Device.ProcessValues.Temperature1");
+}
+
+static UA_NodeId model_maintenance_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)"Device.Maintenance");
+}
+
+static UA_NodeId model_configuration_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)"Device.Configuration");
+}
+
+static UA_NodeId model_security_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)"Device.Security");
+}
+
+static UA_NodeId model_event_type_node_id(const char *node_id)
+{
+    return UA_NODEID_STRING(1, (char *)(node_id != NULL ? node_id : MODEL_EVENT_TYPE_DEVICE));
+}
+
+static void model_copy_string_safe(char *buffer, size_t buffer_size, const char *text)
+{
+    size_t length = 0u;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    if (text != NULL)
+    {
+        length = strlen(text);
+        if (length >= buffer_size)
+        {
+            length = buffer_size - 1u;
+        }
+        if (length > 0u)
+        {
+            memcpy(buffer, text, length);
+        }
+    }
+
+    buffer[length] = '\0';
+}
+
+static void model_event_id_to_hex(const UA_ByteString *event_id, char *buffer, size_t buffer_size)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t offset = 0u;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    buffer[0] = '\0';
+    if (event_id == NULL || event_id->data == NULL || event_id->length == 0u)
+    {
+        return;
+    }
+
+    for (size_t index = 0u; index < event_id->length && (offset + 2u) < buffer_size; ++index)
+    {
+        buffer[offset++] = hex[(event_id->data[index] >> 4u) & 0x0Fu];
+        buffer[offset++] = hex[event_id->data[index] & 0x0Fu];
+    }
+
+    buffer[offset] = '\0';
+}
+
+static void model_store_last_event(model_event_last_kind_t kind,
+                                   const char *event_id_hex,
+                                   const char *message)
+{
+    model_copy_string_safe(g_last_event_state.last_event_id,
+                           sizeof(g_last_event_state.last_event_id),
+                           event_id_hex);
+
+    switch (kind)
+    {
+    case MODEL_EVENT_LAST_KIND_CONFIG:
+        model_copy_string_safe(g_last_event_state.last_config_change,
+                               sizeof(g_last_event_state.last_config_change),
+                               message);
+        break;
+    case MODEL_EVENT_LAST_KIND_NETWORK:
+        model_copy_string_safe(g_last_event_state.last_network_change,
+                               sizeof(g_last_event_state.last_network_change),
+                               message);
+        break;
+    case MODEL_EVENT_LAST_KIND_FAULT:
+        model_copy_string_safe(g_last_event_state.last_fault,
+                               sizeof(g_last_event_state.last_fault),
+                               message);
+        break;
+    case MODEL_EVENT_LAST_KIND_GENERIC:
+    default:
+        break;
+    }
+}
+
+static void model_queue_pending_audit_event(const char *event,
+                                            const char *actor,
+                                            const char *subject,
+                                            bool success,
+                                            const char *details)
+{
+    size_t slot;
+    model_pending_audit_event_t *entry = NULL;
+
+    taskENTER_CRITICAL();
+    if (g_pending_audit_event_count == MODEL_AUDIT_QUEUE_CAPACITY)
+    {
+        g_pending_audit_event_head = (g_pending_audit_event_head + 1u) % MODEL_AUDIT_QUEUE_CAPACITY;
+        --g_pending_audit_event_count;
+    }
+
+    slot = (g_pending_audit_event_head + g_pending_audit_event_count) % MODEL_AUDIT_QUEUE_CAPACITY;
+    entry = &g_pending_audit_events[slot];
+    memset(entry, 0, sizeof(*entry));
+    model_copy_string_safe(entry->event, sizeof(entry->event), event);
+    model_copy_string_safe(entry->actor, sizeof(entry->actor), actor);
+    model_copy_string_safe(entry->subject, sizeof(entry->subject), subject);
+    model_copy_string_safe(entry->details, sizeof(entry->details), details);
+    entry->success = success;
+    ++g_pending_audit_event_count;
+    taskEXIT_CRITICAL();
+}
+
+static bool model_pop_pending_audit_event(model_pending_audit_event_t *out_event)
+{
+    bool has_event = false;
+
+    taskENTER_CRITICAL();
+    if (g_pending_audit_event_count > 0u)
+    {
+        if (out_event != NULL)
+        {
+            *out_event = g_pending_audit_events[g_pending_audit_event_head];
+        }
+        g_pending_audit_event_head = (g_pending_audit_event_head + 1u) % MODEL_AUDIT_QUEUE_CAPACITY;
+        --g_pending_audit_event_count;
+        has_event = true;
+    }
+    taskEXIT_CRITICAL();
+
+    return has_event;
+}
+
+static void model_security_audit_callback(const char *event,
+                                          const char *actor,
+                                          const char *subject,
+                                          bool success,
+                                          const char *details,
+                                          void *context)
+{
+    (void)context;
+    model_queue_pending_audit_event(event, actor, subject, success, details);
+}
+
+static bool model_string_changed(const char *lhs, const char *rhs)
+{
+    if (lhs == NULL)
+    {
+        lhs = "";
+    }
+
+    if (rhs == NULL)
+    {
+        rhs = "";
+    }
+
+    return strcmp(lhs, rhs) != 0;
+}
+
+static UA_StatusCode model_add_event_type(UA_Server *server,
+                                          const char *node_id,
+                                          const char *browse_name,
+                                          const UA_NodeId parent_type_id)
+{
+    UA_ObjectTypeAttributes attributes = UA_ObjectTypeAttributes_default;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.isAbstract = false;
+
+    return UA_Server_addObjectTypeNode(server,
+                                       UA_NODEID_STRING(1, (char *)node_id),
+                                       parent_type_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
+                                       UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                       attributes,
+                                       NULL,
+                                       NULL);
+}
+
+static UA_StatusCode model_add_event_property(UA_Server *server,
+                                              const UA_NodeId event_type_id,
+                                              const char *node_id,
+                                              const char *browse_name,
+                                              UA_NodeId data_type)
+{
+    UA_VariableAttributes attributes = UA_VariableAttributes_default;
+    UA_NodeId property_id = UA_NODEID_NULL;
+    UA_StatusCode status;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.dataType = data_type;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
+    attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    model_set_default_variant_value(&attributes, data_type);
+
+    status = UA_Server_addVariableNode(server,
+                                       UA_NODEID_STRING(1, (char *)node_id),
+                                       event_type_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+                                       UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+                                       attributes,
+                                       NULL,
+                                       &property_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return UA_Server_addReference(server,
+                                  property_id,
+                                  UA_NODEID_NUMERIC(0, UA_NS0ID_HASMODELLINGRULE),
+                                  UA_EXPANDEDNODEID_NUMERIC(0, UA_NS0ID_MODELLINGRULE_MANDATORY),
+                                  true);
+}
+
+static UA_StatusCode model_write_event_string_property(UA_Server *server,
+                                                       UA_NodeId event_node_id,
+                                                       const char *browse_name,
+                                                       const char *value)
+{
+    UA_String string_value = UA_STRING((char *)(value != NULL ? value : ""));
+    return UA_Server_writeObjectProperty_scalar(server,
+                                                event_node_id,
+                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                                &string_value,
+                                                &UA_TYPES[UA_TYPES_STRING]);
+}
+
+static UA_StatusCode model_write_event_bool_property(UA_Server *server,
+                                                     UA_NodeId event_node_id,
+                                                     const char *browse_name,
+                                                     UA_Boolean value)
+{
+    return UA_Server_writeObjectProperty_scalar(server,
+                                                event_node_id,
+                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                                &value,
+                                                &UA_TYPES[UA_TYPES_BOOLEAN]);
+}
+
+static UA_StatusCode model_write_event_uint32_property(UA_Server *server,
+                                                       UA_NodeId event_node_id,
+                                                       const char *browse_name,
+                                                       UA_UInt32 value)
+{
+    return UA_Server_writeObjectProperty_scalar(server,
+                                                event_node_id,
+                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                                &value,
+                                                &UA_TYPES[UA_TYPES_UINT32]);
+}
+
+static UA_StatusCode model_write_event_float_property(UA_Server *server,
+                                                      UA_NodeId event_node_id,
+                                                      const char *browse_name,
+                                                      UA_Float value)
+{
+    return UA_Server_writeObjectProperty_scalar(server,
+                                                event_node_id,
+                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                                &value,
+                                                &UA_TYPES[UA_TYPES_FLOAT]);
+}
+
+static UA_StatusCode model_write_config_event_fields(UA_Server *server,
+                                                     const UA_NodeId event_node_id,
+                                                     const void *fields_context)
+{
+    const model_config_event_fields_t *fields = (const model_config_event_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_event_string_property(server, event_node_id, "ChangedSection", fields->changed_section);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "ChangedKey", fields->changed_key);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "Actor", fields->actor);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_network_event_fields(UA_Server *server,
+                                                      const UA_NodeId event_node_id,
+                                                      const void *fields_context)
+{
+    const model_network_event_fields_t *fields = (const model_network_event_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_event_string_property(server, event_node_id, "OldIp", fields->old_ip);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "NewIp", fields->new_ip);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_bool_property(server, event_node_id, "DhcpEnabled", fields->dhcp_enabled ? UA_TRUE : UA_FALSE);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_bool_property(server, event_node_id, "LinkUp", fields->link_up ? UA_TRUE : UA_FALSE);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_sensor_fault_event_fields(UA_Server *server,
+                                                           const UA_NodeId event_node_id,
+                                                           const void *fields_context)
+{
+    const model_sensor_fault_event_fields_t *fields = (const model_sensor_fault_event_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_event_string_property(server, event_node_id, "SensorId", fields->sensor_id);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_uint32_property(server, event_node_id, "FaultCode", fields->fault_code);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "Quality", fields->quality);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_float_property(server, event_node_id, "MeasuredValue", fields->measured_value);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_maintenance_event_fields(UA_Server *server,
+                                                          const UA_NodeId event_node_id,
+                                                          const void *fields_context)
+{
+    const model_maintenance_event_fields_t *fields = (const model_maintenance_event_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_event_string_property(server, event_node_id, "Operation", fields->operation);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_uint32_property(server, event_node_id, "ResultCode", fields->result_code);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "Actor", fields->actor);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_firmware_event_fields(UA_Server *server,
+                                                       const UA_NodeId event_node_id,
+                                                       const void *fields_context)
+{
+    const model_firmware_event_fields_t *fields = (const model_firmware_event_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_event_string_property(server, event_node_id, "Version", fields->version);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "BuildTime", fields->build_time);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "GitHash", fields->git_hash);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_audit_event_fields(UA_Server *server,
+                                                    const UA_NodeId event_node_id,
+                                                    const void *fields_context)
+{
+    const model_audit_event_fields_t *fields = (const model_audit_event_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_event_string_property(server, event_node_id, "Actor", fields->actor);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "Subject", fields->subject);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_bool_property(server, event_node_id, "Result", fields->result ? UA_TRUE : UA_FALSE);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "Details", fields->details);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_audit_config_event_fields(UA_Server *server,
+                                                           const UA_NodeId event_node_id,
+                                                           const void *fields_context)
+{
+    const model_audit_config_event_fields_t *fields = (const model_audit_config_event_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_event_string_property(server, event_node_id, "ChangedSection", fields->changed_section);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_event_string_property(server, event_node_id, "ChangedKey", fields->changed_key);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_audit_security_event_fields(UA_Server *server,
+                                                             const UA_NodeId event_node_id,
+                                                             const void *fields_context)
+{
+    const model_audit_security_event_fields_t *fields = (const model_audit_security_event_fields_t *)fields_context;
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    return model_write_event_string_property(server, event_node_id, "Operation", fields->operation);
+}
+
+static UA_StatusCode model_write_audit_config_emit_fields(UA_Server *server,
+                                                          const UA_NodeId event_node_id,
+                                                          const void *fields_context)
+{
+    const model_audit_config_emit_fields_t *fields = (const model_audit_config_emit_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_audit_event_fields(server, event_node_id, &fields->audit);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_audit_config_event_fields(server, event_node_id, &fields->config);
+    }
+    return status;
+}
+
+static UA_StatusCode model_write_audit_security_emit_fields(UA_Server *server,
+                                                            const UA_NodeId event_node_id,
+                                                            const void *fields_context)
+{
+    const model_audit_security_emit_fields_t *fields = (const model_audit_security_emit_fields_t *)fields_context;
+    UA_StatusCode status;
+
+    if (fields == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_write_audit_event_fields(server, event_node_id, &fields->audit);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_audit_security_event_fields(server, event_node_id, &fields->security);
+    }
+    return status;
+}
+
+static UA_StatusCode model_emit_event_ex(UA_Server *server,
+                                         const UA_NodeId event_type_id,
+                                         const UA_NodeId source_node_id,
+                                         const char *source_name,
+                                         const char *message,
+                                         UA_UInt16 severity,
+                                         model_event_fields_writer_t fields_writer,
+                                         const void *fields_context,
+                                         model_event_last_kind_t last_kind)
+{
+    UA_NodeId event_node_id = UA_NODEID_NULL;
+    UA_NodeId origin_id = model_device_node_id();
+    UA_DateTime event_time = UA_DateTime_now();
+    UA_String source_name_string =
+        UA_STRING((char *)(source_name != NULL ? source_name : ""));
+    UA_LocalizedText event_message =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)(message != NULL ? message : ""));
+    UA_ByteString event_id = UA_BYTESTRING_NULL;
+    char event_id_hex[33];
+    UA_StatusCode status;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    status = UA_Server_createEvent(server, event_type_id, &event_node_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = UA_Server_writeObjectProperty_scalar(server,
+                                                  event_node_id,
+                                                  UA_QUALIFIEDNAME(0, (char *)"Time"),
+                                                  &event_time,
+                                                  &UA_TYPES[UA_TYPES_DATETIME]);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_writeObjectProperty_scalar(server,
+                                                      event_node_id,
+                                                      UA_QUALIFIEDNAME(0, (char *)"ReceiveTime"),
+                                                      &event_time,
+                                                      &UA_TYPES[UA_TYPES_DATETIME]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_writeObjectProperty_scalar(server,
+                                                      event_node_id,
+                                                      UA_QUALIFIEDNAME(0, (char *)"SourceNode"),
+                                                      &source_node_id,
+                                                      &UA_TYPES[UA_TYPES_NODEID]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_writeObjectProperty_scalar(server,
+                                                      event_node_id,
+                                                      UA_QUALIFIEDNAME(0, (char *)"SourceName"),
+                                                      &source_name_string,
+                                                      &UA_TYPES[UA_TYPES_STRING]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_writeObjectProperty_scalar(server,
+                                                      event_node_id,
+                                                      UA_QUALIFIEDNAME(0, (char *)"Message"),
+                                                      &event_message,
+                                                      &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_writeObjectProperty_scalar(server,
+                                                      event_node_id,
+                                                      UA_QUALIFIEDNAME(0, (char *)"Severity"),
+                                                      &severity,
+                                                      &UA_TYPES[UA_TYPES_UINT16]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = fields_writer != NULL ? fields_writer(server, event_node_id, fields_context)
+                                       : UA_STATUSCODE_GOOD;
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_triggerEvent(server, event_node_id, origin_id, &event_id, true);
+        if (status == UA_STATUSCODE_GOOD)
+        {
+            model_event_id_to_hex(&event_id, event_id_hex, sizeof(event_id_hex));
+            model_store_last_event(last_kind, event_id_hex, message);
+        }
+    }
+    else
+    {
+        (void)UA_Server_deleteNode(server, event_node_id, true);
+    }
+
+    UA_ByteString_clear(&event_id);
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tEvent emit failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+    }
+
+    return status;
+}
+
+static UA_StatusCode model_emit_event(UA_Server *server,
+                                      const UA_NodeId event_type_id,
+                                      const UA_NodeId source_node_id,
+                                      const char *source_name,
+                                      const char *message,
+                                      UA_UInt16 severity)
+{
+    return model_emit_event_ex(server,
+                               event_type_id,
+                               source_node_id,
+                               source_name,
+                               message,
+                               severity,
+                               NULL,
+                               NULL,
+                               MODEL_EVENT_LAST_KIND_GENERIC);
+}
+
+static void model_emit_network_runtime_event(UA_Server *server,
+                                             const char *message,
+                                             UA_UInt16 severity,
+                                             const char *old_ip,
+                                             const char *new_ip,
+                                             bool dhcp_enabled,
+                                             bool link_up)
+{
+    const model_network_event_fields_t fields = {
+        old_ip,
+        new_ip,
+        dhcp_enabled,
+        link_up};
+    (void)model_emit_event_ex(server,
+                              model_event_type_node_id(MODEL_EVENT_TYPE_NETWORK),
+                              model_network_node_id(),
+                              "Device.Network",
+                              message,
+                              severity,
+                              model_write_network_event_fields,
+                              &fields,
+                              MODEL_EVENT_LAST_KIND_NETWORK);
+}
+
+static void model_emit_sensor_runtime_event(UA_Server *server,
+                                            const char *message,
+                                            UA_UInt16 severity,
+                                            uint32_t fault_code,
+                                            const char *quality,
+                                            float measured_value)
+{
+    const model_sensor_fault_event_fields_t fields = {
+        "Temperature1",
+        fault_code,
+        quality,
+        measured_value};
+    (void)model_emit_event_ex(server,
+                              model_event_type_node_id(MODEL_EVENT_TYPE_SENSOR_FAULT),
+                              model_temperature_node_id(),
+                              "Device.ProcessValues.Temperature1",
+                              message,
+                              severity,
+                              model_write_sensor_fault_event_fields,
+                              &fields,
+                              MODEL_EVENT_LAST_KIND_FAULT);
+}
+
+static void model_emit_maintenance_event(UA_Server *server,
+                                         const char *message,
+                                         UA_UInt16 severity,
+                                         const char *operation,
+                                         uint32_t result_code,
+                                         const char *actor)
+{
+    const model_maintenance_event_fields_t fields = {operation, result_code, actor};
+    (void)model_emit_event_ex(server,
+                              model_event_type_node_id(MODEL_EVENT_TYPE_MAINTENANCE),
+                              model_maintenance_node_id(),
+                              "Device.Maintenance",
+                              message,
+                              severity,
+                              model_write_maintenance_event_fields,
+                              &fields,
+                              MODEL_EVENT_LAST_KIND_GENERIC);
+}
+
+static void model_emit_config_changed_event(UA_Server *server,
+                                            const char *message,
+                                            UA_UInt16 severity,
+                                            const char *changed_section,
+                                            const char *changed_key,
+                                            const char *actor)
+{
+    const model_config_event_fields_t fields = {changed_section, changed_key, actor};
+    (void)model_emit_event_ex(server,
+                              model_event_type_node_id(MODEL_EVENT_TYPE_CONFIG_CHANGED),
+                              model_configuration_node_id(),
+                              "Device.Configuration",
+                              message,
+                              severity,
+                              model_write_config_event_fields,
+                              &fields,
+                              MODEL_EVENT_LAST_KIND_CONFIG);
+}
+
+static void model_emit_firmware_event(UA_Server *server,
+                                      const char *message,
+                                      UA_UInt16 severity)
+{
+    const device_profile_config_t *config = config_service_get();
+    const model_firmware_event_fields_t fields = {
+        config != NULL ? config->fw_revision : "",
+        config != NULL ? config->build_time : "",
+        config != NULL ? config->git_hash : ""};
+    (void)model_emit_event_ex(server,
+                              model_event_type_node_id(MODEL_EVENT_TYPE_FIRMWARE),
+                              model_device_node_id(),
+                              "Device",
+                              message,
+                              severity,
+                              model_write_firmware_event_fields,
+                              &fields,
+                              MODEL_EVENT_LAST_KIND_GENERIC);
+}
+
+static void model_process_pending_audit_events(UA_Server *server)
+{
+    model_pending_audit_event_t pending = {{0}};
+
+    while (model_pop_pending_audit_event(&pending))
+    {
+        model_audit_event_fields_t audit_fields = {pending.actor,
+                                                   pending.subject,
+                                                   pending.details,
+                                                   pending.success};
+        UA_NodeId event_type_id = model_event_type_node_id(MODEL_EVENT_TYPE_AUDIT_SECURITY_CHANGE);
+        UA_NodeId source_node_id = model_security_node_id();
+        const char *source_name = "Device.Security";
+        char message[192];
+        model_event_fields_writer_t writer = model_write_audit_event_fields;
+        const void *writer_context = &audit_fields;
+
+        if (strcmp(pending.event, "login") == 0)
+        {
+            event_type_id = model_event_type_node_id(
+                pending.success ? MODEL_EVENT_TYPE_AUDIT_LOGIN_SUCCESS : MODEL_EVENT_TYPE_AUDIT_LOGIN_FAILURE);
+            snprintf(message,
+                     sizeof(message),
+                     "Login %s for %s",
+                     pending.success ? "succeeded" : "failed",
+                     pending.actor[0] != '\0' ? pending.actor : "unknown");
+        }
+        else if (strcmp(pending.event, "config-save") == 0)
+        {
+            const model_audit_config_emit_fields_t config_fields = {
+                {pending.actor, pending.subject, pending.details, pending.success},
+                {"Configuration", "*"}};
+            event_type_id = model_event_type_node_id(MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE);
+            source_node_id = model_configuration_node_id();
+            source_name = "Device.Configuration";
+            writer = model_write_audit_config_emit_fields;
+            writer_context = &config_fields;
+            snprintf(message,
+                     sizeof(message),
+                     "Configuration %s",
+                     pending.success ? "saved" : "save failed");
+            (void)model_emit_event_ex(server,
+                                      event_type_id,
+                                      source_node_id,
+                                      source_name,
+                                      message,
+                                      pending.success ? 250u : 700u,
+                                      writer,
+                                      writer_context,
+                                      MODEL_EVENT_LAST_KIND_GENERIC);
+            continue;
+        }
+        else
+        {
+            const model_audit_security_emit_fields_t security_fields = {
+                {pending.actor, pending.subject, pending.details, pending.success},
+                {pending.event}};
+            if (strcmp(pending.event, "reboot") == 0 || strcmp(pending.event, "factory-reset") == 0)
+            {
+                source_node_id = model_maintenance_node_id();
+                source_name = "Device.Maintenance";
+            }
+            writer = model_write_audit_security_emit_fields;
+            writer_context = &security_fields;
+            snprintf(message,
+                     sizeof(message),
+                     "%s %s",
+                     pending.event[0] != '\0' ? pending.event : "audit",
+                     pending.success ? "succeeded" : "failed");
+            (void)model_emit_event_ex(server,
+                                      event_type_id,
+                                      source_node_id,
+                                      source_name,
+                                      message,
+                                      pending.success ? 250u : 700u,
+                                      writer,
+                                      writer_context,
+                                      MODEL_EVENT_LAST_KIND_GENERIC);
+            continue;
+        }
+
+        (void)model_emit_event_ex(server,
+                                  event_type_id,
+                                  source_node_id,
+                                  source_name,
+                                  message,
+                                  pending.success ? 250u : 700u,
+                                  writer,
+                                  writer_context,
+                                  MODEL_EVENT_LAST_KIND_GENERIC);
+    }
+}
+
+static void model_event_runtime_state_init(model_event_runtime_state_t *state)
+{
+    if (state == NULL)
+    {
+        return;
+    }
+
+    memset(state, 0, sizeof(*state));
+    network_manager_get_status(&state->network_status);
+    sensor_manager_get_snapshot(&state->sensor_snapshot);
+    alarm_service_get_status(&state->alarm_status);
+    state->initialized = true;
+}
+
+static void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t *state)
+{
+    network_manager_status_t current_network = {0};
+    sensor_manager_snapshot_t current_sensor = {0};
+    alarm_service_status_t current_alarm = {0};
+    char message[160];
+
+    if (server == NULL || state == NULL)
+    {
+        return;
+    }
+
+    if (!state->initialized)
+    {
+        model_event_runtime_state_init(state);
+        return;
+    }
+
+    network_manager_get_status(&current_network);
+    sensor_manager_get_snapshot(&current_sensor);
+    alarm_service_get_status(&current_alarm);
+
+    if (model_string_changed(state->network_status.ip_mode, current_network.ip_mode))
+    {
+        snprintf(message,
+                 sizeof(message),
+                 "Network mode changed: %s -> %s",
+                 state->network_status.ip_mode,
+                 current_network.ip_mode);
+        model_emit_network_runtime_event(server,
+                                         message,
+                                         400u,
+                                         state->network_status.ipv4_address,
+                                         current_network.ipv4_address,
+                                         strcmp(current_network.ip_mode, "DHCP") == 0,
+                                         current_network.link_up);
+    }
+
+    if (model_string_changed(state->network_status.ipv4_address, current_network.ipv4_address))
+    {
+        snprintf(message,
+                 sizeof(message),
+                 "IPv4 changed: %s -> %s",
+                 state->network_status.ipv4_address,
+                 current_network.ipv4_address);
+        model_emit_network_runtime_event(server,
+                                         message,
+                                         350u,
+                                         state->network_status.ipv4_address,
+                                         current_network.ipv4_address,
+                                         strcmp(current_network.ip_mode, "DHCP") == 0,
+                                         current_network.link_up);
+    }
+
+    if (state->network_status.link_up != current_network.link_up)
+    {
+        snprintf(message,
+                 sizeof(message),
+                 "Link state changed: %s",
+                 current_network.link_up ? "up" : "down");
+        model_emit_network_runtime_event(server,
+                                         message,
+                                         current_network.link_up ? 250u : 700u,
+                                         state->network_status.ipv4_address,
+                                         current_network.ipv4_address,
+                                         strcmp(current_network.ip_mode, "DHCP") == 0,
+                                         current_network.link_up);
+    }
+
+    if (current_sensor.quality != state->sensor_snapshot.quality)
+    {
+        snprintf(message,
+                 sizeof(message),
+                 "Sensor quality changed: %s -> %s",
+                 model_quality_to_string(state->sensor_snapshot.quality),
+                 model_quality_to_string(current_sensor.quality));
+        model_emit_sensor_runtime_event(server,
+                                        message,
+                                        current_sensor.quality == SERVICE_QUALITY_GOOD ? 250u : 800u,
+                                        current_sensor.quality == SERVICE_QUALITY_GOOD ? 0u : 1001u,
+                                        model_quality_to_string(current_sensor.quality),
+                                        current_sensor.temperature_c);
+    }
+
+    if (current_alarm.alarm_state != state->alarm_status.alarm_state)
+    {
+        snprintf(message,
+                 sizeof(message),
+                 "Temperature alarm changed: %s -> %s",
+                 model_alarm_state_to_string(state->alarm_status.alarm_state),
+                 model_alarm_state_to_string(current_alarm.alarm_state));
+        model_emit_sensor_runtime_event(server,
+                                        message,
+                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_NORMAL ? 250u :
+                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_HIGH ? 650u : 850u,
+                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_HIGH ? 2001u :
+                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_HIGH_HIGH ? 2002u : 0u,
+                                        model_quality_to_string(current_alarm.quality),
+                                        current_sensor.temperature_c);
+    }
+
+    model_process_pending_audit_events(server);
+
+    state->network_status = current_network;
+    state->sensor_snapshot = current_sensor;
+    state->alarm_status = current_alarm;
+}
+#else
+typedef struct
+{
+    bool initialized;
+} model_event_runtime_state_t;
+
+static UA_StatusCode model_add_event_type(UA_Server *server,
+                                          const char *node_id,
+                                          const char *browse_name,
+                                          const UA_NodeId parent_type_id)
+{
+    (void)server;
+    (void)node_id;
+    (void)browse_name;
+    (void)parent_type_id;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_emit_event(UA_Server *server,
+                                      const UA_NodeId event_type_id,
+                                      const UA_NodeId source_node_id,
+                                      const char *source_name,
+                                      const char *message,
+                                      UA_UInt16 severity)
+{
+    (void)server;
+    (void)event_type_id;
+    (void)source_node_id;
+    (void)source_name;
+    (void)message;
+    (void)severity;
+    return UA_STATUSCODE_GOOD;
+}
+
+static void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t *state)
+{
+    (void)server;
+    (void)state;
+}
+#endif
 
 static void model_apply_now_source_timestamp(UA_Boolean include_source_timestamp, UA_DataValue *value)
 {
@@ -1426,6 +2581,18 @@ static UA_StatusCode model_read_value(UA_Server *server,
         return model_set_string_value(value,
                                       model_session_role_to_string(session_context),
                                       UA_STATUSCODE_GOOD);
+    case MODEL_NODE_SECURITY_LAST_EVENT_ID:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_last_event_state.last_event_id, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_NETWORK_LAST_NETWORK_CHANGE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_last_event_state.last_network_change, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_DIAG_LAST_FAULT:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_last_event_state.last_fault, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_CONFIG_LAST_CONFIG_CHANGE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_last_event_state.last_config_change, UA_STATUSCODE_GOOD);
     case MODEL_NODE_DIAG_FREE_HEAP:
     {
         diag_service_heap_stats_t stats = {0};
@@ -1743,6 +2910,17 @@ static UA_StatusCode model_request_reboot(UA_Server *server,
     printf("[OPC UA]\tReboot requested\n");
     fflush(stdout);
     model_audit_session_event(session_context, "reboot", "device", true, "reboot scheduled");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     "Reboot requested",
+                                     450u,
+                                     "Reboot",
+                                     0u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
     model_set_boolean_method_output(output_size, output, result);
 
     return UA_STATUSCODE_GOOD;
@@ -1790,6 +2968,17 @@ static UA_StatusCode model_factory_reset(UA_Server *server,
                               "device",
                               result,
                               result ? "factory reset scheduled" : "factory reset failed");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     result ? "Factory reset requested" : "Factory reset failed",
+                                     result ? 600u : 800u,
+                                     "FactoryReset",
+                                     result ? 0u : 1u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
 
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
@@ -1936,6 +3125,22 @@ static UA_StatusCode model_save_config(UA_Server *server,
     result = config_service_save();
     printf("[OPC UA]\tSaveConfig %s\n", result ? "succeeded" : "failed");
     fflush(stdout);
+    model_audit_session_event(session_context,
+                              "config-save",
+                              "device-configuration",
+                              result,
+                              result ? "configuration saved" : "configuration save failed");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_config_changed_event(server,
+                                        result ? "Configuration saved" : "Configuration save failed",
+                                        result ? 300u : 700u,
+                                        "Configuration",
+                                        "*",
+                                        model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2002,6 +3207,17 @@ static UA_StatusCode model_self_test(UA_Server *server,
     diag_service_set_last_fault_code(result ? DIAG_FAULT_CODE_NONE : DIAG_FAULT_CODE_SELF_TEST_FAILED);
     printf("[OPC UA]\tSelfTest %s\n", result ? "passed" : "failed");
     fflush(stdout);
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     result ? "Self-test passed" : "Self-test failed",
+                                     result ? 250u : 750u,
+                                     "SelfTest",
+                                     result ? 0u : 1u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2081,6 +3297,17 @@ static UA_StatusCode model_enter_commissioning_mode(UA_Server *server,
                               "device-security",
                               result,
                               result ? "commissioning mode enabled" : "commissioning enable failed");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     result ? "Commissioning mode enabled" : "Commissioning mode enable failed",
+                                     result ? 400u : 700u,
+                                     "EnterCommissioningMode",
+                                     result ? 0u : 1u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2123,6 +3350,17 @@ static UA_StatusCode model_exit_commissioning_mode(UA_Server *server,
                                   "device-security",
                                   false,
                                   "trust list is empty");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+        {
+            char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+            model_emit_maintenance_event(server,
+                                         "Exit commissioning mode failed: trust list is empty",
+                                         700u,
+                                         "ExitCommissioningMode",
+                                         1u,
+                                         model_session_actor_name(session_context, actor, sizeof(actor)));
+        }
+#endif
         model_set_boolean_method_output(output_size, output, false);
         return UA_STATUSCODE_GOOD;
     }
@@ -2139,6 +3377,17 @@ static UA_StatusCode model_exit_commissioning_mode(UA_Server *server,
                               "device-security",
                               result,
                               result ? "strict mode scheduled after reboot" : "commissioning disable failed");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     result ? "Commissioning mode disabled" : "Commissioning mode disable failed",
+                                     result ? 400u : 700u,
+                                     "ExitCommissioningMode",
+                                     result ? 0u : 1u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2194,6 +3443,11 @@ static UA_StatusCode model_add_user(UA_Server *server,
            result ? "succeeded" : "failed",
            username);
     fflush(stdout);
+    model_audit_session_event(session_context,
+                              "user-add",
+                              username,
+                              result,
+                              security_service_role_to_string(role));
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2353,6 +3607,11 @@ static UA_StatusCode model_disable_user(UA_Server *server,
            result ? "succeeded" : "failed",
            username);
     fflush(stdout);
+    model_audit_session_event(session_context,
+                              "user-disable",
+                              username,
+                              result,
+                              result ? "user disabled" : "disable failed");
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2396,6 +3655,11 @@ static UA_StatusCode model_delete_user(UA_Server *server,
            result ? "succeeded" : "failed",
            username);
     fflush(stdout);
+    model_audit_session_event(session_context,
+                              "user-delete",
+                              username,
+                              result,
+                              result ? "user deleted" : "delete failed");
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -2859,6 +4123,16 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    status = UA_Server_writeEventNotifier(server,
+                                          device_id,
+                                          UA_EVENTNOTIFIER_SUBSCRIBE_TO_EVENT);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+#endif
+
     status = model_add_folder(server, "Device.Identification", "Identification", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
     if (status != UA_STATUSCODE_GOOD)
     {
@@ -2906,6 +4180,232 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     {
         return status;
     }
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_DEVICE,
+                                  "DeviceEvent",
+                                  UA_NODEID_NUMERIC(0, UA_NS0ID_BASEEVENTTYPE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_CONFIG_CHANGED,
+                                  "ConfigChangedEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_DEVICE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_NETWORK,
+                                  "NetworkEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_DEVICE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_SENSOR_FAULT,
+                                  "SensorFaultEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_DEVICE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_MAINTENANCE,
+                                  "MaintenanceEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_DEVICE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_FIRMWARE,
+                                  "FirmwareEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_DEVICE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_AUDIT,
+                                  "AuditEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_DEVICE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_AUDIT_LOGIN_SUCCESS,
+                                  "AuditLoginSuccessEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_AUDIT_LOGIN_FAILURE,
+                                  "AuditLoginFailureEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE,
+                                  "AuditConfigChangeEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_type(server,
+                                  MODEL_EVENT_TYPE_AUDIT_SECURITY_CHANGE,
+                                  "AuditSecurityChangeEvent",
+                                  UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_event_property(server,
+                                      UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_CONFIG_CHANGED),
+                                      "Types.Events.ConfigChangedEvent.ChangedSection",
+                                      "ChangedSection",
+                                      UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_CONFIG_CHANGED),
+                                       "Types.Events.ConfigChangedEvent.ChangedKey",
+                                       "ChangedKey",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_CONFIG_CHANGED),
+                                       "Types.Events.ConfigChangedEvent.Actor",
+                                       "Actor",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_NETWORK),
+                                       "Types.Events.NetworkEvent.OldIp",
+                                       "OldIp",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_NETWORK),
+                                       "Types.Events.NetworkEvent.NewIp",
+                                       "NewIp",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_NETWORK),
+                                       "Types.Events.NetworkEvent.DhcpEnabled",
+                                       "DhcpEnabled",
+                                       UA_TYPES[UA_TYPES_BOOLEAN].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_NETWORK),
+                                       "Types.Events.NetworkEvent.LinkUp",
+                                       "LinkUp",
+                                       UA_TYPES[UA_TYPES_BOOLEAN].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_SENSOR_FAULT),
+                                       "Types.Events.SensorFaultEvent.SensorId",
+                                       "SensorId",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_SENSOR_FAULT),
+                                       "Types.Events.SensorFaultEvent.FaultCode",
+                                       "FaultCode",
+                                       UA_TYPES[UA_TYPES_UINT32].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_SENSOR_FAULT),
+                                       "Types.Events.SensorFaultEvent.Quality",
+                                       "Quality",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_SENSOR_FAULT),
+                                       "Types.Events.SensorFaultEvent.MeasuredValue",
+                                       "MeasuredValue",
+                                       UA_TYPES[UA_TYPES_FLOAT].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_MAINTENANCE),
+                                       "Types.Events.MaintenanceEvent.Operation",
+                                       "Operation",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_MAINTENANCE),
+                                       "Types.Events.MaintenanceEvent.ResultCode",
+                                       "ResultCode",
+                                       UA_TYPES[UA_TYPES_UINT32].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_MAINTENANCE),
+                                       "Types.Events.MaintenanceEvent.Actor",
+                                       "Actor",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_FIRMWARE),
+                                       "Types.Events.FirmwareEvent.Version",
+                                       "Version",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_FIRMWARE),
+                                       "Types.Events.FirmwareEvent.BuildTime",
+                                       "BuildTime",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_FIRMWARE),
+                                       "Types.Events.FirmwareEvent.GitHash",
+                                       "GitHash",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT),
+                                       "Types.Events.AuditEvent.Actor",
+                                       "Actor",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT),
+                                       "Types.Events.AuditEvent.Subject",
+                                       "Subject",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT),
+                                       "Types.Events.AuditEvent.Result",
+                                       "Result",
+                                       UA_TYPES[UA_TYPES_BOOLEAN].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT),
+                                       "Types.Events.AuditEvent.Details",
+                                       "Details",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE),
+                                       "Types.Events.AuditConfigChangeEvent.ChangedSection",
+                                       "ChangedSection",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE),
+                                       "Types.Events.AuditConfigChangeEvent.ChangedKey",
+                                       "ChangedKey",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    status |= model_add_event_property(server,
+                                       UA_NODEID_STRING(1, (char *)MODEL_EVENT_TYPE_AUDIT_SECURITY_CHANGE),
+                                       "Types.Events.AuditSecurityChangeEvent.Operation",
+                                       "Operation",
+                                       UA_TYPES[UA_TYPES_STRING].typeId);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+#endif
 
     status = model_add_object(server,
                               "Device.ProcessValues.Temperature1",
@@ -3155,6 +4655,17 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
+    status = model_add_readonly_variable(server,
+                                         "Device.Diagnostics.LastFault",
+                                         "LastFault",
+                                         diagnostics_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_DIAG_LAST_FAULT]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
     if (g_model_config.enable_task_diagnostics)
     {
         status = model_add_folder(server, "Device.Diagnostics.Task", "Task", diagnostics_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
@@ -3277,6 +4788,17 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
                                          network_id,
                                          UA_TYPES[UA_TYPES_UINT32].typeId,
                                          &g_fixed_node_contexts[FIXED_CTX_NETWORK_RECONNECT_COUNT]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Network.LastNetworkChange",
+                                         "LastNetworkChange",
+                                         network_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_NETWORK_LAST_NETWORK_CHANGE]);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -3431,6 +4953,28 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
                                          security_id,
                                          UA_TYPES[UA_TYPES_STRING].typeId,
                                          &g_fixed_node_contexts[FIXED_CTX_SECURITY_CURRENT_USER_ROLE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.LastEventId",
+                                         "LastEventId",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_LAST_EVENT_ID]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Configuration.LastConfigChange",
+                                         "LastConfigChange",
+                                         configuration_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_CONFIG_LAST_CONFIG_CHANGE]);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -4068,6 +5612,7 @@ void opcua_model_task(void *argument)
     UA_ServerConfig *config = NULL;
     UA_StatusCode status = UA_STATUSCODE_GOOD;
     bool wait_for_network_logged = false;
+    model_event_runtime_state_t event_runtime_state = {0};
     (void)argument;
 
     if (!g_model_initialized)
@@ -4122,14 +5667,20 @@ void opcua_model_task(void *argument)
     /* Embedded profile: keep the default server configuration modest.
        This avoids spending heap on limits that are irrelevant for a single
        local device endpoint. */
-    config->maxSecureChannels = 2;
-    config->maxSessions = 4;
-    config->maxSubscriptions = 8;
-    config->maxSubscriptionsPerSession = 4;
-    config->maxMonitoredItems = 64;
-    config->maxMonitoredItemsPerSubscription = 32;
-    config->maxNotificationsPerPublish = 32;
+    config->maxSecureChannels = 1;
+    config->maxSessions = 2;
+    config->maxSubscriptions = 2;
+    config->maxSubscriptionsPerSession = 2;
+    config->maxMonitoredItems = 8;
+    config->maxMonitoredItemsPerSubscription = 4;
+    config->maxNotificationsPerPublish = 4;
     config->enableRetransmissionQueue = false;
+    config->queueSizeLimits.min = 1;
+    config->queueSizeLimits.max = 4;
+    config->maxPublishReqPerSession = 2;
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    config->maxEventsPerNode = 8;
+#endif
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
     status = model_configure_secure_server(config);
@@ -4229,6 +5780,21 @@ void opcua_model_task(void *argument)
 
     log_opcua_heap("Server startup complete");
 
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    security_service_set_audit_callback(model_security_audit_callback, NULL);
+    model_event_runtime_state_init(&event_runtime_state);
+    {
+        char startup_message[128];
+        const device_profile_config_t *device_config = config_service_get();
+
+        snprintf(startup_message,
+                 sizeof(startup_message),
+                 "Firmware startup complete (%s)",
+                 device_config != NULL ? device_config->fw_revision : "unknown");
+        model_emit_firmware_event(server, startup_message, 200u);
+    }
+#endif
+
     while (1)
     {
         if (g_pending_actions.reboot_pending &&
@@ -4260,6 +5826,8 @@ void opcua_model_task(void *argument)
             }
         }
 
+        model_process_runtime_events(server, &event_runtime_state);
+
         UA_UInt16 wait_ms = UA_Server_run_iterate(server, false);
         if (wait_ms == 0u)
         {
@@ -4283,6 +5851,10 @@ void opcua_model_task(void *argument)
     }
 
     UA_Server_delete(server);
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    security_service_set_audit_callback(NULL, NULL);
+#endif
 
     if (g_pending_actions.reboot_pending)
     {

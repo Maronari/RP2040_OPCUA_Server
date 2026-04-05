@@ -30,7 +30,8 @@
 #define ALARM_TASK_STACK_SIZE STACK_DEPTH_BYTES(2u * 1024u)
 #define WATCHDOG_TASK_STACK_SIZE STACK_DEPTH_BYTES(1u * 1024u)
 #define INIT_TASK_STACK_SIZE STACK_DEPTH_BYTES(6u * 1024u)
-#define OPCUA_TASK_STACK_SIZE STACK_DEPTH_BYTES(32u * 1024u)
+#define OPCUA_TASK_STACK_SIZE STACK_DEPTH_BYTES(24u * 1024u)
+#define APP_DEFAULT_WATCHDOG_TIMEOUT_MS 8000u
 
 #define INIT_TASK_PRIORITY 4
 #define NETWORK_TASK_PRIORITY 2
@@ -79,7 +80,7 @@ static const device_profile_config_t g_basic_profile = {
     .enable_alarm_ack_method = true,
     .opcua_port = 4840,
     .timezone_offset_minutes = 0,
-    .watchdog_timeout_ms = 0,
+    .watchdog_timeout_ms = APP_DEFAULT_WATCHDOG_TIMEOUT_MS,
     .sampling_period_ms = 1000,
     .temperature_history_interval_ms = 1000,
     .publish_period_ms = 1000,
@@ -93,6 +94,11 @@ static const device_profile_config_t g_basic_profile = {
     .static_netmask = {255, 255, 255, 0},
     .static_gateway = {192, 168, 10, 1},
     .static_dns = {8, 8, 8, 8}};
+
+static uint32_t g_watchdog_timeout_ms_resolved = 0u;
+static volatile bool g_watchdog_kick_enabled = true;
+
+static void app_stop_watchdog_kicks(const char *reason);
 
 static void app_fault_loop(bool blink_led, uint32_t blink_period_ms)
 {
@@ -112,6 +118,7 @@ static void app_fault_loop(bool blink_led, uint32_t blink_period_ms)
 
 static void app_fault_trap(const char *tag, uint32_t blink_period_ms)
 {
+    app_stop_watchdog_kicks(tag);
     printf("[%s]\t\tfatal trap\n", tag != NULL ? tag : "FAULT");
     fflush(stdout);
     app_fault_loop(true, blink_period_ms);
@@ -187,6 +194,29 @@ static bool create_task(TaskFunction_t entry_point,
            (unsigned)xPortGetFreeHeapSize());
     fflush(stdout);
     return true;
+}
+
+static uint32_t app_resolve_watchdog_timeout_ms(const device_profile_config_t *config)
+{
+    if (config != NULL && config->watchdog_timeout_ms > 0u)
+    {
+        return config->watchdog_timeout_ms;
+    }
+
+    return APP_DEFAULT_WATCHDOG_TIMEOUT_MS;
+}
+
+static void app_stop_watchdog_kicks(const char *reason)
+{
+    g_watchdog_kick_enabled = false;
+
+    if (watchdog_driver_is_enabled())
+    {
+        printf("[APP]\t\tWatchdog armed for recovery%s%s\n",
+               reason != NULL ? ": " : "",
+               reason != NULL ? reason : "");
+        fflush(stdout);
+    }
 }
 
 static bool provision_device_identity_if_configured(void)
@@ -271,7 +301,10 @@ static void watchdog_task(void *argument)
 
     while (1)
     {
-        watchdog_driver_kick();
+        if (g_watchdog_kick_enabled)
+        {
+            watchdog_driver_kick();
+        }
         vTaskDelay(delay_ticks);
     }
 }
@@ -329,10 +362,13 @@ static void app_init_task(void *argument)
         printf("[APP]\t\tAlarm service init failed\n");
     }
 
-    if (config->watchdog_timeout_ms > 0)
-    {
-        watchdog_driver_init(config->watchdog_timeout_ms);
-    }
+    g_watchdog_timeout_ms_resolved = app_resolve_watchdog_timeout_ms(config);
+    g_watchdog_kick_enabled = true;
+    watchdog_driver_init(g_watchdog_timeout_ms_resolved);
+    printf("[APP]\t\tWatchdog enabled, timeout=%u ms%s\n",
+           (unsigned)g_watchdog_timeout_ms_resolved,
+           (config != NULL && config->watchdog_timeout_ms == 0u) ? " (fallback default)" : "");
+    fflush(stdout);
 
     model_config.application_name = config->device_name;
     model_config.hostname = config->opcua_hostname;
@@ -357,12 +393,12 @@ static void app_init_task(void *argument)
     create_task(alarm_service_task, "AlarmTask", ALARM_TASK_STACK_SIZE, ALARM_TASK_PRIORITY, &task_handle);
     create_task(opcua_model_task, "OpcUaTask", OPCUA_TASK_STACK_SIZE, OPCUA_TASK_PRIORITY, &task_handle);
 
-    if (config->watchdog_timeout_ms > 0)
+    if (watchdog_driver_is_enabled())
     {
         if (xTaskCreate(watchdog_task,
                         "WatchdogTask",
                         WATCHDOG_TASK_STACK_SIZE,
-                        (void *)&config->watchdog_timeout_ms,
+                        (void *)&g_watchdog_timeout_ms_resolved,
                         WATCHDOG_TASK_PRIORITY,
                         &watchdog_handle) == pdPASS)
         {
@@ -422,6 +458,7 @@ int main(void)
 
 void app_assert_handler(const char *file, unsigned line)
 {
+    app_stop_watchdog_kicks("assert");
     printf("[ASSERT]\t\t%s:%u\n", file != NULL ? file : "unknown", line);
     fflush(stdout);
     app_fault_loop(true, 100u);
@@ -429,10 +466,18 @@ void app_assert_handler(const char *file, unsigned line)
 
 void vApplicationMallocFailedHook(void)
 {
+    HeapStats_t heap_stats = {0};
+
+    vPortGetHeapStats(&heap_stats);
     diag_service_set_last_fault_code(DIAG_FAULT_CODE_MALLOC_FAILED);
-    printf("[FreeRTOS]\tMalloc failed, free heap=%u, min ever free=%u\n",
+    app_stop_watchdog_kicks("malloc failed");
+    printf("[FreeRTOS]\tMalloc failed, req=%u, adj=%u, free heap=%u, min ever free=%u, largest block=%u, free blocks=%u\n",
+           (unsigned)xPortGetLastMallocFailedRequestedSize(),
+           (unsigned)xPortGetLastMallocFailedAdjustedSize(),
            (unsigned)xPortGetFreeHeapSize(),
-           (unsigned)xPortGetMinimumEverFreeHeapSize());
+           (unsigned)xPortGetMinimumEverFreeHeapSize(),
+           (unsigned)heap_stats.xSizeOfLargestFreeBlockInBytes,
+           (unsigned)heap_stats.xNumberOfFreeBlocks);
     fflush(stdout);
 
     app_fault_loop(true, 250u);
@@ -442,6 +487,7 @@ void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 {
     (void)task;
     diag_service_set_last_fault_code(DIAG_FAULT_CODE_STACK_OVERFLOW);
+    app_stop_watchdog_kicks("stack overflow");
     printf("[FreeRTOS]\tStack overflow: %s\n", task_name);
     fflush(stdout);
 

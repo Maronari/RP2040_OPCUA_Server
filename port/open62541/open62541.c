@@ -70541,9 +70541,10 @@ typedef struct UA_NodeMapEntry {
 #ifdef UA_ARCHITECTURE_FREERTOSLWIP
 /* On embedded FreeRTOS targets, Namespace 0 startup can otherwise trigger a
  * late rehash jump to 8191 slots, which requires a large contiguous
- * allocation. Start larger and keep a denser table to reduce peak heap
- * demand during server bootstrap. */
-#define UA_NODEMAP_MINSIZE 4093
+ * allocation. Starting at 2039 keeps the hash table large enough to avoid
+ * early churn while saving about 16 KiB of steady-state heap compared to
+ * 4093 slots. */
+#define UA_NODEMAP_MINSIZE 2039
 #define UA_NODEMAP_INSERT_GROW_NUMERATOR 9u
 #define UA_NODEMAP_INSERT_GROW_DENOMINATOR 10u
 #define UA_NODEMAP_GROW_TARGET_NUMERATOR 10u
@@ -74724,3 +74725,8 @@ UA_ClientConnectionTCP_init(UA_ConnectionConfig config, const UA_String endpoint
     /* Return connection with state UA_CONNECTIONSTATE_OPENING */
     return connection;
 }
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+#include "event_impl/ua_subscription_events_filter.inc"
+#include "event_impl/ua_subscription_events.inc"
+#endif
