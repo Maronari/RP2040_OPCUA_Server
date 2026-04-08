@@ -1,5 +1,6 @@
 #include "opcua_model/opcua_model.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -108,6 +109,12 @@ typedef struct
     network_manager_status_t network_status;
     sensor_manager_snapshot_t sensor_snapshot;
     alarm_service_status_t alarm_status;
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+    bool security_condition_active;
+    uint32_t security_condition_reason;
+    bool system_resource_condition_active;
+    uint32_t system_resource_condition_reason;
+#endif
 } model_event_runtime_state_t;
 
 typedef enum
@@ -206,6 +213,27 @@ typedef struct
 typedef UA_StatusCode (*model_event_fields_writer_t)(UA_Server *server,
                                                      const UA_NodeId event_node_id,
                                                      const void *fields_context);
+
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+typedef enum
+{
+    MODEL_SECURITY_CONDITION_REASON_NONE = 0,
+    MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRED = 1,
+    MODEL_SECURITY_CONDITION_REASON_TRUST_LIST_EMPTY = 2,
+    MODEL_SECURITY_CONDITION_REASON_AUTH_FAILURES = 3,
+    MODEL_SECURITY_CONDITION_REASON_COMMISSIONING = 4
+} model_security_condition_reason_t;
+
+typedef enum
+{
+    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_NONE = 0,
+    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_MALLOC_FAILURE = 1,
+    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_STACK_OVERFLOW = 2,
+    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_CONTIGUOUS_HEAP = 3,
+    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_FREE_HEAP = 4,
+    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_SELF_TEST_FAILED = 5
+} model_system_resource_condition_reason_t;
+#endif
 #endif
 
 typedef UA_StatusCode (*model_activate_session_fn)(UA_Server *server,
@@ -334,6 +362,12 @@ enum
 #define MODEL_EVENT_TYPE_AUDIT_LOGIN_FAILURE "Types.Events.AuditLoginFailureEvent"
 #define MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE "Types.Events.AuditConfigChangeEvent"
 #define MODEL_EVENT_TYPE_AUDIT_SECURITY_CHANGE "Types.Events.AuditSecurityChangeEvent"
+#define MODEL_CONDITION_TYPE_SECURITY_FAULT "Types.Conditions.SecurityFaultConditionType"
+#define MODEL_CONDITION_TYPE_SYSTEM_RESOURCE "Types.Conditions.SystemResourceConditionType"
+#define MODEL_CONDITION_SECURITY_FAULT "Device.Security.SecurityFaultCondition"
+#define MODEL_CONDITION_SYSTEM_RESOURCE "Device.Diagnostics.SystemResourceCondition"
+#define MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES 32768u
+#define MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES 16384u
 #define MODEL_AUDIT_QUEUE_CAPACITY 8u
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
@@ -356,6 +390,9 @@ static model_last_event_state_t g_last_event_state = {{0}};
 static model_pending_audit_event_t g_pending_audit_events[MODEL_AUDIT_QUEUE_CAPACITY] = {{0}};
 static size_t g_pending_audit_event_head = 0u;
 static size_t g_pending_audit_event_count = 0u;
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+static bool g_model_alarm_conditions_available = false;
+#endif
 #endif
 
 static void log_opcua_heap(const char *stage)
@@ -1039,6 +1076,11 @@ static UA_NodeId model_network_node_id(void)
     return UA_NODEID_STRING(1, (char *)"Device.Network");
 }
 
+static UA_NodeId model_diagnostics_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)"Device.Diagnostics");
+}
+
 static UA_NodeId model_temperature_node_id(void)
 {
     return UA_NODEID_STRING(1, (char *)"Device.ProcessValues.Temperature1");
@@ -1062,6 +1104,43 @@ static UA_NodeId model_security_node_id(void)
 static UA_NodeId model_event_type_node_id(const char *node_id)
 {
     return UA_NODEID_STRING(1, (char *)(node_id != NULL ? node_id : MODEL_EVENT_TYPE_DEVICE));
+}
+
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+static UA_NodeId model_condition_type_node_id(const char *node_id)
+{
+    return UA_NODEID_STRING(1, (char *)(node_id != NULL ? node_id : MODEL_CONDITION_TYPE_SECURITY_FAULT));
+}
+
+static UA_NodeId model_security_condition_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_SECURITY_FAULT);
+}
+
+static UA_NodeId model_system_resource_condition_node_id(void)
+{
+    return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_SYSTEM_RESOURCE);
+}
+#endif
+
+static UA_StatusCode model_add_object_type(UA_Server *server,
+                                           const char *node_id,
+                                           const char *browse_name,
+                                           const UA_NodeId parent_type_id)
+{
+    UA_ObjectTypeAttributes attributes = UA_ObjectTypeAttributes_default;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.isAbstract = false;
+
+    return UA_Server_addObjectTypeNode(server,
+                                       UA_NODEID_STRING(1, (char *)node_id),
+                                       parent_type_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
+                                       UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                       attributes,
+                                       NULL,
+                                       NULL);
 }
 
 static void model_copy_string_safe(char *buffer, size_t buffer_size, const char *text)
@@ -1224,19 +1303,7 @@ static UA_StatusCode model_add_event_type(UA_Server *server,
                                           const char *browse_name,
                                           const UA_NodeId parent_type_id)
 {
-    UA_ObjectTypeAttributes attributes = UA_ObjectTypeAttributes_default;
-
-    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
-    attributes.isAbstract = false;
-
-    return UA_Server_addObjectTypeNode(server,
-                                       UA_NODEID_STRING(1, (char *)node_id),
-                                       parent_type_id,
-                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
-                                       UA_QUALIFIEDNAME(1, (char *)browse_name),
-                                       attributes,
-                                       NULL,
-                                       NULL);
+    return model_add_object_type(server, node_id, browse_name, parent_type_id);
 }
 
 static UA_StatusCode model_add_event_property(UA_Server *server,
@@ -1290,6 +1357,658 @@ static UA_StatusCode model_write_event_string_property(UA_Server *server,
                                                 &string_value,
                                                 &UA_TYPES[UA_TYPES_STRING]);
 }
+
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+static const char *model_diag_fault_code_to_string(diag_fault_code_t fault_code)
+{
+    switch (fault_code)
+    {
+    case DIAG_FAULT_CODE_MALLOC_FAILED:
+        return "MallocFailed";
+    case DIAG_FAULT_CODE_STACK_OVERFLOW:
+        return "StackOverflow";
+    case DIAG_FAULT_CODE_SELF_TEST_FAILED:
+        return "SelfTestFailed";
+    case DIAG_FAULT_CODE_NONE:
+    default:
+        return "None";
+    }
+}
+
+static UA_StatusCode model_enable_condition_source(UA_Server *server,
+                                                   const UA_NodeId parent_id,
+                                                   const UA_NodeId source_id)
+{
+    UA_ExpandedNodeId expanded_source = UA_EXPANDEDNODEID_NULL;
+    UA_StatusCode status;
+
+    status = UA_Server_writeEventNotifier(server,
+                                          source_id,
+                                          UA_EVENTNOTIFIER_SUBSCRIBE_TO_EVENT);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    expanded_source.nodeId = source_id;
+    status = UA_Server_addReference(server,
+                                    parent_id,
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASNOTIFIER),
+                                    expanded_source,
+                                    true);
+    if (status == UA_STATUSCODE_BADDUPLICATEREFERENCENOTALLOWED)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    return status;
+}
+
+static UA_StatusCode model_add_condition_type(UA_Server *server,
+                                              const char *node_id,
+                                              const char *browse_name,
+                                              const UA_NodeId parent_type_id)
+{
+    return model_add_object_type(server, node_id, browse_name, parent_type_id);
+}
+
+static UA_StatusCode model_condition_set_field_scalar(UA_Server *server,
+                                                      const UA_NodeId condition_id,
+                                                      const char *field_name,
+                                                      const void *value,
+                                                      const UA_DataType *type)
+{
+    UA_Variant variant;
+
+    UA_Variant_init(&variant);
+    UA_Variant_setScalar(&variant, (void *)value, type);
+    return UA_Server_setConditionField(server,
+                                       condition_id,
+                                       &variant,
+                                       UA_QUALIFIEDNAME(0, (char *)field_name));
+}
+
+static UA_StatusCode model_condition_set_message(UA_Server *server,
+                                                 const UA_NodeId condition_id,
+                                                 const char *message)
+{
+    UA_LocalizedText text =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)(message != NULL ? message : ""));
+    UA_Variant variant;
+
+    UA_Variant_init(&variant);
+    UA_Variant_setScalar(&variant, &text, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    return UA_Server_setConditionField(server,
+                                       condition_id,
+                                       &variant,
+                                       UA_QUALIFIEDNAME(0, (char *)"Message"));
+}
+
+static UA_StatusCode model_condition_set_two_state_id(UA_Server *server,
+                                                      const UA_NodeId condition_id,
+                                                      const char *field_name,
+                                                      UA_Boolean state)
+{
+    UA_Variant variant;
+
+    UA_Variant_init(&variant);
+    UA_Variant_setScalar(&variant, &state, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    return UA_Server_setConditionVariableFieldProperty(server,
+                                                       condition_id,
+                                                       &variant,
+                                                       UA_QUALIFIEDNAME(0, (char *)field_name),
+                                                       UA_QUALIFIEDNAME(0, (char *)"Id"));
+}
+
+static UA_StatusCode model_condition_write_common_fields(UA_Server *server,
+                                                         const UA_NodeId condition_id,
+                                                         UA_UInt16 severity,
+                                                         UA_StatusCode quality,
+                                                         const char *message)
+{
+    UA_DateTime now = UA_DateTime_now();
+    UA_StatusCode status;
+
+    status = model_condition_set_field_scalar(server,
+                                              condition_id,
+                                              "Time",
+                                              &now,
+                                              &UA_TYPES[UA_TYPES_DATETIME]);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_field_scalar(server,
+                                                  condition_id,
+                                                  "ReceiveTime",
+                                                  &now,
+                                                  &UA_TYPES[UA_TYPES_DATETIME]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_field_scalar(server,
+                                                  condition_id,
+                                                  "Severity",
+                                                  &severity,
+                                                  &UA_TYPES[UA_TYPES_UINT16]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_field_scalar(server,
+                                                  condition_id,
+                                                  "Quality",
+                                                  &quality,
+                                                  &UA_TYPES[UA_TYPES_STATUSCODE]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_message(server, condition_id, message);
+    }
+
+    return status;
+}
+
+static UA_StatusCode model_condition_initialize_inactive(UA_Server *server,
+                                                         const UA_NodeId condition_id,
+                                                         const char *message)
+{
+    UA_Boolean retain = false;
+    UA_StatusCode status;
+
+    status = model_condition_write_common_fields(server,
+                                                 condition_id,
+                                                 100u,
+                                                 UA_STATUSCODE_GOOD,
+                                                 message);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_field_scalar(server,
+                                                  condition_id,
+                                                  "Retain",
+                                                  &retain,
+                                                  &UA_TYPES[UA_TYPES_BOOLEAN]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_two_state_id(server, condition_id, "AckedState", true);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_two_state_id(server, condition_id, "ActiveState", false);
+    }
+
+    return status;
+}
+
+static UA_StatusCode model_condition_activate(UA_Server *server,
+                                              const UA_NodeId condition_id,
+                                              UA_UInt16 severity,
+                                              UA_StatusCode quality,
+                                              const char *message,
+                                              bool reset_ack)
+{
+    UA_Boolean retain = true;
+    UA_StatusCode status;
+
+    status = model_condition_write_common_fields(server,
+                                                 condition_id,
+                                                 severity,
+                                                 quality,
+                                                 message);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_field_scalar(server,
+                                                  condition_id,
+                                                  "Retain",
+                                                  &retain,
+                                                  &UA_TYPES[UA_TYPES_BOOLEAN]);
+    }
+    if (status == UA_STATUSCODE_GOOD && reset_ack)
+    {
+        status = model_condition_set_two_state_id(server, condition_id, "AckedState", false);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_two_state_id(server, condition_id, "ActiveState", true);
+    }
+
+    return status;
+}
+
+static UA_StatusCode model_condition_update_active(UA_Server *server,
+                                                   const UA_NodeId condition_id,
+                                                   const UA_NodeId source_id,
+                                                   UA_UInt16 severity,
+                                                   UA_StatusCode quality,
+                                                   const char *message,
+                                                   bool reset_ack)
+{
+    UA_Boolean retain = true;
+    UA_StatusCode status;
+
+    status = model_condition_write_common_fields(server,
+                                                 condition_id,
+                                                 severity,
+                                                 quality,
+                                                 message);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_field_scalar(server,
+                                                  condition_id,
+                                                  "Retain",
+                                                  &retain,
+                                                  &UA_TYPES[UA_TYPES_BOOLEAN]);
+    }
+    if (status == UA_STATUSCODE_GOOD && reset_ack)
+    {
+        status = model_condition_set_two_state_id(server, condition_id, "AckedState", false);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_triggerConditionEvent(server, condition_id, source_id, NULL);
+    }
+
+    return status;
+}
+
+static UA_StatusCode model_condition_deactivate(UA_Server *server,
+                                                const UA_NodeId condition_id,
+                                                const UA_NodeId source_id,
+                                                const char *message)
+{
+    UA_Boolean retain = false;
+    UA_StatusCode status;
+
+    status = model_condition_write_common_fields(server,
+                                                 condition_id,
+                                                 100u,
+                                                 UA_STATUSCODE_GOOD,
+                                                 message);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_field_scalar(server,
+                                                  condition_id,
+                                                  "Retain",
+                                                  &retain,
+                                                  &UA_TYPES[UA_TYPES_BOOLEAN]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_two_state_id(server, condition_id, "AckedState", true);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_two_state_id(server, condition_id, "ActiveState", false);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_triggerConditionEvent(server, condition_id, source_id, NULL);
+    }
+
+    return status;
+}
+
+static UA_StatusCode model_create_condition_instance(UA_Server *server,
+                                                     const char *condition_node_id,
+                                                     const char *browse_name,
+                                                     const UA_NodeId condition_type_id,
+                                                     const UA_NodeId source_id,
+                                                     const char *normal_message)
+{
+    UA_NodeId created_id = UA_NODEID_NULL;
+    UA_StatusCode status;
+
+    status = UA_Server_createCondition(server,
+                                       UA_NODEID_STRING(1, (char *)condition_node_id),
+                                       condition_type_id,
+                                       UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                       source_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                       &created_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return model_condition_initialize_inactive(server, created_id, normal_message);
+}
+
+static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
+{
+    UA_NodeClass condition_type_class = UA_NODECLASS_UNSPECIFIED;
+    UA_NodeClass security_parent_class = UA_NODECLASS_UNSPECIFIED;
+    UA_NodeClass system_parent_class = UA_NODECLASS_UNSPECIFIED;
+    UA_StatusCode status;
+
+    status = UA_Server_readNodeClass(server,
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE),
+                                     &condition_type_class);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tA&C disabled: ConditionType is not present in namespace zero\n");
+        fflush(stdout);
+        g_model_alarm_conditions_available = false;
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = UA_Server_readNodeClass(server,
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMOFFNORMALALARMTYPE),
+                                     &security_parent_class);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tA&C disabled: SystemOffNormalAlarmType is not present in namespace zero\n");
+        fflush(stdout);
+        g_model_alarm_conditions_available = false;
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = UA_Server_readNodeClass(server,
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMDIAGNOSTICALARMTYPE),
+                                     &system_parent_class);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tA&C disabled: SystemDiagnosticAlarmType is not present in namespace zero\n");
+        fflush(stdout);
+        g_model_alarm_conditions_available = false;
+        return UA_STATUSCODE_GOOD;
+    }
+
+    status = model_enable_condition_source(server,
+                                           model_device_node_id(),
+                                           model_security_node_id());
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        g_model_alarm_conditions_available = false;
+        return status;
+    }
+
+    status = model_enable_condition_source(server,
+                                           model_device_node_id(),
+                                           model_diagnostics_node_id());
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        g_model_alarm_conditions_available = false;
+        return status;
+    }
+
+    status = model_add_condition_type(server,
+                                      MODEL_CONDITION_TYPE_SECURITY_FAULT,
+                                      "SecurityFaultConditionType",
+                                      UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMOFFNORMALALARMTYPE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_condition_type(server,
+                                      MODEL_CONDITION_TYPE_SYSTEM_RESOURCE,
+                                      "SystemResourceConditionType",
+                                      UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMDIAGNOSTICALARMTYPE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_create_condition_instance(server,
+                                             MODEL_CONDITION_SECURITY_FAULT,
+                                             "SecurityFaultCondition",
+                                             model_condition_type_node_id(MODEL_CONDITION_TYPE_SECURITY_FAULT),
+                                             model_security_node_id(),
+                                             "Security state normal");
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        g_model_alarm_conditions_available = false;
+        return status;
+    }
+
+    status = model_create_condition_instance(server,
+                                             MODEL_CONDITION_SYSTEM_RESOURCE,
+                                             "SystemResourceCondition",
+                                             model_condition_type_node_id(MODEL_CONDITION_TYPE_SYSTEM_RESOURCE),
+                                             model_diagnostics_node_id(),
+                                             "System resources normal");
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        g_model_alarm_conditions_available = true;
+    }
+    else
+    {
+        g_model_alarm_conditions_available = false;
+    }
+    return status;
+}
+
+static model_security_condition_reason_t model_evaluate_security_condition(char *message,
+                                                                          size_t message_size,
+                                                                          UA_UInt16 *out_severity,
+                                                                          UA_StatusCode *out_quality)
+{
+    const bool commissioning_mode = security_service_is_commissioning_mode();
+    const uint32_t trusted_client_count = security_service_get_trusted_client_count();
+    const uint32_t failed_login_count = security_service_get_failed_login_count();
+    uint32_t certificate_not_after = 0u;
+    const uint32_t now_epoch_s = get_system_time();
+
+    if (security_service_get_device_certificate_not_after(&certificate_not_after) &&
+        certificate_not_after > 0u &&
+        now_epoch_s >= certificate_not_after)
+    {
+        model_copy_string_safe(message, message_size, "Device certificate expired");
+        *out_severity = 900u;
+        *out_quality = UA_STATUSCODE_BADCERTIFICATETIMEINVALID;
+        return MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRED;
+    }
+
+    if (!commissioning_mode && trusted_client_count == 0u)
+    {
+        model_copy_string_safe(message, message_size, "Strict mode active with an empty trust list");
+        *out_severity = 850u;
+        *out_quality = UA_STATUSCODE_BADSECURITYCHECKSFAILED;
+        return MODEL_SECURITY_CONDITION_REASON_TRUST_LIST_EMPTY;
+    }
+
+    if (failed_login_count > 0u)
+    {
+        snprintf(message,
+                 message_size,
+                 "Authentication failures detected (%" PRIu32 ")",
+                 failed_login_count);
+        *out_severity = 650u;
+        *out_quality = UA_STATUSCODE_BADUSERACCESSDENIED;
+        return MODEL_SECURITY_CONDITION_REASON_AUTH_FAILURES;
+    }
+
+    if (commissioning_mode)
+    {
+        model_copy_string_safe(message, message_size, "Commissioning mode is active");
+        *out_severity = 350u;
+        *out_quality = UA_STATUSCODE_UNCERTAIN;
+        return MODEL_SECURITY_CONDITION_REASON_COMMISSIONING;
+    }
+
+    model_copy_string_safe(message, message_size, "Security state normal");
+    *out_severity = 100u;
+    *out_quality = UA_STATUSCODE_GOOD;
+    return MODEL_SECURITY_CONDITION_REASON_NONE;
+}
+
+static model_system_resource_condition_reason_t model_evaluate_system_resource_condition(char *message,
+                                                                                         size_t message_size,
+                                                                                         UA_UInt16 *out_severity,
+                                                                                         UA_StatusCode *out_quality)
+{
+    diag_service_heap_stats_t heap_stats = {0};
+    diag_service_system_stats_t system_stats = {0};
+    diag_fault_code_t last_fault_code;
+
+    diag_service_get_heap_stats(&heap_stats);
+    diag_service_get_system_stats(&system_stats);
+    last_fault_code = (diag_fault_code_t)system_stats.last_fault_code;
+
+    if (last_fault_code == DIAG_FAULT_CODE_MALLOC_FAILED)
+    {
+        model_copy_string_safe(message, message_size, "Malloc failure detected");
+        *out_severity = 950u;
+        *out_quality = UA_STATUSCODE_BADOUTOFMEMORY;
+        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_MALLOC_FAILURE;
+    }
+
+    if (last_fault_code == DIAG_FAULT_CODE_STACK_OVERFLOW)
+    {
+        model_copy_string_safe(message, message_size, "Stack overflow detected");
+        *out_severity = 975u;
+        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_STACK_OVERFLOW;
+    }
+
+    if (last_fault_code == DIAG_FAULT_CODE_SELF_TEST_FAILED)
+    {
+        model_copy_string_safe(message, message_size, "Self-test failed");
+        *out_severity = 700u;
+        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_SELF_TEST_FAILED;
+    }
+
+    if (heap_stats.largest_free_block_bytes < MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES)
+    {
+        snprintf(message,
+                 message_size,
+                 "Largest free heap block below safe threshold (%" PRIu32 " bytes, last fault=%s)",
+                 heap_stats.largest_free_block_bytes,
+                 model_diag_fault_code_to_string(last_fault_code));
+        *out_severity = 700u;
+        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_CONTIGUOUS_HEAP;
+    }
+
+    if (heap_stats.available_heap_bytes < MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES)
+    {
+        snprintf(message,
+                 message_size,
+                 "Available heap below safe threshold (%" PRIu32 " bytes, last fault=%s)",
+                 heap_stats.available_heap_bytes,
+                 model_diag_fault_code_to_string(last_fault_code));
+        *out_severity = 600u;
+        *out_quality = UA_STATUSCODE_BADOUTOFMEMORY;
+        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_FREE_HEAP;
+    }
+
+    model_copy_string_safe(message, message_size, "System resources normal");
+    *out_severity = 100u;
+    *out_quality = UA_STATUSCODE_GOOD;
+    return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_NONE;
+}
+
+static void model_sync_condition(UA_Server *server,
+                                 const UA_NodeId condition_id,
+                                 const UA_NodeId source_id,
+                                 bool *was_active,
+                                 uint32_t *was_reason,
+                                 uint32_t reason,
+                                 UA_UInt16 severity,
+                                 UA_StatusCode quality,
+                                 const char *active_message,
+                                 const char *normal_message)
+{
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+
+    if (reason != 0u)
+    {
+        if (!*was_active)
+        {
+            status = model_condition_activate(server,
+                                              condition_id,
+                                              severity,
+                                              quality,
+                                              active_message,
+                                              true);
+        }
+        else if (*was_reason != reason)
+        {
+            status = model_condition_update_active(server,
+                                                   condition_id,
+                                                   source_id,
+                                                   severity,
+                                                   quality,
+                                                   active_message,
+                                                   true);
+        }
+
+        if (status == UA_STATUSCODE_GOOD)
+        {
+            *was_active = true;
+            *was_reason = reason;
+        }
+    }
+    else if (*was_active)
+    {
+        status = model_condition_deactivate(server,
+                                            condition_id,
+                                            source_id,
+                                            normal_message);
+        if (status == UA_STATUSCODE_GOOD)
+        {
+            *was_active = false;
+            *was_reason = 0u;
+        }
+    }
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tCondition sync failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+    }
+}
+
+static void model_process_alarm_conditions(UA_Server *server, model_event_runtime_state_t *state)
+{
+    char message[192];
+    UA_UInt16 severity = 100u;
+    UA_StatusCode quality = UA_STATUSCODE_GOOD;
+    model_security_condition_reason_t security_reason;
+    model_system_resource_condition_reason_t system_resource_reason;
+
+    if (server == NULL || state == NULL)
+    {
+        return;
+    }
+
+    if (!g_model_alarm_conditions_available)
+    {
+        return;
+    }
+
+    security_reason = model_evaluate_security_condition(message,
+                                                        sizeof(message),
+                                                        &severity,
+                                                        &quality);
+    model_sync_condition(server,
+                         model_security_condition_node_id(),
+                         model_security_node_id(),
+                         &state->security_condition_active,
+                         &state->security_condition_reason,
+                         (uint32_t)security_reason,
+                         severity,
+                         quality,
+                         message,
+                         "Security state normal");
+
+    system_resource_reason = model_evaluate_system_resource_condition(message,
+                                                                      sizeof(message),
+                                                                      &severity,
+                                                                      &quality);
+    model_sync_condition(server,
+                         model_system_resource_condition_node_id(),
+                         model_diagnostics_node_id(),
+                         &state->system_resource_condition_active,
+                         &state->system_resource_condition_reason,
+                         (uint32_t)system_resource_reason,
+                         severity,
+                         quality,
+                         message,
+                         "System resources normal");
+}
+#endif
 
 static UA_StatusCode model_write_event_bool_property(UA_Server *server,
                                                      UA_NodeId event_node_id,
@@ -1892,6 +2611,12 @@ static void model_event_runtime_state_init(model_event_runtime_state_t *state)
     network_manager_get_status(&state->network_status);
     sensor_manager_get_snapshot(&state->sensor_snapshot);
     alarm_service_get_status(&state->alarm_status);
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+    state->security_condition_active = false;
+    state->security_condition_reason = 0u;
+    state->system_resource_condition_active = false;
+    state->system_resource_condition_reason = 0u;
+#endif
     state->initialized = true;
 }
 
@@ -1996,6 +2721,9 @@ static void model_process_runtime_events(UA_Server *server, model_event_runtime_
                                         current_sensor.temperature_c);
     }
 
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+    model_process_alarm_conditions(server, state);
+#endif
     model_process_pending_audit_events(server);
 
     state->network_status = current_network;
@@ -4180,6 +4908,14 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     {
         return status;
     }
+
+#if defined(UA_ENABLE_SUBSCRIPTIONS_EVENTS) && defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+    status = model_build_alarm_conditions(server);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+#endif
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     status = model_add_event_type(server,

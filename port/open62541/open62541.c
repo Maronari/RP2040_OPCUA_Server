@@ -74730,3 +74730,7 @@ UA_ClientConnectionTCP_init(UA_ConnectionConfig config, const UA_String endpoint
 #include "event_impl/ua_subscription_events_filter.inc"
 #include "event_impl/ua_subscription_events.inc"
 #endif
+
+#if defined(UA_ENABLE_SUBSCRIPTIONS_EVENTS) && defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+#include "event_impl/ua_subscription_alarms_conditions.inc"
+#endif
