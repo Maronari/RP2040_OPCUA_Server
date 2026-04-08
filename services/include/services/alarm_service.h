@@ -8,13 +8,15 @@
 
 typedef struct
 {
-    bool high_temperature_active;
-    bool high_high_temperature_active;
+    const char *channel_id;
+    const char *channel_name;
+    bool warning_active;
+    bool critical_active;
     bool acknowledged;
     service_quality_t quality;
-    float high_threshold_c;
-    float high_high_threshold_c;
-    temperature_alarm_state_t alarm_state;
+    float warning_threshold;
+    float critical_threshold;
+    telemetry_alarm_state_t state;
     uint32_t evaluation_count;
     uint32_t trip_count;
 } alarm_service_status_t;

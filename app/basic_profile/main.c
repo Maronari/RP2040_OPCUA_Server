@@ -13,6 +13,7 @@
 #include "drivers/watchdog_driver.h"
 #include "opcua_model/opcua_model.h"
 #include "services/alarm_service.h"
+#include "services/channel_manager.h"
 #include "services/config_service.h"
 #include "services/diag_service.h"
 #include "services/history_service.h"
@@ -74,20 +75,12 @@ static const device_profile_config_t g_basic_profile = {
     .device_name = "RP2 Basic Device",
     .opcua_hostname = "rp2-basic-profile",
     .ntp_server = "pool.ntp.org",
-    .enable_temperature_sensor = true,
     .enable_heap_diagnostics = true,
     .enable_task_diagnostics = true,
     .enable_alarm_ack_method = true,
     .opcua_port = 4840,
     .timezone_offset_minutes = 0,
     .watchdog_timeout_ms = APP_DEFAULT_WATCHDOG_TIMEOUT_MS,
-    .sampling_period_ms = 1000,
-    .temperature_history_interval_ms = 1000,
-    .publish_period_ms = 1000,
-    .temp_offset_c = 0.0f,
-    .temp_scale = 1.0f,
-    .high_temperature_threshold_c = 60.0f,
-    .high_high_temperature_threshold_c = 75.0f,
     .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56},
     .network_mode = NETWORK_MODE_DHCP,
     .static_ip = {192, 168, 10, 42},
@@ -321,6 +314,7 @@ static void app_init_task(void *argument)
     config = config_service_get();
 
     diag_service_init();
+    channel_manager_init();
     diag_service_register_task("InitTask", xTaskGetCurrentTaskHandle());
     print_heap_usage("After services init");
 
@@ -384,7 +378,7 @@ static void app_init_task(void *argument)
 
     create_task(network_manager_task, "NetworkTask", NETWORK_TASK_STACK_SIZE, NETWORK_TASK_PRIORITY, &task_handle);
 
-    if (config->enable_temperature_sensor)
+    if (channel_manager_count() > 0u)
     {
         create_task(sensor_manager_task, "SensorTask", SENSOR_TASK_STACK_SIZE, SENSOR_TASK_PRIORITY, &task_handle);
     }

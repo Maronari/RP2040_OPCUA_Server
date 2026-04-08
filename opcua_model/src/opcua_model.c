@@ -10,7 +10,9 @@
 #include "drivers/led_driver.h"
 #include "open62541.h"
 #include "services/alarm_service.h"
+#include "services/channel_manager.h"
 #include "services/config_service.h"
+#include "services/device_channels.h"
 #include "services/diag_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
@@ -83,6 +85,7 @@ typedef enum
 typedef struct
 {
     model_node_kind_t kind;
+    const char *channel_id;
     const char *task_name;
 } model_node_context_t;
 
@@ -1012,9 +1015,11 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_CONFIG_HIGH_ALARM, NULL},
     {MODEL_NODE_CONFIG_HIGH_HIGH_ALARM, NULL}};
 static model_node_context_t g_task_node_contexts[3] = {
-    {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, "OpcUaTask"},
-    {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, "NetworkTask"},
-    {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, "SensorTask"}};
+    {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, NULL, "OpcUaTask"},
+    {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, NULL, "NetworkTask"},
+    {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, NULL, "SensorTask"}};
+#define MODEL_CHANNEL_FIELD_CONTEXT_COUNT 7u
+static model_node_context_t g_channel_node_contexts[CHANNEL_MANAGER_MAX_CHANNELS][MODEL_CHANNEL_FIELD_CONTEXT_COUNT];
 
 static UA_StatusCode model_quality_to_status(service_quality_t quality)
 {
@@ -1044,20 +1049,97 @@ static const char *model_quality_to_string(service_quality_t quality)
     }
 }
 
-static const char *model_alarm_state_to_string(temperature_alarm_state_t alarm_state)
+static const char *model_alarm_state_to_string(telemetry_alarm_state_t alarm_state)
 {
     switch (alarm_state)
     {
-    case TEMPERATURE_ALARM_STATE_NORMAL:
+    case TELEMETRY_ALARM_STATE_NORMAL:
         return "Normal";
-    case TEMPERATURE_ALARM_STATE_HIGH:
-        return "High";
-    case TEMPERATURE_ALARM_STATE_HIGH_HIGH:
-        return "HighHigh";
-    case TEMPERATURE_ALARM_STATE_INVALID:
+    case TELEMETRY_ALARM_STATE_WARNING:
+        return "Warning";
+    case TELEMETRY_ALARM_STATE_CRITICAL:
+        return "Critical";
+    case TELEMETRY_ALARM_STATE_INVALID:
     default:
         return "Invalid";
     }
+}
+
+static bool model_copy_channel_by_id(const char *channel_id, telemetry_channel_t *out_channel)
+{
+    if (channel_id == NULL || out_channel == NULL)
+    {
+        return false;
+    }
+
+    return channel_manager_copy_channel(channel_id, out_channel);
+}
+
+static bool model_copy_channel_from_context(const model_node_context_t *context,
+                                            telemetry_channel_t *out_channel)
+{
+    return context != NULL &&
+           context->channel_id != NULL &&
+           model_copy_channel_by_id(context->channel_id, out_channel);
+}
+
+static bool model_copy_channel_settings(const char *channel_id, telemetry_channel_settings_t *out_settings)
+{
+    telemetry_channel_t channel = {0};
+
+    if (channel_id == NULL || out_settings == NULL || !model_copy_channel_by_id(channel_id, &channel))
+    {
+        return false;
+    }
+
+    *out_settings = channel.settings;
+    return true;
+}
+
+static UA_NodeId model_channel_value_type_to_data_type(telemetry_channel_value_type_t value_type)
+{
+    switch (value_type)
+    {
+    case TELEMETRY_CHANNEL_VALUE_DOUBLE:
+        return UA_TYPES[UA_TYPES_DOUBLE].typeId;
+    case TELEMETRY_CHANNEL_VALUE_INT32:
+        return UA_TYPES[UA_TYPES_INT32].typeId;
+    case TELEMETRY_CHANNEL_VALUE_UINT32:
+        return UA_TYPES[UA_TYPES_UINT32].typeId;
+    case TELEMETRY_CHANNEL_VALUE_INT64:
+        return UA_TYPES[UA_TYPES_INT64].typeId;
+    case TELEMETRY_CHANNEL_VALUE_UINT64:
+        return UA_TYPES[UA_TYPES_UINT64].typeId;
+    case TELEMETRY_CHANNEL_VALUE_BOOLEAN:
+        return UA_TYPES[UA_TYPES_BOOLEAN].typeId;
+    case TELEMETRY_CHANNEL_VALUE_STRING:
+        return UA_TYPES[UA_TYPES_STRING].typeId;
+    case TELEMETRY_CHANNEL_VALUE_FLOAT:
+    default:
+        return UA_TYPES[UA_TYPES_FLOAT].typeId;
+    }
+}
+
+static bool model_build_channel_node_id(const telemetry_channel_t *channel,
+                                        const char *field_name,
+                                        char *buffer,
+                                        size_t buffer_size)
+{
+    int written = 0;
+
+    if (channel == NULL || channel->metadata.name == NULL || buffer == NULL || buffer_size == 0u)
+    {
+        return false;
+    }
+
+    written = snprintf(buffer,
+                       buffer_size,
+                       field_name != NULL && field_name[0] != '\0'
+                           ? "Device.Channels.%s.%s"
+                           : "Device.Channels.%s",
+                       channel->metadata.name,
+                       field_name != NULL ? field_name : "");
+    return written > 0 && (size_t)written < buffer_size;
 }
 
 static const char *model_security_mode_to_string(void)
@@ -1083,7 +1165,7 @@ static UA_NodeId model_diagnostics_node_id(void)
 
 static UA_NodeId model_temperature_node_id(void)
 {
-    return UA_NODEID_STRING(1, (char *)"Device.ProcessValues.Temperature1");
+    return UA_NODEID_STRING(1, (char *)DEVICE_CHANNEL_NODE_TEMPERATURE_1);
 }
 
 static UA_NodeId model_maintenance_node_id(void)
@@ -2441,7 +2523,7 @@ static void model_emit_sensor_runtime_event(UA_Server *server,
     (void)model_emit_event_ex(server,
                               model_event_type_node_id(MODEL_EVENT_TYPE_SENSOR_FAULT),
                               model_temperature_node_id(),
-                              "Device.ProcessValues.Temperature1",
+                              DEVICE_CHANNEL_NODE_TEMPERATURE_1,
                               message,
                               severity,
                               model_write_sensor_fault_event_fields,
@@ -2704,19 +2786,20 @@ static void model_process_runtime_events(UA_Server *server, model_event_runtime_
                                         current_sensor.temperature_c);
     }
 
-    if (current_alarm.alarm_state != state->alarm_status.alarm_state)
+    if (current_alarm.state != state->alarm_status.state)
     {
         snprintf(message,
                  sizeof(message),
-                 "Temperature alarm changed: %s -> %s",
-                 model_alarm_state_to_string(state->alarm_status.alarm_state),
-                 model_alarm_state_to_string(current_alarm.alarm_state));
+                 "%s alarm changed: %s -> %s",
+                 current_alarm.channel_name != NULL ? current_alarm.channel_name : "Channel",
+                 model_alarm_state_to_string(state->alarm_status.state),
+                 model_alarm_state_to_string(current_alarm.state));
         model_emit_sensor_runtime_event(server,
                                         message,
-                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_NORMAL ? 250u :
-                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_HIGH ? 650u : 850u,
-                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_HIGH ? 2001u :
-                                        current_alarm.alarm_state == TEMPERATURE_ALARM_STATE_HIGH_HIGH ? 2002u : 0u,
+                                        current_alarm.state == TELEMETRY_ALARM_STATE_NORMAL ? 250u :
+                                        current_alarm.state == TELEMETRY_ALARM_STATE_WARNING ? 650u : 850u,
+                                        current_alarm.state == TELEMETRY_ALARM_STATE_WARNING ? 2001u :
+                                        current_alarm.state == TELEMETRY_ALARM_STATE_CRITICAL ? 2002u : 0u,
                                         model_quality_to_string(current_alarm.quality),
                                         current_sensor.temperature_c);
     }
@@ -2809,6 +2892,15 @@ static UA_StatusCode model_set_uint32_value(UA_DataValue *value, UA_UInt32 data,
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_set_int32_value(UA_DataValue *value, UA_Int32 data, UA_StatusCode status)
+{
+    UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_INT32]);
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = status;
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_set_float_value(UA_DataValue *value, UA_Float data, UA_StatusCode status)
 {
     UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_FLOAT]);
@@ -2818,9 +2910,36 @@ static UA_StatusCode model_set_float_value(UA_DataValue *value, UA_Float data, U
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_set_double_value(UA_DataValue *value, UA_Double data, UA_StatusCode status)
+{
+    UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_DOUBLE]);
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = status;
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_set_boolean_value(UA_DataValue *value, UA_Boolean data, UA_StatusCode status)
 {
     UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = status;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_set_uint64_value(UA_DataValue *value, UA_UInt64 data, UA_StatusCode status)
+{
+    UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_UINT64]);
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = status;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_set_int64_value(UA_DataValue *value, UA_Int64 data, UA_StatusCode status)
+{
+    UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_INT64]);
     value->hasValue = true;
     value->hasStatus = true;
     value->status = status;
@@ -2871,6 +2990,13 @@ static void model_set_default_variant_value(UA_VariableAttributes *attributes, U
         return;
     }
 
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_INT32].typeId))
+    {
+        UA_Int32 default_value = 0;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_INT32]);
+        return;
+    }
+
     if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_INT16].typeId))
     {
         UA_Int16 default_value = 0;
@@ -2882,6 +3008,27 @@ static void model_set_default_variant_value(UA_VariableAttributes *attributes, U
     {
         UA_Float default_value = 0.0f;
         UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_FLOAT]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_DOUBLE].typeId))
+    {
+        UA_Double default_value = 0.0;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_DOUBLE]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_INT64].typeId))
+    {
+        UA_Int64 default_value = 0;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_INT64]);
+        return;
+    }
+
+    if (UA_NodeId_equal(&data_type, &UA_TYPES[UA_TYPES_UINT64].typeId))
+    {
+        UA_UInt64 default_value = 0u;
+        UA_Variant_setScalarCopy(&attributes->value, &default_value, &UA_TYPES[UA_TYPES_UINT64]);
         return;
     }
 
@@ -2899,11 +3046,67 @@ static void model_set_default_variant_value(UA_VariableAttributes *attributes, U
     }
 }
 
-#ifdef UA_ENABLE_HISTORIZING
-static bool model_is_temperature_history_node(const UA_NodeId *node_id)
+static UA_StatusCode model_set_channel_runtime_value(UA_DataValue *value,
+                                                     const telemetry_channel_t *channel,
+                                                     UA_StatusCode status)
 {
-    UA_NodeId temperature_value_node = UA_NODEID_STRING(1, (char *)"Device.ProcessValues.Temperature1.Value");
-    return node_id != NULL && UA_NodeId_equal(node_id, &temperature_value_node);
+    if (value == NULL || channel == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    switch (channel->metadata.value_type)
+    {
+    case TELEMETRY_CHANNEL_VALUE_DOUBLE:
+        return model_set_double_value(value, channel->runtime.value.f64, status);
+    case TELEMETRY_CHANNEL_VALUE_INT32:
+        return model_set_int32_value(value, channel->runtime.value.i32, status);
+    case TELEMETRY_CHANNEL_VALUE_UINT32:
+        return model_set_uint32_value(value, channel->runtime.value.u32, status);
+    case TELEMETRY_CHANNEL_VALUE_INT64:
+        return model_set_int64_value(value, (UA_Int64)channel->runtime.value.i64, status);
+    case TELEMETRY_CHANNEL_VALUE_UINT64:
+        return model_set_uint64_value(value, (UA_UInt64)channel->runtime.value.u64, status);
+    case TELEMETRY_CHANNEL_VALUE_BOOLEAN:
+        return model_set_boolean_value(value, channel->runtime.value.boolean, status);
+    case TELEMETRY_CHANNEL_VALUE_STRING:
+        return model_set_string_value(value, channel->runtime.value.string, status);
+    case TELEMETRY_CHANNEL_VALUE_FLOAT:
+    default:
+        return model_set_float_value(value, channel->runtime.value.f32, status);
+    }
+}
+
+#ifdef UA_ENABLE_HISTORIZING
+static const char *model_find_history_channel_id(const UA_NodeId *node_id)
+{
+    char channel_value_node_id[128];
+
+    if (node_id == NULL)
+    {
+        return NULL;
+    }
+
+    for (size_t channel_index = 0u; channel_index < channel_manager_count(); ++channel_index)
+    {
+        telemetry_channel_t *channel = channel_manager_get_by_index(channel_index);
+        UA_NodeId channel_value_node;
+
+        if (channel == NULL ||
+            (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) == 0u ||
+            !model_build_channel_node_id(channel, "Value", channel_value_node_id, sizeof(channel_value_node_id)))
+        {
+            continue;
+        }
+
+        channel_value_node = UA_NODEID_STRING(1, channel_value_node_id);
+        if (UA_NodeId_equal(node_id, &channel_value_node))
+        {
+            return channel->metadata.id;
+        }
+    }
+
+    return NULL;
 }
 
 static uint32_t model_datetime_to_epoch_seconds(UA_DateTime value)
@@ -2916,7 +3119,7 @@ static uint32_t model_datetime_to_epoch_seconds(UA_DateTime value)
     return (uint32_t)UA_DateTime_toUnixTime(value);
 }
 
-static void model_fill_history_data_value(const history_service_temperature_sample_t *sample,
+static void model_fill_history_data_value(const history_service_channel_sample_t *sample,
                                           UA_TimestampsToReturn timestamps_to_return,
                                           UA_DataValue *value)
 {
@@ -2961,7 +3164,7 @@ static void model_history_read_raw(UA_Server *server,
                                    UA_HistoryReadResponse *response,
                                    UA_HistoryData *const *const history_data)
 {
-    history_service_temperature_sample_t sample_buffer[HISTORY_SERVICE_TEMPERATURE_CAPACITY];
+    history_service_channel_sample_t sample_buffer[HISTORY_SERVICE_CHANNEL_CAPACITY];
     const uint32_t start_epoch_s = history_read_details != NULL
                                        ? model_datetime_to_epoch_seconds(history_read_details->startTime)
                                        : 0u;
@@ -2972,8 +3175,8 @@ static void model_history_read_raw(UA_Server *server,
                             history_read_details->startTime > history_read_details->endTime;
     const size_t max_values_per_node = (history_read_details == NULL ||
                                         history_read_details->numValuesPerNode == 0u ||
-                                        history_read_details->numValuesPerNode > HISTORY_SERVICE_TEMPERATURE_CAPACITY)
-                                           ? HISTORY_SERVICE_TEMPERATURE_CAPACITY
+                                        history_read_details->numValuesPerNode > HISTORY_SERVICE_CHANNEL_CAPACITY)
+                                           ? HISTORY_SERVICE_CHANNEL_CAPACITY
                                            : (size_t)history_read_details->numValuesPerNode;
     (void)server;
     (void)history_database_context;
@@ -3006,19 +3209,22 @@ static void model_history_read_raw(UA_Server *server,
             continue;
         }
 
-        if (!model_is_temperature_history_node(&nodes_to_read[index].nodeId))
+        const char *history_channel_id = model_find_history_channel_id(&nodes_to_read[index].nodeId);
+
+        if (history_channel_id == NULL)
         {
             response->results[index].statusCode = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
             continue;
         }
 
-        sample_count = history_service_read_temperature_samples(start_epoch_s,
-                                                                end_epoch_s,
-                                                                descending,
-                                                                max_values_per_node,
-                                                                sample_buffer,
-                                                                HISTORY_SERVICE_TEMPERATURE_CAPACITY,
-                                                                &truncated);
+        sample_count = history_service_read_channel_samples(history_channel_id,
+                                                            start_epoch_s,
+                                                            end_epoch_s,
+                                                            descending,
+                                                            max_values_per_node,
+                                                            sample_buffer,
+                                                            HISTORY_SERVICE_CHANNEL_CAPACITY,
+                                                            &truncated);
 
         if (sample_count > 0u)
         {
@@ -3111,49 +3317,102 @@ static UA_StatusCode model_read_value(UA_Server *server,
         return model_set_string_value(value, config->device_name, UA_STATUSCODE_GOOD);
     case MODEL_NODE_PROCESS_TEMPERATURE_VALUE:
     {
-        sensor_manager_snapshot_t snapshot = {0};
-        sensor_manager_get_snapshot(&snapshot);
-        model_apply_epoch_source_timestamp(include_source_timestamp, snapshot.source_timestamp_epoch_s, value);
-        return model_set_float_value(value, snapshot.temperature_c, model_quality_to_status(snapshot.quality));
+        telemetry_channel_t channel = {0};
+
+        if (!model_copy_channel_from_context(context, &channel))
+        {
+            value->hasStatus = true;
+            value->status = UA_STATUSCODE_BADNODEIDUNKNOWN;
+            return UA_STATUSCODE_GOOD;
+        }
+
+        model_apply_epoch_source_timestamp(include_source_timestamp, channel.runtime.source_timestamp_epoch_s, value);
+        return model_set_channel_runtime_value(value, &channel, model_quality_to_status(channel.runtime.quality));
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_STATUS:
     {
-        sensor_manager_snapshot_t snapshot = {0};
-        sensor_manager_get_snapshot(&snapshot);
+        telemetry_channel_t channel = {0};
+
+        if (!model_copy_channel_from_context(context, &channel))
+        {
+            value->hasStatus = true;
+            value->status = UA_STATUSCODE_BADNODEIDUNKNOWN;
+            return UA_STATUSCODE_GOOD;
+        }
+
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value,
-                                      model_quality_to_string(snapshot.quality),
-                                      model_quality_to_status(snapshot.quality));
+                                      model_quality_to_string(channel.runtime.quality),
+                                      model_quality_to_status(channel.runtime.quality));
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP:
     {
-        sensor_manager_snapshot_t snapshot = {0};
+        telemetry_channel_t channel = {0};
         UA_DateTime timestamp = 0;
-        sensor_manager_get_snapshot(&snapshot);
-        model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (snapshot.source_timestamp_epoch_s > 0u)
+
+        if (!model_copy_channel_from_context(context, &channel))
         {
-            timestamp = UA_DateTime_fromUnixTime((UA_Int64)snapshot.source_timestamp_epoch_s);
+            value->hasStatus = true;
+            value->status = UA_STATUSCODE_BADNODEIDUNKNOWN;
+            return UA_STATUSCODE_GOOD;
         }
-        return model_set_datetime_value(value, timestamp, model_quality_to_status(snapshot.quality));
+
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        if (channel.runtime.source_timestamp_epoch_s > 0u)
+        {
+            timestamp = UA_DateTime_fromUnixTime((UA_Int64)channel.runtime.source_timestamp_epoch_s);
+        }
+        return model_set_datetime_value(value, timestamp, model_quality_to_status(channel.runtime.quality));
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_UNITS:
+    {
+        telemetry_channel_t channel = {0};
+
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_string_value(value, "degC", UA_STATUSCODE_GOOD);
+        if (model_copy_channel_from_context(context, &channel) &&
+            channel.metadata.unit != NULL &&
+            channel.metadata.unit[0] != '\0')
+        {
+            return model_set_string_value(value, channel.metadata.unit, UA_STATUSCODE_GOOD);
+        }
+        return model_set_string_value(value, "", UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
+    {
+        telemetry_channel_t channel = {0};
+
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_uint32_value(value, config->sampling_period_ms, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_from_context(context, &channel) && channel.settings.sample_period_ms > 0u)
+        {
+            return model_set_uint32_value(value, channel.settings.sample_period_ms, UA_STATUSCODE_GOOD);
+        }
+        return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
+    {
+        telemetry_channel_t channel = {0};
+
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_uint32_value(value, config->temperature_history_interval_ms, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_from_context(context, &channel))
+        {
+            return model_set_uint32_value(value, channel.settings.history_interval_ms, UA_STATUSCODE_GOOD);
+        }
+        return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE:
     {
         alarm_service_status_t status = {0};
         alarm_service_get_status(&status);
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_string_value(value,
-                                      model_alarm_state_to_string(status.alarm_state),
-                                      model_quality_to_status(status.quality));
+        if (context != NULL && context->channel_id != NULL &&
+            status.channel_id != NULL &&
+            strcmp(context->channel_id, status.channel_id) == 0)
+        {
+            return model_set_string_value(value,
+                                          model_alarm_state_to_string(status.state),
+                                          model_quality_to_status(status.quality));
+        }
+        return model_set_string_value(value, "Invalid", UA_STATUSCODE_BADNOTSUPPORTED);
     }
     case MODEL_NODE_NETWORK_IPV4:
     {
@@ -3377,23 +3636,65 @@ static UA_StatusCode model_read_value(UA_Server *server,
         return model_set_uint32_value(value, task_info.stack_high_water_mark, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS:
+    {
+        telemetry_channel_t channel = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_uint32_value(value, config->sampling_period_ms, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        {
+            return model_set_uint32_value(value, channel.settings.sample_period_ms, UA_STATUSCODE_GOOD);
+        }
+        return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS:
+    {
+        telemetry_channel_t channel = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_uint32_value(value, config->publish_period_ms, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        {
+            return model_set_uint32_value(value, channel.settings.publish_period_ms, UA_STATUSCODE_GOOD);
+        }
+        return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_CONFIG_TEMP_OFFSET:
+    {
+        telemetry_channel_t channel = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_float_value(value, config->temp_offset_c, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        {
+            return model_set_float_value(value, (UA_Float)channel.settings.offset, UA_STATUSCODE_GOOD);
+        }
+        return model_set_float_value(value, 0.0f, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_CONFIG_TEMP_SCALE:
+    {
+        telemetry_channel_t channel = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_float_value(value, config->temp_scale, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        {
+            return model_set_float_value(value, (UA_Float)channel.settings.scale, UA_STATUSCODE_GOOD);
+        }
+        return model_set_float_value(value, 1.0f, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_CONFIG_HIGH_ALARM:
+    {
+        telemetry_channel_t channel = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_float_value(value, config->high_temperature_threshold_c, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        {
+            return model_set_float_value(value, (UA_Float)channel.settings.warning_threshold, UA_STATUSCODE_GOOD);
+        }
+        return model_set_float_value(value, 0.0f, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_CONFIG_HIGH_HIGH_ALARM:
+    {
+        telemetry_channel_t channel = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_float_value(value, config->high_high_temperature_threshold_c, UA_STATUSCODE_GOOD);
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        {
+            return model_set_float_value(value, (UA_Float)channel.settings.critical_threshold, UA_STATUSCODE_GOOD);
+        }
+        return model_set_float_value(value, 0.0f, UA_STATUSCODE_GOOD);
+    }
     default:
         value->hasStatus = true;
         value->status = UA_STATUSCODE_BADNOTSUPPORTED;
@@ -3410,6 +3711,9 @@ static UA_StatusCode model_write_value(UA_Server *server,
                                        const UA_DataValue *value)
 {
     model_node_context_t *context = (model_node_context_t *)node_context;
+    telemetry_channel_settings_t channel_settings = {0};
+    const char *settings_channel_id = NULL;
+    bool save_device_config = false;
     (void)server;
     (void)session_id;
     (void)session_context;
@@ -3440,6 +3744,20 @@ static UA_StatusCode model_write_value(UA_Server *server,
         return UA_STATUSCODE_BADUSERACCESSDENIED;
     }
 
+    if (context->channel_id != NULL)
+    {
+        settings_channel_id = context->channel_id;
+    }
+    else if (context->kind == MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS ||
+             context->kind == MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS ||
+             context->kind == MODEL_NODE_CONFIG_TEMP_OFFSET ||
+             context->kind == MODEL_NODE_CONFIG_TEMP_SCALE ||
+             context->kind == MODEL_NODE_CONFIG_HIGH_ALARM ||
+             context->kind == MODEL_NODE_CONFIG_HIGH_HIGH_ALARM)
+    {
+        settings_channel_id = DEVICE_CHANNEL_ID_TEMPERATURE_1;
+    }
+
     switch (context->kind)
     {
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
@@ -3448,7 +3766,13 @@ static UA_StatusCode model_write_value(UA_Server *server,
         {
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
-        if (!config_service_set_sampling_period_ms(*(const UA_UInt32 *)value->value.data))
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.sample_period_ms = *(const UA_UInt32 *)value->value.data;
+        if (channel_settings.sample_period_ms == 0u ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -3458,7 +3782,12 @@ static UA_StatusCode model_write_value(UA_Server *server,
         {
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
-        if (!config_service_set_temperature_history_interval_ms(*(const UA_UInt32 *)value->value.data))
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.history_interval_ms = *(const UA_UInt32 *)value->value.data;
+        if (!channel_manager_update_settings(settings_channel_id, &channel_settings))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -3468,7 +3797,13 @@ static UA_StatusCode model_write_value(UA_Server *server,
         {
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
-        if (!config_service_set_publish_period_ms(*(const UA_UInt32 *)value->value.data))
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.publish_period_ms = *(const UA_UInt32 *)value->value.data;
+        if (channel_settings.publish_period_ms == 0u ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -3482,13 +3817,19 @@ static UA_StatusCode model_write_value(UA_Server *server,
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
+        save_device_config = true;
         break;
     case MODEL_NODE_CONFIG_TEMP_OFFSET:
         if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
         {
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
-        if (!config_service_set_temp_offset_c(*(const UA_Float *)value->value.data))
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.offset = *(const UA_Float *)value->value.data;
+        if (!channel_manager_update_settings(settings_channel_id, &channel_settings))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -3498,7 +3839,13 @@ static UA_StatusCode model_write_value(UA_Server *server,
         {
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
-        if (!config_service_set_temp_scale(*(const UA_Float *)value->value.data))
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.scale = *(const UA_Float *)value->value.data;
+        if (channel_settings.scale == 0.0 ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -3508,7 +3855,13 @@ static UA_StatusCode model_write_value(UA_Server *server,
         {
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
-        if (!config_service_set_high_temperature_threshold_c(*(const UA_Float *)value->value.data))
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.warning_threshold = *(const UA_Float *)value->value.data;
+        if (channel_settings.warning_threshold > channel_settings.critical_threshold ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -3518,7 +3871,13 @@ static UA_StatusCode model_write_value(UA_Server *server,
         {
             return UA_STATUSCODE_BADTYPEMISMATCH;
         }
-        if (!config_service_set_high_high_temperature_threshold_c(*(const UA_Float *)value->value.data))
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.critical_threshold = *(const UA_Float *)value->value.data;
+        if (channel_settings.critical_threshold < channel_settings.warning_threshold ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
         {
             return UA_STATUSCODE_BADOUTOFRANGE;
         }
@@ -3527,7 +3886,10 @@ static UA_StatusCode model_write_value(UA_Server *server,
         return UA_STATUSCODE_BADNOTWRITABLE;
     }
 
-    (void)config_service_save();
+    if (save_device_config)
+    {
+        (void)config_service_save();
+    }
     return UA_STATUSCODE_GOOD;
 }
 
@@ -3890,6 +4252,7 @@ static UA_StatusCode model_self_test(UA_Server *server,
     network_manager_status_t network_status = {0};
     time_service_status_t time_status = {0};
     sensor_manager_snapshot_t sensor_snapshot = {0};
+    telemetry_channel_t channel = {0};
     const device_profile_config_t *config = NULL;
     (void)server;
     (void)session_id;
@@ -3923,10 +4286,10 @@ static UA_StatusCode model_self_test(UA_Server *server,
         result = false;
     }
 
-    if (config != NULL && config->enable_temperature_sensor)
+    if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
     {
         sensor_manager_get_snapshot(&sensor_snapshot);
-        if (!sensor_snapshot.enabled)
+        if (!channel.settings.enabled || !sensor_snapshot.enabled)
         {
             result = false;
         }
@@ -4822,14 +5185,181 @@ static UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
                                        task_context);
 }
 
+static model_node_context_t *model_prepare_channel_context(size_t channel_index,
+                                                           size_t field_index,
+                                                           model_node_kind_t kind,
+                                                           const char *channel_id)
+{
+    model_node_context_t *context = NULL;
+
+    if (channel_index >= CHANNEL_MANAGER_MAX_CHANNELS || field_index >= MODEL_CHANNEL_FIELD_CONTEXT_COUNT)
+    {
+        return NULL;
+    }
+
+    context = &g_channel_node_contexts[channel_index][field_index];
+    context->kind = kind;
+    context->channel_id = channel_id;
+    context->task_name = NULL;
+    return context;
+}
+
+static UA_StatusCode model_add_channel_nodes(UA_Server *server,
+                                             UA_NodeId channels_folder_id,
+                                             size_t channel_index,
+                                             const telemetry_channel_t *channel)
+{
+    char channel_node_id[128];
+    char value_node_id[128];
+    char status_node_id[128];
+    char source_timestamp_node_id[128];
+    char units_node_id[128];
+    char update_period_node_id[128];
+    char history_interval_node_id[128];
+    char alarm_state_node_id[128];
+    UA_NodeId channel_object_id = UA_NODEID_NULL;
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+    UA_NodeId value_data_type;
+
+    if (server == NULL || channel == NULL || channel->metadata.id == NULL || channel->metadata.name == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    if (!model_build_channel_node_id(channel, NULL, channel_node_id, sizeof(channel_node_id)) ||
+        !model_build_channel_node_id(channel, "Value", value_node_id, sizeof(value_node_id)) ||
+        !model_build_channel_node_id(channel, "Status", status_node_id, sizeof(status_node_id)) ||
+        !model_build_channel_node_id(channel, "SourceTimestamp", source_timestamp_node_id, sizeof(source_timestamp_node_id)) ||
+        !model_build_channel_node_id(channel, "Units", units_node_id, sizeof(units_node_id)) ||
+        !model_build_channel_node_id(channel, "UpdatePeriodMs", update_period_node_id, sizeof(update_period_node_id)) ||
+        !model_build_channel_node_id(channel, "HistoryIntervalMs", history_interval_node_id, sizeof(history_interval_node_id)) ||
+        !model_build_channel_node_id(channel, "AlarmState", alarm_state_node_id, sizeof(alarm_state_node_id)))
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    channel_object_id = UA_NODEID_STRING(1, channel_node_id);
+    value_data_type = model_channel_value_type_to_data_type(channel->metadata.value_type);
+
+    status = model_add_object(server,
+                              channel_node_id,
+                              channel->metadata.name,
+                              channel->metadata.name,
+                              channels_folder_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable_ex(server,
+                                            value_node_id,
+                                            "Value",
+                                            channel_object_id,
+                                            value_data_type,
+                                            model_prepare_channel_context(channel_index,
+                                                                          0u,
+                                                                          MODEL_NODE_PROCESS_TEMPERATURE_VALUE,
+                                                                          channel->metadata.id),
+                                            UA_ACCESSLEVELMASK_READ |
+                                                (((channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u)
+                                                     ? UA_ACCESSLEVELMASK_HISTORYREAD
+                                                     : 0u),
+                                            ((channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         status_node_id,
+                                         "Status",
+                                         channel_object_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         model_prepare_channel_context(channel_index,
+                                                                       1u,
+                                                                       MODEL_NODE_PROCESS_TEMPERATURE_STATUS,
+                                                                       channel->metadata.id));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         source_timestamp_node_id,
+                                         "SourceTimestamp",
+                                         channel_object_id,
+                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
+                                         model_prepare_channel_context(channel_index,
+                                                                       2u,
+                                                                       MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
+                                                                       channel->metadata.id));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         units_node_id,
+                                         "Units",
+                                         channel_object_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         model_prepare_channel_context(channel_index,
+                                                                       3u,
+                                                                       MODEL_NODE_PROCESS_TEMPERATURE_UNITS,
+                                                                       channel->metadata.id));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_writable_variable(server,
+                                         update_period_node_id,
+                                         "UpdatePeriodMs",
+                                         channel_object_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         model_prepare_channel_context(channel_index,
+                                                                       4u,
+                                                                       MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS,
+                                                                       channel->metadata.id));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_writable_variable(server,
+                                         history_interval_node_id,
+                                         "HistoryIntervalMs",
+                                         channel_object_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         model_prepare_channel_context(channel_index,
+                                                                       5u,
+                                                                       MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS,
+                                                                       channel->metadata.id));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return model_add_readonly_variable(server,
+                                       alarm_state_node_id,
+                                       "AlarmState",
+                                       channel_object_id,
+                                       UA_TYPES[UA_TYPES_STRING].typeId,
+                                       model_prepare_channel_context(channel_index,
+                                                                     6u,
+                                                                     MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE,
+                                                                     channel->metadata.id));
+}
+
 static UA_StatusCode model_build_address_space(UA_Server *server)
 {
     const device_profile_config_t *device_config = config_service_get();
     const char *device_display_name = device_config->device_name[0] != '\0' ? device_config->device_name : "Device";
     UA_NodeId device_id = UA_NODEID_STRING(1, (char *)"Device");
     UA_NodeId identification_id = UA_NODEID_STRING(1, (char *)"Device.Identification");
-    UA_NodeId process_values_id = UA_NODEID_STRING(1, (char *)"Device.ProcessValues");
-    UA_NodeId temperature1_id = UA_NODEID_STRING(1, (char *)"Device.ProcessValues.Temperature1");
+    UA_NodeId channels_id = UA_NODEID_STRING(1, (char *)DEVICE_CHANNELS_NODE_ID);
     UA_NodeId diagnostics_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics");
     UA_NodeId task_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.Task");
     UA_NodeId network_id = UA_NODEID_STRING(1, (char *)"Device.Network");
@@ -4867,7 +5397,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_folder(server, "Device.ProcessValues", "ProcessValues", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    status = model_add_folder(server, DEVICE_CHANNELS_NODE_ID, "Channels", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -5143,18 +5673,6 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 #endif
 
-    status = model_add_object(server,
-                              "Device.ProcessValues.Temperature1",
-                              "Temperature1",
-                              "Temperature1",
-                              process_values_id,
-                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-                              UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE));
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
     status = model_add_readonly_variable(server,
                                          "Device.Identification.Manufacturer",
                                          "Manufacturer",
@@ -5243,83 +5761,20 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable_ex(server,
-                                            "Device.ProcessValues.Temperature1.Value",
-                                            "Value",
-                                            temperature1_id,
-                                            UA_TYPES[UA_TYPES_FLOAT].typeId,
-                                            &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_VALUE],
-                                            UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_HISTORYREAD,
-                                            true);
-    if (status != UA_STATUSCODE_GOOD)
+    for (size_t channel_index = 0u; channel_index < channel_manager_count(); ++channel_index)
     {
-        return status;
-    }
+        telemetry_channel_t *channel = channel_manager_get_by_index(channel_index);
 
-    status = model_add_readonly_variable(server,
-                                         "Device.ProcessValues.Temperature1.Status",
-                                         "Status",
-                                         temperature1_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_STATUS]);
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
+        if (channel == NULL)
+        {
+            continue;
+        }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.ProcessValues.Temperature1.SourceTimestamp",
-                                         "SourceTimestamp",
-                                         temperature1_id,
-                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP]);
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
-    status = model_add_readonly_variable(server,
-                                         "Device.ProcessValues.Temperature1.Units",
-                                         "Units",
-                                         temperature1_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_UNITS]);
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
-    status = model_add_writable_variable(server,
-                                         "Device.ProcessValues.Temperature1.UpdatePeriodMs",
-                                         "UpdatePeriodMs",
-                                         temperature1_id,
-                                         UA_TYPES[UA_TYPES_UINT32].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS]);
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
-    status = model_add_writable_variable(server,
-                                         "Device.ProcessValues.Temperature1.HistoryIntervalMs",
-                                         "HistoryIntervalMs",
-                                         temperature1_id,
-                                         UA_TYPES[UA_TYPES_UINT32].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS]);
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
-    status = model_add_readonly_variable(server,
-                                         "Device.ProcessValues.Temperature1.AlarmState",
-                                         "AlarmState",
-                                         temperature1_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_PROCESS_TEMPERATURE_ALARM_STATE]);
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
+        status = model_add_channel_nodes(server, channels_id, channel_index, channel);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
     }
 
     status = model_add_readonly_variable(server,
@@ -6466,7 +6921,7 @@ void opcua_model_task(void *argument)
     config->historyDatabase.clear = model_history_database_clear;
     config->historyDatabase.readRaw = model_history_read_raw;
     config->accessHistoryDataCapability = true;
-    config->maxReturnDataValues = HISTORY_SERVICE_TEMPERATURE_CAPACITY;
+    config->maxReturnDataValues = HISTORY_SERVICE_CHANNEL_CAPACITY;
     log_opcua_heap("Historizing configured");
 #endif
 

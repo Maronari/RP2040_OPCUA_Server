@@ -13,19 +13,9 @@ static device_profile_config_t g_config;
 static device_profile_config_t g_default_config;
 static bool g_default_config_valid = false;
 
-static bool config_service_is_valid_float(float value)
-{
-    return value == value;
-}
-
 static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
 {
     return value >= -720 && value <= 840;
-}
-
-static bool config_service_is_valid_temperature_history_interval_ms(uint32_t value)
-{
-    return value <= 86400000u;
 }
 
 static void config_service_populate_serial_number(device_profile_config_t *config)
@@ -61,29 +51,9 @@ static void config_service_normalize(device_profile_config_t *config)
         return;
     }
 
-    if (config->sampling_period_ms == 0u)
-    {
-        config->sampling_period_ms = 1000u;
-    }
-
-    if (config->publish_period_ms == 0u)
-    {
-        config->publish_period_ms = 1000u;
-    }
-
-    if (!config_service_is_valid_temperature_history_interval_ms(config->temperature_history_interval_ms))
-    {
-        config->temperature_history_interval_ms = config->sampling_period_ms;
-    }
-
     if (!config_service_is_valid_timezone_offset_minutes(config->timezone_offset_minutes))
     {
         config->timezone_offset_minutes = 0;
-    }
-
-    if (config->temp_scale == 0.0f)
-    {
-        config->temp_scale = 1.0f;
     }
 
     if (config->device_name[0] == '\0' && config->opcua_hostname[0] != '\0')
@@ -167,45 +137,6 @@ bool config_service_apply(void)
     return true;
 }
 
-bool config_service_set_sampling_period_ms(uint32_t value)
-{
-    if (value == 0u)
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    g_config.sampling_period_ms = value;
-    taskEXIT_CRITICAL();
-    return true;
-}
-
-bool config_service_set_temperature_history_interval_ms(uint32_t value)
-{
-    if (!config_service_is_valid_temperature_history_interval_ms(value))
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    g_config.temperature_history_interval_ms = value;
-    taskEXIT_CRITICAL();
-    return true;
-}
-
-bool config_service_set_publish_period_ms(uint32_t value)
-{
-    if (value == 0u)
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    g_config.publish_period_ms = value;
-    taskEXIT_CRITICAL();
-    return true;
-}
-
 bool config_service_set_timezone_offset_minutes(int16_t value)
 {
     if (!config_service_is_valid_timezone_offset_minutes(value))
@@ -215,58 +146,6 @@ bool config_service_set_timezone_offset_minutes(int16_t value)
 
     taskENTER_CRITICAL();
     g_config.timezone_offset_minutes = value;
-    taskEXIT_CRITICAL();
-    return true;
-}
-
-bool config_service_set_temp_offset_c(float value)
-{
-    if (!config_service_is_valid_float(value))
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    g_config.temp_offset_c = value;
-    taskEXIT_CRITICAL();
-    return true;
-}
-
-bool config_service_set_temp_scale(float value)
-{
-    if (!config_service_is_valid_float(value) || value == 0.0f)
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    g_config.temp_scale = value;
-    taskEXIT_CRITICAL();
-    return true;
-}
-
-bool config_service_set_high_temperature_threshold_c(float value)
-{
-    if (!config_service_is_valid_float(value) || value > g_config.high_high_temperature_threshold_c)
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    g_config.high_temperature_threshold_c = value;
-    taskEXIT_CRITICAL();
-    return true;
-}
-
-bool config_service_set_high_high_temperature_threshold_c(float value)
-{
-    if (!config_service_is_valid_float(value) || value < g_config.high_temperature_threshold_c)
-    {
-        return false;
-    }
-
-    taskENTER_CRITICAL();
-    g_config.high_high_temperature_threshold_c = value;
     taskEXIT_CRITICAL();
     return true;
 }
