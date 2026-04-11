@@ -44,7 +44,9 @@ static const channel_config_t g_channel_configs[] = {
                 .value_type = TELEMETRY_CHANNEL_VALUE_FLOAT,
                 .unit = "degC",
                 .range = {false, false, 0.0, 0.0},
-                .flags = TELEMETRY_CHANNEL_FLAG_HISTORIZED | TELEMETRY_CHANNEL_FLAG_ALARM_ENABLED,
+                .flags = TELEMETRY_CHANNEL_FLAG_ENABLED |
+                         TELEMETRY_CHANNEL_FLAG_HISTORIZED |
+                         TELEMETRY_CHANNEL_FLAG_ALARM_ENABLED,
             },
         .settings =
             {

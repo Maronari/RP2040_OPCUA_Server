@@ -74,6 +74,21 @@ static void config_service_normalize(device_profile_config_t *config)
         config->ntp_server[sizeof(config->ntp_server) - 1] = '\0';
     }
 
+    if (config->mqtt_broker_url[0] == '\0')
+    {
+        strncpy(config->mqtt_broker_url, "opc.mqtt://127.0.0.1:1883", sizeof(config->mqtt_broker_url));
+        config->mqtt_broker_url[sizeof(config->mqtt_broker_url) - 1] = '\0';
+    }
+
+    if (config->mqtt_topic_root[0] == '\0')
+    {
+        (void)snprintf(config->mqtt_topic_root,
+                       sizeof(config->mqtt_topic_root),
+                       "devices/%s",
+                       config->opcua_hostname[0] != '\0' ? config->opcua_hostname : "device");
+        config->mqtt_topic_root[sizeof(config->mqtt_topic_root) - 1] = '\0';
+    }
+
     config_service_populate_serial_number(config);
 }
 
@@ -146,6 +161,14 @@ bool config_service_set_timezone_offset_minutes(int16_t value)
 
     taskENTER_CRITICAL();
     g_config.timezone_offset_minutes = value;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_set_mqtt_pubsub_enabled(bool enabled)
+{
+    taskENTER_CRITICAL();
+    g_config.enable_mqtt_pubsub = enabled;
     taskEXIT_CRITICAL();
     return true;
 }

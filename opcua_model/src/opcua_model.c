@@ -2,13 +2,16 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include <FreeRTOS.h>
 #include <task.h>
+#include "ua_port_alloc.h"
 
 #include "drivers/led_driver.h"
 #include "open62541.h"
+#include "pico/stdio.h"
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
@@ -23,6 +26,14 @@
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
 #include "test_certs.h"
 #endif
+
+#if defined(UA_ENABLE_PUBSUB) && defined(UA_ENABLE_MQTT)
+UA_ConnectionManager *UA_ConnectionManager_new_MQTT(const UA_String eventSourceName);
+#endif
+
+#define MODEL_BOOTSTRAP_APPLICATION_URI "urn:open62541.server.application"
+
+#define fflush(_stream) stdio_flush()
 
 typedef enum
 {
@@ -79,7 +90,14 @@ typedef enum
     MODEL_NODE_CONFIG_TEMP_OFFSET,
     MODEL_NODE_CONFIG_TEMP_SCALE,
     MODEL_NODE_CONFIG_HIGH_ALARM,
-    MODEL_NODE_CONFIG_HIGH_HIGH_ALARM
+    MODEL_NODE_CONFIG_HIGH_HIGH_ALARM,
+    MODEL_NODE_MESSAGING_EVENT_SEQUENCE,
+    MODEL_NODE_MESSAGING_EVENT_ID,
+    MODEL_NODE_MESSAGING_EVENT_TYPE,
+    MODEL_NODE_MESSAGING_EVENT_SOURCE,
+    MODEL_NODE_MESSAGING_EVENT_MESSAGE,
+    MODEL_NODE_MESSAGING_EVENT_SEVERITY,
+    MODEL_NODE_MESSAGING_EVENT_TIME
 } model_node_kind_t;
 
 typedef struct
@@ -135,6 +153,33 @@ typedef struct
     char last_fault[160];
     char last_network_change[160];
 } model_last_event_state_t;
+
+#ifdef UA_ENABLE_PUBSUB
+typedef struct
+{
+    uint32_t sequence;
+    UA_DateTime time;
+    UA_UInt32 severity;
+    char event_id[33];
+    char event_type[64];
+    char source[64];
+    char message[160];
+} model_pubsub_event_mirror_t;
+
+typedef struct
+{
+    bool enabled;
+    bool configured;
+    bool use_json;
+    char broker_url[CONFIG_SERVICE_TEXT_MAX_LEN];
+    char topic_root[CONFIG_SERVICE_TEXT_MAX_LEN];
+    char client_id[64];
+    UA_NodeId connection_id;
+    UA_NodeId telemetry_writer_group_ids[CHANNEL_MANAGER_MAX_CHANNELS];
+    size_t telemetry_writer_group_count;
+    UA_NodeId event_writer_group_id;
+} model_pubsub_runtime_t;
+#endif
 
 typedef struct
 {
@@ -213,8 +258,7 @@ typedef struct
     model_audit_security_event_fields_t security;
 } model_audit_security_emit_fields_t;
 
-typedef UA_StatusCode (*model_event_fields_writer_t)(UA_Server *server,
-                                                     const UA_NodeId event_node_id,
+typedef UA_StatusCode (*model_event_fields_writer_t)(UA_KeyValueMap *event_fields,
                                                      const void *fields_context);
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
@@ -337,6 +381,13 @@ enum
     FIXED_CTX_CONFIG_TEMP_SCALE,
     FIXED_CTX_CONFIG_HIGH_ALARM,
     FIXED_CTX_CONFIG_HIGH_HIGH_ALARM,
+    FIXED_CTX_MESSAGING_EVENT_SEQUENCE,
+    FIXED_CTX_MESSAGING_EVENT_ID,
+    FIXED_CTX_MESSAGING_EVENT_TYPE,
+    FIXED_CTX_MESSAGING_EVENT_SOURCE,
+    FIXED_CTX_MESSAGING_EVENT_MESSAGE,
+    FIXED_CTX_MESSAGING_EVENT_SEVERITY,
+    FIXED_CTX_MESSAGING_EVENT_TIME,
     FIXED_CTX_COUNT
 };
 
@@ -352,6 +403,7 @@ enum
 #define MODEL_METHOD_SET_ROLE "Device.Maintenance.SetRole"
 #define MODEL_METHOD_DISABLE_USER "Device.Maintenance.DisableUser"
 #define MODEL_METHOD_DELETE_USER "Device.Maintenance.DeleteUser"
+#define MODEL_METHOD_SET_MQTT_PUBSUB_ENABLED "Device.Maintenance.SetMqttPubSubEnabled"
 #define MODEL_METHOD_ENTER_COMMISSIONING "Device.Security.EnterCommissioningMode"
 #define MODEL_METHOD_EXIT_COMMISSIONING "Device.Security.ExitCommissioningMode"
 #define MODEL_EVENT_TYPE_DEVICE "Types.Events.DeviceEvent"
@@ -372,6 +424,27 @@ enum
 #define MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES 32768u
 #define MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES 16384u
 #define MODEL_AUDIT_QUEUE_CAPACITY 8u
+#define MODEL_PUBSUB_TOPIC_MAX_LEN 96u
+#define MODEL_PUBSUB_CLIENT_ID_MAX_LEN 64u
+#define MODEL_PUBSUB_TELEMETRY_TOPIC_SUFFIX "telemetry"
+#define MODEL_PUBSUB_EVENTS_TOPIC_SUFFIX "events"
+#define MODEL_PUBSUB_CONNECTION_NAME "MQTT PubSub Connection"
+#define MODEL_PUBSUB_TELEMETRY_PDS_PREFIX "TelemetryPDS"
+#define MODEL_PUBSUB_TELEMETRY_WG_PREFIX "TelemetryWG"
+#define MODEL_PUBSUB_TELEMETRY_DSW_PREFIX "TelemetryDSW"
+#define MODEL_PUBSUB_EVENTS_PDS_NAME "EventsMirrorPDS"
+#define MODEL_PUBSUB_EVENTS_WG_NAME "EventsMirrorWG"
+#define MODEL_PUBSUB_EVENTS_DSW_NAME "EventsMirrorDSW"
+#define MODEL_PUBSUB_MQTT_PROFILE_JSON "http://opcfoundation.org/UA-Profile/Transport/pubsub-mqtt-json"
+#define MODEL_PUBSUB_MQTT_PROFILE_UADP "http://opcfoundation.org/UA-Profile/Transport/pubsub-mqtt-uadp"
+#define MODEL_NODE_MESSAGING "Device.Messaging"
+#define MODEL_NODE_MESSAGING_LAST_EVENT_SEQUENCE "Device.Messaging.LastPubSubEventSequence"
+#define MODEL_NODE_MESSAGING_LAST_EVENT_ID "Device.Messaging.LastPubSubEventId"
+#define MODEL_NODE_MESSAGING_LAST_EVENT_TYPE "Device.Messaging.LastPubSubEventType"
+#define MODEL_NODE_MESSAGING_LAST_EVENT_SOURCE "Device.Messaging.LastPubSubEventSource"
+#define MODEL_NODE_MESSAGING_LAST_EVENT_MESSAGE "Device.Messaging.LastPubSubEventMessage"
+#define MODEL_NODE_MESSAGING_LAST_EVENT_SEVERITY "Device.Messaging.LastPubSubEventSeverity"
+#define MODEL_NODE_MESSAGING_LAST_EVENT_TIME "Device.Messaging.LastPubSubEventTime"
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
 static const uint8_t g_bootstrap_device_certificate[] = TEST_SRV_CRT_RSA_SHA256_DER;
@@ -397,6 +470,47 @@ static size_t g_pending_audit_event_count = 0u;
 static bool g_model_alarm_conditions_available = false;
 #endif
 #endif
+#ifdef UA_ENABLE_PUBSUB
+static model_pubsub_runtime_t g_model_pubsub = {0};
+static model_pubsub_event_mirror_t g_model_pubsub_event_mirror = {0};
+#endif
+
+static const char *model_log_level_name(UA_LogLevel level)
+{
+    switch (level)
+    {
+    case UA_LOGLEVEL_FATAL:
+        return "fatal";
+    case UA_LOGLEVEL_ERROR:
+        return "error";
+    case UA_LOGLEVEL_WARNING:
+        return "warn";
+    case UA_LOGLEVEL_INFO:
+        return "info";
+    case UA_LOGLEVEL_DEBUG:
+        return "debug";
+    case UA_LOGLEVEL_TRACE:
+        return "trace";
+    default:
+        return "log";
+    }
+}
+
+static void model_ua_logger_log(void *context,
+                                UA_LogLevel level,
+                                UA_LogCategory category,
+                                const char *msg,
+                                va_list args)
+{
+    (void)context;
+    (void)category;
+    printf("[open62541/%s]\t", model_log_level_name(level));
+    vprintf(msg, args);
+    putchar('\n');
+    stdio_flush();
+}
+
+static UA_Logger g_model_ua_logger = {model_ua_logger_log, NULL, NULL};
 
 static void log_opcua_heap(const char *stage)
 {
@@ -483,6 +597,44 @@ static bool model_copy_session_username(const void *session_context, char *buffe
     memcpy(buffer, username->data, username->length);
     buffer[username->length] = '\0';
     return true;
+}
+
+static UA_ByteString *model_allocate_session_username(const UA_String *user_name)
+{
+    UA_ByteString *stored_username = NULL;
+
+    if (user_name == NULL)
+    {
+        return NULL;
+    }
+
+    stored_username = (UA_ByteString *)UA_calloc(1u, sizeof(UA_ByteString));
+    if (stored_username == NULL)
+    {
+        return NULL;
+    }
+
+    if (UA_ByteString_allocBuffer(stored_username, user_name->length) != UA_STATUSCODE_GOOD)
+    {
+        UA_free(stored_username);
+        return NULL;
+    }
+
+    memcpy(stored_username->data, user_name->data, user_name->length);
+    return stored_username;
+}
+
+static void model_free_session_username(void *base_context)
+{
+    UA_ByteString *stored_username = (UA_ByteString *)base_context;
+
+    if (stored_username == NULL)
+    {
+        return;
+    }
+
+    UA_ByteString_clear(stored_username);
+    UA_free(stored_username);
 }
 
 static bool model_session_has_role(const void *session_context, security_user_role_t required_role)
@@ -613,7 +765,8 @@ static security_user_role_t model_required_role_for_method(const UA_NodeId *meth
 
     if (model_nodeid_string_has_prefix(method_id, "Device.Maintenance.AcknowledgeAllAlarms") ||
         model_nodeid_string_has_prefix(method_id, "Device.Maintenance.ApplyConfig") ||
-        model_nodeid_string_has_prefix(method_id, "Device.Maintenance.SaveConfig"))
+        model_nodeid_string_has_prefix(method_id, "Device.Maintenance.SaveConfig") ||
+        model_nodeid_string_has_prefix(method_id, MODEL_METHOD_SET_MQTT_PUBSUB_ENABLED))
     {
         return SECURITY_ROLE_OPERATOR;
     }
@@ -755,6 +908,16 @@ static UA_StatusCode model_login_callback(const UA_String *user_name,
            username,
            security_service_role_to_string(role));
     fflush(stdout);
+
+    if (session_context != NULL)
+    {
+        *session_context = model_allocate_session_username(user_name);
+        if (*session_context == NULL)
+        {
+            return UA_STATUSCODE_BADOUTOFMEMORY;
+        }
+    }
+
     return UA_STATUSCODE_GOOD;
 }
 
@@ -816,12 +979,14 @@ static void model_close_session_secure_wrapper(UA_Server *server,
                                                void *session_context)
 {
     model_session_context_t *wrapped_context = (model_session_context_t *)session_context;
+    void *base_context = wrapped_context != NULL ? wrapped_context->base_context : NULL;
 
-    if (wrapped_context != NULL && g_default_close_session != NULL)
+    if (g_default_close_session != NULL)
     {
-        g_default_close_session(server, ac, session_id, wrapped_context->base_context);
+        g_default_close_session(server, ac, session_id, base_context);
     }
 
+    model_free_session_username(base_context);
     UA_free(wrapped_context);
 }
 
@@ -1013,7 +1178,14 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_CONFIG_TEMP_OFFSET, NULL},
     {MODEL_NODE_CONFIG_TEMP_SCALE, NULL},
     {MODEL_NODE_CONFIG_HIGH_ALARM, NULL},
-    {MODEL_NODE_CONFIG_HIGH_HIGH_ALARM, NULL}};
+    {MODEL_NODE_CONFIG_HIGH_HIGH_ALARM, NULL},
+    {MODEL_NODE_MESSAGING_EVENT_SEQUENCE, NULL},
+    {MODEL_NODE_MESSAGING_EVENT_ID, NULL},
+    {MODEL_NODE_MESSAGING_EVENT_TYPE, NULL},
+    {MODEL_NODE_MESSAGING_EVENT_SOURCE, NULL},
+    {MODEL_NODE_MESSAGING_EVENT_MESSAGE, NULL},
+    {MODEL_NODE_MESSAGING_EVENT_SEVERITY, NULL},
+    {MODEL_NODE_MESSAGING_EVENT_TIME, NULL}};
 static model_node_context_t g_task_node_contexts[3] = {
     {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, NULL, "OpcUaTask"},
     {MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER, NULL, "NetworkTask"},
@@ -1306,6 +1478,745 @@ static void model_store_last_event(model_event_last_kind_t kind,
     }
 }
 
+#ifdef UA_ENABLE_PUBSUB
+static void model_pubsub_reset_runtime(void)
+{
+    UA_NodeId_clear(&g_model_pubsub.connection_id);
+    UA_NodeId_clear(&g_model_pubsub.event_writer_group_id);
+    for (size_t index = 0u; index < CHANNEL_MANAGER_MAX_CHANNELS; ++index)
+    {
+        UA_NodeId_clear(&g_model_pubsub.telemetry_writer_group_ids[index]);
+    }
+
+    memset(&g_model_pubsub, 0, sizeof(g_model_pubsub));
+    memset(&g_model_pubsub_event_mirror, 0, sizeof(g_model_pubsub_event_mirror));
+}
+
+static bool model_pubsub_requested(void)
+{
+    return g_model_config.enable_mqtt_pubsub &&
+           g_model_config.mqtt_broker_url != NULL &&
+           g_model_config.mqtt_broker_url[0] != '\0' &&
+           g_model_config.mqtt_topic_root != NULL &&
+           g_model_config.mqtt_topic_root[0] != '\0';
+}
+
+static const char *model_pubsub_component_type_to_string(UA_PubSubComponentType type)
+{
+    switch (type)
+    {
+    case UA_PUBSUBCOMPONENT_CONNECTION:
+        return "Connection";
+    case UA_PUBSUBCOMPONENT_WRITERGROUP:
+        return "WriterGroup";
+    case UA_PUBSUBCOMPONENT_DATASETWRITER:
+        return "DataSetWriter";
+    case UA_PUBSUBCOMPONENT_READERGROUP:
+        return "ReaderGroup";
+    case UA_PUBSUBCOMPONENT_DATASETREADER:
+        return "DataSetReader";
+    case UA_PUBSUBCOMPONENT_PUBLISHEDDATASET:
+        return "PublishedDataSet";
+    case UA_PUBSUBCOMPONENT_SUBSCRIBEDDDATASET:
+        return "SubscribedDataSet";
+    default:
+        return "Component";
+    }
+}
+
+static const char *model_pubsub_state_to_string(UA_PubSubState state)
+{
+    switch (state)
+    {
+    case UA_PUBSUBSTATE_DISABLED:
+        return "Disabled";
+    case UA_PUBSUBSTATE_PAUSED:
+        return "Paused";
+    case UA_PUBSUBSTATE_OPERATIONAL:
+        return "Operational";
+    case UA_PUBSUBSTATE_ERROR:
+        return "Error";
+    case UA_PUBSUBSTATE_PREOPERATIONAL:
+        return "PreOperational";
+    default:
+        return "Unknown";
+    }
+}
+
+static void model_node_id_to_text(const UA_NodeId *node_id, char *buffer, size_t buffer_size)
+{
+    UA_String rendered = UA_STRING_NULL;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    buffer[0] = '\0';
+    if (node_id == NULL)
+    {
+        return;
+    }
+
+    if (node_id->identifierType == UA_NODEIDTYPE_STRING &&
+        node_id->identifier.string.data != NULL &&
+        node_id->identifier.string.length > 0u)
+    {
+        size_t length = node_id->identifier.string.length;
+        if (length >= buffer_size)
+        {
+            length = buffer_size - 1u;
+        }
+
+        memcpy(buffer, node_id->identifier.string.data, length);
+        buffer[length] = '\0';
+        return;
+    }
+
+    if (UA_NodeId_print(node_id, &rendered) == UA_STATUSCODE_GOOD &&
+        rendered.data != NULL &&
+        rendered.length > 0u)
+    {
+        size_t length = rendered.length;
+        if (length >= buffer_size)
+        {
+            length = buffer_size - 1u;
+        }
+
+        memcpy(buffer, rendered.data, length);
+        buffer[length] = '\0';
+    }
+
+    UA_String_clear(&rendered);
+}
+
+static void model_pubsub_extract_tail(const char *text, char *buffer, size_t buffer_size)
+{
+    const char *tail = text;
+    const char *last_dot = NULL;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    if (text != NULL)
+    {
+        last_dot = strrchr(text, '.');
+        if (last_dot != NULL && last_dot[1] != '\0')
+        {
+            tail = last_dot + 1;
+        }
+    }
+
+    model_copy_string_safe(buffer, buffer_size, tail);
+}
+
+static bool model_pubsub_build_client_id(char *buffer, size_t buffer_size)
+{
+    const device_profile_config_t *device_config = config_service_get();
+    const char *base = NULL;
+    int written = 0;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return false;
+    }
+
+    base = (g_model_config.hostname != NULL && g_model_config.hostname[0] != '\0')
+               ? g_model_config.hostname
+               : ((device_config != NULL && device_config->opcua_hostname[0] != '\0')
+                      ? device_config->opcua_hostname
+                      : "rp2-opcua");
+
+    written = snprintf(buffer, buffer_size, "rp2-%s", base);
+    return written > 0 && (size_t)written < buffer_size;
+}
+
+static bool model_pubsub_build_topic(char *buffer,
+                                     size_t buffer_size,
+                                     const char *root,
+                                     const char *suffix,
+                                     const char *leaf)
+{
+    int written = 0;
+
+    if (buffer == NULL || buffer_size == 0u || root == NULL || suffix == NULL)
+    {
+        return false;
+    }
+
+    written = snprintf(buffer,
+                       buffer_size,
+                       (leaf != NULL && leaf[0] != '\0') ? "%s/%s/%s" : "%s/%s",
+                       root,
+                       suffix,
+                       leaf != NULL ? leaf : "");
+    return written > 0 && (size_t)written < buffer_size;
+}
+
+static void model_pubsub_state_change_callback(UA_Server *server,
+                                               const UA_NodeId id,
+                                               UA_PubSubState state,
+                                               UA_StatusCode status)
+{
+    UA_PubSubComponentType component_type = UA_PUBSUBCOMPONENT_CONNECTION;
+    char id_text[64] = {0};
+    const char *component_name = "Component";
+
+    if (UA_Server_getPubSubComponentType(server, id, &component_type) == UA_STATUSCODE_GOOD)
+    {
+        component_name = model_pubsub_component_type_to_string(component_type);
+    }
+
+    model_node_id_to_text(&id, id_text, sizeof(id_text));
+    printf("[OPC UA]\tPubSub %s %s -> %s (0x%x %s)\n",
+           component_name,
+           id_text[0] != '\0' ? id_text : "<id>",
+           model_pubsub_state_to_string(state),
+           status,
+           UA_StatusCode_name(status));
+    fflush(stdout);
+}
+
+static UA_StatusCode model_pubsub_register_mqtt_manager(UA_ServerConfig *config)
+{
+    UA_ConnectionManager *mqtt_manager = NULL;
+
+    if (config == NULL || config->eventLoop == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    mqtt_manager = UA_ConnectionManager_new_MQTT(UA_STRING("mqtt connection manager"));
+    if (mqtt_manager == NULL)
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+
+    return config->eventLoop->registerEventSource(config->eventLoop, (UA_EventSource *)mqtt_manager);
+}
+
+static void model_pubsub_update_event_mirror(const UA_NodeId *event_type_id,
+                                             const char *source_name,
+                                             const char *message,
+                                             UA_UInt16 severity,
+                                             UA_DateTime event_time,
+                                             const UA_ByteString *event_id)
+{
+    char type_text[64] = {0};
+    char event_id_hex[33] = {0};
+
+    g_model_pubsub_event_mirror.sequence++;
+    g_model_pubsub_event_mirror.time = event_time;
+    g_model_pubsub_event_mirror.severity = (UA_UInt32)severity;
+
+    model_node_id_to_text(event_type_id, type_text, sizeof(type_text));
+    model_pubsub_extract_tail(type_text,
+                              g_model_pubsub_event_mirror.event_type,
+                              sizeof(g_model_pubsub_event_mirror.event_type));
+    model_copy_string_safe(g_model_pubsub_event_mirror.source,
+                           sizeof(g_model_pubsub_event_mirror.source),
+                           source_name);
+    model_copy_string_safe(g_model_pubsub_event_mirror.message,
+                           sizeof(g_model_pubsub_event_mirror.message),
+                           message);
+    model_event_id_to_hex(event_id, event_id_hex, sizeof(event_id_hex));
+    model_copy_string_safe(g_model_pubsub_event_mirror.event_id,
+                           sizeof(g_model_pubsub_event_mirror.event_id),
+                           event_id_hex);
+}
+
+static void model_pubsub_trigger_event_publish(UA_Server *server)
+{
+    UA_StatusCode status;
+
+    if (server == NULL || !g_model_pubsub.configured || UA_NodeId_isNull(&g_model_pubsub.event_writer_group_id))
+    {
+        return;
+    }
+
+    status = UA_Server_triggerWriterGroupPublish(server, g_model_pubsub.event_writer_group_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tPubSub event publish trigger failed: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+    }
+}
+
+static UA_StatusCode model_pubsub_add_variable_field(UA_Server *server,
+                                                     const UA_NodeId pds_id,
+                                                     const UA_NodeId published_variable,
+                                                     const char *alias)
+{
+    UA_DataSetFieldConfig field_config;
+    UA_DataSetFieldResult result;
+
+    memset(&field_config, 0, sizeof(field_config));
+    field_config.dataSetFieldType = UA_PUBSUB_DATASETFIELD_VARIABLE;
+    field_config.field.variable.fieldNameAlias = UA_STRING((char *)(alias != NULL ? alias : ""));
+    field_config.field.variable.publishParameters.publishedVariable = published_variable;
+    field_config.field.variable.publishParameters.attributeId = UA_ATTRIBUTEID_VALUE;
+    field_config.field.variable.promotedField = false;
+
+    result = UA_Server_addDataSetField(server, pds_id, &field_config, NULL);
+    return result.result;
+}
+
+static UA_StatusCode model_pubsub_add_mqtt_connection(UA_Server *server)
+{
+    UA_PubSubConnectionConfig connection_config;
+    UA_NetworkAddressUrlDataType broker_address;
+    UA_KeyValuePair connection_properties[1];
+    UA_String mqtt_client_id;
+
+    memset(&connection_config, 0, sizeof(connection_config));
+    connection_config.name = UA_STRING((char *)MODEL_PUBSUB_CONNECTION_NAME);
+    connection_config.transportProfileUri =
+        UA_STRING((char *)(g_model_pubsub.use_json ? MODEL_PUBSUB_MQTT_PROFILE_JSON : MODEL_PUBSUB_MQTT_PROFILE_UADP));
+    connection_config.publisherId.idType = UA_PUBLISHERIDTYPE_STRING;
+    connection_config.publisherId.id.string = UA_STRING(g_model_pubsub.client_id);
+
+    broker_address.networkInterface = UA_STRING_NULL;
+    broker_address.url = UA_STRING(g_model_pubsub.broker_url);
+    UA_Variant_setScalar(&connection_config.address,
+                         &broker_address,
+                         &UA_TYPES[UA_TYPES_NETWORKADDRESSURLDATATYPE]);
+
+    memset(connection_properties, 0, sizeof(connection_properties));
+    mqtt_client_id = UA_STRING(g_model_pubsub.client_id);
+    connection_properties[0].key = UA_QUALIFIEDNAME(0, (char *)"mqttClientId");
+    UA_Variant_setScalar(&connection_properties[0].value,
+                         &mqtt_client_id,
+                         &UA_TYPES[UA_TYPES_STRING]);
+    connection_config.connectionProperties.map = connection_properties;
+    connection_config.connectionProperties.mapSize = 1u;
+
+    return UA_Server_addPubSubConnection(server, &connection_config, &g_model_pubsub.connection_id);
+}
+
+static UA_StatusCode model_pubsub_add_writer_group(UA_Server *server,
+                                                   const char *name,
+                                                   const char *topic,
+                                                   UA_Duration publishing_interval,
+                                                   UA_UInt16 writer_group_id,
+                                                   UA_NodeId *out_writer_group_id)
+{
+    UA_WriterGroupConfig writer_group_config;
+    UA_BrokerWriterGroupTransportDataType broker_transport;
+    UA_ExtensionObject transport_settings;
+    UA_StatusCode status;
+
+    memset(&writer_group_config, 0, sizeof(writer_group_config));
+    writer_group_config.name = UA_STRING((char *)(name != NULL ? name : ""));
+    writer_group_config.publishingInterval = publishing_interval;
+    writer_group_config.writerGroupId = writer_group_id;
+
+    if (g_model_pubsub.use_json)
+    {
+#ifdef UA_ENABLE_JSON_ENCODING
+        UA_JsonWriterGroupMessageDataType json_message;
+        UA_ExtensionObject message_settings;
+
+        memset(&json_message, 0, sizeof(json_message));
+        json_message.networkMessageContentMask =
+            (UA_JsonNetworkMessageContentMask)(UA_JSONNETWORKMESSAGECONTENTMASK_NETWORKMESSAGEHEADER |
+                                               UA_JSONNETWORKMESSAGECONTENTMASK_DATASETMESSAGEHEADER |
+                                               UA_JSONNETWORKMESSAGECONTENTMASK_SINGLEDATASETMESSAGE |
+                                               UA_JSONNETWORKMESSAGECONTENTMASK_PUBLISHERID);
+        memset(&message_settings, 0, sizeof(message_settings));
+        message_settings.encoding = UA_EXTENSIONOBJECT_DECODED;
+        message_settings.content.decoded.type = &UA_TYPES[UA_TYPES_JSONWRITERGROUPMESSAGEDATATYPE];
+        message_settings.content.decoded.data = &json_message;
+        writer_group_config.encodingMimeType = UA_PUBSUB_ENCODING_JSON;
+        writer_group_config.messageSettings = message_settings;
+#endif
+    }
+    else
+    {
+        UA_UadpWriterGroupMessageDataType uadp_message;
+        UA_ExtensionObject message_settings;
+
+        memset(&uadp_message, 0, sizeof(uadp_message));
+        uadp_message.networkMessageContentMask =
+            (UA_UadpNetworkMessageContentMask)(UA_UADPNETWORKMESSAGECONTENTMASK_PUBLISHERID |
+                                               UA_UADPNETWORKMESSAGECONTENTMASK_GROUPHEADER |
+                                               UA_UADPNETWORKMESSAGECONTENTMASK_WRITERGROUPID |
+                                               UA_UADPNETWORKMESSAGECONTENTMASK_PAYLOADHEADER);
+        memset(&message_settings, 0, sizeof(message_settings));
+        message_settings.encoding = UA_EXTENSIONOBJECT_DECODED;
+        message_settings.content.decoded.type = &UA_TYPES[UA_TYPES_UADPWRITERGROUPMESSAGEDATATYPE];
+        message_settings.content.decoded.data = &uadp_message;
+        writer_group_config.encodingMimeType = UA_PUBSUB_ENCODING_UADP;
+        writer_group_config.messageSettings = message_settings;
+    }
+
+    memset(&broker_transport, 0, sizeof(broker_transport));
+    broker_transport.queueName = UA_STRING((char *)(topic != NULL ? topic : ""));
+    broker_transport.resourceUri = UA_STRING_NULL;
+    broker_transport.authenticationProfileUri = UA_STRING_NULL;
+    broker_transport.requestedDeliveryGuarantee = UA_BROKERTRANSPORTQUALITYOFSERVICE_BESTEFFORT;
+
+    memset(&transport_settings, 0, sizeof(transport_settings));
+    transport_settings.encoding = UA_EXTENSIONOBJECT_DECODED;
+    transport_settings.content.decoded.type = &UA_TYPES[UA_TYPES_BROKERWRITERGROUPTRANSPORTDATATYPE];
+    transport_settings.content.decoded.data = &broker_transport;
+    writer_group_config.transportSettings = transport_settings;
+
+    status = UA_Server_addWriterGroup(server,
+                                      g_model_pubsub.connection_id,
+                                      &writer_group_config,
+                                      out_writer_group_id);
+    return status;
+}
+
+static UA_StatusCode model_pubsub_add_data_set_writer(UA_Server *server,
+                                                      const UA_NodeId writer_group_id,
+                                                      const UA_NodeId pds_id,
+                                                      const char *name,
+                                                      const char *topic,
+                                                      UA_UInt16 writer_id)
+{
+    UA_DataSetWriterConfig writer_config;
+    UA_BrokerDataSetWriterTransportDataType broker_transport;
+    UA_ExtensionObject transport_settings;
+
+    memset(&writer_config, 0, sizeof(writer_config));
+    writer_config.name = UA_STRING((char *)(name != NULL ? name : ""));
+    writer_config.dataSetWriterId = writer_id;
+    writer_config.keyFrameCount = 1u;
+    writer_config.dataSetName = UA_STRING((char *)(name != NULL ? name : ""));
+
+    if (g_model_pubsub.use_json)
+    {
+#ifdef UA_ENABLE_JSON_ENCODING
+        UA_JsonDataSetWriterMessageDataType json_message;
+        UA_ExtensionObject message_settings;
+
+        memset(&json_message, 0, sizeof(json_message));
+        json_message.dataSetMessageContentMask =
+            (UA_JsonDataSetMessageContentMask)(UA_JSONDATASETMESSAGECONTENTMASK_DATASETWRITERID |
+                                               UA_JSONDATASETMESSAGECONTENTMASK_SEQUENCENUMBER |
+                                               UA_JSONDATASETMESSAGECONTENTMASK_STATUS |
+                                               UA_JSONDATASETMESSAGECONTENTMASK_TIMESTAMP);
+        memset(&message_settings, 0, sizeof(message_settings));
+        message_settings.encoding = UA_EXTENSIONOBJECT_DECODED;
+        message_settings.content.decoded.type = &UA_TYPES[UA_TYPES_JSONDATASETWRITERMESSAGEDATATYPE];
+        message_settings.content.decoded.data = &json_message;
+        writer_config.messageSettings = message_settings;
+#endif
+    }
+
+    memset(&broker_transport, 0, sizeof(broker_transport));
+    broker_transport.queueName = UA_STRING((char *)(topic != NULL ? topic : ""));
+    broker_transport.resourceUri = UA_STRING_NULL;
+    broker_transport.authenticationProfileUri = UA_STRING_NULL;
+    broker_transport.metaDataQueueName = UA_STRING_NULL;
+    broker_transport.metaDataUpdateTime = 0.0;
+    broker_transport.requestedDeliveryGuarantee = UA_BROKERTRANSPORTQUALITYOFSERVICE_BESTEFFORT;
+
+    memset(&transport_settings, 0, sizeof(transport_settings));
+    transport_settings.encoding = UA_EXTENSIONOBJECT_DECODED;
+    transport_settings.content.decoded.type = &UA_TYPES[UA_TYPES_BROKERDATASETWRITERTRANSPORTDATATYPE];
+    transport_settings.content.decoded.data = &broker_transport;
+    writer_config.transportSettings = transport_settings;
+
+    return UA_Server_addDataSetWriter(server, writer_group_id, pds_id, &writer_config, NULL);
+}
+
+static UA_StatusCode model_pubsub_add_telemetry_writer_for_channel(UA_Server *server,
+                                                                   size_t channel_index,
+                                                                   const telemetry_channel_t *channel)
+{
+    char pds_name[64];
+    char writer_group_name[64];
+    char data_set_writer_name[64];
+    char topic[MODEL_PUBSUB_TOPIC_MAX_LEN];
+    char value_node_id[128];
+    char status_node_id[128];
+    char source_timestamp_node_id[128];
+    char alarm_state_node_id[128];
+    UA_PublishedDataSetConfig pds_config;
+    UA_AddPublishedDataSetResult pds_result;
+    UA_NodeId pds_id = UA_NODEID_NULL;
+    UA_NodeId writer_group_id = UA_NODEID_NULL;
+    UA_StatusCode status;
+    UA_Duration publishing_interval = 1000.0;
+
+    if (server == NULL || channel == NULL || channel->metadata.name == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    if (!channel->settings.enabled || (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_ENABLED) == 0u)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    if (!model_pubsub_build_topic(topic,
+                                  sizeof(topic),
+                                  g_model_pubsub.topic_root,
+                                  MODEL_PUBSUB_TELEMETRY_TOPIC_SUFFIX,
+                                  channel->metadata.name))
+    {
+        return UA_STATUSCODE_BADCONFIGURATIONERROR;
+    }
+
+    if (!model_build_channel_node_id(channel, "Value", value_node_id, sizeof(value_node_id)) ||
+        !model_build_channel_node_id(channel, "Status", status_node_id, sizeof(status_node_id)) ||
+        !model_build_channel_node_id(channel, "SourceTimestamp", source_timestamp_node_id, sizeof(source_timestamp_node_id)) ||
+        !model_build_channel_node_id(channel, "AlarmState", alarm_state_node_id, sizeof(alarm_state_node_id)))
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    snprintf(pds_name, sizeof(pds_name), "%s.%s", MODEL_PUBSUB_TELEMETRY_PDS_PREFIX, channel->metadata.name);
+    snprintf(writer_group_name, sizeof(writer_group_name), "%s.%s", MODEL_PUBSUB_TELEMETRY_WG_PREFIX, channel->metadata.name);
+    snprintf(data_set_writer_name, sizeof(data_set_writer_name), "%s.%s", MODEL_PUBSUB_TELEMETRY_DSW_PREFIX, channel->metadata.name);
+
+    memset(&pds_config, 0, sizeof(pds_config));
+    pds_config.publishedDataSetType = UA_PUBSUB_DATASET_PUBLISHEDITEMS;
+    pds_config.name = UA_STRING(pds_name);
+    pds_result = UA_Server_addPublishedDataSet(server, &pds_config, &pds_id);
+    if (pds_result.addResult != UA_STATUSCODE_GOOD)
+    {
+        return pds_result.addResult;
+    }
+
+    status = model_pubsub_add_variable_field(server,
+                                             pds_id,
+                                             UA_NODEID_STRING(1, value_node_id),
+                                             "Value");
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, status_node_id),
+                                                 "Status");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, source_timestamp_node_id),
+                                                 "SourceTimestamp");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, alarm_state_node_id),
+                                                 "AlarmState");
+    }
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (channel->settings.publish_period_ms > 0u)
+    {
+        publishing_interval = (UA_Duration)channel->settings.publish_period_ms;
+    }
+
+    status = model_pubsub_add_writer_group(server,
+                                           writer_group_name,
+                                           topic,
+                                           publishing_interval,
+                                           (UA_UInt16)(100u + channel_index),
+                                           &writer_group_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_pubsub_add_data_set_writer(server,
+                                              writer_group_id,
+                                              pds_id,
+                                              data_set_writer_name,
+                                              topic,
+                                              (UA_UInt16)(1000u + channel_index));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (channel_index < CHANNEL_MANAGER_MAX_CHANNELS)
+    {
+        g_model_pubsub.telemetry_writer_group_ids[channel_index] = writer_group_id;
+        g_model_pubsub.telemetry_writer_group_count++;
+    }
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_pubsub_add_event_mirror_writer(UA_Server *server)
+{
+    char topic[MODEL_PUBSUB_TOPIC_MAX_LEN];
+    UA_PublishedDataSetConfig pds_config;
+    UA_AddPublishedDataSetResult pds_result;
+    UA_NodeId pds_id = UA_NODEID_NULL;
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+
+    if (!model_pubsub_build_topic(topic,
+                                  sizeof(topic),
+                                  g_model_pubsub.topic_root,
+                                  MODEL_PUBSUB_EVENTS_TOPIC_SUFFIX,
+                                  NULL))
+    {
+        return UA_STATUSCODE_BADCONFIGURATIONERROR;
+    }
+
+    memset(&pds_config, 0, sizeof(pds_config));
+    pds_config.publishedDataSetType = UA_PUBSUB_DATASET_PUBLISHEDITEMS;
+    pds_config.name = UA_STRING((char *)MODEL_PUBSUB_EVENTS_PDS_NAME);
+    pds_result = UA_Server_addPublishedDataSet(server, &pds_config, &pds_id);
+    if (pds_result.addResult != UA_STATUSCODE_GOOD)
+    {
+        return pds_result.addResult;
+    }
+
+    status = model_pubsub_add_variable_field(server,
+                                             pds_id,
+                                             UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING_LAST_EVENT_SEQUENCE),
+                                             "Sequence");
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING_LAST_EVENT_ID),
+                                                 "EventId");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING_LAST_EVENT_TYPE),
+                                                 "EventType");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING_LAST_EVENT_SOURCE),
+                                                 "Source");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING_LAST_EVENT_MESSAGE),
+                                                 "Message");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING_LAST_EVENT_SEVERITY),
+                                                 "Severity");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_pubsub_add_variable_field(server,
+                                                 pds_id,
+                                                 UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING_LAST_EVENT_TIME),
+                                                 "Time");
+    }
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_pubsub_add_writer_group(server,
+                                           MODEL_PUBSUB_EVENTS_WG_NAME,
+                                           topic,
+                                           60000.0,
+                                           500u,
+                                           &g_model_pubsub.event_writer_group_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return model_pubsub_add_data_set_writer(server,
+                                            g_model_pubsub.event_writer_group_id,
+                                            pds_id,
+                                            MODEL_PUBSUB_EVENTS_DSW_NAME,
+                                            topic,
+                                            5000u);
+}
+
+static UA_StatusCode model_configure_pubsub_publishers(UA_Server *server, UA_ServerConfig *config)
+{
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+
+    if (server == NULL || config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    model_pubsub_reset_runtime();
+    g_model_pubsub.enabled = model_pubsub_requested();
+    if (!g_model_pubsub.enabled)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    g_model_pubsub.use_json = g_model_config.mqtt_pubsub_use_json;
+    model_copy_string_safe(g_model_pubsub.broker_url,
+                           sizeof(g_model_pubsub.broker_url),
+                           g_model_config.mqtt_broker_url);
+    model_copy_string_safe(g_model_pubsub.topic_root,
+                           sizeof(g_model_pubsub.topic_root),
+                           g_model_config.mqtt_topic_root);
+    if (!model_pubsub_build_client_id(g_model_pubsub.client_id, sizeof(g_model_pubsub.client_id)))
+    {
+        return UA_STATUSCODE_BADCONFIGURATIONERROR;
+    }
+
+    config->pubSubConfig.stateChangeCallback = model_pubsub_state_change_callback;
+    config->pubSubConfig.enableDeltaFrames = false;
+
+    status = model_pubsub_add_mqtt_connection(server);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    for (size_t channel_index = 0u; channel_index < channel_manager_count(); ++channel_index)
+    {
+        telemetry_channel_t *channel = channel_manager_get_by_index(channel_index);
+
+        if (channel == NULL)
+        {
+            continue;
+        }
+
+        status = model_pubsub_add_telemetry_writer_for_channel(server, channel_index, channel);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+
+    status = model_pubsub_add_event_mirror_writer(server);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    g_model_pubsub.configured = true;
+    printf("[OPC UA]\tPubSub configured: broker=%s, topicRoot=%s, telemetryWriters=%u, events=yes, encoding=%s\n",
+           g_model_pubsub.broker_url,
+           g_model_pubsub.topic_root,
+           (unsigned)g_model_pubsub.telemetry_writer_group_count,
+           g_model_pubsub.use_json ? "JSON" : "UADP");
+    fflush(stdout);
+    return UA_STATUSCODE_GOOD;
+}
+#endif
+
 static void model_queue_pending_audit_event(const char *event,
                                             const char *actor,
                                             const char *subject,
@@ -1420,6 +2331,20 @@ static UA_StatusCode model_add_event_property(UA_Server *server,
         return status;
     }
 
+    /* MINIMAL Namespace 0 does not instantiate the ModellingRule objects.
+       Keep the custom event fields usable even when the Mandatory rule target
+       is absent. */
+    {
+        UA_NodeClass modelling_rule_class = UA_NODECLASS_UNSPECIFIED;
+        status = UA_Server_readNodeClass(server,
+                                         UA_NODEID_NUMERIC(0, UA_NS0ID_MODELLINGRULE_MANDATORY),
+                                         &modelling_rule_class);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return UA_STATUSCODE_GOOD;
+        }
+    }
+
     return UA_Server_addReference(server,
                                   property_id,
                                   UA_NODEID_NUMERIC(0, UA_NS0ID_HASMODELLINGRULE),
@@ -1427,17 +2352,15 @@ static UA_StatusCode model_add_event_property(UA_Server *server,
                                   true);
 }
 
-static UA_StatusCode model_write_event_string_property(UA_Server *server,
-                                                       UA_NodeId event_node_id,
-                                                       const char *browse_name,
-                                                       const char *value)
+static UA_StatusCode model_set_event_string_field(UA_KeyValueMap *event_fields,
+                                                  const char *browse_name,
+                                                  const char *value)
 {
     UA_String string_value = UA_STRING((char *)(value != NULL ? value : ""));
-    return UA_Server_writeObjectProperty_scalar(server,
-                                                event_node_id,
-                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
-                                                &string_value,
-                                                &UA_TYPES[UA_TYPES_STRING]);
+    return UA_KeyValueMap_setScalar(event_fields,
+                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    &string_value,
+                                    &UA_TYPES[UA_TYPES_STRING]);
 }
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
@@ -2092,44 +3015,37 @@ static void model_process_alarm_conditions(UA_Server *server, model_event_runtim
 }
 #endif
 
-static UA_StatusCode model_write_event_bool_property(UA_Server *server,
-                                                     UA_NodeId event_node_id,
-                                                     const char *browse_name,
-                                                     UA_Boolean value)
+static UA_StatusCode model_set_event_bool_field(UA_KeyValueMap *event_fields,
+                                                const char *browse_name,
+                                                UA_Boolean value)
 {
-    return UA_Server_writeObjectProperty_scalar(server,
-                                                event_node_id,
-                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
-                                                &value,
-                                                &UA_TYPES[UA_TYPES_BOOLEAN]);
+    return UA_KeyValueMap_setScalar(event_fields,
+                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    &value,
+                                    &UA_TYPES[UA_TYPES_BOOLEAN]);
 }
 
-static UA_StatusCode model_write_event_uint32_property(UA_Server *server,
-                                                       UA_NodeId event_node_id,
-                                                       const char *browse_name,
-                                                       UA_UInt32 value)
+static UA_StatusCode model_set_event_uint32_field(UA_KeyValueMap *event_fields,
+                                                  const char *browse_name,
+                                                  UA_UInt32 value)
 {
-    return UA_Server_writeObjectProperty_scalar(server,
-                                                event_node_id,
-                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
-                                                &value,
-                                                &UA_TYPES[UA_TYPES_UINT32]);
+    return UA_KeyValueMap_setScalar(event_fields,
+                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    &value,
+                                    &UA_TYPES[UA_TYPES_UINT32]);
 }
 
-static UA_StatusCode model_write_event_float_property(UA_Server *server,
-                                                      UA_NodeId event_node_id,
-                                                      const char *browse_name,
-                                                      UA_Float value)
+static UA_StatusCode model_set_event_float_field(UA_KeyValueMap *event_fields,
+                                                 const char *browse_name,
+                                                 UA_Float value)
 {
-    return UA_Server_writeObjectProperty_scalar(server,
-                                                event_node_id,
-                                                UA_QUALIFIEDNAME(1, (char *)browse_name),
-                                                &value,
-                                                &UA_TYPES[UA_TYPES_FLOAT]);
+    return UA_KeyValueMap_setScalar(event_fields,
+                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    &value,
+                                    &UA_TYPES[UA_TYPES_FLOAT]);
 }
 
-static UA_StatusCode model_write_config_event_fields(UA_Server *server,
-                                                     const UA_NodeId event_node_id,
+static UA_StatusCode model_write_config_event_fields(UA_KeyValueMap *event_fields,
                                                      const void *fields_context)
 {
     const model_config_event_fields_t *fields = (const model_config_event_fields_t *)fields_context;
@@ -2140,20 +3056,19 @@ static UA_StatusCode model_write_config_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_event_string_property(server, event_node_id, "ChangedSection", fields->changed_section);
+    status = model_set_event_string_field(event_fields, "ChangedSection", fields->changed_section);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "ChangedKey", fields->changed_key);
+        status = model_set_event_string_field(event_fields, "ChangedKey", fields->changed_key);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "Actor", fields->actor);
+        status = model_set_event_string_field(event_fields, "Actor", fields->actor);
     }
     return status;
 }
 
-static UA_StatusCode model_write_network_event_fields(UA_Server *server,
-                                                      const UA_NodeId event_node_id,
+static UA_StatusCode model_write_network_event_fields(UA_KeyValueMap *event_fields,
                                                       const void *fields_context)
 {
     const model_network_event_fields_t *fields = (const model_network_event_fields_t *)fields_context;
@@ -2164,24 +3079,23 @@ static UA_StatusCode model_write_network_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_event_string_property(server, event_node_id, "OldIp", fields->old_ip);
+    status = model_set_event_string_field(event_fields, "OldIp", fields->old_ip);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "NewIp", fields->new_ip);
+        status = model_set_event_string_field(event_fields, "NewIp", fields->new_ip);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_bool_property(server, event_node_id, "DhcpEnabled", fields->dhcp_enabled ? UA_TRUE : UA_FALSE);
+        status = model_set_event_bool_field(event_fields, "DhcpEnabled", fields->dhcp_enabled ? UA_TRUE : UA_FALSE);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_bool_property(server, event_node_id, "LinkUp", fields->link_up ? UA_TRUE : UA_FALSE);
+        status = model_set_event_bool_field(event_fields, "LinkUp", fields->link_up ? UA_TRUE : UA_FALSE);
     }
     return status;
 }
 
-static UA_StatusCode model_write_sensor_fault_event_fields(UA_Server *server,
-                                                           const UA_NodeId event_node_id,
+static UA_StatusCode model_write_sensor_fault_event_fields(UA_KeyValueMap *event_fields,
                                                            const void *fields_context)
 {
     const model_sensor_fault_event_fields_t *fields = (const model_sensor_fault_event_fields_t *)fields_context;
@@ -2192,24 +3106,23 @@ static UA_StatusCode model_write_sensor_fault_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_event_string_property(server, event_node_id, "SensorId", fields->sensor_id);
+    status = model_set_event_string_field(event_fields, "SensorId", fields->sensor_id);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_uint32_property(server, event_node_id, "FaultCode", fields->fault_code);
+        status = model_set_event_uint32_field(event_fields, "FaultCode", fields->fault_code);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "Quality", fields->quality);
+        status = model_set_event_string_field(event_fields, "Quality", fields->quality);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_float_property(server, event_node_id, "MeasuredValue", fields->measured_value);
+        status = model_set_event_float_field(event_fields, "MeasuredValue", fields->measured_value);
     }
     return status;
 }
 
-static UA_StatusCode model_write_maintenance_event_fields(UA_Server *server,
-                                                          const UA_NodeId event_node_id,
+static UA_StatusCode model_write_maintenance_event_fields(UA_KeyValueMap *event_fields,
                                                           const void *fields_context)
 {
     const model_maintenance_event_fields_t *fields = (const model_maintenance_event_fields_t *)fields_context;
@@ -2220,20 +3133,19 @@ static UA_StatusCode model_write_maintenance_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_event_string_property(server, event_node_id, "Operation", fields->operation);
+    status = model_set_event_string_field(event_fields, "Operation", fields->operation);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_uint32_property(server, event_node_id, "ResultCode", fields->result_code);
+        status = model_set_event_uint32_field(event_fields, "ResultCode", fields->result_code);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "Actor", fields->actor);
+        status = model_set_event_string_field(event_fields, "Actor", fields->actor);
     }
     return status;
 }
 
-static UA_StatusCode model_write_firmware_event_fields(UA_Server *server,
-                                                       const UA_NodeId event_node_id,
+static UA_StatusCode model_write_firmware_event_fields(UA_KeyValueMap *event_fields,
                                                        const void *fields_context)
 {
     const model_firmware_event_fields_t *fields = (const model_firmware_event_fields_t *)fields_context;
@@ -2244,20 +3156,19 @@ static UA_StatusCode model_write_firmware_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_event_string_property(server, event_node_id, "Version", fields->version);
+    status = model_set_event_string_field(event_fields, "Version", fields->version);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "BuildTime", fields->build_time);
+        status = model_set_event_string_field(event_fields, "BuildTime", fields->build_time);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "GitHash", fields->git_hash);
+        status = model_set_event_string_field(event_fields, "GitHash", fields->git_hash);
     }
     return status;
 }
 
-static UA_StatusCode model_write_audit_event_fields(UA_Server *server,
-                                                    const UA_NodeId event_node_id,
+static UA_StatusCode model_write_audit_event_fields(UA_KeyValueMap *event_fields,
                                                     const void *fields_context)
 {
     const model_audit_event_fields_t *fields = (const model_audit_event_fields_t *)fields_context;
@@ -2268,24 +3179,23 @@ static UA_StatusCode model_write_audit_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_event_string_property(server, event_node_id, "Actor", fields->actor);
+    status = model_set_event_string_field(event_fields, "Actor", fields->actor);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "Subject", fields->subject);
+        status = model_set_event_string_field(event_fields, "Subject", fields->subject);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_bool_property(server, event_node_id, "Result", fields->result ? UA_TRUE : UA_FALSE);
+        status = model_set_event_bool_field(event_fields, "Result", fields->result ? UA_TRUE : UA_FALSE);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "Details", fields->details);
+        status = model_set_event_string_field(event_fields, "Details", fields->details);
     }
     return status;
 }
 
-static UA_StatusCode model_write_audit_config_event_fields(UA_Server *server,
-                                                           const UA_NodeId event_node_id,
+static UA_StatusCode model_write_audit_config_event_fields(UA_KeyValueMap *event_fields,
                                                            const void *fields_context)
 {
     const model_audit_config_event_fields_t *fields = (const model_audit_config_event_fields_t *)fields_context;
@@ -2296,16 +3206,15 @@ static UA_StatusCode model_write_audit_config_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_event_string_property(server, event_node_id, "ChangedSection", fields->changed_section);
+    status = model_set_event_string_field(event_fields, "ChangedSection", fields->changed_section);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_event_string_property(server, event_node_id, "ChangedKey", fields->changed_key);
+        status = model_set_event_string_field(event_fields, "ChangedKey", fields->changed_key);
     }
     return status;
 }
 
-static UA_StatusCode model_write_audit_security_event_fields(UA_Server *server,
-                                                             const UA_NodeId event_node_id,
+static UA_StatusCode model_write_audit_security_event_fields(UA_KeyValueMap *event_fields,
                                                              const void *fields_context)
 {
     const model_audit_security_event_fields_t *fields = (const model_audit_security_event_fields_t *)fields_context;
@@ -2314,11 +3223,10 @@ static UA_StatusCode model_write_audit_security_event_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    return model_write_event_string_property(server, event_node_id, "Operation", fields->operation);
+    return model_set_event_string_field(event_fields, "Operation", fields->operation);
 }
 
-static UA_StatusCode model_write_audit_config_emit_fields(UA_Server *server,
-                                                          const UA_NodeId event_node_id,
+static UA_StatusCode model_write_audit_config_emit_fields(UA_KeyValueMap *event_fields,
                                                           const void *fields_context)
 {
     const model_audit_config_emit_fields_t *fields = (const model_audit_config_emit_fields_t *)fields_context;
@@ -2329,16 +3237,15 @@ static UA_StatusCode model_write_audit_config_emit_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_audit_event_fields(server, event_node_id, &fields->audit);
+    status = model_write_audit_event_fields(event_fields, &fields->audit);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_audit_config_event_fields(server, event_node_id, &fields->config);
+        status = model_write_audit_config_event_fields(event_fields, &fields->config);
     }
     return status;
 }
 
-static UA_StatusCode model_write_audit_security_emit_fields(UA_Server *server,
-                                                            const UA_NodeId event_node_id,
+static UA_StatusCode model_write_audit_security_emit_fields(UA_KeyValueMap *event_fields,
                                                             const void *fields_context)
 {
     const model_audit_security_emit_fields_t *fields = (const model_audit_security_emit_fields_t *)fields_context;
@@ -2349,10 +3256,10 @@ static UA_StatusCode model_write_audit_security_emit_fields(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 
-    status = model_write_audit_event_fields(server, event_node_id, &fields->audit);
+    status = model_write_audit_event_fields(event_fields, &fields->audit);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = model_write_audit_security_event_fields(server, event_node_id, &fields->security);
+        status = model_write_audit_security_event_fields(event_fields, &fields->security);
     }
     return status;
 }
@@ -2367,8 +3274,7 @@ static UA_StatusCode model_emit_event_ex(UA_Server *server,
                                          const void *fields_context,
                                          model_event_last_kind_t last_kind)
 {
-    UA_NodeId event_node_id = UA_NODEID_NULL;
-    UA_NodeId origin_id = model_device_node_id();
+    UA_KeyValueMap event_fields = {0};
     UA_DateTime event_time = UA_DateTime_now();
     UA_String source_name_string =
         UA_STRING((char *)(source_name != NULL ? source_name : ""));
@@ -2383,76 +3289,64 @@ static UA_StatusCode model_emit_event_ex(UA_Server *server,
         return UA_STATUSCODE_BADINVALIDARGUMENT;
     }
 
-    status = UA_Server_createEvent(server, event_type_id, &event_node_id);
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
-    status = UA_Server_writeObjectProperty_scalar(server,
-                                                  event_node_id,
-                                                  UA_QUALIFIEDNAME(0, (char *)"Time"),
-                                                  &event_time,
-                                                  &UA_TYPES[UA_TYPES_DATETIME]);
+    status = UA_KeyValueMap_setScalar(&event_fields,
+                                      UA_QUALIFIEDNAME(0, (char *)"Time"),
+                                      &event_time,
+                                      &UA_TYPES[UA_TYPES_DATETIME]);
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = UA_Server_writeObjectProperty_scalar(server,
-                                                      event_node_id,
-                                                      UA_QUALIFIEDNAME(0, (char *)"ReceiveTime"),
-                                                      &event_time,
-                                                      &UA_TYPES[UA_TYPES_DATETIME]);
+        status = UA_KeyValueMap_setScalar(&event_fields,
+                                          UA_QUALIFIEDNAME(0, (char *)"ReceiveTime"),
+                                          &event_time,
+                                          &UA_TYPES[UA_TYPES_DATETIME]);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = UA_Server_writeObjectProperty_scalar(server,
-                                                      event_node_id,
-                                                      UA_QUALIFIEDNAME(0, (char *)"SourceNode"),
-                                                      &source_node_id,
-                                                      &UA_TYPES[UA_TYPES_NODEID]);
+        status = UA_KeyValueMap_setScalar(&event_fields,
+                                          UA_QUALIFIEDNAME(0, (char *)"SourceNode"),
+                                          &source_node_id,
+                                          &UA_TYPES[UA_TYPES_NODEID]);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = UA_Server_writeObjectProperty_scalar(server,
-                                                      event_node_id,
-                                                      UA_QUALIFIEDNAME(0, (char *)"SourceName"),
-                                                      &source_name_string,
-                                                      &UA_TYPES[UA_TYPES_STRING]);
+        status = UA_KeyValueMap_setScalar(&event_fields,
+                                          UA_QUALIFIEDNAME(0, (char *)"SourceName"),
+                                          &source_name_string,
+                                          &UA_TYPES[UA_TYPES_STRING]);
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = UA_Server_writeObjectProperty_scalar(server,
-                                                      event_node_id,
-                                                      UA_QUALIFIEDNAME(0, (char *)"Message"),
-                                                      &event_message,
-                                                      &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
-    }
-    if (status == UA_STATUSCODE_GOOD)
-    {
-        status = UA_Server_writeObjectProperty_scalar(server,
-                                                      event_node_id,
-                                                      UA_QUALIFIEDNAME(0, (char *)"Severity"),
-                                                      &severity,
-                                                      &UA_TYPES[UA_TYPES_UINT16]);
-    }
-    if (status == UA_STATUSCODE_GOOD)
-    {
-        status = fields_writer != NULL ? fields_writer(server, event_node_id, fields_context)
+        status = fields_writer != NULL ? fields_writer(&event_fields, fields_context)
                                        : UA_STATUSCODE_GOOD;
     }
     if (status == UA_STATUSCODE_GOOD)
     {
-        status = UA_Server_triggerEvent(server, event_node_id, origin_id, &event_id, true);
-        if (status == UA_STATUSCODE_GOOD)
-        {
-            model_event_id_to_hex(&event_id, event_id_hex, sizeof(event_id_hex));
-            model_store_last_event(last_kind, event_id_hex, message);
-        }
-    }
-    else
-    {
-        (void)UA_Server_deleteNode(server, event_node_id, true);
+        status = UA_Server_createEvent(server,
+                                       source_node_id,
+                                       event_type_id,
+                                       severity,
+                                       event_message,
+                                       &event_fields,
+                                       NULL,
+                                       &event_id);
     }
 
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        model_event_id_to_hex(&event_id, event_id_hex, sizeof(event_id_hex));
+        model_store_last_event(last_kind, event_id_hex, message);
+#ifdef UA_ENABLE_PUBSUB
+        model_pubsub_update_event_mirror(&event_type_id,
+                                         source_name,
+                                         message,
+                                         severity,
+                                         event_time,
+                                         &event_id);
+        model_pubsub_trigger_event_publish(server);
+#endif
+    }
+
+    UA_KeyValueMap_clear(&event_fields);
     UA_ByteString_clear(&event_id);
 
     if (status != UA_STATUSCODE_GOOD)
@@ -3695,6 +4589,27 @@ static UA_StatusCode model_read_value(UA_Server *server,
         }
         return model_set_float_value(value, 0.0f, UA_STATUSCODE_GOOD);
     }
+    case MODEL_NODE_MESSAGING_EVENT_SEQUENCE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value, g_model_pubsub_event_mirror.sequence, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_MESSAGING_EVENT_ID:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_model_pubsub_event_mirror.event_id, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_MESSAGING_EVENT_TYPE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_model_pubsub_event_mirror.event_type, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_MESSAGING_EVENT_SOURCE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_model_pubsub_event_mirror.source, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_MESSAGING_EVENT_MESSAGE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, g_model_pubsub_event_mirror.message, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_MESSAGING_EVENT_SEVERITY:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value, g_model_pubsub_event_mirror.severity, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_MESSAGING_EVENT_TIME:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_datetime_value(value, g_model_pubsub_event_mirror.time, UA_STATUSCODE_GOOD);
     default:
         value->hasStatus = true;
         value->status = UA_STATUSCODE_BADNOTSUPPORTED;
@@ -4231,6 +5146,69 @@ static UA_StatusCode model_save_config(UA_Server *server,
                                         model_session_actor_name(session_context, actor, sizeof(actor)));
     }
 #endif
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_set_mqtt_pubsub_enabled(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context,
+                                                   const UA_NodeId *object_id,
+                                                   void *object_context,
+                                                   size_t input_size,
+                                                   const UA_Variant *input,
+                                                   size_t output_size,
+                                                   UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    UA_Boolean enabled = false;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 1u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_BOOLEAN]) ||
+        input[0].data == NULL)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    enabled = *(const UA_Boolean *)input[0].data;
+    result = config_service_set_mqtt_pubsub_enabled(enabled == UA_TRUE);
+
+    printf("[OPC UA]\tSetMqttPubSubEnabled %s (%s after SaveConfig + Reboot)\n",
+           result ? "accepted" : "failed",
+           enabled == UA_TRUE ? "enable" : "disable");
+    fflush(stdout);
+
+    model_audit_session_event(session_context,
+                              "mqtt-pubsub-enable",
+                              "device-messaging",
+                              result,
+                              enabled == UA_TRUE ? "mqtt pubsub enabled in runtime config" : "mqtt pubsub disabled in runtime config");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_config_changed_event(server,
+                                        enabled == UA_TRUE ? "MQTT PubSub enabled in runtime configuration" : "MQTT PubSub disabled in runtime configuration",
+                                        result ? 250u : 700u,
+                                        "Messaging",
+                                        "EnableMqttPubSub",
+                                        model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -4906,6 +5884,18 @@ static void model_fill_string_argument(UA_Argument *argument,
     argument->valueRank = UA_VALUERANK_SCALAR;
 }
 
+static void model_fill_boolean_argument(UA_Argument *argument,
+                                        const char *name,
+                                        const char *description)
+{
+    UA_Argument_init(argument);
+    argument->name = UA_STRING((char *)(name != NULL ? name : ""));
+    argument->description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                             (char *)(description != NULL ? description : ""));
+    argument->dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
+    argument->valueRank = UA_VALUERANK_SCALAR;
+}
+
 static UA_StatusCode model_add_method_node_with_boolean_result(UA_Server *server,
                                                                UA_NodeId maintenance_folder_id,
                                                                const char *node_id,
@@ -5029,6 +6019,24 @@ static UA_StatusCode model_add_save_config_method_node(UA_Server *server, UA_Nod
                                          "SaveConfig",
                                          "Persists the current configuration to flash",
                                          model_save_config);
+}
+
+static UA_StatusCode model_add_set_mqtt_pubsub_enabled_method_node(UA_Server *server,
+                                                                   UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_boolean_argument(&input_argument,
+                                "Enabled",
+                                "True enables MQTT PubSub in configuration; requires SaveConfig and Reboot to take effect");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_SET_MQTT_PUBSUB_ENABLED,
+                                                     "SetMqttPubSubEnabled",
+                                                     "Updates the MQTT PubSub enable flag in runtime configuration",
+                                                     model_set_mqtt_pubsub_enabled,
+                                                     1u,
+                                                     &input_argument);
 }
 
 static UA_StatusCode model_add_self_test_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
@@ -5367,6 +6375,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     UA_NodeId security_id = UA_NODEID_STRING(1, (char *)"Device.Security");
     UA_NodeId configuration_id = UA_NODEID_STRING(1, (char *)"Device.Configuration");
     UA_NodeId maintenance_id = UA_NODEID_STRING(1, (char *)"Device.Maintenance");
+    UA_NodeId messaging_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING);
     UA_StatusCode status = UA_STATUSCODE_GOOD;
 
     status = model_add_object(server,
@@ -5434,6 +6443,12 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 
     status = model_add_folder(server, "Device.Maintenance", "Maintenance", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server, MODEL_NODE_MESSAGING, "Messaging", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -6237,6 +7252,83 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
+    status = model_add_readonly_variable(server,
+                                         MODEL_NODE_MESSAGING_LAST_EVENT_SEQUENCE,
+                                         "LastPubSubEventSequence",
+                                         messaging_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_MESSAGING_EVENT_SEQUENCE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         MODEL_NODE_MESSAGING_LAST_EVENT_ID,
+                                         "LastPubSubEventId",
+                                         messaging_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_MESSAGING_EVENT_ID]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         MODEL_NODE_MESSAGING_LAST_EVENT_TYPE,
+                                         "LastPubSubEventType",
+                                         messaging_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_MESSAGING_EVENT_TYPE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         MODEL_NODE_MESSAGING_LAST_EVENT_SOURCE,
+                                         "LastPubSubEventSource",
+                                         messaging_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_MESSAGING_EVENT_SOURCE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         MODEL_NODE_MESSAGING_LAST_EVENT_MESSAGE,
+                                         "LastPubSubEventMessage",
+                                         messaging_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_MESSAGING_EVENT_MESSAGE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         MODEL_NODE_MESSAGING_LAST_EVENT_SEVERITY,
+                                         "LastPubSubEventSeverity",
+                                         messaging_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_MESSAGING_EVENT_SEVERITY]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         MODEL_NODE_MESSAGING_LAST_EVENT_TIME,
+                                         "LastPubSubEventTime",
+                                         messaging_id,
+                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_MESSAGING_EVENT_TIME]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
     if (g_model_config.enable_alarm_methods)
     {
         status = model_add_alarm_method_node(server, maintenance_id);
@@ -6276,6 +7368,12 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
         status = model_add_save_config_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_set_mqtt_pubsub_enabled_method_node(server, maintenance_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
@@ -6355,6 +7453,9 @@ bool opcua_model_init(const opcua_model_config_t *config)
     g_pending_actions.identify_next_tick = 0;
     g_pending_actions.identify_toggles_remaining = 0u;
     g_pending_actions.identify_led_on = false;
+#ifdef UA_ENABLE_PUBSUB
+    model_pubsub_reset_runtime();
+#endif
     g_model_initialized = true;
     return true;
 }
@@ -6383,10 +7484,16 @@ static void model_clear_runtime_security_config(UA_ServerConfig *config)
         memset(&config->accessControl, 0, sizeof(config->accessControl));
     }
 
-    if (config->certificateVerification.clear != NULL)
+    if (config->secureChannelPKI.clear != NULL)
     {
-        config->certificateVerification.clear(&config->certificateVerification);
-        memset(&config->certificateVerification, 0, sizeof(config->certificateVerification));
+        config->secureChannelPKI.clear(&config->secureChannelPKI);
+        memset(&config->secureChannelPKI, 0, sizeof(config->secureChannelPKI));
+    }
+
+    if (config->sessionPKI.clear != NULL)
+    {
+        config->sessionPKI.clear(&config->sessionPKI);
+        memset(&config->sessionPKI, 0, sizeof(config->sessionPKI));
     }
 
     for (size_t i = 0u; i < config->endpointsSize; ++i)
@@ -6404,6 +7511,70 @@ static void model_clear_runtime_security_config(UA_ServerConfig *config)
     UA_free(config->securityPolicies);
     config->securityPolicies = NULL;
     config->securityPoliciesSize = 0u;
+
+}
+
+static void model_clear_server_urls(UA_ServerConfig *config)
+{
+    if (config == NULL)
+    {
+        return;
+    }
+
+    for (size_t i = 0u; i < config->serverUrlsSize; ++i)
+    {
+        UA_String_clear(&config->serverUrls[i]);
+    }
+    UA_free(config->serverUrls);
+    config->serverUrls = NULL;
+    config->serverUrlsSize = 0u;
+}
+
+static UA_StatusCode model_configure_server_url(UA_ServerConfig *config,
+                                                const char *hostname,
+                                                uint16_t port)
+{
+    char endpoint_url[160];
+    UA_String url;
+    UA_StatusCode status;
+
+    if (config == NULL || hostname == NULL || hostname[0] == '\0')
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    snprintf(endpoint_url, sizeof(endpoint_url), "opc.tcp://%s:%u/", hostname, (unsigned)port);
+    url = UA_STRING(endpoint_url);
+
+    model_clear_server_urls(config);
+    config->serverUrls = (UA_String *)UA_Array_new(1u, &UA_TYPES[UA_TYPES_STRING]);
+    if (config->serverUrls == NULL)
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+
+    status = UA_String_copy(&url, &config->serverUrls[0]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_clear_server_urls(config);
+        return status;
+    }
+
+    config->serverUrlsSize = 1u;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_configure_application_uri(UA_ServerConfig *config)
+{
+    UA_String application_uri = UA_STRING((char *)MODEL_BOOTSTRAP_APPLICATION_URI);
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    UA_String_clear(&config->applicationDescription.applicationUri);
+    return UA_String_copy(&application_uri, &config->applicationDescription.applicationUri);
 }
 
 static UA_StatusCode model_seed_bootstrap_identity_if_needed(void)
@@ -6459,7 +7630,6 @@ static UA_StatusCode model_configure_secure_access_control(UA_ServerConfig *conf
 
     status = UA_AccessControl_defaultWithLoginCallback(config,
                                                        true,
-                                                       NULL,
                                                        username_policy_uri,
                                                        1u,
                                                        &placeholder_login,
@@ -6680,6 +7850,11 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     UA_ByteString local_certificate = UA_BYTESTRING_NULL;
     UA_ByteString local_private_key = UA_BYTESTRING_NULL;
     UA_ByteString trust_list_entry = UA_BYTESTRING_NULL;
+    UA_TrustListDataType trust_list_data;
+    UA_NodeId default_application_group =
+        UA_NS0ID(SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP);
+    UA_NodeId default_user_token_group =
+        UA_NS0ID(SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP);
     UA_StatusCode status;
 
     if (config == NULL)
@@ -6703,6 +7878,7 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     local_certificate.length = certificate.length;
     local_private_key.data = (UA_Byte *)private_key.data;
     local_private_key.length = private_key.length;
+    UA_TrustListDataType_init(&trust_list_data);
 
     model_clear_runtime_security_config(config);
 
@@ -6717,17 +7893,28 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     {
         trust_list_entry.data = (UA_Byte *)trust_list.data;
         trust_list_entry.length = trust_list.length;
-        status = UA_CertificateVerification_Trustlist(&config->certificateVerification,
-                                                      &trust_list_entry,
-                                                      1u,
-                                                      NULL,
-                                                      0u,
-                                                      NULL,
-                                                      0u);
+        trust_list_data.specifiedLists = UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;
+        trust_list_data.trustedCertificatesSize = 1u;
+        trust_list_data.trustedCertificates = &trust_list_entry;
+
+        status = UA_CertificateGroup_Memorystore(&config->secureChannelPKI,
+                                                 &default_application_group,
+                                                 &trust_list_data,
+                                                 config->logging,
+                                                 NULL);
+        if (status == UA_STATUSCODE_GOOD)
+        {
+            status = UA_CertificateGroup_Memorystore(&config->sessionPKI,
+                                                     &default_user_token_group,
+                                                     &trust_list_data,
+                                                     config->logging,
+                                                     NULL);
+        }
     }
     else
     {
-        UA_CertificateVerification_AcceptAll(&config->certificateVerification);
+        UA_CertificateGroup_AcceptAll(&config->secureChannelPKI);
+        UA_CertificateGroup_AcceptAll(&config->sessionPKI);
         status = UA_STATUSCODE_GOOD;
         printf("[OPC UA]\tCommissioning mode enabled: using AcceptAll client certificate verification\n");
         fflush(stdout);
@@ -6797,6 +7984,16 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
 }
 #endif
 
+static void model_bind_open62541_allocators(void)
+{
+#ifdef UA_ENABLE_MALLOC_SINGLETON
+    UA_mallocSingleton = ua_port_malloc;
+    UA_callocSingleton = ua_port_calloc;
+    UA_reallocSingleton = ua_port_realloc;
+    UA_freeSingleton = ua_port_free;
+#endif
+}
+
 void opcua_model_task(void *argument)
 {
     UA_Server *server = NULL;
@@ -6828,16 +8025,13 @@ void opcua_model_task(void *argument)
 
     printf("[OPC UA]\tIPv4 is ready, continuing startup\n");
     fflush(stdout);
-    server = UA_Server_new();
-    if (server == NULL)
-    {
-        printf("[OPC UA]\tUA_Server_new returned NULL\n");
-        fflush(stdout);
-        vTaskDelete(NULL);
-    }
+    model_bind_open62541_allocators();
 
-    log_opcua_heap("UA_Server_new completed");
-    config = UA_Server_getConfig(server);
+    UA_ServerConfig server_config;
+    memset(&server_config, 0, sizeof(server_config));
+    config = &server_config;
+    config->logging = &g_model_ua_logger;
+
     status = UA_ServerConfig_setMinimalCustomBuffer(config,
                                                     g_model_config.port,
                                                     0,
@@ -6849,17 +8043,27 @@ void opcua_model_task(void *argument)
                status,
                UA_StatusCode_name(status));
         fflush(stdout);
-        UA_Server_delete(server);
         vTaskDelete(NULL);
     }
 
     log_opcua_heap("Network layer configured");
 
+    status = model_configure_application_uri(config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tFailed to configure ApplicationUri: 0x%x (%s)\n",
+               status,
+               UA_StatusCode_name(status));
+        fflush(stdout);
+        UA_ServerConfig_clear(config);
+        vTaskDelete(NULL);
+    }
+
     /* Embedded profile: keep the default server configuration modest.
        This avoids spending heap on limits that are irrelevant for a single
        local device endpoint. */
     config->maxSecureChannels = 1;
-    config->maxSessions = 2;
+    config->maxSessions = 1;
     config->maxSubscriptions = 2;
     config->maxSubscriptionsPerSession = 2;
     config->maxMonitoredItems = 8;
@@ -6872,6 +8076,50 @@ void opcua_model_task(void *argument)
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     config->maxEventsPerNode = 8;
 #endif
+#ifdef UA_ENABLE_PUBSUB
+    config->pubsubEnabled = model_pubsub_requested();
+    config->pubSubConfig.enableDeltaFrames = false;
+    if (config->pubsubEnabled)
+    {
+        config->pubSubConfig.stateChangeCallback = model_pubsub_state_change_callback;
+        status = model_pubsub_register_mqtt_manager(config);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tFailed to register MQTT connection manager: 0x%x (%s)\n",
+                   status,
+                   UA_StatusCode_name(status));
+            fflush(stdout);
+            UA_ServerConfig_clear(config);
+            vTaskDelete(NULL);
+        }
+    }
+#endif
+
+    if (g_model_config.hostname != NULL && g_model_config.hostname[0] != '\0')
+    {
+        network_manager_status_t network_status = {0};
+        const char *hostname_text = g_model_config.hostname;
+
+        network_manager_get_status(&network_status);
+        if (network_status.has_ipv4 && network_status.ipv4_address[0] != '\0')
+        {
+            hostname_text = network_status.ipv4_address;
+        }
+
+        status = model_configure_server_url(config, hostname_text, g_model_config.port);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tFailed to configure endpoint URL: 0x%x (%s)\n",
+                   status,
+                   UA_StatusCode_name(status));
+            fflush(stdout);
+            UA_ServerConfig_clear(config);
+            vTaskDelete(NULL);
+        }
+
+        printf("[OPC UA]\tUsing endpoint host %s\n", hostname_text);
+        fflush(stdout);
+    }
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
     status = model_configure_secure_server(config);
@@ -6881,7 +8129,7 @@ void opcua_model_task(void *argument)
                status,
                UA_StatusCode_name(status));
         fflush(stdout);
-        UA_Server_delete(server);
+        UA_ServerConfig_clear(config);
         vTaskDelete(NULL);
     }
     log_opcua_heap("Secure policies and access control configured");
@@ -6904,7 +8152,7 @@ void opcua_model_task(void *argument)
                status,
                UA_StatusCode_name(status));
         fflush(stdout);
-        UA_Server_delete(server);
+        UA_ServerConfig_clear(config);
         vTaskDelete(NULL);
     }
 
@@ -6925,23 +8173,16 @@ void opcua_model_task(void *argument)
     log_opcua_heap("Historizing configured");
 #endif
 
-    if (g_model_config.hostname != NULL && g_model_config.hostname[0] != '\0')
+    server = UA_Server_newWithConfig(config);
+    if (server == NULL)
     {
-        network_manager_status_t network_status = {0};
-        const char *hostname_text = g_model_config.hostname;
-
-        network_manager_get_status(&network_status);
-        if (network_status.has_ipv4 && network_status.ipv4_address[0] != '\0')
-        {
-            hostname_text = network_status.ipv4_address;
-        }
-
-        UA_String hostname = UA_STRING((char *)hostname_text);
-        UA_String_clear(&config->customHostname);
-        UA_String_copy(&hostname, &config->customHostname);
-        printf("[OPC UA]\tUsing endpoint host %s\n", hostname_text);
+        printf("[OPC UA]\tUA_Server_newWithConfig returned NULL\n");
         fflush(stdout);
+        vTaskDelete(NULL);
     }
+
+    log_opcua_heap("UA_Server_newWithConfig completed");
+    config = UA_Server_getConfig(server);
 
     status = model_build_address_space(server);
     if (status != UA_STATUSCODE_GOOD)
@@ -6955,6 +8196,25 @@ void opcua_model_task(void *argument)
     }
 
     log_opcua_heap("Address space ready");
+
+#ifdef UA_ENABLE_PUBSUB
+    if (config->pubsubEnabled)
+    {
+        status = model_configure_pubsub_publishers(server, config);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tFailed to configure PubSub publishers: 0x%x (%s)\n",
+                   status,
+                   UA_StatusCode_name(status));
+            fflush(stdout);
+            UA_Server_delete(server);
+            vTaskDelete(NULL);
+        }
+
+        log_opcua_heap("PubSub configured");
+    }
+#endif
+
     printf("[OPC UA]\tStarting server on port %u\n", (unsigned)g_model_config.port);
     fflush(stdout);
 
@@ -6970,6 +8230,24 @@ void opcua_model_task(void *argument)
     }
 
     log_opcua_heap("Server startup complete");
+
+#ifdef UA_ENABLE_PUBSUB
+    if (g_model_pubsub.configured)
+    {
+        status = UA_Server_enableAllPubSubComponents(server);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tFailed to enable PubSub components: 0x%x (%s)\n",
+                   status,
+                   UA_StatusCode_name(status));
+            fflush(stdout);
+            UA_Server_delete(server);
+            vTaskDelete(NULL);
+        }
+
+        log_opcua_heap("PubSub enabled");
+    }
+#endif
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     security_service_set_audit_callback(model_security_audit_callback, NULL);
@@ -7060,5 +8338,3 @@ void opcua_model_task(void *argument)
 
     vTaskDelete(NULL);
 }
-
-

@@ -6,6 +6,7 @@
 
 #include "hardware/exception.h"
 #include "hardware/structs/timer.h"
+#include "pico/stdio.h"
 #include "pico/stdlib.h"
 
 #include "drivers/led_driver.h"
@@ -33,6 +34,8 @@
 #define INIT_TASK_STACK_SIZE STACK_DEPTH_BYTES(6u * 1024u)
 #define OPCUA_TASK_STACK_SIZE STACK_DEPTH_BYTES(24u * 1024u)
 #define APP_DEFAULT_WATCHDOG_TIMEOUT_MS 8000u
+
+#define fflush(_stream) stdio_flush()
 
 #define INIT_TASK_PRIORITY 4
 #define NETWORK_TASK_PRIORITY 2
@@ -75,9 +78,13 @@ static const device_profile_config_t g_basic_profile = {
     .device_name = "RP2 Basic Device",
     .opcua_hostname = "rp2-basic-profile",
     .ntp_server = "pool.ntp.org",
+    .mqtt_broker_url = "opc.mqtt://127.0.0.1:1883",
+    .mqtt_topic_root = "devices/rp2-basic-profile",
     .enable_heap_diagnostics = true,
     .enable_task_diagnostics = true,
     .enable_alarm_ack_method = true,
+    .enable_mqtt_pubsub = false,
+    .mqtt_pubsub_use_json = true,
     .opcua_port = 4840,
     .timezone_offset_minutes = 0,
     .watchdog_timeout_ms = APP_DEFAULT_WATCHDOG_TIMEOUT_MS,
@@ -370,6 +377,10 @@ static void app_init_task(void *argument)
     model_config.enable_alarm_methods = config->enable_alarm_ack_method;
     model_config.enable_heap_diagnostics = config->enable_heap_diagnostics;
     model_config.enable_task_diagnostics = config->enable_task_diagnostics;
+    model_config.enable_mqtt_pubsub = config->enable_mqtt_pubsub;
+    model_config.mqtt_pubsub_use_json = config->mqtt_pubsub_use_json;
+    model_config.mqtt_broker_url = config->mqtt_broker_url;
+    model_config.mqtt_topic_root = config->mqtt_topic_root;
     if (!opcua_model_init(&model_config))
     {
         printf("[APP]\t\tOPC UA model init failed\n");

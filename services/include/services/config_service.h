@@ -20,9 +20,13 @@ typedef struct
     char device_name[CONFIG_SERVICE_TEXT_MAX_LEN];
     char opcua_hostname[CONFIG_SERVICE_TEXT_MAX_LEN];
     char ntp_server[CONFIG_SERVICE_TEXT_MAX_LEN];
+    char mqtt_broker_url[CONFIG_SERVICE_TEXT_MAX_LEN];
+    char mqtt_topic_root[CONFIG_SERVICE_TEXT_MAX_LEN];
     bool enable_heap_diagnostics;
     bool enable_task_diagnostics;
     bool enable_alarm_ack_method;
+    bool enable_mqtt_pubsub;
+    bool mqtt_pubsub_use_json;
     uint16_t opcua_port;
     int16_t timezone_offset_minutes;
     uint32_t watchdog_timeout_ms;
@@ -39,6 +43,7 @@ const device_profile_config_t *config_service_get(void);
 bool config_service_reset_to_defaults(void);
 bool config_service_apply(void);
 bool config_service_set_timezone_offset_minutes(int16_t value);
+bool config_service_set_mqtt_pubsub_enabled(bool enabled);
 bool config_service_save(void);
 
 #endif

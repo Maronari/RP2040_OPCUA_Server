@@ -13,6 +13,7 @@
 #include "pico/flash.h"
 #include "pico/rand.h"
 #include "pico/sha256.h"
+#include "pico/stdio.h"
 #include "pico/stdlib.h"
 #include "services/time_service.h"
 
@@ -26,6 +27,8 @@
 #define SECURITY_SERVICE_FLAG_COMMISSIONING_MODE (1u << 0u)
 #define SECURITY_SERVICE_AUTH_BASE_BACKOFF_MS   1000u
 #define SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS    32000u
+
+#define fflush(_stream) stdio_flush()
 
 typedef struct
 {
