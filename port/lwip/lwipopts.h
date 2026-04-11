@@ -48,6 +48,10 @@ extern void set_system_time(uint32_t sec);
 #define LWIP_UDP                    1
 #define LWIP_TCP                    1
 #define LWIP_IPV6                   0
+#define LWIP_IGMP                   1
+#define LWIP_NETIF_LOOPBACK         1
+#define LWIP_HAVE_LOOPIF            1
+#define LWIP_MULTICAST_TX_OPTIONS   1
 #define MEM_SIZE                    4000
 
 #define LWIP_TCP_KEEPALIVE          0
@@ -105,7 +109,7 @@ extern void set_system_time(uint32_t sec);
 
 #define DEFAULT_RAW_RECVMBOX_SIZE   8
 #define MEMP_NUM_NETCONN            10
-#define PBUF_POOL_SIZE              12
+#define PBUF_POOL_SIZE              7
 #define MEMP_NUM_PBUF               16
 #define MEMP_NUM_TCP_SEG            32
 #define MEMP_NUM_TCP_WND            6

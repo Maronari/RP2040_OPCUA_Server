@@ -81,6 +81,7 @@ add_library(OPEN62541_FILES STATIC)
 
 target_sources(OPEN62541_FILES PRIVATE
         ${PORT_DIR}/open62541/open62541.c
+        ${PORT_DIR}/open62541/nodesetinjector.c
         ${PORT_DIR}/mbedtls/mbedtls_alt_alloc.c
         ${PORT_DIR}/mbedtls/mbedtls_alt_time.c
         )
@@ -91,6 +92,7 @@ target_include_directories(OPEN62541_FILES PUBLIC
         ${PORT_DIR}
         ${PORT_DIR}/lwip
         ${PORT_DIR}/open62541/include
+        ${CMAKE_SOURCE_DIR}/open62541_v1.5.3/deps/mqtt-c/include
         ${PICO_SDK_PATH}/lib/lwip/src/include
         ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
         ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
@@ -99,10 +101,6 @@ target_include_directories(OPEN62541_FILES PUBLIC
         )
 
 target_compile_definitions(OPEN62541_FILES PUBLIC
-        OPEN62541_FEERTOS_USE_OWN_MEM
-        UA_ENABLE_SUBSCRIPTIONS_EVENTS
-        UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS
-        UA_ENABLE_ENCRYPTION_MBEDTLS
         MBEDTLS_USER_CONFIG_FILE="ssl_config.h"
         )
 

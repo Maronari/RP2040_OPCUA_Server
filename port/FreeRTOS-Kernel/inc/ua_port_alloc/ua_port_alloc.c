@@ -6,8 +6,11 @@
 #include <string.h>
 
 #include <FreeRTOS.h>
+#include "pico/stdio.h"
 
 #define UA_PORT_ALLOC_MAGIC 0x55414c4cu
+
+#define fflush(_stream) stdio_flush()
 
 typedef union
 {
