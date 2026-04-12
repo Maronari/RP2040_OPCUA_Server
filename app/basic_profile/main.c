@@ -91,9 +91,9 @@ static const device_profile_config_t g_basic_profile = {
     .watchdog_timeout_ms = APP_DEFAULT_WATCHDOG_TIMEOUT_MS,
     .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56},
     .network_mode = NETWORK_MODE_DHCP,
-    .static_ip = {192, 168, 10, 42},
+    .static_ip = {192, 168, 1, 42},
     .static_netmask = {255, 255, 255, 0},
-    .static_gateway = {192, 168, 10, 1},
+    .static_gateway = {192, 168, 1, 0},
     .static_dns = {8, 8, 8, 8},
     .channels = {
         {

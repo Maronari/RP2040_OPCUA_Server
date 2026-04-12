@@ -41,6 +41,37 @@ static void config_service_force_terminated(char *text, size_t size)
     text[size - 1u] = '\0';
 }
 
+static bool config_service_ipv4_is_zero(const uint8_t address[4])
+{
+    return address == NULL ||
+           (address[0] == 0u && address[1] == 0u && address[2] == 0u && address[3] == 0u);
+}
+
+static void config_service_normalize_text_fields(device_profile_config_t *config)
+{
+    if (config == NULL)
+    {
+        return;
+    }
+
+    config_service_force_terminated(config->manufacturer, sizeof(config->manufacturer));
+    config_service_force_terminated(config->model, sizeof(config->model));
+    config_service_force_terminated(config->serial_number, sizeof(config->serial_number));
+    config_service_force_terminated(config->hw_revision, sizeof(config->hw_revision));
+    config_service_force_terminated(config->fw_revision, sizeof(config->fw_revision));
+    config_service_force_terminated(config->build_time, sizeof(config->build_time));
+    config_service_force_terminated(config->git_hash, sizeof(config->git_hash));
+    config_service_force_terminated(config->device_name, sizeof(config->device_name));
+    config_service_force_terminated(config->opcua_hostname, sizeof(config->opcua_hostname));
+    config_service_force_terminated(config->ntp_server, sizeof(config->ntp_server));
+    config_service_force_terminated(config->mqtt_broker_url, sizeof(config->mqtt_broker_url));
+    config_service_force_terminated(config->mqtt_topic_root, sizeof(config->mqtt_topic_root));
+    config_service_force_terminated(config->product_instance_uri, sizeof(config->product_instance_uri));
+    config_service_force_terminated(config->asset_id, sizeof(config->asset_id));
+    config_service_force_terminated(config->location, sizeof(config->location));
+    config_service_force_terminated(config->asset_class, sizeof(config->asset_class));
+}
+
 static void config_service_normalize_channel(config_channel_definition_t *channel, size_t index)
 {
     const driver_catalog_entry_t *driver = NULL;
@@ -181,6 +212,20 @@ static void config_service_populate_serial_number(device_profile_config_t *confi
     }
 }
 
+static void config_service_populate_product_instance_uri(device_profile_config_t *config)
+{
+    if (config == NULL || config->product_instance_uri[0] != '\0')
+    {
+        return;
+    }
+
+    (void)snprintf(config->product_instance_uri,
+                   sizeof(config->product_instance_uri),
+                   "urn:rp2-opcua:%s",
+                   config->serial_number[0] != '\0' ? config->serial_number : "device");
+    config->product_instance_uri[sizeof(config->product_instance_uri) - 1u] = '\0';
+}
+
 static void config_service_normalize(device_profile_config_t *config)
 {
     if (config == NULL)
@@ -188,9 +233,37 @@ static void config_service_normalize(device_profile_config_t *config)
         return;
     }
 
+    config_service_normalize_text_fields(config);
+
     if (!config_service_is_valid_timezone_offset_minutes(config->timezone_offset_minutes))
     {
         config->timezone_offset_minutes = 0;
+    }
+
+    if (config->opcua_port == 0u)
+    {
+        config->opcua_port = 4840u;
+    }
+
+    if (config->network_mode != NETWORK_MODE_DHCP && config->network_mode != NETWORK_MODE_STATIC)
+    {
+        config->network_mode = NETWORK_MODE_DHCP;
+    }
+
+    if (config_service_ipv4_is_zero(config->static_netmask))
+    {
+        config->static_netmask[0] = 255u;
+        config->static_netmask[1] = 255u;
+        config->static_netmask[2] = 255u;
+        config->static_netmask[3] = 0u;
+    }
+
+    if (config_service_ipv4_is_zero(config->static_dns))
+    {
+        config->static_dns[0] = 8u;
+        config->static_dns[1] = 8u;
+        config->static_dns[2] = 8u;
+        config->static_dns[3] = 8u;
     }
 
     if (config->device_name[0] == '\0' && config->opcua_hostname[0] != '\0')
@@ -232,6 +305,7 @@ static void config_service_normalize(device_profile_config_t *config)
     }
 
     config_service_populate_serial_number(config);
+    config_service_populate_product_instance_uri(config);
 }
 
 void config_service_init(const device_profile_config_t *defaults)
@@ -252,7 +326,7 @@ void config_service_init(const device_profile_config_t *defaults)
     }
 
     device_profile_config_t persisted = {0};
-    if (flash_storage_driver_load(&persisted, sizeof(persisted)))
+    if (flash_storage_driver_load_partial(&persisted, sizeof(persisted), NULL))
     {
         g_running_config = persisted;
         g_staged_config = persisted;
@@ -327,6 +401,70 @@ bool config_service_stage_set_mqtt_pubsub_enabled(bool enabled)
 {
     taskENTER_CRITICAL();
     g_staged_config.enable_mqtt_pubsub = enabled;
+    g_staged_revision++;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_stage_set_identity(const device_identity_config_t *identity)
+{
+    device_profile_config_t updated_config;
+
+    if (identity == NULL)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    updated_config = g_staged_config;
+    taskEXIT_CRITICAL();
+
+    memcpy(updated_config.device_name, identity->device_name, sizeof(updated_config.device_name));
+    memcpy(updated_config.opcua_hostname, identity->opcua_hostname, sizeof(updated_config.opcua_hostname));
+    memcpy(updated_config.product_instance_uri, identity->product_instance_uri, sizeof(updated_config.product_instance_uri));
+    memcpy(updated_config.serial_number, identity->serial_number, sizeof(updated_config.serial_number));
+    memcpy(updated_config.asset_id, identity->asset_id, sizeof(updated_config.asset_id));
+    memcpy(updated_config.hw_revision, identity->hw_revision, sizeof(updated_config.hw_revision));
+    memcpy(updated_config.fw_revision, identity->fw_revision, sizeof(updated_config.fw_revision));
+    updated_config.manufacture_date_utc = identity->manufacture_date_utc;
+    updated_config.calibration_date_utc = identity->calibration_date_utc;
+    memcpy(updated_config.location, identity->location, sizeof(updated_config.location));
+    memcpy(updated_config.asset_class, identity->asset_class, sizeof(updated_config.asset_class));
+    config_service_normalize(&updated_config);
+
+    taskENTER_CRITICAL();
+    g_staged_config = updated_config;
+    g_staged_revision++;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
+bool config_service_stage_set_network(const device_network_config_t *network)
+{
+    device_profile_config_t updated_config;
+
+    if (network == NULL || network->opcua_port == 0u)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    updated_config = g_staged_config;
+    taskEXIT_CRITICAL();
+
+    updated_config.network_mode = network->use_dhcp ? NETWORK_MODE_DHCP : NETWORK_MODE_STATIC;
+    memcpy(updated_config.mac, network->mac, sizeof(updated_config.mac));
+    memcpy(updated_config.opcua_hostname, network->opcua_hostname, sizeof(updated_config.opcua_hostname));
+    updated_config.opcua_port = network->opcua_port;
+    memcpy(updated_config.ntp_server, network->ntp_server, sizeof(updated_config.ntp_server));
+    memcpy(updated_config.static_ip, network->static_ip, sizeof(updated_config.static_ip));
+    memcpy(updated_config.static_netmask, network->static_netmask, sizeof(updated_config.static_netmask));
+    memcpy(updated_config.static_gateway, network->static_gateway, sizeof(updated_config.static_gateway));
+    memcpy(updated_config.static_dns, network->static_dns, sizeof(updated_config.static_dns));
+    config_service_normalize(&updated_config);
+
+    taskENTER_CRITICAL();
+    g_staged_config = updated_config;
     g_staged_revision++;
     taskEXIT_CRITICAL();
     return true;

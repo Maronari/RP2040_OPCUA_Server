@@ -45,6 +45,13 @@ typedef enum
     MODEL_NODE_IDENT_BUILD_TIME,
     MODEL_NODE_IDENT_GIT_HASH,
     MODEL_NODE_IDENT_DEVICE_NAME,
+    MODEL_NODE_IDENT_PRODUCT_INSTANCE_URI,
+    MODEL_NODE_IDENT_ASSET_ID,
+    MODEL_NODE_IDENT_MAC_ADDRESS,
+    MODEL_NODE_IDENT_MANUFACTURE_DATE,
+    MODEL_NODE_IDENT_CALIBRATION_DATE,
+    MODEL_NODE_IDENT_LOCATION,
+    MODEL_NODE_IDENT_ASSET_CLASS,
     MODEL_NODE_PROCESS_TEMPERATURE_VALUE,
     MODEL_NODE_PROCESS_TEMPERATURE_STATUS,
     MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
@@ -92,6 +99,7 @@ typedef enum
     MODEL_NODE_CONFIG_HIGH_ALARM,
     MODEL_NODE_CONFIG_HIGH_HIGH_ALARM,
     MODEL_NODE_CONFIG_REBOOT_REQUIRED,
+    MODEL_NODE_CONFIG_COMMISSIONED,
     MODEL_NODE_MESSAGING_EVENT_SEQUENCE,
     MODEL_NODE_MESSAGING_EVENT_ID,
     MODEL_NODE_MESSAGING_EVENT_TYPE,
@@ -337,6 +345,13 @@ enum
     FIXED_CTX_IDENT_BUILD_TIME,
     FIXED_CTX_IDENT_GIT_HASH,
     FIXED_CTX_IDENT_DEVICE_NAME,
+    FIXED_CTX_IDENT_PRODUCT_INSTANCE_URI,
+    FIXED_CTX_IDENT_ASSET_ID,
+    FIXED_CTX_IDENT_MAC_ADDRESS,
+    FIXED_CTX_IDENT_MANUFACTURE_DATE,
+    FIXED_CTX_IDENT_CALIBRATION_DATE,
+    FIXED_CTX_IDENT_LOCATION,
+    FIXED_CTX_IDENT_ASSET_CLASS,
     FIXED_CTX_PROCESS_TEMPERATURE_VALUE,
     FIXED_CTX_PROCESS_TEMPERATURE_STATUS,
     FIXED_CTX_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
@@ -383,6 +398,7 @@ enum
     FIXED_CTX_CONFIG_HIGH_ALARM,
     FIXED_CTX_CONFIG_HIGH_HIGH_ALARM,
     FIXED_CTX_CONFIG_REBOOT_REQUIRED,
+    FIXED_CTX_CONFIG_COMMISSIONED,
     FIXED_CTX_MESSAGING_EVENT_SEQUENCE,
     FIXED_CTX_MESSAGING_EVENT_ID,
     FIXED_CTX_MESSAGING_EVENT_TYPE,
@@ -400,6 +416,9 @@ enum
    keeps secure setup working and avoids per-connection heap spikes. */
 #define OPCUA_SEND_BUFFER_SIZE 8192u
 #define OPCUA_RECV_BUFFER_SIZE 16384u
+#define MODEL_METHOD_SET_DEVICE_IDENTITY "Device.Maintenance.SetDeviceIdentity"
+#define MODEL_METHOD_SET_NETWORK_CONFIG "Device.Maintenance.SetNetworkConfig"
+#define MODEL_METHOD_SET_TRUST_LIST "Device.Security.SetTrustList"
 #define MODEL_METHOD_ADD_USER "Device.Maintenance.AddUser"
 #define MODEL_METHOD_CHANGE_PASSWORD "Device.Maintenance.ChangePassword"
 #define MODEL_METHOD_SET_ROLE "Device.Maintenance.SetRole"
@@ -870,6 +889,156 @@ static bool model_get_input_ua_string(const UA_Variant *value, const UA_String *
     return true;
 }
 
+static bool model_get_input_ua_bytestring(const UA_Variant *value, const UA_ByteString **out_bytes)
+{
+    if (value == NULL || out_bytes == NULL ||
+        !UA_Variant_hasScalarType(value, &UA_TYPES[UA_TYPES_BYTESTRING]) ||
+        value->data == NULL)
+    {
+        return false;
+    }
+
+    *out_bytes = (const UA_ByteString *)value->data;
+    return true;
+}
+
+static bool model_has_config_text(const char *value)
+{
+    return value != NULL && value[0] != '\0';
+}
+
+static void model_format_mac_string(const uint8_t mac[6], char *buffer, size_t buffer_size)
+{
+    if (buffer == NULL || buffer_size == 0u || mac == NULL)
+    {
+        return;
+    }
+
+    (void)snprintf(buffer,
+                   buffer_size,
+                   "%02X:%02X:%02X:%02X:%02X:%02X",
+                   mac[0],
+                   mac[1],
+                   mac[2],
+                   mac[3],
+                   mac[4],
+                   mac[5]);
+    buffer[buffer_size - 1u] = '\0';
+}
+
+static bool model_parse_ipv4_string(const char *text, uint8_t out_ipv4[4])
+{
+    unsigned int octets[4] = {0};
+
+    if (text == NULL || out_ipv4 == NULL ||
+        sscanf(text, "%u.%u.%u.%u", &octets[0], &octets[1], &octets[2], &octets[3]) != 4)
+    {
+        return false;
+    }
+
+    for (size_t index = 0u; index < 4u; ++index)
+    {
+        if (octets[index] > 255u)
+        {
+            return false;
+        }
+
+        out_ipv4[index] = (uint8_t)octets[index];
+    }
+
+    return true;
+}
+
+static bool model_parse_mac_string(const char *text, uint8_t out_mac[6])
+{
+    unsigned int octets[6] = {0};
+
+    if (text == NULL || out_mac == NULL)
+    {
+        return false;
+    }
+
+    if (sscanf(text,
+               "%x:%x:%x:%x:%x:%x",
+               &octets[0],
+               &octets[1],
+               &octets[2],
+               &octets[3],
+               &octets[4],
+               &octets[5]) != 6 &&
+        sscanf(text,
+               "%x-%x-%x-%x-%x-%x",
+               &octets[0],
+               &octets[1],
+               &octets[2],
+               &octets[3],
+               &octets[4],
+               &octets[5]) != 6)
+    {
+        return false;
+    }
+
+    for (size_t index = 0u; index < 6u; ++index)
+    {
+        if (octets[index] > 255u)
+        {
+            return false;
+        }
+
+        out_mac[index] = (uint8_t)octets[index];
+    }
+
+    return true;
+}
+
+static bool model_identity_is_complete(const device_profile_config_t *config)
+{
+    return config != NULL &&
+           model_has_config_text(config->device_name) &&
+           model_has_config_text(config->opcua_hostname) &&
+           model_has_config_text(config->product_instance_uri) &&
+           model_has_config_text(config->serial_number) &&
+           model_has_config_text(config->asset_id) &&
+           model_has_config_text(config->hw_revision) &&
+           model_has_config_text(config->fw_revision) &&
+           model_has_config_text(config->location) &&
+           model_has_config_text(config->asset_class) &&
+           config->manufacture_date_utc > 0 &&
+           config->calibration_date_utc > 0;
+}
+
+static bool model_network_config_is_complete(const device_profile_config_t *config)
+{
+    if (config == NULL || config->opcua_port == 0u || !model_has_config_text(config->opcua_hostname))
+    {
+        return false;
+    }
+
+    if (config->network_mode == NETWORK_MODE_DHCP)
+    {
+        return true;
+    }
+
+    return !(config->static_ip[0] == 0u && config->static_ip[1] == 0u &&
+             config->static_ip[2] == 0u && config->static_ip[3] == 0u);
+}
+
+static bool model_has_trust_anchors(void)
+{
+    security_service_blob_view_t trust_list = {0};
+    return security_service_get_trust_list(&trust_list) && trust_list.length > 0u;
+}
+
+static bool model_is_commissioned(void)
+{
+    const device_profile_config_t *config = config_service_get();
+
+    return model_identity_is_complete(config) &&
+           model_network_config_is_complete(config) &&
+           model_has_trust_anchors() &&
+           !security_service_is_commissioning_mode();
+}
+
 static UA_StatusCode model_login_callback(const UA_String *user_name,
                                           const UA_ByteString *password,
                                           size_t username_password_login_size,
@@ -1145,6 +1314,13 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_IDENT_BUILD_TIME, NULL},
     {MODEL_NODE_IDENT_GIT_HASH, NULL},
     {MODEL_NODE_IDENT_DEVICE_NAME, NULL},
+    {MODEL_NODE_IDENT_PRODUCT_INSTANCE_URI, NULL},
+    {MODEL_NODE_IDENT_ASSET_ID, NULL},
+    {MODEL_NODE_IDENT_MAC_ADDRESS, NULL},
+    {MODEL_NODE_IDENT_MANUFACTURE_DATE, NULL},
+    {MODEL_NODE_IDENT_CALIBRATION_DATE, NULL},
+    {MODEL_NODE_IDENT_LOCATION, NULL},
+    {MODEL_NODE_IDENT_ASSET_CLASS, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_VALUE, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_STATUS, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP, NULL},
@@ -1191,6 +1367,7 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_CONFIG_HIGH_ALARM, NULL},
     {MODEL_NODE_CONFIG_HIGH_HIGH_ALARM, NULL},
     {MODEL_NODE_CONFIG_REBOOT_REQUIRED, NULL},
+    {MODEL_NODE_CONFIG_COMMISSIONED, NULL},
     {MODEL_NODE_MESSAGING_EVENT_SEQUENCE, NULL},
     {MODEL_NODE_MESSAGING_EVENT_ID, NULL},
     {MODEL_NODE_MESSAGING_EVENT_TYPE, NULL},
@@ -1344,6 +1521,16 @@ static bool model_channel_requires_server_rebuild(const config_channel_definitio
            model_string_changed(lhs->name, rhs->name);
 }
 
+static bool model_byte_array_changed(const uint8_t *lhs, const uint8_t *rhs, size_t size)
+{
+    if (lhs == NULL || rhs == NULL)
+    {
+        return lhs != rhs;
+    }
+
+    return memcmp(lhs, rhs, size) != 0;
+}
+
 static bool model_config_requires_server_reboot(const device_profile_config_t *lhs,
                                                 const device_profile_config_t *rhs)
 {
@@ -1357,8 +1544,16 @@ static bool model_config_requires_server_reboot(const device_profile_config_t *l
         lhs->mqtt_pubsub_use_json != rhs->mqtt_pubsub_use_json ||
         model_string_changed(lhs->device_name, rhs->device_name) ||
         model_string_changed(lhs->opcua_hostname, rhs->opcua_hostname) ||
+        model_string_changed(lhs->ntp_server, rhs->ntp_server) ||
         model_string_changed(lhs->mqtt_broker_url, rhs->mqtt_broker_url) ||
-        model_string_changed(lhs->mqtt_topic_root, rhs->mqtt_topic_root))
+        model_string_changed(lhs->mqtt_topic_root, rhs->mqtt_topic_root) ||
+        model_string_changed(lhs->product_instance_uri, rhs->product_instance_uri) ||
+        model_byte_array_changed(lhs->mac, rhs->mac, sizeof(lhs->mac)) ||
+        lhs->network_mode != rhs->network_mode ||
+        model_byte_array_changed(lhs->static_ip, rhs->static_ip, sizeof(lhs->static_ip)) ||
+        model_byte_array_changed(lhs->static_netmask, rhs->static_netmask, sizeof(lhs->static_netmask)) ||
+        model_byte_array_changed(lhs->static_gateway, rhs->static_gateway, sizeof(lhs->static_gateway)) ||
+        model_byte_array_changed(lhs->static_dns, rhs->static_dns, sizeof(lhs->static_dns)))
     {
         return true;
     }
@@ -4283,6 +4478,31 @@ static UA_StatusCode model_read_value(UA_Server *server,
     case MODEL_NODE_IDENT_DEVICE_NAME:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value, config->device_name, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_IDENT_PRODUCT_INSTANCE_URI:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, config->product_instance_uri, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_IDENT_ASSET_ID:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, config->asset_id, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_IDENT_MAC_ADDRESS:
+    {
+        char mac_address[18] = {0};
+        model_format_mac_string(config->mac, mac_address, sizeof(mac_address));
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, mac_address, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_IDENT_MANUFACTURE_DATE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_datetime_value(value, (UA_DateTime)config->manufacture_date_utc, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_IDENT_CALIBRATION_DATE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_datetime_value(value, (UA_DateTime)config->calibration_date_utc, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_IDENT_LOCATION:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, config->location, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_IDENT_ASSET_CLASS:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, config->asset_class, UA_STATUSCODE_GOOD);
     case MODEL_NODE_PROCESS_TEMPERATURE_VALUE:
     {
         telemetry_channel_t channel = {0};
@@ -4551,6 +4771,9 @@ static UA_StatusCode model_read_value(UA_Server *server,
     case MODEL_NODE_CONFIG_REBOOT_REQUIRED:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_boolean_value(value, model_is_reboot_required() ? UA_TRUE : UA_FALSE, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_CONFIG_COMMISSIONED:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_boolean_value(value, model_is_commissioned() ? UA_TRUE : UA_FALSE, UA_STATUSCODE_GOOD);
     case MODEL_NODE_DIAG_FREE_HEAP:
     {
         diag_service_heap_stats_t stats = {0};
@@ -5290,6 +5513,128 @@ static UA_StatusCode model_set_mqtt_pubsub_enabled(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_set_device_identity(UA_Server *server,
+                                               const UA_NodeId *session_id,
+                                               void *session_context,
+                                               const UA_NodeId *method_id,
+                                               void *method_context,
+                                               const UA_NodeId *object_id,
+                                               void *object_context,
+                                               size_t input_size,
+                                               const UA_Variant *input,
+                                               size_t output_size,
+                                               UA_Variant *output)
+{
+    static const size_t expected_input_size = 10u;
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    device_identity_config_t identity = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != expected_input_size || input == NULL ||
+        !model_copy_input_string(&input[0], identity.device_name, sizeof(identity.device_name)) ||
+        !model_copy_input_string(&input[1], identity.product_instance_uri, sizeof(identity.product_instance_uri)) ||
+        !model_copy_input_string(&input[2], identity.serial_number, sizeof(identity.serial_number)) ||
+        !model_copy_input_string(&input[3], identity.asset_id, sizeof(identity.asset_id)) ||
+        !model_copy_input_string(&input[4], identity.hw_revision, sizeof(identity.hw_revision)) ||
+        !model_copy_input_string(&input[5], identity.fw_revision, sizeof(identity.fw_revision)) ||
+        !UA_Variant_hasScalarType(&input[6], &UA_TYPES[UA_TYPES_DATETIME]) || input[6].data == NULL ||
+        !UA_Variant_hasScalarType(&input[7], &UA_TYPES[UA_TYPES_DATETIME]) || input[7].data == NULL ||
+        !model_copy_input_string(&input[8], identity.location, sizeof(identity.location)) ||
+        !model_copy_input_string(&input[9], identity.asset_class, sizeof(identity.asset_class)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    identity.manufacture_date_utc = (int64_t)*(const UA_DateTime *)input[6].data;
+    identity.calibration_date_utc = (int64_t)*(const UA_DateTime *)input[7].data;
+    result = config_service_stage_set_identity(&identity);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_set_network_config(UA_Server *server,
+                                              const UA_NodeId *session_id,
+                                              void *session_context,
+                                              const UA_NodeId *method_id,
+                                              void *method_context,
+                                              const UA_NodeId *object_id,
+                                              void *object_context,
+                                              size_t input_size,
+                                              const UA_Variant *input,
+                                              size_t output_size,
+                                              UA_Variant *output)
+{
+    static const size_t expected_input_size = 9u;
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    device_network_config_t network = {0};
+    UA_Boolean use_dhcp = false;
+    UA_UInt32 opcua_port = 0u;
+    char mac_address[18] = {0};
+    char ipv4[16] = {0};
+    char netmask[16] = {0};
+    char gateway[16] = {0};
+    char dns[16] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != expected_input_size || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_BOOLEAN]) || input[0].data == NULL ||
+        !model_copy_input_string(&input[1], mac_address, sizeof(mac_address)) ||
+        !model_copy_input_string(&input[2], network.opcua_hostname, sizeof(network.opcua_hostname)) ||
+        !UA_Variant_hasScalarType(&input[3], &UA_TYPES[UA_TYPES_UINT32]) || input[3].data == NULL ||
+        !model_copy_input_string(&input[4], network.ntp_server, sizeof(network.ntp_server)) ||
+        !model_copy_input_string(&input[5], ipv4, sizeof(ipv4)) ||
+        !model_copy_input_string(&input[6], netmask, sizeof(netmask)) ||
+        !model_copy_input_string(&input[7], gateway, sizeof(gateway)) ||
+        !model_copy_input_string(&input[8], dns, sizeof(dns)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    use_dhcp = *(const UA_Boolean *)input[0].data;
+    opcua_port = *(const UA_UInt32 *)input[3].data;
+    network.use_dhcp = use_dhcp == UA_TRUE;
+
+    if (opcua_port > UINT16_MAX ||
+        !model_parse_mac_string(mac_address, network.mac) ||
+        !model_parse_ipv4_string(ipv4, network.static_ip) ||
+        !model_parse_ipv4_string(netmask, network.static_netmask) ||
+        !model_parse_ipv4_string(gateway, network.static_gateway) ||
+        !model_parse_ipv4_string(dns, network.static_dns))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
+
+    network.opcua_port = (uint16_t)opcua_port;
+    result = config_service_stage_set_network(&network);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
 static void model_format_channel_config_json(size_t slot_index,
                                              const config_channel_definition_t *channel,
                                              char *buffer,
@@ -5467,7 +5812,7 @@ static UA_StatusCode model_get_config_state(UA_Server *server,
                                             UA_Variant *output)
 {
     UA_StatusCode status;
-    char payload[192] = {0};
+    char payload[320] = {0};
     const uint32_t running_revision = config_service_get_running_revision();
     const uint32_t staged_revision = config_service_get_staged_revision();
     const bool reboot_required = model_is_reboot_required();
@@ -5776,6 +6121,44 @@ static UA_StatusCode model_clear_diagnostics(UA_Server *server,
     diag_service_clear();
     printf("[OPC UA]\tDiagnostics cleared\n");
     fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_set_trust_list(UA_Server *server,
+                                          const UA_NodeId *session_id,
+                                          void *session_context,
+                                          const UA_NodeId *method_id,
+                                          void *method_context,
+                                          const UA_NodeId *object_id,
+                                          void *object_context,
+                                          size_t input_size,
+                                          const UA_Variant *input,
+                                          size_t output_size,
+                                          UA_Variant *output)
+{
+    const UA_ByteString *trust_list = NULL;
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 1u || input == NULL || !model_get_input_ua_bytestring(&input[0], &trust_list))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    result = security_service_set_trust_list(trust_list->data, trust_list->length);
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -6338,6 +6721,30 @@ static void model_fill_string_argument(UA_Argument *argument,
     argument->valueRank = UA_VALUERANK_SCALAR;
 }
 
+static void model_fill_bytestring_argument(UA_Argument *argument,
+                                           const char *name,
+                                           const char *description)
+{
+    UA_Argument_init(argument);
+    argument->name = UA_STRING((char *)(name != NULL ? name : ""));
+    argument->description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                             (char *)(description != NULL ? description : ""));
+    argument->dataType = UA_TYPES[UA_TYPES_BYTESTRING].typeId;
+    argument->valueRank = UA_VALUERANK_SCALAR;
+}
+
+static void model_fill_datetime_argument(UA_Argument *argument,
+                                         const char *name,
+                                         const char *description)
+{
+    UA_Argument_init(argument);
+    argument->name = UA_STRING((char *)(name != NULL ? name : ""));
+    argument->description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                             (char *)(description != NULL ? description : ""));
+    argument->dataType = UA_TYPES[UA_TYPES_DATETIME].typeId;
+    argument->valueRank = UA_VALUERANK_SCALAR;
+}
+
 static void model_fill_uint32_argument(UA_Argument *argument,
                                        const char *name,
                                        const char *description)
@@ -6564,6 +6971,57 @@ static UA_StatusCode model_add_set_mqtt_pubsub_enabled_method_node(UA_Server *se
                                                      &input_argument);
 }
 
+static UA_StatusCode model_add_set_device_identity_method_node(UA_Server *server,
+                                                               UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[10];
+
+    model_fill_string_argument(&input_arguments[0], "DeviceName", "Human-readable device name");
+    model_fill_string_argument(&input_arguments[1], "ProductInstanceUri", "Stable production URI");
+    model_fill_string_argument(&input_arguments[2], "SerialNumber", "Production serial number");
+    model_fill_string_argument(&input_arguments[3], "AssetId", "Plant asset identifier");
+    model_fill_string_argument(&input_arguments[4], "HWRevision", "Hardware revision");
+    model_fill_string_argument(&input_arguments[5], "FWRevision", "Firmware revision");
+    model_fill_datetime_argument(&input_arguments[6], "ManufactureDate", "Manufacturing timestamp in UTC");
+    model_fill_datetime_argument(&input_arguments[7], "CalibrationDate", "Calibration timestamp in UTC");
+    model_fill_string_argument(&input_arguments[8], "Location", "Site, line and position string");
+    model_fill_string_argument(&input_arguments[9], "AssetClass", "Asset classification");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_SET_DEVICE_IDENTITY,
+                                                     "SetDeviceIdentity",
+                                                     "Stages production identity fields.",
+                                                     model_set_device_identity,
+                                                     10u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_set_network_config_method_node(UA_Server *server,
+                                                              UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[9];
+
+    model_fill_boolean_argument(&input_arguments[0], "UseDhcp", "True selects DHCP, false selects static IPv4");
+    model_fill_string_argument(&input_arguments[1], "MacAddress", "MAC address in AA:BB:CC:DD:EE:FF format");
+    model_fill_string_argument(&input_arguments[2], "Hostname", "Hostname used in the endpoint URL");
+    model_fill_uint32_argument(&input_arguments[3], "OpcUaPort", "TCP port for the OPC UA endpoint");
+    model_fill_string_argument(&input_arguments[4], "NtpServer", "NTP server hostname");
+    model_fill_string_argument(&input_arguments[5], "IPv4", "Static IPv4 address");
+    model_fill_string_argument(&input_arguments[6], "Netmask", "Static IPv4 netmask");
+    model_fill_string_argument(&input_arguments[7], "Gateway", "Static IPv4 gateway");
+    model_fill_string_argument(&input_arguments[8], "Dns", "Static DNS server IPv4 address");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_SET_NETWORK_CONFIG,
+                                                     "SetNetworkConfig",
+                                                     "Stages network and endpoint settings.",
+                                                     model_set_network_config,
+                                                     9u,
+                                                     input_arguments);
+}
+
 static UA_StatusCode model_add_set_channel_config_method_node(UA_Server *server,
                                                               UA_NodeId maintenance_folder_id)
 {
@@ -6669,6 +7127,23 @@ static UA_StatusCode model_add_clear_diagnostics_method_node(UA_Server *server, 
                                          "ClearDiagnostics",
                                          "Clears software diagnostic fault state",
                                          model_clear_diagnostics);
+}
+
+static UA_StatusCode model_add_set_trust_list_method_node(UA_Server *server, UA_NodeId security_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_bytestring_argument(&input_argument,
+                                   "TrustList",
+                                   "Trusted client certificate or bundle as a raw ByteString. Empty clears the trust list.");
+    return model_add_method_node_with_boolean_result(server,
+                                                     security_folder_id,
+                                                     MODEL_METHOD_SET_TRUST_LIST,
+                                                     "SetTrustList",
+                                                     "Stores trust anchors in persistent security storage.",
+                                                     model_set_trust_list,
+                                                     1u,
+                                                     &input_argument);
 }
 
 static UA_StatusCode model_add_enter_commissioning_method_node(UA_Server *server, UA_NodeId security_folder_id)
@@ -7388,6 +7863,83 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
+    status = model_add_readonly_variable(server,
+                                         "Device.Identification.ProductInstanceUri",
+                                         "ProductInstanceUri",
+                                         identification_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_PRODUCT_INSTANCE_URI]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Identification.AssetId",
+                                         "AssetId",
+                                         identification_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_ASSET_ID]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Identification.MacAddress",
+                                         "MacAddress",
+                                         identification_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_MAC_ADDRESS]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Identification.ManufactureDate",
+                                         "ManufactureDate",
+                                         identification_id,
+                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_MANUFACTURE_DATE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Identification.CalibrationDate",
+                                         "CalibrationDate",
+                                         identification_id,
+                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_CALIBRATION_DATE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Identification.Location",
+                                         "Location",
+                                         identification_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_LOCATION]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Identification.AssetClass",
+                                         "AssetClass",
+                                         identification_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_ASSET_CLASS]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
     for (size_t channel_index = 0u; channel_index < channel_manager_count(); ++channel_index)
     {
         telemetry_channel_t *channel = channel_manager_get_by_index(channel_index);
@@ -7809,6 +8361,17 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
+    status = model_add_readonly_variable(server,
+                                         "Device.Configuration.Commissioned",
+                                         "Commissioned",
+                                         configuration_id,
+                                         UA_TYPES[UA_TYPES_BOOLEAN].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_CONFIG_COMMISSIONED]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
     status = model_add_writable_variable(server,
                                          "Device.Configuration.SamplingPeriodMs",
                                          "SamplingPeriodMs",
@@ -8002,6 +8565,18 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
             return status;
         }
 
+        status = model_add_set_device_identity_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_set_network_config_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
         status = model_add_set_channel_config_method_node(server, maintenance_id);
         if (status != UA_STATUSCODE_GOOD)
         {
@@ -8039,6 +8614,12 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
         status = model_add_clear_diagnostics_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_set_trust_list_method_node(server, security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
@@ -8219,12 +8800,21 @@ static UA_StatusCode model_configure_server_url(UA_ServerConfig *config,
 
 static UA_StatusCode model_configure_application_uri(UA_ServerConfig *config)
 {
-    UA_String application_uri = UA_STRING((char *)MODEL_BOOTSTRAP_APPLICATION_URI);
+    const device_profile_config_t *device_config = config_service_get();
+    const char *configured_uri = MODEL_BOOTSTRAP_APPLICATION_URI;
+    UA_String application_uri;
 
     if (config == NULL)
     {
         return UA_STATUSCODE_BADINVALIDARGUMENT;
     }
+
+    if (device_config != NULL && device_config->product_instance_uri[0] != '\0')
+    {
+        configured_uri = device_config->product_instance_uri;
+    }
+
+    application_uri = UA_STRING((char *)configured_uri);
 
     UA_String_clear(&config->applicationDescription.applicationUri);
     return UA_String_copy(&application_uri, &config->applicationDescription.applicationUri);

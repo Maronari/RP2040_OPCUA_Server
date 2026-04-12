@@ -62,7 +62,7 @@
  * Changing the feature options has no effect on a pre-compiled library. */
 
 #ifndef UA_LOGLEVEL /* allows overriding UA_LOGLEVEL from an external Makefile */
-#define UA_LOGLEVEL 200
+#define UA_LOGLEVEL 300
 #endif
 #define UA_ENABLE_AMALGAMATION
 #define UA_ENABLE_METHODCALLS

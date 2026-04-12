@@ -1,5 +1,5 @@
 set(TARGET_NAME device_profile_basic)
-set(DEVICE_PROFILE_FW_REVISION "0.1.0")
+set(DEVICE_PROFILE_FW_REVISION "0.3.0")
 string(TIMESTAMP DEVICE_PROFILE_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
 execute_process(
         COMMAND git -C ${CMAKE_SOURCE_DIR} rev-parse --short=12 --verify HEAD

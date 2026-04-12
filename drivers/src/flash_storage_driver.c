@@ -100,6 +100,42 @@ bool flash_storage_driver_load(void *buffer, size_t size)
     return true;
 }
 
+bool flash_storage_driver_load_partial(void *buffer, size_t buffer_size, size_t *out_payload_size)
+{
+    const uint8_t *flash = (const uint8_t *)(XIP_BASE + FLASH_STORAGE_OFFSET);
+    const flash_storage_header_t *header = (const flash_storage_header_t *)flash;
+    const uint8_t *payload = flash + sizeof(flash_storage_header_t);
+
+    if (buffer == NULL || buffer_size == 0u || header == NULL)
+    {
+        return false;
+    }
+
+    if (header->magic != FLASH_STORAGE_MAGIC ||
+        header->version != FLASH_STORAGE_VERSION ||
+        header->payload_size == 0u ||
+        header->payload_size > flash_storage_payload_capacity() ||
+        header->payload_size > buffer_size)
+    {
+        return false;
+    }
+
+    if (flash_storage_crc32(payload, header->payload_size) != header->crc32)
+    {
+        return false;
+    }
+
+    memset(buffer, 0, buffer_size);
+    memcpy(buffer, payload, header->payload_size);
+
+    if (out_payload_size != NULL)
+    {
+        *out_payload_size = header->payload_size;
+    }
+
+    return true;
+}
+
 bool flash_storage_driver_save(const void *buffer, size_t size)
 {
     flash_storage_header_t *header = (flash_storage_header_t *)g_flash_storage_sector_buffer;
