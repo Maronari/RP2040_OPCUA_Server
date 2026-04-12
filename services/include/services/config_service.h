@@ -2,11 +2,39 @@
 #define SERVICES_CONFIG_SERVICE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
+#include "services/driver_catalog.h"
 #include "services/service_types.h"
+#include "services/telemetry_channel.h"
 
 #define CONFIG_SERVICE_TEXT_MAX_LEN 64
+#define CONFIG_SERVICE_MAX_CHANNELS 4u
+#define CONFIG_SERVICE_CHANNEL_ID_MAX_LEN 32
+#define CONFIG_SERVICE_CHANNEL_NAME_MAX_LEN 32
+#define CONFIG_SERVICE_CHANNEL_DESCRIPTION_MAX_LEN 64
+#define CONFIG_SERVICE_CHANNEL_UNIT_MAX_LEN 16
+
+typedef struct
+{
+    uint8_t in_use;
+    uint8_t kind;
+    uint8_t value_type;
+    uint8_t driver_id;
+    uint8_t source_index;
+    uint8_t source_flags;
+    uint8_t has_minimum;
+    uint8_t has_maximum;
+    char id[CONFIG_SERVICE_CHANNEL_ID_MAX_LEN];
+    char name[CONFIG_SERVICE_CHANNEL_NAME_MAX_LEN];
+    char description[CONFIG_SERVICE_CHANNEL_DESCRIPTION_MAX_LEN];
+    char unit[CONFIG_SERVICE_CHANNEL_UNIT_MAX_LEN];
+    uint32_t flags;
+    double minimum;
+    double maximum;
+    telemetry_channel_settings_t settings;
+} config_channel_definition_t;
 
 typedef struct
 {
@@ -36,14 +64,21 @@ typedef struct
     uint8_t static_netmask[4];
     uint8_t static_gateway[4];
     uint8_t static_dns[4];
+    config_channel_definition_t channels[CONFIG_SERVICE_MAX_CHANNELS];
 } device_profile_config_t;
 
 void config_service_init(const device_profile_config_t *defaults);
 const device_profile_config_t *config_service_get(void);
+const device_profile_config_t *config_service_get_staged(void);
 bool config_service_reset_to_defaults(void);
 bool config_service_apply(void);
 bool config_service_set_timezone_offset_minutes(int16_t value);
-bool config_service_set_mqtt_pubsub_enabled(bool enabled);
+bool config_service_stage_set_mqtt_pubsub_enabled(bool enabled);
+bool config_service_stage_copy_channel(size_t index, config_channel_definition_t *out_channel);
+bool config_service_stage_set_channel(size_t index, const config_channel_definition_t *channel);
+bool config_service_stage_clear_channel(size_t index);
+uint32_t config_service_get_running_revision(void);
+uint32_t config_service_get_staged_revision(void);
 bool config_service_save(void);
 
 #endif

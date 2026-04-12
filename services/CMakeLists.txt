@@ -2,6 +2,7 @@ add_library(FIRMWARE_SERVICES STATIC
         src/alarm_service.c
         src/channel_manager.c
         src/config_service.c
+        src/driver_catalog.c
         src/diag_service.c
         src/history_service.c
         src/network_manager.c

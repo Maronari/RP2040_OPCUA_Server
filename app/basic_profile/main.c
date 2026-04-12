@@ -17,6 +17,7 @@
 #include "services/channel_manager.h"
 #include "services/config_service.h"
 #include "services/diag_service.h"
+#include "services/device_channels.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
 #include "services/security_service.h"
@@ -93,7 +94,32 @@ static const device_profile_config_t g_basic_profile = {
     .static_ip = {192, 168, 10, 42},
     .static_netmask = {255, 255, 255, 0},
     .static_gateway = {192, 168, 10, 1},
-    .static_dns = {8, 8, 8, 8}};
+    .static_dns = {8, 8, 8, 8},
+    .channels = {
+        {
+            .in_use = 1u,
+            .kind = (uint8_t)TELEMETRY_CHANNEL_KIND_ANALOG,
+            .value_type = (uint8_t)TELEMETRY_CHANNEL_VALUE_FLOAT,
+            .driver_id = (uint8_t)CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP,
+            .id = DEVICE_CHANNEL_ID_TEMPERATURE_1,
+            .name = DEVICE_CHANNEL_NAME_TEMPERATURE_1,
+            .description = "Internal temperature telemetry channel",
+            .unit = "degC",
+            .flags = TELEMETRY_CHANNEL_FLAG_ENABLED |
+                     TELEMETRY_CHANNEL_FLAG_HISTORIZED |
+                     TELEMETRY_CHANNEL_FLAG_ALARM_ENABLED,
+            .settings = {
+                .enabled = true,
+                .sample_period_ms = 1000u,
+                .publish_period_ms = 1000u,
+                .history_interval_ms = 1000u,
+                .scale = 1.0,
+                .offset = 0.0,
+                .warning_threshold = 60.0,
+                .critical_threshold = 75.0,
+            },
+        },
+    }};
 
 static uint32_t g_watchdog_timeout_ms_resolved = 0u;
 static volatile bool g_watchdog_kick_enabled = true;
