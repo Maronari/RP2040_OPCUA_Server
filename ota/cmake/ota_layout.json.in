@@ -28,6 +28,16 @@
       "offset_bytes": @OTA_BANK_B_OFFSET_BYTES@,
       "size_bytes": @OTA_BANK_SIZE_BYTES@
     },
+    "config_slot_0": {
+      "origin": "@OTA_CONFIG_SLOT_0_ORIGIN_HEX@",
+      "offset_bytes": @OTA_CONFIG_SLOT_0_OFFSET_BYTES@,
+      "size_bytes": @OTA_CONFIG_SLOT_SIZE_BYTES@
+    },
+    "config_slot_1": {
+      "origin": "@OTA_CONFIG_SLOT_1_ORIGIN_HEX@",
+      "offset_bytes": @OTA_CONFIG_SLOT_1_OFFSET_BYTES@,
+      "size_bytes": @OTA_CONFIG_SLOT_SIZE_BYTES@
+    },
     "state": {
       "origin": "@OTA_STATE_ORIGIN_HEX@",
       "offset_bytes": @OTA_STATE_OFFSET_BYTES@,

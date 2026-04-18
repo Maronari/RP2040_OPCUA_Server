@@ -7,12 +7,18 @@ _Static_assert(OTA_LAYOUT_BANK_A_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES 
                "Bank A must be erase aligned");
 _Static_assert(OTA_LAYOUT_BANK_B_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES == 0u,
                "Bank B must be erase aligned");
+_Static_assert(OTA_LAYOUT_CONFIG_SLOT_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES == 0u,
+               "Config slots must be erase aligned");
 _Static_assert(OTA_LAYOUT_STATE_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES == 0u,
                "State region must be erase aligned");
 _Static_assert(OTA_LAYOUT_BANK_A_ORIGIN == (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYOUT_BANK_A_OFFSET_BYTES),
                "Bank A origin/offset mismatch");
 _Static_assert(OTA_LAYOUT_BANK_B_ORIGIN == (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYOUT_BANK_B_OFFSET_BYTES),
                "Bank B origin/offset mismatch");
+_Static_assert(OTA_LAYOUT_CONFIG_SLOT_0_ORIGIN == (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYOUT_CONFIG_SLOT_0_OFFSET_BYTES),
+               "Config slot 0 origin/offset mismatch");
+_Static_assert(OTA_LAYOUT_CONFIG_SLOT_1_ORIGIN == (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYOUT_CONFIG_SLOT_1_OFFSET_BYTES),
+               "Config slot 1 origin/offset mismatch");
 _Static_assert(OTA_LAYOUT_STATE_ORIGIN == (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYOUT_STATE_OFFSET_BYTES),
                "State origin/offset mismatch");
 _Static_assert((OTA_LAYOUT_STATE_OFFSET_BYTES + OTA_LAYOUT_STATE_SIZE_BYTES) == OTA_LAYOUT_FLASH_TOTAL_SIZE_BYTES,

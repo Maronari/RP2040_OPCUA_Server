@@ -393,6 +393,12 @@ static void bootloader_print_banner(void)
     printf("[BOOT] bank B:          0x%08lx + 0x%08lx\n",
            (unsigned long)OTA_LAYOUT_BANK_B_ORIGIN,
            (unsigned long)OTA_LAYOUT_BANK_B_SIZE_BYTES);
+    printf("[BOOT] config slot 0:   0x%08lx + 0x%08lx\n",
+           (unsigned long)OTA_LAYOUT_CONFIG_SLOT_0_ORIGIN,
+           (unsigned long)OTA_LAYOUT_CONFIG_SLOT_SIZE_BYTES);
+    printf("[BOOT] config slot 1:   0x%08lx + 0x%08lx\n",
+           (unsigned long)OTA_LAYOUT_CONFIG_SLOT_1_ORIGIN,
+           (unsigned long)OTA_LAYOUT_CONFIG_SLOT_SIZE_BYTES);
     printf("[BOOT] state region:    0x%08lx + 0x%08lx\n",
            (unsigned long)OTA_LAYOUT_STATE_ORIGIN,
            (unsigned long)OTA_LAYOUT_STATE_SIZE_BYTES);
