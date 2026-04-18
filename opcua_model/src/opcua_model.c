@@ -9930,6 +9930,17 @@ void opcua_model_task(void *argument)
         vTaskDelay(pdMS_TO_TICKS(wait_ms));
     }
 
+    if (g_pending_actions.reboot_pending)
+    {
+        printf("[OPC UA]\tExecuting scheduled reboot\n");
+        fflush(stdout);
+        diag_service_reboot(10u);
+        while (1)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
     status = UA_Server_run_shutdown(server);
     if (status != UA_STATUSCODE_GOOD)
     {
@@ -9944,17 +9955,6 @@ void opcua_model_task(void *argument)
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     security_service_set_audit_callback(NULL, NULL);
 #endif
-
-    if (g_pending_actions.reboot_pending)
-    {
-        printf("[OPC UA]\tExecuting scheduled reboot\n");
-        fflush(stdout);
-        diag_service_reboot(10u);
-        while (1)
-        {
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-    }
 
     vTaskDelete(NULL);
 }

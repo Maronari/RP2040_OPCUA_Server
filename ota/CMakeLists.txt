@@ -9,7 +9,7 @@ target_include_directories(OTA_SHARED PUBLIC
 
 ota_layout_apply_to_target(OTA_SHARED)
 
-target_compile_definitions(OTA_SHARED PRIVATE
+target_compile_definitions(OTA_SHARED PUBLIC
         PICO_FLASH_ASSERT_ON_UNSAFE=0
         PICO_FLASH_ASSUME_CORE1_SAFE=1
         )

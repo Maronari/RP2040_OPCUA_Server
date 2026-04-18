@@ -22,6 +22,7 @@ pico_set_program_name(${BOOTLOADER_TARGET} "ota_bootloader")
 pico_set_program_version(${BOOTLOADER_TARGET} "0.1.0")
 
 target_compile_definitions(${BOOTLOADER_TARGET} PRIVATE
+        PICO_CORE1_STACK_SIZE=0
         PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=1
         PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0
         PICO_STDIO_USB_POST_CONNECT_WAIT_DELAY_MS=0

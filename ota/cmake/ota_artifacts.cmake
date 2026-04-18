@@ -28,7 +28,7 @@ if(TARGET ota_bootloader AND TARGET device_profile_basic_bank_a)
     add_custom_command(
         OUTPUT ${OTA_PAYLOAD_MANIFEST}
         COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
-                ${CMAKE_SOURCE_DIR}/cmake/write_ota_manifest.ps1
+                ${CMAKE_SOURCE_DIR}/ota/tools/write_ota_manifest.ps1
                 -PayloadBin ${OTA_PAYLOAD_BIN}
                 -OutJson ${OTA_PAYLOAD_MANIFEST}
                 -Board ${PICO_BOARD}
@@ -44,7 +44,7 @@ if(TARGET ota_bootloader AND TARGET device_profile_basic_bank_a)
     add_custom_command(
         OUTPUT ${FACTORY_FULL_BIN}
         COMMAND powershell -NoProfile -ExecutionPolicy Bypass -File
-                ${CMAKE_SOURCE_DIR}/cmake/combine_ota_factory.ps1
+                ${CMAKE_SOURCE_DIR}/ota/tools/combine_ota_factory.ps1
                 -BootloaderBin ${CMAKE_BINARY_DIR}/bootloader/ota_bootloader.bin
                 -AppBin ${CMAKE_BINARY_DIR}/app/basic_profile/device_profile_basic_bank_a.bin
                 -AppOffsetBytes ${OTA_BANK_A_OFFSET_BYTES}

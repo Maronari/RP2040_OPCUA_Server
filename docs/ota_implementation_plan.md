@@ -3,7 +3,7 @@
 ## Invariants
 
 - `boards/include/boards/weact_studio_rp2350a_16mb.h` remains the single source of truth for hardware facts.
-- `cmake/ota_layout.cmake` is the single source of truth for OTA partitioning.
+- `ota/cmake/ota_layout.cmake` is the single source of truth for OTA partitioning.
 - The application always executes from a fixed address in Bank A.
 - OTA updates stage into Bank B and are copied into Bank A only on reboot.
 - Factory images and OTA payloads are different artifacts.

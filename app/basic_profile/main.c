@@ -223,6 +223,23 @@ static void app_log_ota_state(void)
     fflush(stdout);
 }
 
+static void app_acknowledge_ota_boot_if_needed(void)
+{
+    ota_state_record_t record;
+    ota_flash_status_t status;
+
+    if (!ota_flash_read_state(&record) || record.state != OTA_IMAGE_STATE_READY_TO_BOOT)
+    {
+        return;
+    }
+
+    status = ota_flash_reset_state();
+    if (status != OTA_FLASH_STATUS_OK)
+    {
+        return;
+    }
+}
+
 static bool create_task(TaskFunction_t entry_point,
                         const char *name,
                         configSTACK_DEPTH_TYPE stack_size,
@@ -419,6 +436,10 @@ static void app_init_task(void *argument)
     g_watchdog_timeout_ms_resolved = app_resolve_watchdog_timeout_ms(config);
     g_watchdog_kick_enabled = true;
     watchdog_driver_init(g_watchdog_timeout_ms_resolved);
+    printf("[APP]\t\tRunning FW=%s Build=%s Git=%s\n",
+           DEVICE_PROFILE_FW_REVISION,
+           DEVICE_PROFILE_BUILD_TIME,
+           DEVICE_PROFILE_GIT_HASH);
     printf("[APP]\t\tWatchdog enabled, timeout=%u ms%s\n",
            (unsigned)g_watchdog_timeout_ms_resolved,
            (config != NULL && config->watchdog_timeout_ms == 0u) ? " (fallback default)" : "");
@@ -470,6 +491,7 @@ static void app_init_task(void *argument)
     }
 
     print_heap_usage("Init task complete");
+    app_acknowledge_ota_boot_if_needed();
     vTaskDelete(NULL);
 }
 
@@ -483,10 +505,11 @@ int main(void)
     sleep_ms(100);
     app_install_exception_handlers();
 
-    printf("[APP]\t\tBooting %s FW=%s HW=%s Git=%s\n",
+    printf("[APP]\t\tBooting %s FW=%s HW=%s Build=%s Git=%s\n",
            g_basic_profile.device_name,
            DEVICE_PROFILE_FW_REVISION,
            DEVICE_PROFILE_HW_REVISION,
+           DEVICE_PROFILE_BUILD_TIME,
            DEVICE_PROFILE_GIT_HASH);
     fflush(stdout);
     app_log_ota_state();

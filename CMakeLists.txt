@@ -58,7 +58,7 @@ set(CMAKE_CXX_STANDARD 17)
 # Initialize the SDK
 pico_sdk_init()
 
-include(${CMAKE_SOURCE_DIR}/cmake/ota_layout.cmake)
+include(${CMAKE_SOURCE_DIR}/ota/cmake/ota_layout.cmake)
 
 set(DEVICE_IDENTITY_CERT_DER_FILE
     "${CMAKE_SOURCE_DIR}/static/certs/server.crt.der"
@@ -114,7 +114,7 @@ add_subdirectory(app)
 
 if(OTA_BUILD_BOOTLOADER AND EXISTS ${CMAKE_SOURCE_DIR}/bootloader/CMakeLists.txt)
     add_subdirectory(bootloader)
-    include(${CMAKE_SOURCE_DIR}/cmake/ota_artifacts.cmake)
+    include(${CMAKE_SOURCE_DIR}/ota/cmake/ota_artifacts.cmake)
 endif()
 
 if(BUILD_LEGACY_EXAMPLES)

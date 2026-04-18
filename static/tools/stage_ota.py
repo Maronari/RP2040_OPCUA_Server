@@ -29,6 +29,7 @@ METHOD_BEGIN = 'ns=1;s=Device.Maintenance.BeginFirmwareUpdate'
 METHOD_WRITE = 'ns=1;s=Device.Maintenance.WriteFirmwareChunk'
 METHOD_FINALIZE = 'ns=1;s=Device.Maintenance.FinalizeFirmwareUpdate'
 METHOD_ABORT = 'ns=1;s=Device.Maintenance.AbortFirmwareUpdate'
+METHOD_REBOOT = 'ns=1;s=Device.Maintenance.Reboot'
 
 
 def parse_args():
@@ -55,6 +56,7 @@ def parse_args():
     parser.add_argument('--no-auto-client-cert', action='store_true')
     parser.add_argument('--skip-pre-status', action='store_true')
     parser.add_argument('--skip-post-status', action='store_true')
+    parser.add_argument('--reboot-after-finalize', action='store_true')
     return parser.parse_args()
 
 
@@ -173,13 +175,18 @@ async def get_status(maintenance_node):
     return json.loads(str(unwrap_scalar_result(result)))
 
 
+async def request_reboot(maintenance_node):
+    result = await maintenance_node.call_method(ua.NodeId.from_string(METHOD_REBOOT))
+    return bool(unwrap_scalar_result(result))
+
+
 def print_status(prefix, status):
     print(f'{prefix}: {json.dumps(status, indent=2, sort_keys=True)}')
 
 
 def print_progress(sent_bytes, total_bytes):
     percent = (100.0 * sent_bytes / total_bytes) if total_bytes else 100.0
-    print(f'\\rUploaded {sent_bytes}/{total_bytes} bytes ({percent:5.1f}%)', end='', flush=True)
+    print(f'\rUploaded {sent_bytes}/{total_bytes} bytes ({percent:5.1f}%)', end='', flush=True)
 
 
 async def stage_payload(client, args, payload_info):
@@ -256,6 +263,12 @@ async def stage_payload(client, args, payload_info):
         print_status('Post-upload status', status_after)
         if status_after.get('otaState') != 'STAGED_IN_BANK_B':
             raise RuntimeError('Upload finished but otaState is not STAGED_IN_BANK_B')
+
+    if args.reboot_after_finalize:
+        reboot_ok = await request_reboot(maintenance)
+        if not reboot_ok:
+            raise RuntimeError('Reboot returned false after successful finalize')
+        print('Reboot requested')
 
 
 async def main_async():

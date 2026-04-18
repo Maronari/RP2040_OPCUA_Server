@@ -21,7 +21,7 @@ endfunction()
 
 ota_pack_firmware_version("${DEVICE_PROFILE_FW_REVISION}" DEVICE_PROFILE_FW_VERSION_NUMBER)
 
-string(TIMESTAMP DEVICE_PROFILE_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
+
 execute_process(
         COMMAND git -C ${CMAKE_SOURCE_DIR} rev-parse --short=12 --verify HEAD
         OUTPUT_VARIABLE DEVICE_PROFILE_GIT_HASH
@@ -145,7 +145,6 @@ function(add_device_profile_target target_name use_ota_linker)
             PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
             DEVICE_PROFILE_HW_REVISION=\"${PICO_BOARD}/${WIZNET_CHIP}\"
             DEVICE_PROFILE_FW_REVISION=\"${DEVICE_PROFILE_FW_REVISION}\"
-            DEVICE_PROFILE_BUILD_TIME=\"${DEVICE_PROFILE_BUILD_TIME}\"
             DEVICE_PROFILE_GIT_HASH=\"${DEVICE_PROFILE_GIT_HASH}\"
             )
 endfunction()
