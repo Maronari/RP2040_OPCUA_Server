@@ -40,6 +40,7 @@ if(NOT DEFINED PICO_DEOPTIMIZED_DEBUG AND CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 option(BUILD_LEGACY_EXAMPLES "Build legacy example targets" OFF)
+option(OTA_BUILD_BOOTLOADER "Build the OTA bootloader target" OFF)
 
 include(pico_sdk_import.cmake)
 include(rp2040_hat_lwip_c_sdk_version.cmake)
@@ -56,6 +57,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Initialize the SDK
 pico_sdk_init()
+
+include(${CMAKE_SOURCE_DIR}/cmake/ota_layout.cmake)
 
 set(DEVICE_IDENTITY_CERT_DER_FILE
     "${CMAKE_SOURCE_DIR}/static/certs/server.crt.der"
@@ -98,16 +101,21 @@ if(NOT DEFINED OPEN62541_DIR)
 endif()
 
 add_definitions(-DUA_ARCHITECTURE_FREERTOSLWIP)
-
 add_definitions(-DSET_TRUSTED_CERT_IN_SAMPLES)
 
 # Add libraries in subdirectories
 add_subdirectory(${CMAKE_SOURCE_DIR}/libraries)
 add_subdirectory(${PORT_DIR})
 add_subdirectory(drivers)
+add_subdirectory(ota)
 add_subdirectory(services)
 add_subdirectory(opcua_model)
 add_subdirectory(app)
+
+if(OTA_BUILD_BOOTLOADER AND EXISTS ${CMAKE_SOURCE_DIR}/bootloader/CMakeLists.txt)
+    add_subdirectory(bootloader)
+    include(${CMAKE_SOURCE_DIR}/cmake/ota_artifacts.cmake)
+endif()
 
 if(BUILD_LEGACY_EXAMPLES)
     add_subdirectory(examples)

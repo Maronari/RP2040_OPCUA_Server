@@ -4,6 +4,7 @@ add_library(FIRMWARE_SERVICES STATIC
         src/config_service.c
         src/driver_catalog.c
         src/diag_service.c
+        src/firmware_update_service.c
         src/history_service.c
         src/network_manager.c
         src/security_service.c
@@ -26,6 +27,7 @@ target_compile_definitions(FIRMWARE_SERVICES PUBLIC
 
 target_link_libraries(FIRMWARE_SERVICES PUBLIC
         FIRMWARE_DRIVERS
+        OTA_SHARED
         FREERTOS_FILES
         pico_sha256
         pico_mbedtls

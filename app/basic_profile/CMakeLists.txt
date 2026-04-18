@@ -1,5 +1,26 @@
 set(TARGET_NAME device_profile_basic)
 set(DEVICE_PROFILE_FW_REVISION "0.3.0")
+
+function(ota_pack_firmware_version version_text out_version_number)
+    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _version_match "${version_text}")
+    if(NOT _version_match)
+        message(FATAL_ERROR "DEVICE_PROFILE_FW_REVISION must use semantic version format MAJOR.MINOR.PATCH, got: ${version_text}")
+    endif()
+
+    set(_major ${CMAKE_MATCH_1})
+    set(_minor ${CMAKE_MATCH_2})
+    set(_patch ${CMAKE_MATCH_3})
+
+    if(_major GREATER 255 OR _minor GREATER 255 OR _patch GREATER 65535)
+        message(FATAL_ERROR "Firmware version components exceed OTA packing limits: ${version_text}")
+    endif()
+
+    math(EXPR _version_number "(${_major} << 24) | (${_minor} << 16) | ${_patch}")
+    set(${out_version_number} ${_version_number} PARENT_SCOPE)
+endfunction()
+
+ota_pack_firmware_version("${DEVICE_PROFILE_FW_REVISION}" DEVICE_PROFILE_FW_VERSION_NUMBER)
+
 string(TIMESTAMP DEVICE_PROFILE_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
 execute_process(
         COMMAND git -C ${CMAKE_SOURCE_DIR} rev-parse --short=12 --verify HEAD
@@ -10,6 +31,10 @@ execute_process(
 if(NOT DEVICE_PROFILE_GIT_HASH)
     set(DEVICE_PROFILE_GIT_HASH "unknown")
 endif()
+
+set(OTA_APP_FIRMWARE_VERSION ${DEVICE_PROFILE_FW_REVISION} CACHE INTERNAL "OTA app firmware version" FORCE)
+set(OTA_APP_FIRMWARE_VERSION_NUMBER ${DEVICE_PROFILE_FW_VERSION_NUMBER} CACHE INTERNAL "OTA app firmware version number" FORCE)
+set(OTA_APP_GIT_HASH ${DEVICE_PROFILE_GIT_HASH} CACHE INTERNAL "OTA app git hash" FORCE)
 
 set(DEVICE_IDENTITY_CERT_DER_FILE "" CACHE FILEPATH "DER-encoded OPC UA device certificate to provision into flash")
 set(DEVICE_IDENTITY_PRIVATE_KEY_FILE "" CACHE FILEPATH "PEM or DER private key to provision into flash")
@@ -83,33 +108,50 @@ configure_file(${CMAKE_CURRENT_LIST_DIR}/device_identity_provisioning.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/generated/device_identity_provisioning.h
                @ONLY)
 
-add_executable(${TARGET_NAME}
-        main.c
-        )
+function(add_device_profile_target target_name use_ota_linker)
+    add_executable(${target_name}
+            main.c
+            ota_layout_sanity.c
+            )
 
-target_include_directories(${TARGET_NAME} PRIVATE
-        ${CMAKE_CURRENT_BINARY_DIR}/generated
-        )
+    target_include_directories(${target_name} PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/generated
+            )
 
-target_link_libraries(${TARGET_NAME} PRIVATE
-        FIRMWARE_DRIVERS
-        FIRMWARE_SERVICES
-        OPCUA_DEVICE_MODEL
-        )
+    ota_layout_apply_to_target(${target_name})
+    if(use_ota_linker)
+        ota_layout_set_app_bank_a_linker_script(${target_name})
+    endif()
 
-pico_enable_stdio_usb(${TARGET_NAME} 1)
-pico_enable_stdio_uart(${TARGET_NAME} 0)
-pico_add_extra_outputs(${TARGET_NAME})
+    target_link_libraries(${target_name} PRIVATE
+            OTA_SHARED
+            FIRMWARE_DRIVERS
+            FIRMWARE_SERVICES
+            OPCUA_DEVICE_MODEL
+            )
 
-target_compile_definitions(${TARGET_NAME} PRIVATE
-        PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=1
-        PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0
-        PICO_STDIO_USB_POST_CONNECT_WAIT_DELAY_MS=0
-        PICO_STDIO_USB_STDOUT_TIMEOUT_US=0
-        PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
-        PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
-        DEVICE_PROFILE_HW_REVISION=\"${PICO_BOARD}/${WIZNET_CHIP}\"
-        DEVICE_PROFILE_FW_REVISION=\"${DEVICE_PROFILE_FW_REVISION}\"
-        DEVICE_PROFILE_BUILD_TIME=\"${DEVICE_PROFILE_BUILD_TIME}\"
-        DEVICE_PROFILE_GIT_HASH=\"${DEVICE_PROFILE_GIT_HASH}\"
-        )
+    pico_enable_stdio_usb(${target_name} 1)
+    pico_enable_stdio_uart(${target_name} 0)
+    pico_add_extra_outputs(${target_name})
+
+    target_compile_definitions(${target_name} PRIVATE
+            PICO_CORE1_STACK_SIZE=0
+            PICO_HEAP_SIZE=0x400
+            PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=1
+            PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0
+            PICO_STDIO_USB_POST_CONNECT_WAIT_DELAY_MS=0
+            PICO_STDIO_USB_STDOUT_TIMEOUT_US=0
+            PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
+            PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
+            DEVICE_PROFILE_HW_REVISION=\"${PICO_BOARD}/${WIZNET_CHIP}\"
+            DEVICE_PROFILE_FW_REVISION=\"${DEVICE_PROFILE_FW_REVISION}\"
+            DEVICE_PROFILE_BUILD_TIME=\"${DEVICE_PROFILE_BUILD_TIME}\"
+            DEVICE_PROFILE_GIT_HASH=\"${DEVICE_PROFILE_GIT_HASH}\"
+            )
+endfunction()
+
+add_device_profile_target(${TARGET_NAME} FALSE)
+
+if(OTA_BUILD_BOOTLOADER)
+    add_device_profile_target(${TARGET_NAME}_bank_a TRUE)
+endif()

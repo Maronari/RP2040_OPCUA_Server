@@ -17,6 +17,7 @@
 #include "services/config_service.h"
 #include "services/device_channels.h"
 #include "services/diag_service.h"
+#include "services/firmware_update_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
 #include "services/security_service.h"
@@ -430,6 +431,11 @@ enum
 #define MODEL_METHOD_CLEAR_CHANNEL_CONFIG "Device.Maintenance.ClearChannelConfig"
 #define MODEL_METHOD_LIST_DRIVERS "Device.Maintenance.ListDrivers"
 #define MODEL_METHOD_GET_CONFIG_STATE "Device.Maintenance.GetConfigState"
+#define MODEL_METHOD_GET_FIRMWARE_UPDATE_STATUS "Device.Maintenance.GetFirmwareUpdateStatus"
+#define MODEL_METHOD_BEGIN_FIRMWARE_UPDATE "Device.Maintenance.BeginFirmwareUpdate"
+#define MODEL_METHOD_WRITE_FIRMWARE_CHUNK "Device.Maintenance.WriteFirmwareChunk"
+#define MODEL_METHOD_FINALIZE_FIRMWARE_UPDATE "Device.Maintenance.FinalizeFirmwareUpdate"
+#define MODEL_METHOD_ABORT_FIRMWARE_UPDATE "Device.Maintenance.AbortFirmwareUpdate"
 #define MODEL_METHOD_ENTER_COMMISSIONING "Device.Security.EnterCommissioningMode"
 #define MODEL_METHOD_EXIT_COMMISSIONING "Device.Security.ExitCommissioningMode"
 #define MODEL_EVENT_TYPE_DEVICE "Types.Events.DeviceEvent"
@@ -5841,6 +5847,265 @@ static UA_StatusCode model_get_config_state(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+static void model_format_firmware_update_status_json(char *buffer, size_t buffer_size)
+{
+    firmware_update_service_status_t status = {0};
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    firmware_update_service_get_status(&status);
+    if (!status.ota_state_valid)
+    {
+        (void)snprintf(buffer,
+                       buffer_size,
+                       "{\"sessionActive\":%s,\"bytesWritten\":%lu,\"expectedImageSize\":%lu,\"remainingBytes\":%lu,\"expectedImageCrc32\":\"0x%08lx\",\"versionNumber\":%lu,\"lastResult\":\"%s\",\"maxChunkBytes\":%u,\"otaStateValid\":false}",
+                       status.session_active ? "true" : "false",
+                       (unsigned long)status.bytes_written,
+                       (unsigned long)status.expected_image_size,
+                       (unsigned long)status.remaining_bytes,
+                       (unsigned long)status.expected_image_crc32,
+                       (unsigned long)status.version_number,
+                       firmware_update_service_result_to_string(status.last_result),
+                       (unsigned)FIRMWARE_UPDATE_SERVICE_MAX_CHUNK_BYTES);
+        return;
+    }
+
+    (void)snprintf(buffer,
+                   buffer_size,
+                   "{\"sessionActive\":%s,\"bytesWritten\":%lu,\"expectedImageSize\":%lu,\"remainingBytes\":%lu,\"expectedImageCrc32\":\"0x%08lx\",\"versionNumber\":%lu,\"lastResult\":\"%s\",\"maxChunkBytes\":%u,\"otaStateValid\":true,\"otaState\":\"%s\",\"otaImageSize\":%lu,\"otaImageCrc32\":\"0x%08lx\",\"otaStagedOffset\":\"0x%08lx\",\"otaStagedSize\":\"0x%08lx\",\"otaBootAttempts\":%lu,\"otaLastError\":\"%s\"}",
+                   status.session_active ? "true" : "false",
+                   (unsigned long)status.bytes_written,
+                   (unsigned long)status.expected_image_size,
+                   (unsigned long)status.remaining_bytes,
+                   (unsigned long)status.expected_image_crc32,
+                   (unsigned long)status.version_number,
+                   firmware_update_service_result_to_string(status.last_result),
+                   (unsigned)FIRMWARE_UPDATE_SERVICE_MAX_CHUNK_BYTES,
+                   ota_state_to_string(status.ota_state.state),
+                   (unsigned long)status.ota_state.image_size,
+                   (unsigned long)status.ota_state.image_crc32,
+                   (unsigned long)status.ota_state.staged_bank_offset,
+                   (unsigned long)status.ota_state.staged_bank_size,
+                   (unsigned long)status.ota_state.boot_attempts,
+                   ota_error_to_string(status.ota_state.last_error));
+}
+
+static UA_StatusCode model_get_firmware_update_status(UA_Server *server,
+                                                      const UA_NodeId *session_id,
+                                                      void *session_context,
+                                                      const UA_NodeId *method_id,
+                                                      void *method_context,
+                                                      const UA_NodeId *object_id,
+                                                      void *object_context,
+                                                      size_t input_size,
+                                                      const UA_Variant *input,
+                                                      size_t output_size,
+                                                      UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    char payload[512] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    model_format_firmware_update_status_json(payload, sizeof(payload));
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_begin_firmware_update(UA_Server *server,
+                                                 const UA_NodeId *session_id,
+                                                 void *session_context,
+                                                 const UA_NodeId *method_id,
+                                                 void *method_context,
+                                                 const UA_NodeId *object_id,
+                                                 void *object_context,
+                                                 size_t input_size,
+                                                 const UA_Variant *input,
+                                                 size_t output_size,
+                                                 UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    UA_UInt32 image_size = 0u;
+    UA_UInt32 image_crc32 = 0u;
+    UA_UInt32 version_number = 0u;
+    firmware_update_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (input_size != 3u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_UINT32]) || input[0].data == NULL ||
+        !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_UINT32]) || input[1].data == NULL ||
+        !UA_Variant_hasScalarType(&input[2], &UA_TYPES[UA_TYPES_UINT32]) || input[2].data == NULL)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    image_size = *(const UA_UInt32 *)input[0].data;
+    image_crc32 = *(const UA_UInt32 *)input[1].data;
+    version_number = *(const UA_UInt32 *)input[2].data;
+
+    service_result = firmware_update_service_begin((uint32_t)image_size,
+                                                   (uint32_t)image_crc32,
+                                                   (uint32_t)version_number);
+    result = (service_result == FIRMWARE_UPDATE_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tBeginFirmwareUpdate %s size=%lu crc32=0x%08lx version=%lu\n",
+           result == UA_TRUE ? "accepted" : firmware_update_service_result_to_string(service_result),
+           (unsigned long)image_size,
+           (unsigned long)image_crc32,
+           (unsigned long)version_number);
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_write_firmware_chunk(UA_Server *server,
+                                                const UA_NodeId *session_id,
+                                                void *session_context,
+                                                const UA_NodeId *method_id,
+                                                void *method_context,
+                                                const UA_NodeId *object_id,
+                                                void *object_context,
+                                                size_t input_size,
+                                                const UA_Variant *input,
+                                                size_t output_size,
+                                                UA_Variant *output)
+{
+    const UA_ByteString *chunk = NULL;
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    firmware_update_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (input_size != 1u || input == NULL || !model_get_input_ua_bytestring(&input[0], &chunk))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    service_result = firmware_update_service_write_chunk(chunk->data, chunk->length);
+    result = (service_result == FIRMWARE_UPDATE_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    if (result != UA_TRUE)
+    {
+        printf("[OPC UA]\tWriteFirmwareChunk failed: %s (size=%lu)\n",
+               firmware_update_service_result_to_string(service_result),
+               (unsigned long)chunk->length);
+        fflush(stdout);
+    }
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_finalize_firmware_update(UA_Server *server,
+                                                    const UA_NodeId *session_id,
+                                                    void *session_context,
+                                                    const UA_NodeId *method_id,
+                                                    void *method_context,
+                                                    const UA_NodeId *object_id,
+                                                    void *object_context,
+                                                    size_t input_size,
+                                                    const UA_Variant *input,
+                                                    size_t output_size,
+                                                    UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    firmware_update_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    service_result = firmware_update_service_finalize();
+    result = (service_result == FIRMWARE_UPDATE_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tFinalizeFirmwareUpdate %s\n",
+           result == UA_TRUE ? "succeeded" : firmware_update_service_result_to_string(service_result));
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_abort_firmware_update(UA_Server *server,
+                                                 const UA_NodeId *session_id,
+                                                 void *session_context,
+                                                 const UA_NodeId *method_id,
+                                                 void *method_context,
+                                                 const UA_NodeId *object_id,
+                                                 void *object_context,
+                                                 size_t input_size,
+                                                 const UA_Variant *input,
+                                                 size_t output_size,
+                                                 UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    firmware_update_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    service_result = firmware_update_service_abort();
+    result = (service_result == FIRMWARE_UPDATE_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tAbortFirmwareUpdate %s\n",
+           result == UA_TRUE ? "succeeded" : firmware_update_service_result_to_string(service_result));
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_clear_channel_config(UA_Server *server,
                                                 const UA_NodeId *session_id,
                                                 void *session_context,
@@ -7107,6 +7372,78 @@ static UA_StatusCode model_add_get_config_state_method_node(UA_Server *server,
                                                     model_get_config_state,
                                                     0u,
                                                     NULL);
+}
+
+static UA_StatusCode model_add_get_firmware_update_status_method_node(UA_Server *server,
+                                                                      UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_GET_FIRMWARE_UPDATE_STATUS,
+                                                    "GetFirmwareUpdateStatus",
+                                                    "Returns OTA staging session status and persistent OTA state as JSON.",
+                                                    model_get_firmware_update_status,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_begin_firmware_update_method_node(UA_Server *server,
+                                                                 UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[3];
+
+    model_fill_uint32_argument(&input_arguments[0], "ImageSizeBytes", "Total OTA payload size in bytes");
+    model_fill_uint32_argument(&input_arguments[1], "ImageCrc32", "Expected CRC32 of the OTA payload");
+    model_fill_uint32_argument(&input_arguments[2], "VersionNumber", "Monotonic firmware version number for OTA state tracking");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_BEGIN_FIRMWARE_UPDATE,
+                                                     "BeginFirmwareUpdate",
+                                                     "Starts staging a new firmware image into Bank B and resets OTA state to IDLE for the new session.",
+                                                     model_begin_firmware_update,
+                                                     3u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_write_firmware_chunk_method_node(UA_Server *server,
+                                                                UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_bytestring_argument(&input_argument,
+                                   "Chunk",
+                                   "Next firmware payload chunk. Maximum accepted chunk is 4096 bytes and data must be sent sequentially.");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_WRITE_FIRMWARE_CHUNK,
+                                                     "WriteFirmwareChunk",
+                                                     "Appends the next sequential firmware payload chunk to Bank B staging storage.",
+                                                     model_write_firmware_chunk,
+                                                     1u,
+                                                     &input_argument);
+}
+
+static UA_StatusCode model_add_finalize_firmware_update_method_node(UA_Server *server,
+                                                                    UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_FINALIZE_FIRMWARE_UPDATE,
+                                         "FinalizeFirmwareUpdate",
+                                         "Verifies the staged Bank B image by CRC32 and writes OTA state as STAGED_IN_BANK_B.",
+                                         model_finalize_firmware_update);
+}
+
+static UA_StatusCode model_add_abort_firmware_update_method_node(UA_Server *server,
+                                                                 UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_ABORT_FIRMWARE_UPDATE,
+                                         "AbortFirmwareUpdate",
+                                         "Aborts the active staging session and resets OTA state back to IDLE.",
+                                         model_abort_firmware_update);
 }
 
 static UA_StatusCode model_add_self_test_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
@@ -8602,6 +8939,36 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
         status = model_add_get_config_state_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_get_firmware_update_status_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_begin_firmware_update_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_write_firmware_chunk_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_finalize_firmware_update_method_node(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_abort_firmware_update_method_node(server, maintenance_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;

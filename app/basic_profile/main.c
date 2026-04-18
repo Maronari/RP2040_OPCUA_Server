@@ -13,11 +13,13 @@
 #include "drivers/platform_clock.h"
 #include "drivers/watchdog_driver.h"
 #include "opcua_model/opcua_model.h"
+#include "ota/ota_flash.h"
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
 #include "services/diag_service.h"
 #include "services/device_channels.h"
+#include "services/firmware_update_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
 #include "services/security_service.h"
@@ -197,6 +199,30 @@ static void print_heap_usage(const char *stage)
     fflush(stdout);
 }
 
+static void app_log_ota_state(void)
+{
+    ota_state_record_t record;
+
+    if (!ota_flash_read_state(&record))
+    {
+        printf("[APP]\t\tOTA state: empty or invalid\n");
+        fflush(stdout);
+        return;
+    }
+
+    printf("[APP]\t\tOTA state=%s image_size=%lu crc32=0x%08lx version=%lu\n",
+           ota_state_to_string(record.state),
+           (unsigned long)record.image_size,
+           (unsigned long)record.image_crc32,
+           (unsigned long)record.version_number);
+    printf("[APP]\t\tOTA staged_offset=0x%08lx staged_size=0x%08lx last_error=%s attempts=%lu\n",
+           (unsigned long)record.staged_bank_offset,
+           (unsigned long)record.staged_bank_size,
+           ota_error_to_string(record.last_error),
+           (unsigned long)record.boot_attempts);
+    fflush(stdout);
+}
+
 static bool create_task(TaskFunction_t entry_point,
                         const char *name,
                         configSTACK_DEPTH_TYPE stack_size,
@@ -347,6 +373,7 @@ static void app_init_task(void *argument)
     config = config_service_get();
 
     diag_service_init();
+    firmware_update_service_init();
     channel_manager_init();
     diag_service_register_task("InitTask", xTaskGetCurrentTaskHandle());
     print_heap_usage("After services init");
@@ -462,6 +489,7 @@ int main(void)
            DEVICE_PROFILE_HW_REVISION,
            DEVICE_PROFILE_GIT_HASH);
     fflush(stdout);
+    app_log_ota_state();
 
     if (xTaskCreate(app_init_task,
                     "InitTask",

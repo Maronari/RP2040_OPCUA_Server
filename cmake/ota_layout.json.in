@@ -1,0 +1,37 @@
+{
+  "board": "@PICO_BOARD@",
+  "platform": "@PICO_PLATFORM@",
+  "flash": {
+    "xip_base": "@OTA_FLASH_XIP_BASE_HEX@",
+    "size_bytes": @OTA_FLASH_TOTAL_BYTES@,
+    "size_hex": "@OTA_FLASH_TOTAL_BYTES_HEX@",
+    "end_address": "@OTA_FLASH_END_ADDRESS_HEX@"
+  },
+  "constraints": {
+    "erase_size_bytes": @OTA_FLASH_ERASE_SIZE_BYTES@,
+    "program_size_bytes": @OTA_FLASH_PROGRAM_SIZE_BYTES@,
+    "boot2_reserved_size_bytes": @OTA_BOOT2_RESERVED_SIZE_BYTES@
+  },
+  "regions": {
+    "bootloader": {
+      "origin": "@OTA_BOOTLOADER_ORIGIN_HEX@",
+      "offset_bytes": @OTA_BOOTLOADER_OFFSET_BYTES@,
+      "size_bytes": @OTA_BOOTLOADER_SIZE_BYTES@
+    },
+    "bank_a": {
+      "origin": "@OTA_BANK_A_ORIGIN_HEX@",
+      "offset_bytes": @OTA_BANK_A_OFFSET_BYTES@,
+      "size_bytes": @OTA_BANK_SIZE_BYTES@
+    },
+    "bank_b": {
+      "origin": "@OTA_BANK_B_ORIGIN_HEX@",
+      "offset_bytes": @OTA_BANK_B_OFFSET_BYTES@,
+      "size_bytes": @OTA_BANK_SIZE_BYTES@
+    },
+    "state": {
+      "origin": "@OTA_STATE_ORIGIN_HEX@",
+      "offset_bytes": @OTA_STATE_OFFSET_BYTES@,
+      "size_bytes": @OTA_STATE_SIZE_BYTES@
+    }
+  }
+}
