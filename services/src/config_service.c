@@ -6,8 +6,13 @@
 #include <FreeRTOS.h>
 #include <task.h>
 
+#include <config_store_limits.h>
 #include "drivers/flash_storage_driver.h"
+#include "services/config_store_service.h"
 #include "pico/unique_id.h"
+
+_Static_assert(sizeof(device_profile_config_t) <= CONFIG_STORE_MAX_PAYLOAD_SIZE_BYTES,
+               "device_profile_config_t must fit in one config storage slot");
 
 static device_profile_config_t g_running_config;
 static device_profile_config_t g_staged_config;
@@ -326,7 +331,14 @@ void config_service_init(const device_profile_config_t *defaults)
     }
 
     device_profile_config_t persisted = {0};
-    if (flash_storage_driver_load_partial(&persisted, sizeof(persisted), NULL))
+    config_store_record_info_t persisted_info = {0};
+    if (config_store_load_active(&persisted, sizeof(persisted), NULL, &persisted_info) &&
+        persisted_info.payload_format == CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY)
+    {
+        g_running_config = persisted;
+        g_staged_config = persisted;
+    }
+    else if (flash_storage_driver_load_partial(&persisted, sizeof(persisted), NULL))
     {
         g_running_config = persisted;
         g_staged_config = persisted;
@@ -512,6 +524,39 @@ bool config_service_stage_clear_channel(size_t index)
     return config_service_stage_set_channel(index, &cleared_channel);
 }
 
+bool config_service_replace_and_save(const device_profile_config_t *config, bool apply_running)
+{
+    device_profile_config_t normalized_config;
+
+    if (config == NULL)
+    {
+        return false;
+    }
+
+    normalized_config = *config;
+    config_service_normalize(&normalized_config);
+
+    if (!config_store_save_payload(&normalized_config,
+                                   sizeof(normalized_config),
+                                   CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                   CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                   NULL))
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    g_staged_config = normalized_config;
+    g_staged_revision++;
+    if (apply_running)
+    {
+        g_running_config = normalized_config;
+        g_running_revision++;
+    }
+    taskEXIT_CRITICAL();
+    return true;
+}
+
 uint32_t config_service_get_running_revision(void)
 {
     uint32_t revision = 0u;
@@ -547,5 +592,9 @@ bool config_service_save(void)
     g_staged_revision++;
     taskEXIT_CRITICAL();
 
-    return flash_storage_driver_save(&normalized_config, sizeof(normalized_config));
+    return config_store_save_payload(&normalized_config,
+                                     sizeof(normalized_config),
+                                     CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                     CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                     NULL);
 }

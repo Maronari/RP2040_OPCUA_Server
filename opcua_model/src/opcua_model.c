@@ -1,4 +1,4 @@
-#include "opcua_model/opcua_model.h"
+﻿#include "opcua_model/opcua_model.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -15,6 +15,10 @@
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
+#include "services/config_export_service.h"
+#include "services/config_import_service.h"
+#include "services/config_reset_service.h"
+#include <services/config_validate_service.h>
 #include "services/device_channels.h"
 #include "services/diag_service.h"
 #include "services/firmware_update_service.h"
@@ -417,6 +421,11 @@ enum
    keeps secure setup working and avoids per-connection heap spikes. */
 #define OPCUA_SEND_BUFFER_SIZE 8192u
 #define OPCUA_RECV_BUFFER_SIZE 16384u
+#define MODEL_NODE_MAINTENANCE_CONFIGURATION "Device.Maintenance.Configuration"
+#define MODEL_NODE_MAINTENANCE_FIRMWARE "Device.Maintenance.Firmware"
+#define MODEL_NODE_MAINTENANCE_SECURITY "Device.Maintenance.Security"
+#define MODEL_NODE_MAINTENANCE_DIAGNOSTICS "Device.Maintenance.Diagnostics"
+#define MODEL_NODE_MAINTENANCE_SYSTEM "Device.Maintenance.System"
 #define MODEL_METHOD_SET_DEVICE_IDENTITY "Device.Maintenance.SetDeviceIdentity"
 #define MODEL_METHOD_SET_NETWORK_CONFIG "Device.Maintenance.SetNetworkConfig"
 #define MODEL_METHOD_SET_TRUST_LIST "Device.Security.SetTrustList"
@@ -431,6 +440,12 @@ enum
 #define MODEL_METHOD_CLEAR_CHANNEL_CONFIG "Device.Maintenance.ClearChannelConfig"
 #define MODEL_METHOD_LIST_DRIVERS "Device.Maintenance.ListDrivers"
 #define MODEL_METHOD_GET_CONFIG_STATE "Device.Maintenance.GetConfigState"
+#define MODEL_METHOD_EXPORT_CONFIG "Device.Maintenance.ExportConfig"
+#define MODEL_METHOD_BEGIN_CONFIG_IMPORT "Device.Maintenance.BeginConfigImport"
+#define MODEL_METHOD_WRITE_CONFIG_CHUNK "Device.Maintenance.WriteConfigChunk"
+#define MODEL_METHOD_ABORT_CONFIG_IMPORT "Device.Maintenance.AbortConfigImport"
+#define MODEL_METHOD_VALIDATE_IMPORTED_CONFIG "Device.Maintenance.ValidateImportedConfig"
+#define MODEL_METHOD_APPLY_IMPORTED_CONFIG "Device.Maintenance.ApplyImportedConfig"
 #define MODEL_METHOD_GET_FIRMWARE_UPDATE_STATUS "Device.Maintenance.GetFirmwareUpdateStatus"
 #define MODEL_METHOD_BEGIN_FIRMWARE_UPDATE "Device.Maintenance.BeginFirmwareUpdate"
 #define MODEL_METHOD_WRITE_FIRMWARE_CHUNK "Device.Maintenance.WriteFirmwareChunk"
@@ -5251,13 +5266,14 @@ static UA_StatusCode model_factory_reset(UA_Server *server,
 {
     UA_StatusCode status;
     UA_Boolean result = false;
-    (void)server;
+    const UA_String *scope_string = NULL;
+    char scope_text[48] = {0};
+    config_reset_scope_t scope = CONFIG_RESET_SCOPE_ALL_KEEP_IDENTITY;
+    const char *details = "factory reset failed";
     (void)session_id;
     (void)method_context;
     (void)object_id;
     (void)object_context;
-    (void)input_size;
-    (void)input;
 
     status = model_require_method_role(session_context, method_id, output_size, output);
     if (status != UA_STATUSCODE_GOOD)
@@ -5265,28 +5281,57 @@ static UA_StatusCode model_factory_reset(UA_Server *server,
         return status;
     }
 
-    result = config_service_reset_to_defaults();
-    if (result)
+    if (input_size > 1u || (input_size == 1u && (input == NULL || !model_get_input_ua_string(&input[0], &scope_string))))
     {
-        (void)config_service_save();
-        model_schedule_reboot(250u);
-        printf("[OPC UA]\tFactory reset requested\n");
-        fflush(stdout);
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
     }
+
+    if (scope_string != NULL)
+    {
+        if (scope_string->length >= sizeof(scope_text))
+        {
+            model_set_boolean_method_output(output_size, output, false);
+            return UA_STATUSCODE_BADINVALIDARGUMENT;
+        }
+
+        memcpy(scope_text, scope_string->data, scope_string->length);
+        scope_text[scope_string->length] = '\0';
+    }
+
+    if (!config_reset_service_parse_scope(scope_text, &scope))
+    {
+        details = "unsupported factory reset scope";
+    }
+    else if (!config_reset_service_execute(scope))
+    {
+        details = "factory reset execution failed";
+    }
+    else
+    {
+        result = true;
+        details = "factory reset scheduled";
+        model_schedule_reboot(250u);
+    }
+
+    printf("[OPC UA]\tFactoryReset %s scope=%s\n",
+           result == UA_TRUE ? "requested" : "failed",
+           config_reset_service_scope_to_string(scope));
+    fflush(stdout);
 
     model_audit_session_event(session_context,
                               "factory-reset",
                               "device",
-                              result,
-                              result ? "factory reset scheduled" : "factory reset failed");
+                              result == UA_TRUE,
+                              details);
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     {
         char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
         model_emit_maintenance_event(server,
-                                     result ? "Factory reset requested" : "Factory reset failed",
-                                     result ? 600u : 800u,
+                                     result == UA_TRUE ? "Factory reset requested" : "Factory reset failed",
+                                     result == UA_TRUE ? 600u : 800u,
                                      "FactoryReset",
-                                     result ? 0u : 1u,
+                                     result == UA_TRUE ? 0u : 1u,
                                      model_session_actor_name(session_context, actor, sizeof(actor)));
     }
 #endif
@@ -5785,7 +5830,7 @@ static UA_StatusCode model_list_drivers(UA_Server *server,
                                         UA_Variant *output)
 {
     UA_StatusCode status;
-    char payload[384] = {0};
+    char payload[768] = {0};
     (void)server;
     (void)session_id;
     (void)method_context;
@@ -5818,9 +5863,7 @@ static UA_StatusCode model_get_config_state(UA_Server *server,
                                             UA_Variant *output)
 {
     UA_StatusCode status;
-    char payload[320] = {0};
-    const uint32_t running_revision = config_service_get_running_revision();
-    const uint32_t staged_revision = config_service_get_staged_revision();
+    char payload[384] = {0};
     const bool reboot_required = model_is_reboot_required();
     (void)server;
     (void)session_id;
@@ -5836,17 +5879,316 @@ static UA_StatusCode model_get_config_state(UA_Server *server,
         return status;
     }
 
-    (void)snprintf(payload,
-                   sizeof(payload),
-                   "{\"runningRevision\":%u,\"stagedRevision\":%u,\"rebootRequired\":%s,\"stagedDiffers\":%s}",
-                   (unsigned)running_revision,
-                   (unsigned)staged_revision,
-                   reboot_required ? "true" : "false",
-                   running_revision != staged_revision ? "true" : "false");
+    if (!config_export_service_write_state_json(payload, sizeof(payload), reboot_required))
+    {
+        model_set_string_method_output(output_size, output, "{}");
+        return UA_STATUSCODE_GOOD;
+    }
+
     model_set_string_method_output(output_size, output, payload);
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_export_config(UA_Server *server,
+                                         const UA_NodeId *session_id,
+                                         void *session_context,
+                                         const UA_NodeId *method_id,
+                                         void *method_context,
+                                         const UA_NodeId *object_id,
+                                         void *object_context,
+                                         size_t input_size,
+                                         const UA_Variant *input,
+                                         size_t output_size,
+                                         UA_Variant *output)
+{
+    UA_StatusCode status;
+    char payload[4096] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (!config_export_service_write_running_json(payload, sizeof(payload)))
+    {
+        model_set_string_method_output(output_size, output, "{}");
+        return UA_STATUSCODE_GOOD;
+    }
+
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_begin_config_import(UA_Server *server,
+                                               const UA_NodeId *session_id,
+                                               void *session_context,
+                                               const UA_NodeId *method_id,
+                                               void *method_context,
+                                               const UA_NodeId *object_id,
+                                               void *object_context,
+                                               size_t input_size,
+                                               const UA_Variant *input,
+                                               size_t output_size,
+                                               UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    UA_UInt32 payload_size = 0u;
+    UA_UInt32 payload_crc32 = 0u;
+    UA_UInt32 schema_version = 0u;
+    config_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (input_size != 3u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_UINT32]) || input[0].data == NULL ||
+        !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_UINT32]) || input[1].data == NULL ||
+        !UA_Variant_hasScalarType(&input[2], &UA_TYPES[UA_TYPES_UINT32]) || input[2].data == NULL)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    payload_size = *(const UA_UInt32 *)input[0].data;
+    payload_crc32 = *(const UA_UInt32 *)input[1].data;
+    schema_version = *(const UA_UInt32 *)input[2].data;
+
+    service_result = config_import_service_begin((uint32_t)payload_size,
+                                                 (uint32_t)payload_crc32,
+                                                 (uint32_t)schema_version);
+    result = (service_result == CONFIG_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tBeginConfigImport %s size=%lu crc32=0x%08lx schema=%lu\n",
+           result == UA_TRUE ? "accepted" : config_import_service_result_to_string(service_result),
+           (unsigned long)payload_size,
+           (unsigned long)payload_crc32,
+           (unsigned long)schema_version);
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_write_config_chunk(UA_Server *server,
+                                              const UA_NodeId *session_id,
+                                              void *session_context,
+                                              const UA_NodeId *method_id,
+                                              void *method_context,
+                                              const UA_NodeId *object_id,
+                                              void *object_context,
+                                              size_t input_size,
+                                              const UA_Variant *input,
+                                              size_t output_size,
+                                              UA_Variant *output)
+{
+    const UA_ByteString *chunk = NULL;
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    config_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (input_size != 1u || input == NULL || !model_get_input_ua_bytestring(&input[0], &chunk))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    service_result = config_import_service_write_chunk(chunk->data, chunk->length);
+    result = (service_result == CONFIG_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    if (result != UA_TRUE)
+    {
+        printf("[OPC UA]\tWriteConfigChunk failed: %s (size=%lu)\n",
+               config_import_service_result_to_string(service_result),
+               (unsigned long)chunk->length);
+        fflush(stdout);
+    }
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_abort_config_import(UA_Server *server,
+                                               const UA_NodeId *session_id,
+                                               void *session_context,
+                                               const UA_NodeId *method_id,
+                                               void *method_context,
+                                               const UA_NodeId *object_id,
+                                               void *object_context,
+                                               size_t input_size,
+                                               const UA_Variant *input,
+                                               size_t output_size,
+                                               UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    config_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    service_result = config_import_service_abort();
+    result = (service_result == CONFIG_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tAbortConfigImport %s\n",
+           result == UA_TRUE ? "succeeded" : config_import_service_result_to_string(service_result));
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_validate_imported_config(UA_Server *server,
+                                                    const UA_NodeId *session_id,
+                                                    void *session_context,
+                                                    const UA_NodeId *method_id,
+                                                    void *method_context,
+                                                    const UA_NodeId *object_id,
+                                                    void *object_context,
+                                                    size_t input_size,
+                                                    const UA_Variant *input,
+                                                    size_t output_size,
+                                                    UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    config_validate_service_report_t report = {0};
+    char payload[384] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    (void)config_validate_service_validate_imported(&report, NULL);
+    if (!config_validate_service_write_report_json(payload, sizeof(payload), &report))
+    {
+        model_set_string_method_output(output_size, output, "{}");
+        return UA_STATUSCODE_GOOD;
+    }
+
+    printf("[OPC UA]\tValidateImportedConfig %s\n",
+           report.valid ? "OK" : config_validate_service_result_to_string(report.result));
+    fflush(stdout);
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_apply_imported_config(UA_Server *server,
+                                                 const UA_NodeId *session_id,
+                                                 void *session_context,
+                                                 const UA_NodeId *method_id,
+                                                 void *method_context,
+                                                 const UA_NodeId *object_id,
+                                                 void *object_context,
+                                                 size_t input_size,
+                                                 const UA_Variant *input,
+                                                 size_t output_size,
+                                                 UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    config_validate_service_report_t report = {0};
+    device_profile_config_t candidate = {0};
+    const char *details = "imported configuration validation failed";
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (config_validate_service_validate_imported(&report, &candidate) != CONFIG_VALIDATE_RESULT_OK)
+    {
+        if (report.message[0] != '\0')
+        {
+            details = report.message;
+        }
+    }
+    else if (!config_service_replace_and_save(&candidate, true))
+    {
+        details = "failed to persist imported configuration";
+    }
+    else
+    {
+        (void)config_import_service_abort();
+        result = true;
+        details = "imported configuration applied";
+    }
+
+    if (result == UA_TRUE)
+    {
+        printf("[OPC UA]\tApplyImportedConfig succeeded\n");
+    }
+    else
+    {
+        printf("[OPC UA]\tApplyImportedConfig failed: %s\n", details);
+    }
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "config-import-apply",
+                              "device-configuration",
+                              result == UA_TRUE,
+                              details);
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    if (result == UA_TRUE)
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_config_changed_event(server,
+                                        "Imported configuration applied",
+                                        300u,
+                                        "ConfigurationImport",
+                                        "*",
+                                        model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
 static void model_format_firmware_update_status_json(char *buffer, size_t buffer_size)
 {
     firmware_update_service_status_t status = {0};
@@ -7170,12 +7512,19 @@ static UA_StatusCode model_add_reboot_method_node(UA_Server *server, UA_NodeId m
 
 static UA_StatusCode model_add_factory_reset_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
 {
-    return model_add_boolean_method_node(server,
-                                         maintenance_folder_id,
-                                         "Device.Maintenance.FactoryReset",
-                                         "FactoryReset",
-                                         "Restores profile defaults and reboots the device",
-                                         model_factory_reset);
+    UA_Argument input_argument;
+
+    model_fill_string_argument(&input_argument,
+                               "Scope",
+                               "Reset scope. Supported value in this build: all_keep_identity. Empty string also maps to that default.");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     "Device.Maintenance.FactoryReset",
+                                                     "FactoryReset",
+                                                     "Erases persisted configuration slots for the requested scope and reboots the device.",
+                                                     model_factory_reset,
+                                                     1u,
+                                                     &input_argument);
 }
 
 static UA_StatusCode model_add_sync_time_now_method_node(UA_Server *server, UA_NodeId maintenance_folder_id)
@@ -7374,6 +7723,90 @@ static UA_StatusCode model_add_get_config_state_method_node(UA_Server *server,
                                                     NULL);
 }
 
+static UA_StatusCode model_add_export_config_method_node(UA_Server *server,
+                                                         UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_EXPORT_CONFIG,
+                                                    "ExportConfig",
+                                                    "Returns the current effective device configuration as JSON.",
+                                                    model_export_config,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_begin_config_import_method_node(UA_Server *server,
+                                                               UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[3];
+
+    model_fill_uint32_argument(&input_arguments[0], "PayloadSizeBytes", "Total configuration payload size in bytes");
+    model_fill_uint32_argument(&input_arguments[1], "PayloadCrc32", "Expected CRC32 of the configuration payload");
+    model_fill_uint32_argument(&input_arguments[2], "SchemaVersion", "Configuration schema version declared by the client payload");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_BEGIN_CONFIG_IMPORT,
+                                                     "BeginConfigImport",
+                                                     "Starts staged configuration upload into a temporary import buffer.",
+                                                     model_begin_config_import,
+                                                     3u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_write_config_chunk_method_node(UA_Server *server,
+                                                              UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_bytestring_argument(&input_argument,
+                                   "Chunk",
+                                   "Next configuration payload chunk. Maximum accepted chunk is 4096 bytes and data must be sent sequentially.");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_WRITE_CONFIG_CHUNK,
+                                                     "WriteConfigChunk",
+                                                     "Appends the next sequential configuration payload chunk to the staged import buffer.",
+                                                     model_write_config_chunk,
+                                                     1u,
+                                                     &input_argument);
+}
+
+static UA_StatusCode model_add_abort_config_import_method_node(UA_Server *server,
+                                                               UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_ABORT_CONFIG_IMPORT,
+                                         "AbortConfigImport",
+                                         "Aborts the staged configuration upload session and frees the import buffer.",
+                                         model_abort_config_import);
+}
+
+static UA_StatusCode model_add_validate_imported_config_method_node(UA_Server *server,
+                                                                    UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_VALIDATE_IMPORTED_CONFIG,
+                                                    "ValidateImportedConfig",
+                                                    "Validates the currently staged imported configuration payload and returns JSON diagnostics.",
+                                                    model_validate_imported_config,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_apply_imported_config_method_node(UA_Server *server,
+                                                                 UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_APPLY_IMPORTED_CONFIG,
+                                         "ApplyImportedConfig",
+                                         "Validates, persists, and applies the currently staged imported configuration payload.",
+                                         model_apply_imported_config);
+}
 static UA_StatusCode model_add_get_firmware_update_status_method_node(UA_Server *server,
                                                                       UA_NodeId maintenance_folder_id)
 {
@@ -7799,6 +8232,11 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     UA_NodeId security_id = UA_NODEID_STRING(1, (char *)"Device.Security");
     UA_NodeId configuration_id = UA_NODEID_STRING(1, (char *)"Device.Configuration");
     UA_NodeId maintenance_id = UA_NODEID_STRING(1, (char *)"Device.Maintenance");
+    UA_NodeId maintenance_configuration_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_CONFIGURATION);
+    UA_NodeId maintenance_firmware_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_FIRMWARE);
+    UA_NodeId maintenance_security_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_SECURITY);
+    UA_NodeId maintenance_diagnostics_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_DIAGNOSTICS);
+    UA_NodeId maintenance_system_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_SYSTEM);
     UA_NodeId messaging_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING);
     UA_StatusCode status = UA_STATUSCODE_GOOD;
 
@@ -7867,6 +8305,56 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 
     status = model_add_folder(server, "Device.Maintenance", "Maintenance", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server,
+                              MODEL_NODE_MAINTENANCE_CONFIGURATION,
+                              "Configuration",
+                              maintenance_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server,
+                              MODEL_NODE_MAINTENANCE_FIRMWARE,
+                              "Firmware",
+                              maintenance_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server,
+                              MODEL_NODE_MAINTENANCE_SECURITY,
+                              "Security",
+                              maintenance_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server,
+                              MODEL_NODE_MAINTENANCE_DIAGNOSTICS,
+                              "Diagnostics",
+                              maintenance_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server,
+                              MODEL_NODE_MAINTENANCE_SYSTEM,
+                              "System",
+                              maintenance_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -8854,133 +9342,169 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
 
     if (g_model_config.enable_alarm_methods)
     {
-        status = model_add_alarm_method_node(server, maintenance_id);
+        status = model_add_alarm_method_node(server, maintenance_diagnostics_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_reboot_method_node(server, maintenance_id);
+        status = model_add_reboot_method_node(server, maintenance_system_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_factory_reset_method_node(server, maintenance_id);
+        status = model_add_factory_reset_method_node(server, maintenance_system_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_sync_time_now_method_node(server, maintenance_id);
+        status = model_add_sync_time_now_method_node(server, maintenance_diagnostics_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_blink_identify_method_node(server, maintenance_id);
+        status = model_add_blink_identify_method_node(server, maintenance_diagnostics_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_apply_config_method_node(server, maintenance_id);
+        status = model_add_apply_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_save_config_method_node(server, maintenance_id);
+        status = model_add_save_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_set_mqtt_pubsub_enabled_method_node(server, maintenance_id);
+        status = model_add_set_mqtt_pubsub_enabled_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_set_device_identity_method_node(server, maintenance_id);
+        status = model_add_set_device_identity_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_set_network_config_method_node(server, maintenance_id);
+        status = model_add_set_network_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_set_channel_config_method_node(server, maintenance_id);
+        status = model_add_set_channel_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_get_channel_config_method_node(server, maintenance_id);
+        status = model_add_get_channel_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_clear_channel_config_method_node(server, maintenance_id);
+        status = model_add_clear_channel_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_list_drivers_method_node(server, maintenance_id);
+        status = model_add_list_drivers_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_get_config_state_method_node(server, maintenance_id);
+        status = model_add_get_config_state_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_get_firmware_update_status_method_node(server, maintenance_id);
+        status = model_add_export_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_begin_firmware_update_method_node(server, maintenance_id);
+        status = model_add_begin_config_import_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_write_firmware_chunk_method_node(server, maintenance_id);
+        status = model_add_write_config_chunk_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_finalize_firmware_update_method_node(server, maintenance_id);
+        status = model_add_abort_config_import_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_abort_firmware_update_method_node(server, maintenance_id);
+        status = model_add_validate_imported_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_self_test_method_node(server, maintenance_id);
+        status = model_add_apply_imported_config_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_clear_diagnostics_method_node(server, maintenance_id);
+        status = model_add_get_firmware_update_status_method_node(server, maintenance_firmware_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_begin_firmware_update_method_node(server, maintenance_firmware_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_write_firmware_chunk_method_node(server, maintenance_firmware_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_finalize_firmware_update_method_node(server, maintenance_firmware_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_abort_firmware_update_method_node(server, maintenance_firmware_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_self_test_method_node(server, maintenance_diagnostics_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_clear_diagnostics_method_node(server, maintenance_diagnostics_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
@@ -9005,31 +9529,31 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
-        status = model_add_add_user_method_node(server, maintenance_id);
+        status = model_add_add_user_method_node(server, maintenance_security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_change_password_method_node(server, maintenance_id);
+        status = model_add_change_password_method_node(server, maintenance_security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_set_role_method_node(server, maintenance_id);
+        status = model_add_set_role_method_node(server, maintenance_security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_disable_user_method_node(server, maintenance_id);
+        status = model_add_disable_user_method_node(server, maintenance_security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
         }
 
-        status = model_add_delete_user_method_node(server, maintenance_id);
+        status = model_add_delete_user_method_node(server, maintenance_security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
@@ -9958,3 +10482,10 @@ void opcua_model_task(void *argument)
 
     vTaskDelete(NULL);
 }
+
+
+
+
+
+
+

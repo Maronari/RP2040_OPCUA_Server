@@ -1,7 +1,12 @@
 add_library(FIRMWARE_SERVICES STATIC
         src/alarm_service.c
         src/channel_manager.c
+        src/config_export_service.c
+        src/config_import_service.c
+        src/config_reset_service.c
         src/config_service.c
+        src/config_store_service.c
+        src/config_validate_service.c
         src/driver_catalog.c
         src/diag_service.c
         src/firmware_update_service.c
@@ -20,6 +25,12 @@ target_include_directories(FIRMWARE_SERVICES PUBLIC
         ${PICO_SDK_PATH}/src/rp2_common/pico_rand/include
         ${PORT_DIR}/mbedtls/inc
         )
+
+target_include_directories(FIRMWARE_SERVICES PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+
+ota_layout_apply_to_target(FIRMWARE_SERVICES)
 
 target_compile_definitions(FIRMWARE_SERVICES PUBLIC
         MBEDTLS_USER_CONFIG_FILE="ssl_config.h"

@@ -17,6 +17,7 @@
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
+#include "services/config_import_service.h"
 #include "services/diag_service.h"
 #include "services/device_channels.h"
 #include "services/firmware_update_service.h"
@@ -390,6 +391,7 @@ static void app_init_task(void *argument)
     config = config_service_get();
 
     diag_service_init();
+    config_import_service_init();
     firmware_update_service_init();
     channel_manager_init();
     diag_service_register_task("InitTask", xTaskGetCurrentTaskHandle());

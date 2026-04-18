@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 '''Stage an OTA payload into Bank B over OPC UA maintenance methods.'''
 
 import argparse
@@ -23,7 +23,8 @@ except ImportError:
 
 DEFAULT_MANIFEST_PATH = Path('build/ota_artifacts/ota_payload.json')
 DEFAULT_CHUNK_SIZE = 4096
-MAINTENANCE_NODE_ID = 'ns=1;s=Device.Maintenance'
+FIRMWARE_NODE_ID = 'ns=1;s=Device.Maintenance.Firmware'
+SYSTEM_NODE_ID = 'ns=1;s=Device.Maintenance.System'
 METHOD_GET_STATUS = 'ns=1;s=Device.Maintenance.GetFirmwareUpdateStatus'
 METHOD_BEGIN = 'ns=1;s=Device.Maintenance.BeginFirmwareUpdate'
 METHOD_WRITE = 'ns=1;s=Device.Maintenance.WriteFirmwareChunk'
@@ -190,11 +191,12 @@ def print_progress(sent_bytes, total_bytes):
 
 
 async def stage_payload(client, args, payload_info):
-    maintenance = client.get_node(ua.NodeId.from_string(MAINTENANCE_NODE_ID))
+    firmware = client.get_node(ua.NodeId.from_string(FIRMWARE_NODE_ID))
+    system = client.get_node(ua.NodeId.from_string(SYSTEM_NODE_ID))
     upload_started = False
 
     if not args.skip_pre_status:
-        status_before = await get_status(maintenance)
+        status_before = await get_status(firmware)
         print_status('Pre-upload status', status_before)
         max_chunk_bytes = int(status_before.get('maxChunkBytes', DEFAULT_CHUNK_SIZE))
         if args.chunk_size > max_chunk_bytes:
@@ -203,14 +205,14 @@ async def stage_payload(client, args, payload_info):
             )
 
     begin_ok = await call_bool_method(
-        maintenance,
+        firmware,
         METHOD_BEGIN,
         ua.Variant(payload_info['image_size'], ua.VariantType.UInt32),
         ua.Variant(payload_info['image_crc32'], ua.VariantType.UInt32),
         ua.Variant(payload_info['version_number'], ua.VariantType.UInt32),
     )
     if not begin_ok:
-        print_status('Begin rejected', await get_status(maintenance))
+        print_status('Begin rejected', await get_status(firmware))
         raise RuntimeError('BeginFirmwareUpdate returned false')
 
     upload_started = True
@@ -232,40 +234,40 @@ async def stage_payload(client, args, payload_info):
                     break
 
                 write_ok = await call_bool_method(
-                    maintenance,
+                    firmware,
                     METHOD_WRITE,
                     ua.Variant(chunk, ua.VariantType.ByteString),
                 )
                 if not write_ok:
                     print()
-                    print_status('Write rejected', await get_status(maintenance))
+                    print_status('Write rejected', await get_status(firmware))
                     raise RuntimeError(f'WriteFirmwareChunk returned false at offset {sent_bytes}')
 
                 sent_bytes += len(chunk)
                 print_progress(sent_bytes, image_size)
 
         print()
-        finalize_ok = await call_bool_method(maintenance, METHOD_FINALIZE)
+        finalize_ok = await call_bool_method(firmware, METHOD_FINALIZE)
         if not finalize_ok:
-            print_status('Finalize rejected', await get_status(maintenance))
+            print_status('Finalize rejected', await get_status(firmware))
             raise RuntimeError('FinalizeFirmwareUpdate returned false')
     except Exception:
         if upload_started:
             try:
-                abort_ok = await call_bool_method(maintenance, METHOD_ABORT)
+                abort_ok = await call_bool_method(firmware, METHOD_ABORT)
                 print(f'AbortFirmwareUpdate returned: {abort_ok}')
             except Exception as abort_exc:
                 print(f'AbortFirmwareUpdate failed: {abort_exc}')
         raise
 
     if not args.skip_post_status:
-        status_after = await get_status(maintenance)
+        status_after = await get_status(firmware)
         print_status('Post-upload status', status_after)
         if status_after.get('otaState') != 'STAGED_IN_BANK_B':
             raise RuntimeError('Upload finished but otaState is not STAGED_IN_BANK_B')
 
     if args.reboot_after_finalize:
-        reboot_ok = await request_reboot(maintenance)
+        reboot_ok = await request_reboot(system)
         if not reboot_ok:
             raise RuntimeError('Reboot returned false after successful finalize')
         print('Reboot requested')
@@ -320,3 +322,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+

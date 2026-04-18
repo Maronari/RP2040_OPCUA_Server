@@ -117,6 +117,7 @@ bool config_service_stage_set_network(const device_network_config_t *network);
 bool config_service_stage_copy_channel(size_t index, config_channel_definition_t *out_channel);
 bool config_service_stage_set_channel(size_t index, const config_channel_definition_t *channel);
 bool config_service_stage_clear_channel(size_t index);
+bool config_service_replace_and_save(const device_profile_config_t *config, bool apply_running);
 uint32_t config_service_get_running_revision(void);
 uint32_t config_service_get_staged_revision(void);
 bool config_service_save(void);
