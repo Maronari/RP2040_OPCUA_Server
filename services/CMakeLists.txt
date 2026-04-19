@@ -12,7 +12,11 @@ add_library(FIRMWARE_SERVICES STATIC
         src/firmware_update_service.c
         src/history_service.c
         src/network_manager.c
+        src/security_identity_import_service.c
+        src/security_certificate_group_service.c
         src/security_service.c
+        src/security_state_service.c
+        src/security_trust_import_service.c
         src/sensor_manager.c
         src/time_service.c
         )
@@ -40,6 +44,7 @@ target_link_libraries(FIRMWARE_SERVICES PUBLIC
         FIRMWARE_DRIVERS
         OTA_SHARED
         FREERTOS_FILES
+        OPEN62541_FILES
         pico_sha256
         pico_mbedtls
         pico_lwip_sntp

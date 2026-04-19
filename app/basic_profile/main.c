@@ -23,7 +23,9 @@
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
+#include "services/security_identity_import_service.h"
 #include "services/security_service.h"
+#include "services/security_trust_import_service.h"
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
 #include "device_identity_provisioning.h"
@@ -393,6 +395,8 @@ static void app_init_task(void *argument)
     diag_service_init();
     config_import_service_init();
     firmware_update_service_init();
+    security_identity_import_service_init();
+    security_trust_import_service_init();
     channel_manager_init();
     diag_service_register_task("InitTask", xTaskGetCurrentTaskHandle());
     print_heap_usage("After services init");

@@ -38,6 +38,31 @@
       "offset_bytes": @OTA_CONFIG_SLOT_1_OFFSET_BYTES@,
       "size_bytes": @OTA_CONFIG_SLOT_SIZE_BYTES@
     },
+    "security_identity_slot_0": {
+      "origin": "@OTA_SECURITY_IDENTITY_SLOT_0_ORIGIN_HEX@",
+      "offset_bytes": @OTA_SECURITY_IDENTITY_SLOT_0_OFFSET_BYTES@,
+      "size_bytes": @OTA_SECURITY_IDENTITY_SLOT_SIZE_BYTES@
+    },
+    "security_identity_slot_1": {
+      "origin": "@OTA_SECURITY_IDENTITY_SLOT_1_ORIGIN_HEX@",
+      "offset_bytes": @OTA_SECURITY_IDENTITY_SLOT_1_OFFSET_BYTES@,
+      "size_bytes": @OTA_SECURITY_IDENTITY_SLOT_SIZE_BYTES@
+    },
+    "security_trust_slot_0": {
+      "origin": "@OTA_SECURITY_TRUST_SLOT_0_ORIGIN_HEX@",
+      "offset_bytes": @OTA_SECURITY_TRUST_SLOT_0_OFFSET_BYTES@,
+      "size_bytes": @OTA_SECURITY_TRUST_SLOT_SIZE_BYTES@
+    },
+    "security_trust_slot_1": {
+      "origin": "@OTA_SECURITY_TRUST_SLOT_1_ORIGIN_HEX@",
+      "offset_bytes": @OTA_SECURITY_TRUST_SLOT_1_OFFSET_BYTES@,
+      "size_bytes": @OTA_SECURITY_TRUST_SLOT_SIZE_BYTES@
+    },
+    "security_state": {
+      "origin": "@OTA_SECURITY_STATE_ORIGIN_HEX@",
+      "offset_bytes": @OTA_SECURITY_STATE_OFFSET_BYTES@,
+      "size_bytes": @OTA_SECURITY_STATE_SIZE_BYTES@
+    },
     "state": {
       "origin": "@OTA_STATE_ORIGIN_HEX@",
       "offset_bytes": @OTA_STATE_OFFSET_BYTES@,

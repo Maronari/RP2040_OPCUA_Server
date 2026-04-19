@@ -64,6 +64,7 @@ bool security_service_get_last_auth_failure(uint32_t *out_epoch_s);
 uint32_t security_service_get_failed_login_count(void);
 uint32_t security_service_get_trusted_client_count(void);
 bool security_service_get_device_certificate_thumbprint(char *buffer, size_t buffer_size);
+bool security_service_get_device_certificate_not_before(uint32_t *out_epoch_s);
 bool security_service_get_device_certificate_not_after(uint32_t *out_epoch_s);
 
 bool security_service_verify_password(const char *username,

@@ -10,8 +10,10 @@
 #include "hardware/flash.h"
 #include "mbedtls/sha1.h"
 #include "mbedtls/x509_crt.h"
+#include "ota_layout.h"
 #include "pico/flash.h"
 #include "pico/rand.h"
+#include "services/security_state_service.h"
 #include "pico/sha256.h"
 #include "pico/stdio.h"
 #include "pico/stdlib.h"
@@ -19,9 +21,6 @@
 
 #define SECURITY_SERVICE_STORE_MAGIC            0x53454331u /* "SEC1" */
 #define SECURITY_SERVICE_STORE_VERSION          1u
-#define SECURITY_SERVICE_STORE_REGION_SIZE      (3u * FLASH_SECTOR_SIZE)
-#define SECURITY_SERVICE_CONFIG_REGION_SIZE     FLASH_SECTOR_SIZE
-#define SECURITY_SERVICE_STORE_OFFSET           (PICO_FLASH_SIZE_BYTES - SECURITY_SERVICE_CONFIG_REGION_SIZE - SECURITY_SERVICE_STORE_REGION_SIZE)
 #define SECURITY_SERVICE_DEFAULT_ADMIN_USER     "admin"
 #define SECURITY_SERVICE_DEFAULT_ADMIN_PASSWORD "admin"
 #define SECURITY_SERVICE_FLAG_COMMISSIONING_MODE (1u << 0u)
@@ -77,7 +76,7 @@ static uint32_t g_last_auth_failure_epoch_s = 0u;
 static security_service_audit_callback_t g_audit_callback = NULL;
 static void *g_audit_callback_context = NULL;
 
-_Static_assert(sizeof(security_service_store_t) <= SECURITY_SERVICE_STORE_REGION_SIZE,
+_Static_assert(sizeof(security_service_store_t) <= OTA_LAYOUT_SECURITY_STORE_SIZE_BYTES,
                "Security store does not fit into the reserved flash region");
 
 static uint32_t security_service_crc32(const uint8_t *data, size_t size)
@@ -99,7 +98,7 @@ static uint32_t security_service_crc32(const uint8_t *data, size_t size)
 
 static const security_service_store_t *security_service_flash_store(void)
 {
-    return (const security_service_store_t *)(XIP_BASE + SECURITY_SERVICE_STORE_OFFSET);
+    return (const security_service_store_t *)OTA_LAYOUT_SECURITY_STORE_ORIGIN;
 }
 
 static const security_service_store_t *security_service_store(void)
@@ -543,16 +542,23 @@ static security_service_store_t *security_service_allocate_image(const security_
 static void __not_in_flash_func(security_service_program_region)(void *param)
 {
     const security_service_program_context_t *context = (const security_service_program_context_t *)param;
-    const size_t program_size =
-        ((context->image_size + FLASH_PAGE_SIZE - 1u) / FLASH_PAGE_SIZE) * FLASH_PAGE_SIZE;
 
-    flash_range_erase(SECURITY_SERVICE_STORE_OFFSET, SECURITY_SERVICE_STORE_REGION_SIZE);
-    flash_range_program(SECURITY_SERVICE_STORE_OFFSET, context->image, program_size);
+    flash_range_erase(OTA_LAYOUT_SECURITY_STORE_OFFSET_BYTES, OTA_LAYOUT_SECURITY_STORE_SIZE_BYTES);
+    flash_range_program(OTA_LAYOUT_SECURITY_STORE_OFFSET_BYTES, context->image, context->image_size);
+}
+
+static size_t security_service_get_program_size(size_t image_size)
+{
+    return ((image_size + OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES - 1u) /
+            OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES) * OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES;
 }
 
 static bool security_service_commit_store(security_service_store_t *image)
 {
     security_service_program_context_t context;
+    uint8_t *program_image = NULL;
+    const size_t program_size = security_service_get_program_size(sizeof(*image));
+    bool committed = false;
 
     if (image == NULL)
     {
@@ -564,16 +570,56 @@ static bool security_service_commit_store(security_service_store_t *image)
     image->crc32 = security_service_crc32((const uint8_t *)image,
                                           offsetof(security_service_store_t, crc32));
 
-    context.image = (const uint8_t *)image;
-    context.image_size = sizeof(*image);
-
-    if (flash_safe_execute(security_service_program_region, &context, 1000u) != PICO_OK)
+    program_image = (uint8_t *)pvPortMalloc(program_size);
+    if (program_image == NULL)
     {
         return false;
     }
 
+    memset(program_image, 0xFF, program_size);
+    memcpy(program_image, image, sizeof(*image));
+
+    context.image = program_image;
+    context.image_size = program_size;
+
+    if (flash_safe_execute(security_service_program_region, &context, 1000u) != PICO_OK)
+    {
+        goto cleanup;
+    }
+
     g_security_store_ready = true;
-    return true;
+    committed = true;
+
+cleanup:
+    vPortFree(program_image);
+    return committed;
+}
+
+static bool security_service_sync_state_store(const security_service_store_t *store)
+{
+    const bool commissioning_mode = store == NULL ||
+                                    store->trust_list_length == 0u ||
+                                    security_service_get_commissioning_flag(store);
+    const uint32_t trust_list_version = (store != NULL) ? store->trust_list_version : 0u;
+    const uint32_t active_trust_generation =
+        (store != NULL && store->trust_list_length > 0u) ? store->trust_list_version : 0u;
+
+    if (!security_state_service_init(commissioning_mode, trust_list_version))
+    {
+        return false;
+    }
+
+    if (!security_state_service_set_trust_list_version(trust_list_version))
+    {
+        return false;
+    }
+
+    if (!security_state_service_set_trust_generations(active_trust_generation, 0u))
+    {
+        return false;
+    }
+
+    return security_state_service_set_commissioning_mode(commissioning_mode);
 }
 
 static bool security_service_ensure_admin_account(security_service_store_t *store)
@@ -615,7 +661,7 @@ bool security_service_init(void)
         g_security_store_ready = true;
         if (security_service_count_enabled_admins(flash_store) > 0u)
         {
-            return true;
+            return security_service_sync_state_store(flash_store);
         }
 
         image = security_service_allocate_image(flash_store);
@@ -640,6 +686,12 @@ bool security_service_init(void)
     fflush(stdout);
 
     if (!security_service_commit_store(image))
+    {
+        vPortFree(image);
+        return false;
+    }
+
+    if (!security_service_sync_state_store(image))
     {
         vPortFree(image);
         return false;
@@ -839,6 +891,12 @@ bool security_service_set_trust_list(const uint8_t *trust_list, size_t trust_lis
         return false;
     }
 
+    if (!security_service_sync_state_store(image))
+    {
+        vPortFree(image);
+        return false;
+    }
+
     security_service_audit_log("trust-list-update",
                                "system",
                                "trust-list",
@@ -852,7 +910,17 @@ bool security_service_get_trust_list_version(uint32_t *out_version)
 {
     const security_service_store_t *store = security_service_store();
 
-    if (out_version == NULL || store == NULL)
+    if (out_version == NULL)
+    {
+        return false;
+    }
+
+    if (security_state_service_get_trust_list_version(out_version))
+    {
+        return true;
+    }
+
+    if (store == NULL)
     {
         return false;
     }
@@ -864,6 +932,12 @@ bool security_service_get_trust_list_version(uint32_t *out_version)
 bool security_service_is_commissioning_mode(void)
 {
     const security_service_store_t *store = security_service_store();
+    bool commissioning_mode = true;
+
+    if (security_state_service_get_commissioning_mode(&commissioning_mode))
+    {
+        return commissioning_mode;
+    }
 
     if (store == NULL)
     {
@@ -906,6 +980,12 @@ bool security_service_set_commissioning_mode(bool enabled)
 
     security_service_set_commissioning_flag(image, enabled);
     if (!security_service_commit_store(image))
+    {
+        vPortFree(image);
+        return false;
+    }
+
+    if (!security_service_sync_state_store(image))
     {
         vPortFree(image);
         return false;
@@ -987,6 +1067,26 @@ bool security_service_get_device_certificate_thumbprint(char *buffer, size_t buf
     }
     buffer[SECURITY_SERVICE_CERT_THUMBPRINT_LEN] = '\0';
     return true;
+}
+
+bool security_service_get_device_certificate_not_before(uint32_t *out_epoch_s)
+{
+    mbedtls_x509_crt certificate;
+    bool ok = false;
+
+    if (out_epoch_s == NULL)
+    {
+        return false;
+    }
+
+    if (!security_service_parse_device_certificate(&certificate))
+    {
+        return false;
+    }
+
+    ok = security_service_x509_time_to_epoch(&certificate.valid_from, out_epoch_s);
+    mbedtls_x509_crt_free(&certificate);
+    return ok;
 }
 
 bool security_service_get_device_certificate_not_after(uint32_t *out_epoch_s)

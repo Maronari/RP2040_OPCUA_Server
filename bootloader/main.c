@@ -399,7 +399,22 @@ static void bootloader_print_banner(void)
     printf("[BOOT] config slot 1:   0x%08lx + 0x%08lx\n",
            (unsigned long)OTA_LAYOUT_CONFIG_SLOT_1_ORIGIN,
            (unsigned long)OTA_LAYOUT_CONFIG_SLOT_SIZE_BYTES);
-    printf("[BOOT] state region:    0x%08lx + 0x%08lx\n",
+    printf("[BOOT] sec ident slot0: 0x%08lx + 0x%08lx\n",
+           (unsigned long)OTA_LAYOUT_SECURITY_IDENTITY_SLOT_0_ORIGIN,
+           (unsigned long)OTA_LAYOUT_SECURITY_IDENTITY_SLOT_SIZE_BYTES);
+    printf("[BOOT] sec ident slot1: 0x%08lx + 0x%08lx\n",
+           (unsigned long)OTA_LAYOUT_SECURITY_IDENTITY_SLOT_1_ORIGIN,
+           (unsigned long)OTA_LAYOUT_SECURITY_IDENTITY_SLOT_SIZE_BYTES);
+    printf("[BOOT] sec trust slot0: 0x%08lx + 0x%08lx\n",
+           (unsigned long)OTA_LAYOUT_SECURITY_TRUST_SLOT_0_ORIGIN,
+           (unsigned long)OTA_LAYOUT_SECURITY_TRUST_SLOT_SIZE_BYTES);
+    printf("[BOOT] sec trust slot1: 0x%08lx + 0x%08lx\n",
+           (unsigned long)OTA_LAYOUT_SECURITY_TRUST_SLOT_1_ORIGIN,
+           (unsigned long)OTA_LAYOUT_SECURITY_TRUST_SLOT_SIZE_BYTES);
+    printf("[BOOT] sec state:       0x%08lx + 0x%08lx\n",
+           (unsigned long)OTA_LAYOUT_SECURITY_STATE_ORIGIN,
+           (unsigned long)OTA_LAYOUT_SECURITY_STATE_SIZE_BYTES);
+    printf("[BOOT] ota state:       0x%08lx + 0x%08lx\n",
            (unsigned long)OTA_LAYOUT_STATE_ORIGIN,
            (unsigned long)OTA_LAYOUT_STATE_SIZE_BYTES);
     fflush(stdout);

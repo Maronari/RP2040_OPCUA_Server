@@ -24,7 +24,11 @@
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
+#include "services/security_identity_import_service.h"
+#include "services/security_certificate_group_service.h"
 #include "services/security_service.h"
+#include "services/security_state_service.h"
+#include "services/security_trust_import_service.h"
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
 
@@ -91,7 +95,13 @@ typedef enum
     MODEL_NODE_SECURITY_LAST_AUTH_FAILURE,
     MODEL_NODE_SECURITY_FAILED_LOGIN_COUNT,
     MODEL_NODE_SECURITY_CERT_THUMBPRINT,
+    MODEL_NODE_SECURITY_CERT_NOT_BEFORE,
     MODEL_NODE_SECURITY_CERT_NOT_AFTER,
+    MODEL_NODE_SECURITY_DAYS_UNTIL_EXPIRY,
+    MODEL_NODE_SECURITY_EXPIRY_STATE,
+    MODEL_NODE_SECURITY_COMMISSIONING_STATE,
+    MODEL_NODE_SECURITY_ACTIVE_IDENTITY_GENERATION,
+    MODEL_NODE_SECURITY_ACTIVE_TRUST_GENERATION,
     MODEL_NODE_SECURITY_CURRENT_USER_ROLE,
     MODEL_NODE_SECURITY_LAST_EVENT_ID,
     MODEL_NODE_NETWORK_LAST_NETWORK_CHANGE,
@@ -275,14 +285,26 @@ typedef struct
 typedef UA_StatusCode (*model_event_fields_writer_t)(UA_KeyValueMap *event_fields,
                                                      const void *fields_context);
 
+typedef enum
+{
+    MODEL_CERTIFICATE_EXPIRY_STATE_MISSING = 0,
+    MODEL_CERTIFICATE_EXPIRY_STATE_UNKNOWN = 1,
+    MODEL_CERTIFICATE_EXPIRY_STATE_VALID = 2,
+    MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM = 3,
+    MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH = 4,
+    MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED = 5,
+} model_certificate_expiry_state_t;
+
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
 typedef enum
 {
     MODEL_SECURITY_CONDITION_REASON_NONE = 0,
     MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRED = 1,
-    MODEL_SECURITY_CONDITION_REASON_TRUST_LIST_EMPTY = 2,
-    MODEL_SECURITY_CONDITION_REASON_AUTH_FAILURES = 3,
-    MODEL_SECURITY_CONDITION_REASON_COMMISSIONING = 4
+    MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRES_SOON_HIGH = 2,
+    MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRES_SOON_MEDIUM = 3,
+    MODEL_SECURITY_CONDITION_REASON_TRUST_LIST_EMPTY = 4,
+    MODEL_SECURITY_CONDITION_REASON_AUTH_FAILURES = 5,
+    MODEL_SECURITY_CONDITION_REASON_COMMISSIONING = 6
 } model_security_condition_reason_t;
 
 typedef enum
@@ -390,7 +412,13 @@ enum
     FIXED_CTX_SECURITY_LAST_AUTH_FAILURE,
     FIXED_CTX_SECURITY_FAILED_LOGIN_COUNT,
     FIXED_CTX_SECURITY_CERT_THUMBPRINT,
+    FIXED_CTX_SECURITY_CERT_NOT_BEFORE,
     FIXED_CTX_SECURITY_CERT_NOT_AFTER,
+    FIXED_CTX_SECURITY_DAYS_UNTIL_EXPIRY,
+    FIXED_CTX_SECURITY_EXPIRY_STATE,
+    FIXED_CTX_SECURITY_COMMISSIONING_STATE,
+    FIXED_CTX_SECURITY_ACTIVE_IDENTITY_GENERATION,
+    FIXED_CTX_SECURITY_ACTIVE_TRUST_GENERATION,
     FIXED_CTX_SECURITY_CURRENT_USER_ROLE,
     FIXED_CTX_SECURITY_LAST_EVENT_ID,
     FIXED_CTX_NETWORK_LAST_NETWORK_CHANGE,
@@ -429,6 +457,20 @@ enum
 #define MODEL_METHOD_SET_DEVICE_IDENTITY "Device.Maintenance.SetDeviceIdentity"
 #define MODEL_METHOD_SET_NETWORK_CONFIG "Device.Maintenance.SetNetworkConfig"
 #define MODEL_METHOD_SET_TRUST_LIST "Device.Security.SetTrustList"
+#define MODEL_METHOD_GET_CERTIFICATE_STATE "Device.Maintenance.Security.GetCertificateState"
+#define MODEL_METHOD_EXPORT_CERTIFICATE_METADATA "Device.Maintenance.Security.ExportCertificateMetadata"
+#define MODEL_METHOD_BEGIN_IDENTITY_ROTATION "Device.Maintenance.Security.BeginIdentityRotation"
+#define MODEL_METHOD_WRITE_IDENTITY_ROTATION_CHUNK "Device.Maintenance.Security.WriteIdentityRotationChunk"
+#define MODEL_METHOD_ABORT_IDENTITY_ROTATION "Device.Maintenance.Security.AbortIdentityRotation"
+#define MODEL_METHOD_VALIDATE_STAGED_IDENTITY "Device.Maintenance.Security.ValidateStagedIdentity"
+#define MODEL_METHOD_APPLY_STAGED_IDENTITY "Device.Maintenance.Security.ApplyStagedIdentity"
+#define MODEL_METHOD_GET_TRUST_STATE "Device.Maintenance.Security.GetTrustState"
+#define MODEL_METHOD_EXPORT_TRUST_LIST "Device.Maintenance.Security.ExportTrustList"
+#define MODEL_METHOD_BEGIN_TRUST_LIST_IMPORT "Device.Maintenance.Security.BeginTrustListImport"
+#define MODEL_METHOD_WRITE_TRUST_LIST_CHUNK "Device.Maintenance.Security.WriteTrustListChunk"
+#define MODEL_METHOD_ABORT_TRUST_LIST_IMPORT "Device.Maintenance.Security.AbortTrustListImport"
+#define MODEL_METHOD_VALIDATE_IMPORTED_TRUST_LIST "Device.Maintenance.Security.ValidateImportedTrustList"
+#define MODEL_METHOD_APPLY_IMPORTED_TRUST_LIST "Device.Maintenance.Security.ApplyImportedTrustList"
 #define MODEL_METHOD_ADD_USER "Device.Maintenance.AddUser"
 #define MODEL_METHOD_CHANGE_PASSWORD "Device.Maintenance.ChangePassword"
 #define MODEL_METHOD_SET_ROLE "Device.Maintenance.SetRole"
@@ -468,6 +510,8 @@ enum
 #define MODEL_CONDITION_TYPE_SYSTEM_RESOURCE "Types.Conditions.SystemResourceConditionType"
 #define MODEL_CONDITION_SECURITY_FAULT "Device.Security.SecurityFaultCondition"
 #define MODEL_CONDITION_SYSTEM_RESOURCE "Device.Diagnostics.SystemResourceCondition"
+#define MODEL_CERTIFICATE_EXPIRY_WARN_DAYS 30u
+#define MODEL_CERTIFICATE_EXPIRY_HIGH_WARN_DAYS 7u
 #define MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES 32768u
 #define MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES 16384u
 #define MODEL_AUDIT_QUEUE_CAPACITY 8u
@@ -572,6 +616,9 @@ static void log_opcua_heap(const char *stage)
 
 static void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result);
 static void model_set_string_method_output(size_t output_size, UA_Variant *output, const char *result);
+static void model_set_bytestring_method_output(size_t output_size,
+                                               UA_Variant *output,
+                                               const UA_ByteString *result);
 static void model_set_default_variant_value(UA_VariableAttributes *attributes, UA_NodeId data_type);
 static const UA_ByteString *model_session_get_username_bytes(const void *session_context);
 static bool model_copy_session_username(const void *session_context, char *buffer, size_t buffer_size);
@@ -1375,7 +1422,13 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_SECURITY_LAST_AUTH_FAILURE, NULL},
     {MODEL_NODE_SECURITY_FAILED_LOGIN_COUNT, NULL},
     {MODEL_NODE_SECURITY_CERT_THUMBPRINT, NULL},
+    {MODEL_NODE_SECURITY_CERT_NOT_BEFORE, NULL},
     {MODEL_NODE_SECURITY_CERT_NOT_AFTER, NULL},
+    {MODEL_NODE_SECURITY_DAYS_UNTIL_EXPIRY, NULL},
+    {MODEL_NODE_SECURITY_EXPIRY_STATE, NULL},
+    {MODEL_NODE_SECURITY_COMMISSIONING_STATE, NULL},
+    {MODEL_NODE_SECURITY_ACTIVE_IDENTITY_GENERATION, NULL},
+    {MODEL_NODE_SECURITY_ACTIVE_TRUST_GENERATION, NULL},
     {MODEL_NODE_SECURITY_CURRENT_USER_ROLE, NULL},
     {MODEL_NODE_SECURITY_LAST_EVENT_ID, NULL},
     {MODEL_NODE_NETWORK_LAST_NETWORK_CHANGE, NULL},
@@ -1607,6 +1660,108 @@ static bool model_is_reboot_required(void)
 static const char *model_security_mode_to_string(void)
 {
     return security_service_is_commissioning_mode() ? "Commissioning" : "Strict";
+}
+
+static model_certificate_expiry_state_t model_get_certificate_expiry_state(uint32_t *out_days_until_expiry,
+                                                                           bool *out_time_check_performed)
+{
+    time_service_status_t time_status = {0};
+    uint32_t not_after_epoch_s = 0u;
+    uint32_t remaining_days = 0u;
+
+    if (out_days_until_expiry != NULL)
+    {
+        *out_days_until_expiry = 0u;
+    }
+
+    if (out_time_check_performed != NULL)
+    {
+        *out_time_check_performed = false;
+    }
+
+    if (!security_service_has_device_identity())
+    {
+        return MODEL_CERTIFICATE_EXPIRY_STATE_MISSING;
+    }
+
+    if (!security_service_get_device_certificate_not_after(&not_after_epoch_s) || not_after_epoch_s == 0u)
+    {
+        return MODEL_CERTIFICATE_EXPIRY_STATE_UNKNOWN;
+    }
+
+    time_service_get_status(&time_status);
+    if (time_status.quality == SERVICE_QUALITY_BAD)
+    {
+        return MODEL_CERTIFICATE_EXPIRY_STATE_UNKNOWN;
+    }
+
+    if (out_time_check_performed != NULL)
+    {
+        *out_time_check_performed = true;
+    }
+
+    if (time_status.unix_time_s >= not_after_epoch_s)
+    {
+        return MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED;
+    }
+
+    remaining_days = (not_after_epoch_s - time_status.unix_time_s + 86399u) / 86400u;
+
+    if (out_days_until_expiry != NULL)
+    {
+        *out_days_until_expiry = remaining_days;
+    }
+
+    if (remaining_days <= MODEL_CERTIFICATE_EXPIRY_HIGH_WARN_DAYS)
+    {
+        return MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH;
+    }
+
+    if (remaining_days <= MODEL_CERTIFICATE_EXPIRY_WARN_DAYS)
+    {
+        return MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM;
+    }
+
+    return MODEL_CERTIFICATE_EXPIRY_STATE_VALID;
+}
+
+static const char *model_certificate_expiry_state_to_string(model_certificate_expiry_state_t state)
+{
+    switch (state)
+    {
+    case MODEL_CERTIFICATE_EXPIRY_STATE_MISSING:
+        return "missing";
+    case MODEL_CERTIFICATE_EXPIRY_STATE_UNKNOWN:
+        return "unknown";
+    case MODEL_CERTIFICATE_EXPIRY_STATE_VALID:
+        return "valid";
+    case MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM:
+        return "expires_soon_medium";
+    case MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH:
+        return "expires_soon_high";
+    case MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED:
+        return "expired";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *model_security_commissioning_state_to_string(void)
+{
+    security_state_service_snapshot_t snapshot = {0};
+
+    if (!security_state_service_get_snapshot(&snapshot))
+    {
+        return security_service_is_commissioning_mode() ? "commissioning_open" : "strict";
+    }
+
+    if (snapshot.pending_identity_generation > snapshot.active_identity_generation ||
+        snapshot.pending_trust_generation > snapshot.active_trust_generation)
+    {
+        return "rotation_pending";
+    }
+
+    return snapshot.commissioning_mode ? "commissioning_open" : "strict";
 }
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
@@ -3079,17 +3234,41 @@ static model_security_condition_reason_t model_evaluate_security_condition(char 
     const bool commissioning_mode = security_service_is_commissioning_mode();
     const uint32_t trusted_client_count = security_service_get_trusted_client_count();
     const uint32_t failed_login_count = security_service_get_failed_login_count();
-    uint32_t certificate_not_after = 0u;
-    const uint32_t now_epoch_s = get_system_time();
+    uint32_t days_until_expiry = 0u;
+    bool time_check_performed = false;
+    const model_certificate_expiry_state_t expiry_state =
+        model_get_certificate_expiry_state(&days_until_expiry, &time_check_performed);
 
-    if (security_service_get_device_certificate_not_after(&certificate_not_after) &&
-        certificate_not_after > 0u &&
-        now_epoch_s >= certificate_not_after)
+    (void)time_check_performed;
+
+    if (expiry_state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED)
     {
         model_copy_string_safe(message, message_size, "Device certificate expired");
         *out_severity = 900u;
         *out_quality = UA_STATUSCODE_BADCERTIFICATETIMEINVALID;
         return MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRED;
+    }
+
+    if (expiry_state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH)
+    {
+        snprintf(message,
+                 message_size,
+                 "Device certificate expires soon (%" PRIu32 " days remaining)",
+                 days_until_expiry);
+        *out_severity = 750u;
+        *out_quality = UA_STATUSCODE_UNCERTAIN;
+        return MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRES_SOON_HIGH;
+    }
+
+    if (expiry_state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM)
+    {
+        snprintf(message,
+                 message_size,
+                 "Device certificate approaching expiry (%" PRIu32 " days remaining)",
+                 days_until_expiry);
+        *out_severity = 550u;
+        *out_quality = UA_STATUSCODE_UNCERTAIN;
+        return MODEL_SECURITY_CONDITION_REASON_CERT_EXPIRES_SOON_MEDIUM;
     }
 
     if (!commissioning_mode && trusted_client_count == 0u)
@@ -4761,6 +4940,17 @@ static UA_StatusCode model_read_value(UA_Server *server,
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value, value_text, UA_STATUSCODE_GOOD);
     }
+    case MODEL_NODE_SECURITY_CERT_NOT_BEFORE:
+    {
+        uint32_t not_before_epoch_s = 0u;
+        UA_DateTime timestamp = 0;
+        if (security_service_get_device_certificate_not_before(&not_before_epoch_s))
+        {
+            timestamp = UA_DateTime_fromUnixTime((UA_Int64)not_before_epoch_s);
+        }
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_datetime_value(value, timestamp, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_SECURITY_CERT_NOT_AFTER:
     {
         uint32_t not_after_epoch_s = 0u;
@@ -4771,6 +4961,45 @@ static UA_StatusCode model_read_value(UA_Server *server,
         }
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_datetime_value(value, timestamp, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_DAYS_UNTIL_EXPIRY:
+    {
+        uint32_t days_until_expiry = 0u;
+
+        (void)model_get_certificate_expiry_state(&days_until_expiry, NULL);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value, days_until_expiry, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_EXPIRY_STATE:
+    {
+        const model_certificate_expiry_state_t expiry_state =
+            model_get_certificate_expiry_state(NULL, NULL);
+
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value,
+                                      model_certificate_expiry_state_to_string(expiry_state),
+                                      UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_COMMISSIONING_STATE:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value,
+                                      model_security_commissioning_state_to_string(),
+                                      UA_STATUSCODE_GOOD);
+    case MODEL_NODE_SECURITY_ACTIVE_IDENTITY_GENERATION:
+    {
+        security_state_service_snapshot_t snapshot = {0};
+
+        (void)security_state_service_get_snapshot(&snapshot);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value, snapshot.active_identity_generation, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_SECURITY_ACTIVE_TRUST_GENERATION:
+    {
+        security_state_service_snapshot_t snapshot = {0};
+
+        (void)security_state_service_get_snapshot(&snapshot);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value, snapshot.active_trust_generation, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_SECURITY_CURRENT_USER_ROLE:
         model_apply_now_source_timestamp(include_source_timestamp, value);
@@ -5927,6 +6156,945 @@ static UA_StatusCode model_export_config(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_refresh_runtime_trust_backends(UA_Server *server)
+{
+    UA_ServerConfig *config;
+    UA_StatusCode refresh_status = UA_STATUSCODE_GOOD;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    config = UA_Server_getConfig(server);
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    if (security_certificate_group_service_manages(&config->secureChannelPKI))
+    {
+        refresh_status = security_certificate_group_service_refresh(&config->secureChannelPKI);
+    }
+
+    if (refresh_status == UA_STATUSCODE_GOOD &&
+        security_certificate_group_service_manages(&config->sessionPKI))
+    {
+        refresh_status = security_certificate_group_service_refresh(&config->sessionPKI);
+    }
+
+    return refresh_status;
+}
+
+static void model_finalize_identity_generation_after_startup(void)
+{
+    security_state_service_snapshot_t snapshot = {0};
+    security_service_blob_view_t certificate = {0};
+    security_service_blob_view_t private_key = {0};
+    bool have_identity = false;
+    uint32_t next_active_generation = 0u;
+    uint32_t next_pending_generation = 0u;
+
+    if (!security_state_service_get_snapshot(&snapshot))
+    {
+        return;
+    }
+
+    have_identity = security_service_get_device_certificate(&certificate) &&
+                    security_service_get_device_private_key(&private_key) &&
+                    certificate.length > 0u &&
+                    private_key.length > 0u;
+
+    next_active_generation = snapshot.active_identity_generation;
+    next_pending_generation = snapshot.pending_identity_generation;
+
+    if (snapshot.pending_identity_generation > snapshot.active_identity_generation)
+    {
+        next_active_generation = snapshot.pending_identity_generation;
+        next_pending_generation = 0u;
+    }
+    else if (snapshot.active_identity_generation == 0u &&
+             snapshot.pending_identity_generation == 0u &&
+             have_identity)
+    {
+        next_active_generation = 1u;
+    }
+
+    if (next_active_generation == snapshot.active_identity_generation &&
+        next_pending_generation == snapshot.pending_identity_generation)
+    {
+        return;
+    }
+
+    if (security_state_service_set_identity_generations(next_active_generation,
+                                                        next_pending_generation))
+    {
+        printf("[OPC UA]\tIdentity generation active=%lu pending=%lu\n",
+               (unsigned long)next_active_generation,
+               (unsigned long)next_pending_generation);
+        fflush(stdout);
+    }
+}
+
+static void model_write_identity_import_report_json(char *buffer,
+                                                    size_t buffer_size,
+                                                    const security_identity_import_service_report_t *report)
+{
+    if (buffer == NULL || buffer_size == 0u || report == NULL)
+    {
+        return;
+    }
+
+    snprintf(buffer,
+             buffer_size,
+             "{\"sessionActive\":%s,\"payloadComplete\":%s,\"payloadCrc32Matches\":%s,\"valid\":%s,\"timeCheckPerformed\":%s,\"rebootRequired\":%s,\"payloadSizeBytes\":%lu,\"payloadCrc32\":%lu,\"schemaVersion\":%lu,\"certificateSizeBytes\":%lu,\"privateKeySizeBytes\":%lu,\"notBeforeEpochS\":%lu,\"notAfterEpochS\":%lu,\"result\":\"%s\"}",
+             report->session_active ? "true" : "false",
+             report->payload_complete ? "true" : "false",
+             report->payload_crc32_matches ? "true" : "false",
+             report->valid ? "true" : "false",
+             report->time_check_performed ? "true" : "false",
+             report->reboot_required ? "true" : "false",
+             (unsigned long)report->payload_size,
+             (unsigned long)report->expected_payload_crc32,
+             (unsigned long)report->schema_version,
+             (unsigned long)report->certificate_size,
+             (unsigned long)report->private_key_size,
+             (unsigned long)report->not_before_epoch_s,
+             (unsigned long)report->not_after_epoch_s,
+             security_identity_import_service_result_to_string(report->result));
+}
+
+static void model_write_certificate_metadata_json(char *buffer, size_t buffer_size)
+{
+    security_service_blob_view_t certificate = {0};
+    security_service_blob_view_t private_key = {0};
+    security_state_service_snapshot_t snapshot = {0};
+    char thumbprint[SECURITY_SERVICE_CERT_THUMBPRINT_LEN + 1u] = {0};
+    const device_profile_config_t *config = config_service_get();
+    const bool have_identity =
+        security_service_get_device_certificate(&certificate) &&
+        security_service_get_device_private_key(&private_key) &&
+        certificate.length > 0u &&
+        private_key.length > 0u;
+    uint32_t not_before_epoch_s = 0u;
+    uint32_t not_after_epoch_s = 0u;
+    uint32_t days_until_expiry = 0u;
+    bool time_check_performed = false;
+    bool expiry_known = false;
+    const model_certificate_expiry_state_t expiry_state =
+        model_get_certificate_expiry_state(&days_until_expiry, &time_check_performed);
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    if (have_identity)
+    {
+        (void)security_service_get_device_certificate_thumbprint(thumbprint, sizeof(thumbprint));
+        (void)security_service_get_device_certificate_not_before(&not_before_epoch_s);
+        if (security_service_get_device_certificate_not_after(&not_after_epoch_s))
+        {
+            expiry_known = true;
+        }
+    }
+
+    (void)security_state_service_get_snapshot(&snapshot);
+    snprintf(buffer,
+             buffer_size,
+             "{\"haveDeviceIdentity\":%s,\"certificateSizeBytes\":%lu,\"privateKeySizeBytes\":%lu,\"applicationUri\":\"%s\",\"thumbprint\":\"%s\",\"notBeforeEpochS\":%lu,\"notAfterEpochS\":%lu,\"expiryKnown\":%s,\"timeCheckPerformed\":%s,\"daysUntilExpiry\":%lu,\"expiryState\":\"%s\",\"commissioningState\":\"%s\",\"activeIdentityGeneration\":%lu,\"pendingIdentityGeneration\":%lu,\"activeTrustGeneration\":%lu,\"pendingTrustGeneration\":%lu,\"rebootRequired\":%s}",
+             have_identity ? "true" : "false",
+             (unsigned long)certificate.length,
+             (unsigned long)private_key.length,
+             (config != NULL) ? config->product_instance_uri : "",
+             thumbprint,
+             (unsigned long)not_before_epoch_s,
+             (unsigned long)not_after_epoch_s,
+             expiry_known ? "true" : "false",
+             time_check_performed ? "true" : "false",
+             (unsigned long)days_until_expiry,
+             model_certificate_expiry_state_to_string(expiry_state),
+             model_security_commissioning_state_to_string(),
+             (unsigned long)snapshot.active_identity_generation,
+             (unsigned long)snapshot.pending_identity_generation,
+             (unsigned long)snapshot.active_trust_generation,
+             (unsigned long)snapshot.pending_trust_generation,
+             snapshot.pending_identity_generation > snapshot.active_identity_generation ? "true" : "false");
+}
+
+static void model_write_certificate_state_json(char *buffer, size_t buffer_size)
+{
+    security_identity_import_service_status_t import_status = {0};
+    security_identity_import_service_report_t report = {0};
+    char metadata[768] = {0};
+    const char *validation_result = "NONE";
+    bool validation_valid = false;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    model_write_certificate_metadata_json(metadata, sizeof(metadata));
+    security_identity_import_service_get_status(&import_status);
+    if (import_status.session_active)
+    {
+        (void)security_identity_import_service_validate_staged(&report);
+        validation_result = security_identity_import_service_result_to_string(report.result);
+        validation_valid = report.valid;
+    }
+
+    snprintf(buffer,
+             buffer_size,
+             "{\"metadata\":%s,\"maxChunkBytes\":%u,\"import\":{\"sessionActive\":%s,\"expectedPayloadSizeBytes\":%lu,\"payloadCrc32\":%lu,\"schemaVersion\":%lu,\"bytesWritten\":%lu,\"remainingBytes\":%lu,\"payloadComplete\":%s,\"payloadCrc32Matches\":%s,\"lastResult\":\"%s\"},\"stagedValidation\":{\"available\":%s,\"valid\":%s,\"certificateSizeBytes\":%lu,\"privateKeySizeBytes\":%lu,\"notBeforeEpochS\":%lu,\"notAfterEpochS\":%lu,\"timeCheckPerformed\":%s,\"result\":\"%s\"}}",
+             metadata,
+             (unsigned)SECURITY_IDENTITY_IMPORT_SERVICE_MAX_CHUNK_BYTES,
+             import_status.session_active ? "true" : "false",
+             (unsigned long)import_status.expected_payload_size,
+             (unsigned long)import_status.expected_payload_crc32,
+             (unsigned long)import_status.schema_version,
+             (unsigned long)import_status.bytes_written,
+             (unsigned long)import_status.remaining_bytes,
+             import_status.payload_complete ? "true" : "false",
+             import_status.payload_crc32_matches ? "true" : "false",
+             security_identity_import_service_result_to_string(import_status.last_result),
+             import_status.session_active ? "true" : "false",
+             validation_valid ? "true" : "false",
+             (unsigned long)report.certificate_size,
+             (unsigned long)report.private_key_size,
+             (unsigned long)report.not_before_epoch_s,
+             (unsigned long)report.not_after_epoch_s,
+             report.time_check_performed ? "true" : "false",
+             validation_result);
+}
+
+static UA_StatusCode model_get_certificate_state(UA_Server *server,
+                                                 const UA_NodeId *session_id,
+                                                 void *session_context,
+                                                 const UA_NodeId *method_id,
+                                                 void *method_context,
+                                                 const UA_NodeId *object_id,
+                                                 void *object_context,
+                                                 size_t input_size,
+                                                 const UA_Variant *input,
+                                                 size_t output_size,
+                                                 UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    char payload[1536] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    model_write_certificate_state_json(payload, sizeof(payload));
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_export_certificate_metadata(UA_Server *server,
+                                                       const UA_NodeId *session_id,
+                                                       void *session_context,
+                                                       const UA_NodeId *method_id,
+                                                       void *method_context,
+                                                       const UA_NodeId *object_id,
+                                                       void *object_context,
+                                                       size_t input_size,
+                                                       const UA_Variant *input,
+                                                       size_t output_size,
+                                                       UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    char payload[896] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    model_write_certificate_metadata_json(payload, sizeof(payload));
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_begin_identity_rotation(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context,
+                                                   const UA_NodeId *object_id,
+                                                   void *object_context,
+                                                   size_t input_size,
+                                                   const UA_Variant *input,
+                                                   size_t output_size,
+                                                   UA_Variant *output)
+{
+    UA_Boolean result = false;
+    UA_UInt32 payload_size = 0u;
+    UA_UInt32 payload_crc32 = 0u;
+    UA_UInt32 schema_version = 0u;
+    security_identity_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    if (model_require_admin_session(session_context, output_size, output) != UA_STATUSCODE_GOOD)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    if (input_size != 3u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_UINT32]) || input[0].data == NULL ||
+        !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_UINT32]) || input[1].data == NULL ||
+        !UA_Variant_hasScalarType(&input[2], &UA_TYPES[UA_TYPES_UINT32]) || input[2].data == NULL)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    payload_size = *(const UA_UInt32 *)input[0].data;
+    payload_crc32 = *(const UA_UInt32 *)input[1].data;
+    schema_version = *(const UA_UInt32 *)input[2].data;
+
+    service_result = security_identity_import_service_begin((uint32_t)payload_size,
+                                                            (uint32_t)payload_crc32,
+                                                            (uint32_t)schema_version);
+    result = (service_result == SECURITY_IDENTITY_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tBeginIdentityRotation %s size=%lu crc32=0x%08lx schema=%lu\n",
+           result == UA_TRUE ? "accepted" : security_identity_import_service_result_to_string(service_result),
+           (unsigned long)payload_size,
+           (unsigned long)payload_crc32,
+           (unsigned long)schema_version);
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_write_identity_rotation_chunk(UA_Server *server,
+                                                         const UA_NodeId *session_id,
+                                                         void *session_context,
+                                                         const UA_NodeId *method_id,
+                                                         void *method_context,
+                                                         const UA_NodeId *object_id,
+                                                         void *object_context,
+                                                         size_t input_size,
+                                                         const UA_Variant *input,
+                                                         size_t output_size,
+                                                         UA_Variant *output)
+{
+    const UA_ByteString *chunk = NULL;
+    UA_Boolean result = false;
+    security_identity_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    if (model_require_admin_session(session_context, output_size, output) != UA_STATUSCODE_GOOD)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    if (input_size != 1u || input == NULL || !model_get_input_ua_bytestring(&input[0], &chunk))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    service_result = security_identity_import_service_write_chunk(chunk->data, chunk->length);
+    result = (service_result == SECURITY_IDENTITY_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    if (result != UA_TRUE)
+    {
+        printf("[OPC UA]\tWriteIdentityRotationChunk failed: %s (size=%lu)\n",
+               security_identity_import_service_result_to_string(service_result),
+               (unsigned long)chunk->length);
+        fflush(stdout);
+    }
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_abort_identity_rotation(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context,
+                                                   const UA_NodeId *object_id,
+                                                   void *object_context,
+                                                   size_t input_size,
+                                                   const UA_Variant *input,
+                                                   size_t output_size,
+                                                   UA_Variant *output)
+{
+    UA_Boolean result = false;
+    security_identity_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    if (model_require_admin_session(session_context, output_size, output) != UA_STATUSCODE_GOOD)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    service_result = security_identity_import_service_abort();
+    result = (service_result == SECURITY_IDENTITY_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tAbortIdentityRotation %s\n",
+           result == UA_TRUE ? "succeeded" : security_identity_import_service_result_to_string(service_result));
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_validate_staged_identity(UA_Server *server,
+                                                    const UA_NodeId *session_id,
+                                                    void *session_context,
+                                                    const UA_NodeId *method_id,
+                                                    void *method_context,
+                                                    const UA_NodeId *object_id,
+                                                    void *object_context,
+                                                    size_t input_size,
+                                                    const UA_Variant *input,
+                                                    size_t output_size,
+                                                    UA_Variant *output)
+{
+    security_identity_import_service_report_t report = {0};
+    char payload[512] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    if (model_require_admin_session(session_context, output_size, output) != UA_STATUSCODE_GOOD)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    (void)security_identity_import_service_validate_staged(&report);
+    model_write_identity_import_report_json(payload, sizeof(payload), &report);
+
+    printf("[OPC UA]\tValidateStagedIdentity %s\n",
+           report.valid ? "OK" : security_identity_import_service_result_to_string(report.result));
+    fflush(stdout);
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_apply_staged_identity(UA_Server *server,
+                                                 const UA_NodeId *session_id,
+                                                 void *session_context,
+                                                 const UA_NodeId *method_id,
+                                                 void *method_context,
+                                                 const UA_NodeId *object_id,
+                                                 void *object_context,
+                                                 size_t input_size,
+                                                 const UA_Variant *input,
+                                                 size_t output_size,
+                                                 UA_Variant *output)
+{
+    UA_Boolean result = false;
+    security_identity_import_service_report_t report = {0};
+    const char *details = "staged identity validation failed";
+    (void)server;
+    (void)session_id;
+    (void)method_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    if (model_require_admin_session(session_context, output_size, output) != UA_STATUSCODE_GOOD)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    if (security_identity_import_service_apply_staged(&report) == SECURITY_IDENTITY_IMPORT_RESULT_OK)
+    {
+        result = true;
+        details = "staged identity persisted; reboot required";
+    }
+    else
+    {
+        details = security_identity_import_service_result_to_string(report.result);
+    }
+
+    if (result == UA_TRUE)
+    {
+        printf("[OPC UA]\tApplyStagedIdentity succeeded; reboot required\n");
+    }
+    else
+    {
+        printf("[OPC UA]\tApplyStagedIdentity failed: %s\n", details);
+    }
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "identity-rotation-apply",
+                              "device-identity",
+                              result == UA_TRUE,
+                              details);
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     result == UA_TRUE ? "Staged identity applied; reboot required"
+                                                       : "Staged identity apply failed",
+                                     result == UA_TRUE ? 300u : 700u,
+                                     "IdentityRotation",
+                                     result == UA_TRUE ? 0u : 1u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static void model_write_trust_import_report_json(char *buffer,
+                                                 size_t buffer_size,
+                                                 const security_trust_import_service_report_t *report)
+{
+    if (buffer == NULL || buffer_size == 0u || report == NULL)
+    {
+        return;
+    }
+
+    snprintf(buffer,
+             buffer_size,
+             "{\"sessionActive\":%s,\"payloadComplete\":%s,\"payloadCrc32Matches\":%s,\"valid\":%s,\"payloadSizeBytes\":%lu,\"payloadCrc32\":%lu,\"schemaVersion\":%lu,\"certificateCount\":%lu,\"result\":\"%s\"}",
+             report->session_active ? "true" : "false",
+             report->payload_complete ? "true" : "false",
+             report->payload_crc32_matches ? "true" : "false",
+             report->valid ? "true" : "false",
+             (unsigned long)report->payload_size,
+             (unsigned long)report->expected_payload_crc32,
+             (unsigned long)report->schema_version,
+             (unsigned long)report->certificate_count,
+             security_trust_import_service_result_to_string(report->result));
+}
+
+static void model_write_trust_state_json(char *buffer, size_t buffer_size)
+{
+    security_service_blob_view_t trust_list = {0};
+    security_trust_import_service_status_t import_status = {0};
+    security_trust_import_service_report_t report = {0};
+    security_state_service_snapshot_t snapshot = {0};
+    uint32_t trust_list_version = 0u;
+    const bool have_trust_list = security_service_get_trust_list(&trust_list);
+    const uint32_t trusted_client_count = security_service_get_trusted_client_count();
+    const char *validation_result = "NONE";
+    bool validation_valid = false;
+    uint32_t validation_cert_count = 0u;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    security_trust_import_service_get_status(&import_status);
+    if (import_status.session_active)
+    {
+        (void)security_trust_import_service_validate_staged(&report);
+        validation_result = security_trust_import_service_result_to_string(report.result);
+        validation_valid = report.valid;
+        validation_cert_count = report.certificate_count;
+    }
+
+    (void)security_service_get_trust_list_version(&trust_list_version);
+    (void)security_state_service_get_snapshot(&snapshot);
+    snprintf(buffer,
+             buffer_size,
+             "{\"commissioningMode\":%s,\"commissioningState\":\"%s\",\"haveTrustList\":%s,\"trustListSizeBytes\":%lu,\"trustListVersion\":%lu,\"activeTrustGeneration\":%lu,\"pendingTrustGeneration\":%lu,\"trustedClientCount\":%lu,\"maxChunkBytes\":%u,\"import\":{\"sessionActive\":%s,\"expectedPayloadSizeBytes\":%lu,\"payloadCrc32\":%lu,\"schemaVersion\":%lu,\"bytesWritten\":%lu,\"remainingBytes\":%lu,\"payloadComplete\":%s,\"payloadCrc32Matches\":%s,\"lastResult\":\"%s\"},\"stagedValidation\":{\"available\":%s,\"valid\":%s,\"certificateCount\":%lu,\"result\":\"%s\"}}",
+             snapshot.commissioning_mode ? "true" : "false",
+             model_security_commissioning_state_to_string(),
+             have_trust_list ? "true" : "false",
+             (unsigned long)trust_list.length,
+             (unsigned long)trust_list_version,
+             (unsigned long)snapshot.active_trust_generation,
+             (unsigned long)snapshot.pending_trust_generation,
+             (unsigned long)trusted_client_count,
+             (unsigned)SECURITY_TRUST_IMPORT_SERVICE_MAX_CHUNK_BYTES,
+             import_status.session_active ? "true" : "false",
+             (unsigned long)import_status.expected_payload_size,
+             (unsigned long)import_status.expected_payload_crc32,
+             (unsigned long)import_status.schema_version,
+             (unsigned long)import_status.bytes_written,
+             (unsigned long)import_status.remaining_bytes,
+             import_status.payload_complete ? "true" : "false",
+             import_status.payload_crc32_matches ? "true" : "false",
+             security_trust_import_service_result_to_string(import_status.last_result),
+             import_status.session_active ? "true" : "false",
+             validation_valid ? "true" : "false",
+             (unsigned long)validation_cert_count,
+             validation_result);
+}
+
+static UA_StatusCode model_get_trust_state(UA_Server *server,
+                                           const UA_NodeId *session_id,
+                                           void *session_context,
+                                           const UA_NodeId *method_id,
+                                           void *method_context,
+                                           const UA_NodeId *object_id,
+                                           void *object_context,
+                                           size_t input_size,
+                                           const UA_Variant *input,
+                                           size_t output_size,
+                                           UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    char payload[896] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    model_write_trust_state_json(payload, sizeof(payload));
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_export_trust_list(UA_Server *server,
+                                             const UA_NodeId *session_id,
+                                             void *session_context,
+                                             const UA_NodeId *method_id,
+                                             void *method_context,
+                                             const UA_NodeId *object_id,
+                                             void *object_context,
+                                             size_t input_size,
+                                             const UA_Variant *input,
+                                             size_t output_size,
+                                             UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    security_service_blob_view_t trust_list = {0};
+    UA_ByteString payload = UA_BYTESTRING_NULL;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (security_service_get_trust_list(&trust_list) && trust_list.length > 0u)
+    {
+        payload.data = (UA_Byte *)(uintptr_t)trust_list.data;
+        payload.length = trust_list.length;
+    }
+
+    model_set_bytestring_method_output(output_size, output, &payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_begin_trust_list_import(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context,
+                                                   const UA_NodeId *object_id,
+                                                   void *object_context,
+                                                   size_t input_size,
+                                                   const UA_Variant *input,
+                                                   size_t output_size,
+                                                   UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    UA_UInt32 payload_size = 0u;
+    UA_UInt32 payload_crc32 = 0u;
+    UA_UInt32 schema_version = 0u;
+    security_trust_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (input_size != 3u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_UINT32]) || input[0].data == NULL ||
+        !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_UINT32]) || input[1].data == NULL ||
+        !UA_Variant_hasScalarType(&input[2], &UA_TYPES[UA_TYPES_UINT32]) || input[2].data == NULL)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    payload_size = *(const UA_UInt32 *)input[0].data;
+    payload_crc32 = *(const UA_UInt32 *)input[1].data;
+    schema_version = *(const UA_UInt32 *)input[2].data;
+
+    service_result = security_trust_import_service_begin((uint32_t)payload_size,
+                                                         (uint32_t)payload_crc32,
+                                                         (uint32_t)schema_version);
+    result = (service_result == SECURITY_TRUST_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tBeginTrustListImport %s size=%lu crc32=0x%08lx schema=%lu\n",
+           result == UA_TRUE ? "accepted" : security_trust_import_service_result_to_string(service_result),
+           (unsigned long)payload_size,
+           (unsigned long)payload_crc32,
+           (unsigned long)schema_version);
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_write_trust_list_chunk(UA_Server *server,
+                                                  const UA_NodeId *session_id,
+                                                  void *session_context,
+                                                  const UA_NodeId *method_id,
+                                                  void *method_context,
+                                                  const UA_NodeId *object_id,
+                                                  void *object_context,
+                                                  size_t input_size,
+                                                  const UA_Variant *input,
+                                                  size_t output_size,
+                                                  UA_Variant *output)
+{
+    const UA_ByteString *chunk = NULL;
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    security_trust_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (input_size != 1u || input == NULL || !model_get_input_ua_bytestring(&input[0], &chunk))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    service_result = security_trust_import_service_write_chunk(chunk->data, chunk->length);
+    result = (service_result == SECURITY_TRUST_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    if (result != UA_TRUE)
+    {
+        printf("[OPC UA]\tWriteTrustListChunk failed: %s (size=%lu)\n",
+               security_trust_import_service_result_to_string(service_result),
+               (unsigned long)chunk->length);
+        fflush(stdout);
+    }
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_abort_trust_list_import(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context,
+                                                   const UA_NodeId *object_id,
+                                                   void *object_context,
+                                                   size_t input_size,
+                                                   const UA_Variant *input,
+                                                   size_t output_size,
+                                                   UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    security_trust_import_service_result_t service_result;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    service_result = security_trust_import_service_abort();
+    result = (service_result == SECURITY_TRUST_IMPORT_RESULT_OK) ? UA_TRUE : UA_FALSE;
+    printf("[OPC UA]\tAbortTrustListImport %s\n",
+           result == UA_TRUE ? "succeeded" : security_trust_import_service_result_to_string(service_result));
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_validate_imported_trust_list(UA_Server *server,
+                                                        const UA_NodeId *session_id,
+                                                        void *session_context,
+                                                        const UA_NodeId *method_id,
+                                                        void *method_context,
+                                                        const UA_NodeId *object_id,
+                                                        void *object_context,
+                                                        size_t input_size,
+                                                        const UA_Variant *input,
+                                                        size_t output_size,
+                                                        UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    security_trust_import_service_report_t report = {0};
+    char payload[384] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    (void)security_trust_import_service_validate_staged(&report);
+    model_write_trust_import_report_json(payload, sizeof(payload), &report);
+
+    printf("[OPC UA]\tValidateImportedTrustList %s\n",
+           report.valid ? "OK" : security_trust_import_service_result_to_string(report.result));
+    fflush(stdout);
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_apply_imported_trust_list(UA_Server *server,
+                                                     const UA_NodeId *session_id,
+                                                     void *session_context,
+                                                     const UA_NodeId *method_id,
+                                                     void *method_context,
+                                                     const UA_NodeId *object_id,
+                                                     void *object_context,
+                                                     size_t input_size,
+                                                     const UA_Variant *input,
+                                                     size_t output_size,
+                                                     UA_Variant *output)
+{
+    UA_StatusCode status_code;
+    UA_Boolean result = false;
+    UA_StatusCode refresh_status = UA_STATUSCODE_GOOD;
+    security_trust_import_service_report_t report = {0};
+    const char *details = "imported trust list validation failed";
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status_code = model_require_method_role(session_context, method_id, output_size, output);
+    if (status_code != UA_STATUSCODE_GOOD)
+    {
+        return status_code;
+    }
+
+    if (security_trust_import_service_apply_staged(&report) == SECURITY_TRUST_IMPORT_RESULT_OK)
+    {
+        result = true;
+        details = "imported trust list applied";
+        refresh_status = model_refresh_runtime_trust_backends(server);
+        if (refresh_status != UA_STATUSCODE_GOOD)
+        {
+            details = "trust list applied but runtime PKI refresh failed";
+            printf("[OPC UA]\tApplyImportedTrustList runtime PKI refresh failed: %s\n",
+                   UA_StatusCode_name(refresh_status));
+            fflush(stdout);
+        }
+    }
+    else
+    {
+        details = security_trust_import_service_result_to_string(report.result);
+    }
+
+    if (result == UA_TRUE)
+    {
+        printf("[OPC UA]\tApplyImportedTrustList succeeded\n");
+    }
+    else
+    {
+        printf("[OPC UA]\tApplyImportedTrustList failed: %s\n", details);
+    }
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "trust-import-apply",
+                              "device-security",
+                              result == UA_TRUE,
+                              details);
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     result == UA_TRUE
+                                         ? (refresh_status == UA_STATUSCODE_GOOD
+                                                ? "Imported trust list applied"
+                                                : "Imported trust list applied; runtime PKI refresh failed")
+                                         : "Imported trust list apply failed",
+                                     result == UA_TRUE
+                                         ? (refresh_status == UA_STATUSCODE_GOOD ? 300u : 600u)
+                                         : 700u,
+                                     "TrustListImport",
+                                     result == UA_TRUE ? 0u : 1u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_begin_config_import(UA_Server *server,
                                                const UA_NodeId *session_id,
                                                void *session_context,
@@ -6746,8 +7914,8 @@ static UA_StatusCode model_set_trust_list(UA_Server *server,
 {
     const UA_ByteString *trust_list = NULL;
     UA_StatusCode status;
+    UA_StatusCode refresh_status = UA_STATUSCODE_GOOD;
     UA_Boolean result = false;
-    (void)server;
     (void)session_id;
     (void)method_context;
     (void)object_id;
@@ -6766,6 +7934,17 @@ static UA_StatusCode model_set_trust_list(UA_Server *server,
     }
 
     result = security_service_set_trust_list(trust_list->data, trust_list->length);
+    if (result && server != NULL)
+    {
+        refresh_status = model_refresh_runtime_trust_backends(server);
+        if (refresh_status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tTrust list persisted but runtime PKI refresh failed: %s\n",
+                   UA_StatusCode_name(refresh_status));
+            fflush(stdout);
+        }
+    }
+
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -7397,6 +8576,23 @@ static void model_set_string_method_output(size_t output_size, UA_Variant *outpu
     }
 }
 
+static void model_set_bytestring_method_output(size_t output_size,
+                                               UA_Variant *output,
+                                               const UA_ByteString *result)
+{
+    if (output_size > 0)
+    {
+        UA_ByteString bytestring_value = UA_BYTESTRING_NULL;
+
+        if (result != NULL)
+        {
+            bytestring_value = *result;
+        }
+
+        UA_Variant_setScalarCopy(&output[0], &bytestring_value, &UA_TYPES[UA_TYPES_BYTESTRING]);
+    }
+}
+
 static UA_StatusCode model_add_method_node_with_boolean_result(UA_Server *server,
                                                                UA_NodeId maintenance_folder_id,
                                                                const char *node_id,
@@ -7451,6 +8647,44 @@ static UA_StatusCode model_add_method_node_with_string_result(UA_Server *server,
     output_argument.name = UA_STRING((char *)"Result");
     output_argument.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Method result payload as JSON");
     output_argument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    output_argument.valueRank = UA_VALUERANK_SCALAR;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)method_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)description);
+    attributes.executable = true;
+    attributes.userExecutable = true;
+
+    return UA_Server_addMethodNode(server,
+                                   UA_NODEID_STRING(1, (char *)node_id),
+                                   maintenance_folder_id,
+                                   UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                   UA_QUALIFIEDNAME(1, (char *)method_name),
+                                   attributes,
+                                   callback,
+                                   input_size,
+                                   input_arguments,
+                                   1,
+                                   &output_argument,
+                                    NULL,
+                                    NULL);
+}
+
+static UA_StatusCode model_add_method_node_with_bytestring_result(UA_Server *server,
+                                                                  UA_NodeId maintenance_folder_id,
+                                                                  const char *node_id,
+                                                                  const char *method_name,
+                                                                  const char *description,
+                                                                  UA_MethodCallback callback,
+                                                                  size_t input_size,
+                                                                  UA_Argument *input_arguments)
+{
+    UA_MethodAttributes attributes = UA_MethodAttributes_default;
+    UA_Argument output_argument;
+
+    UA_Argument_init(&output_argument);
+    output_argument.name = UA_STRING((char *)"Payload");
+    output_argument.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Method result payload as ByteString");
+    output_argument.dataType = UA_TYPES[UA_TYPES_BYTESTRING].typeId;
     output_argument.valueRank = UA_VALUERANK_SCALAR;
 
     attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)method_name);
@@ -7807,6 +9041,203 @@ static UA_StatusCode model_add_apply_imported_config_method_node(UA_Server *serv
                                          "Validates, persists, and applies the currently staged imported configuration payload.",
                                          model_apply_imported_config);
 }
+
+static UA_StatusCode model_add_get_trust_state_method_node(UA_Server *server,
+                                                           UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_GET_TRUST_STATE,
+                                                    "GetTrustState",
+                                                    "Returns persistent trust-list and staged import state as JSON.",
+                                                    model_get_trust_state,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_export_trust_list_method_node(UA_Server *server,
+                                                             UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_bytestring_result(server,
+                                                        maintenance_folder_id,
+                                                        MODEL_METHOD_EXPORT_TRUST_LIST,
+                                                        "ExportTrustList",
+                                                        "Returns the currently active persisted trust-list payload as a raw ByteString.",
+                                                        model_export_trust_list,
+                                                        0u,
+                                                        NULL);
+}
+
+static UA_StatusCode model_add_begin_trust_list_import_method_node(UA_Server *server,
+                                                                   UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[3];
+
+    model_fill_uint32_argument(&input_arguments[0], "PayloadSizeBytes", "Total trust-list payload size in bytes");
+    model_fill_uint32_argument(&input_arguments[1], "PayloadCrc32", "Expected CRC32 of the trust-list payload");
+    model_fill_uint32_argument(&input_arguments[2], "SchemaVersion", "Trust-list payload schema version declared by the client");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_BEGIN_TRUST_LIST_IMPORT,
+                                                     "BeginTrustListImport",
+                                                     "Starts staged trust-list upload into a temporary import buffer.",
+                                                     model_begin_trust_list_import,
+                                                     3u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_write_trust_list_chunk_method_node(UA_Server *server,
+                                                                  UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_bytestring_argument(&input_argument,
+                                   "Chunk",
+                                   "Next trust-list payload chunk. Maximum accepted chunk is 4096 bytes and data must be sent sequentially.");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_WRITE_TRUST_LIST_CHUNK,
+                                                     "WriteTrustListChunk",
+                                                     "Appends the next sequential trust-list payload chunk to the staged import buffer.",
+                                                     model_write_trust_list_chunk,
+                                                     1u,
+                                                     &input_argument);
+}
+
+static UA_StatusCode model_add_abort_trust_list_import_method_node(UA_Server *server,
+                                                                   UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_ABORT_TRUST_LIST_IMPORT,
+                                         "AbortTrustListImport",
+                                         "Aborts the staged trust-list upload session and frees the import buffer.",
+                                         model_abort_trust_list_import);
+}
+
+static UA_StatusCode model_add_validate_imported_trust_list_method_node(UA_Server *server,
+                                                                        UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_VALIDATE_IMPORTED_TRUST_LIST,
+                                                    "ValidateImportedTrustList",
+                                                    "Validates the currently staged trust-list payload and returns JSON diagnostics.",
+                                                    model_validate_imported_trust_list,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_apply_imported_trust_list_method_node(UA_Server *server,
+                                                                     UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_APPLY_IMPORTED_TRUST_LIST,
+                                         "ApplyImportedTrustList",
+                                         "Validates, persists, and activates the currently staged trust-list payload.",
+                                         model_apply_imported_trust_list);
+}
+
+static UA_StatusCode model_add_get_certificate_state_method_node(UA_Server *server,
+                                                                 UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_GET_CERTIFICATE_STATE,
+                                                    "GetCertificateState",
+                                                    "Returns active certificate metadata and staged identity import state as JSON.",
+                                                    model_get_certificate_state,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_export_certificate_metadata_method_node(UA_Server *server,
+                                                                       UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_EXPORT_CERTIFICATE_METADATA,
+                                                    "ExportCertificateMetadata",
+                                                    "Returns the currently active device certificate metadata as JSON.",
+                                                    model_export_certificate_metadata,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_begin_identity_rotation_method_node(UA_Server *server,
+                                                                   UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[3];
+
+    model_fill_uint32_argument(&input_arguments[0], "PayloadSizeBytes", "Total identity rotation package size in bytes");
+    model_fill_uint32_argument(&input_arguments[1], "PayloadCrc32", "Expected CRC32 of the identity rotation package");
+    model_fill_uint32_argument(&input_arguments[2], "SchemaVersion", "Identity rotation package schema version declared by the client");
+
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_BEGIN_IDENTITY_ROTATION,
+                                                     "BeginIdentityRotation",
+                                                     "Starts staged upload of a new device certificate and private key package.",
+                                                     model_begin_identity_rotation,
+                                                     3u,
+                                                     input_arguments);
+}
+
+static UA_StatusCode model_add_write_identity_rotation_chunk_method_node(UA_Server *server,
+                                                                         UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_bytestring_argument(&input_argument,
+                                   "Chunk",
+                                   "Next identity rotation payload chunk. Maximum accepted chunk is 4096 bytes and data must be sent sequentially.");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_WRITE_IDENTITY_ROTATION_CHUNK,
+                                                     "WriteIdentityRotationChunk",
+                                                     "Appends the next sequential identity rotation payload chunk to the staged import buffer.",
+                                                     model_write_identity_rotation_chunk,
+                                                     1u,
+                                                     &input_argument);
+}
+
+static UA_StatusCode model_add_abort_identity_rotation_method_node(UA_Server *server,
+                                                                   UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_ABORT_IDENTITY_ROTATION,
+                                         "AbortIdentityRotation",
+                                         "Aborts the staged identity rotation upload session and frees the import buffer.",
+                                         model_abort_identity_rotation);
+}
+
+static UA_StatusCode model_add_validate_staged_identity_method_node(UA_Server *server,
+                                                                    UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_VALIDATE_STAGED_IDENTITY,
+                                                    "ValidateStagedIdentity",
+                                                    "Validates the currently staged identity rotation package and returns JSON diagnostics.",
+                                                    model_validate_staged_identity,
+                                                    0u,
+                                                    NULL);
+}
+
+static UA_StatusCode model_add_apply_staged_identity_method_node(UA_Server *server,
+                                                                 UA_NodeId maintenance_folder_id)
+{
+    return model_add_boolean_method_node(server,
+                                         maintenance_folder_id,
+                                         MODEL_METHOD_APPLY_STAGED_IDENTITY,
+                                         "ApplyStagedIdentity",
+                                         "Validates and persists the currently staged identity rotation package for activation after reboot.",
+                                         model_apply_staged_identity);
+}
+
 static UA_StatusCode model_add_get_firmware_update_status_method_node(UA_Server *server,
                                                                       UA_NodeId maintenance_folder_id)
 {
@@ -9132,11 +10563,77 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 
     status = model_add_readonly_variable(server,
+                                         "Device.Security.CertNotBefore",
+                                         "CertNotBefore",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_DATETIME].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_CERT_NOT_BEFORE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
                                          "Device.Security.CertNotAfter",
                                          "CertNotAfter",
                                          security_id,
                                          UA_TYPES[UA_TYPES_DATETIME].typeId,
                                          &g_fixed_node_contexts[FIXED_CTX_SECURITY_CERT_NOT_AFTER]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.DaysUntilExpiry",
+                                         "DaysUntilExpiry",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_DAYS_UNTIL_EXPIRY]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.ExpiryState",
+                                         "ExpiryState",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_EXPIRY_STATE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.CommissioningState",
+                                         "CommissioningState",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_COMMISSIONING_STATE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.ActiveIdentityGeneration",
+                                         "ActiveIdentityGeneration",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_ACTIVE_IDENTITY_GENERATION]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Security.ActiveTrustGeneration",
+                                         "ActiveTrustGeneration",
+                                         security_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_SECURITY_ACTIVE_TRUST_GENERATION]);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -9523,6 +11020,90 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
         status = model_add_exit_commissioning_method_node(server, security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_get_trust_state_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_export_trust_list_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_begin_trust_list_import_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_write_trust_list_chunk_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_abort_trust_list_import_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_validate_imported_trust_list_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_apply_imported_trust_list_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_get_certificate_state_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_export_certificate_metadata_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_begin_identity_rotation_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_write_identity_rotation_chunk_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_abort_identity_rotation_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_validate_staged_identity_method_node(server, maintenance_security_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_apply_staged_identity_method_node(server, maintenance_security_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;
@@ -9983,8 +11564,6 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     const bool have_trust_list = security_service_get_trust_list(&trust_list);
     UA_ByteString local_certificate = UA_BYTESTRING_NULL;
     UA_ByteString local_private_key = UA_BYTESTRING_NULL;
-    UA_ByteString trust_list_entry = UA_BYTESTRING_NULL;
-    UA_TrustListDataType trust_list_data;
     UA_NodeId default_application_group =
         UA_NS0ID(SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTAPPLICATIONGROUP);
     UA_NodeId default_user_token_group =
@@ -10012,7 +11591,6 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     local_certificate.length = certificate.length;
     local_private_key.data = (UA_Byte *)private_key.data;
     local_private_key.length = private_key.length;
-    UA_TrustListDataType_init(&trust_list_data);
 
     model_clear_runtime_security_config(config);
 
@@ -10025,24 +11603,20 @@ static UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
 
     if (!commissioning_mode && have_trust_list)
     {
-        trust_list_entry.data = (UA_Byte *)trust_list.data;
-        trust_list_entry.length = trust_list.length;
-        trust_list_data.specifiedLists = UA_TRUSTLISTMASKS_TRUSTEDCERTIFICATES;
-        trust_list_data.trustedCertificatesSize = 1u;
-        trust_list_data.trustedCertificates = &trust_list_entry;
-
-        status = UA_CertificateGroup_Memorystore(&config->secureChannelPKI,
-                                                 &default_application_group,
-                                                 &trust_list_data,
-                                                 config->logging,
-                                                 NULL);
+        status = security_certificate_group_service_configure(&config->secureChannelPKI,
+                                                              &default_application_group,
+                                                              config->logging);
         if (status == UA_STATUSCODE_GOOD)
         {
-            status = UA_CertificateGroup_Memorystore(&config->sessionPKI,
-                                                     &default_user_token_group,
-                                                     &trust_list_data,
-                                                     config->logging,
-                                                     NULL);
+            status = security_certificate_group_service_configure(&config->sessionPKI,
+                                                                  &default_user_token_group,
+                                                                  config->logging);
+        }
+
+        if (status == UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tStrict mode enabled: using flash-backed trust list backend\n");
+            fflush(stdout);
         }
     }
     else
@@ -10373,6 +11947,8 @@ void opcua_model_task(void *argument)
         vTaskDelete(NULL);
     }
 
+    model_finalize_identity_generation_after_startup();
+
     log_opcua_heap("Server startup complete");
 
 #ifdef UA_ENABLE_PUBSUB
@@ -10482,10 +12058,3 @@ void opcua_model_task(void *argument)
 
     vTaskDelete(NULL);
 }
-
-
-
-
-
-
-
