@@ -1,0 +1,182 @@
+if(NOT DEFINED OUTPUT_PATH)
+    message(FATAL_ERROR "OUTPUT_PATH is required")
+endif()
+
+if(NOT DEFINED FW_REVISION)
+    message(FATAL_ERROR "FW_REVISION is required")
+endif()
+
+if(NOT DEFINED BUILD_TIME)
+    message(FATAL_ERROR "BUILD_TIME is required")
+endif()
+
+if(NOT DEFINED GIT_HASH)
+    message(FATAL_ERROR "GIT_HASH is required")
+endif()
+
+if(NOT DEFINED HW_REVISION)
+    message(FATAL_ERROR "HW_REVISION is required")
+endif()
+
+# Keep this artifact in sync with g_basic_profile in app/basic_profile/main.c.
+set(CONFIG_EXPORT_JSON [==[
+{
+  "schemaVersion": 1,
+  "device": {
+    "manufacturer": "RP2 OPC UA",
+    "model": "BasicFirmwareProfile",
+    "deviceName": "RP2 Basic Device",
+    "opcuaHostname": "rp2-basic-profile",
+    "serialNumber": "",
+    "productInstanceUri": "",
+    "assetId": "",
+    "hwRevision": "@HW_REVISION@",
+    "fwRevision": "@FW_REVISION@",
+    "buildTime": "@BUILD_TIME@",
+    "gitHash": "@GIT_HASH@",
+    "location": "",
+    "assetClass": "",
+    "manufactureDateUtc": 0,
+    "calibrationDateUtc": 0
+  },
+  "network": {
+    "mode": "dhcp",
+    "mac": "00:08:DC:12:34:56",
+    "staticIp": "192.168.1.42",
+    "staticNetmask": "255.255.255.0",
+    "staticGateway": "192.168.1.0",
+    "staticDns": "8.8.8.8"
+  },
+  "time": {
+    "ntpServer": "pool.ntp.org",
+    "timezoneOffsetMinutes": 0
+  },
+  "mqtt": {
+    "enabled": false,
+    "useJson": true,
+    "brokerUrl": "opc.mqtt://127.0.0.1:1883",
+    "topicRoot": "devices/rp2-basic-profile"
+  },
+  "diagnostics": {
+    "enableHeapDiagnostics": true,
+    "enableTaskDiagnostics": true,
+    "watchdogTimeoutMs": 8000
+  },
+  "opcua": {
+    "port": 4840,
+    "enableAlarmAckMethod": true
+  },
+  "channels": [
+    {
+      "slot": 0,
+      "inUse": true,
+      "kind": 0,
+      "valueType": 0,
+      "driverId": 1,
+      "sourceIndex": 0,
+      "sourceFlags": 0,
+      "id": "channel.temperature.1",
+      "name": "Temperature1",
+      "description": "Internal temperature telemetry channel",
+      "unit": "degC",
+      "flags": 7,
+      "minimum": 0.0,
+      "maximum": 0.0,
+      "hasMinimum": false,
+      "hasMaximum": false,
+      "enabled": true,
+      "samplePeriodMs": 1000,
+      "publishPeriodMs": 1000,
+      "historyIntervalMs": 1000,
+      "scale": 1.0,
+      "offset": 0.0,
+      "warningThreshold": 60.0,
+      "criticalThreshold": 75.0
+    },
+    {
+      "slot": 1,
+      "inUse": false,
+      "kind": 0,
+      "valueType": 0,
+      "driverId": 0,
+      "sourceIndex": 0,
+      "sourceFlags": 0,
+      "id": "",
+      "name": "",
+      "description": "",
+      "unit": "",
+      "flags": 0,
+      "minimum": 0.0,
+      "maximum": 0.0,
+      "hasMinimum": false,
+      "hasMaximum": false,
+      "enabled": false,
+      "samplePeriodMs": 0,
+      "publishPeriodMs": 0,
+      "historyIntervalMs": 0,
+      "scale": 0.0,
+      "offset": 0.0,
+      "warningThreshold": 0.0,
+      "criticalThreshold": 0.0
+    },
+    {
+      "slot": 2,
+      "inUse": false,
+      "kind": 0,
+      "valueType": 0,
+      "driverId": 0,
+      "sourceIndex": 0,
+      "sourceFlags": 0,
+      "id": "",
+      "name": "",
+      "description": "",
+      "unit": "",
+      "flags": 0,
+      "minimum": 0.0,
+      "maximum": 0.0,
+      "hasMinimum": false,
+      "hasMaximum": false,
+      "enabled": false,
+      "samplePeriodMs": 0,
+      "publishPeriodMs": 0,
+      "historyIntervalMs": 0,
+      "scale": 0.0,
+      "offset": 0.0,
+      "warningThreshold": 0.0,
+      "criticalThreshold": 0.0
+    },
+    {
+      "slot": 3,
+      "inUse": false,
+      "kind": 0,
+      "valueType": 0,
+      "driverId": 0,
+      "sourceIndex": 0,
+      "sourceFlags": 0,
+      "id": "",
+      "name": "",
+      "description": "",
+      "unit": "",
+      "flags": 0,
+      "minimum": 0.0,
+      "maximum": 0.0,
+      "hasMinimum": false,
+      "hasMaximum": false,
+      "enabled": false,
+      "samplePeriodMs": 0,
+      "publishPeriodMs": 0,
+      "historyIntervalMs": 0,
+      "scale": 0.0,
+      "offset": 0.0,
+      "warningThreshold": 0.0,
+      "criticalThreshold": 0.0
+    }
+  ]
+}
+]==])
+
+string(CONFIGURE "${CONFIG_EXPORT_JSON}" CONFIG_EXPORT_JSON @ONLY)
+
+get_filename_component(OUTPUT_DIRECTORY "${OUTPUT_PATH}" DIRECTORY)
+file(MAKE_DIRECTORY "${OUTPUT_DIRECTORY}")
+file(WRITE "${OUTPUT_PATH}" "${CONFIG_EXPORT_JSON}\n")

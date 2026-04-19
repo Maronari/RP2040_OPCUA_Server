@@ -43,6 +43,11 @@ def load_asyncua():
 
 DEFAULT_CHUNK_SIZE = 4096
 DEFAULT_EXPORT_PATH = Path('build/config_export.json')
+DEFAULT_AUTO_CLIENT_CERT_DIR = 'rp2040_opcua_client'
+LEGACY_AUTO_CLIENT_CERT_DIRS = (
+    'rp2040_opcua_ota',
+    'rp2040_opcua_config',
+)
 CONFIG_SCHEMA_VERSION = 1
 CONFIG_MAX_CHANNELS = 4
 CONFIGURATION_NODE_ID = 'ns=1;s=Device.Maintenance.Configuration'
@@ -131,6 +136,20 @@ async def ensure_client_certificate(cert_path, key_path, app_uri):
     )
 
 
+def resolve_auto_client_certificate_paths():
+    temp_root = Path(tempfile.gettempdir())
+
+    for dirname in LEGACY_AUTO_CLIENT_CERT_DIRS:
+        base_dir = temp_root / dirname
+        client_cert = base_dir / 'client_cert.der'
+        client_key = base_dir / 'client_key.pem'
+        if client_cert.is_file() and client_key.is_file():
+            return client_cert, client_key
+
+    base_dir = temp_root / DEFAULT_AUTO_CLIENT_CERT_DIR
+    return base_dir / 'client_cert.der', base_dir / 'client_key.pem'
+
+
 async def configure_client_security(client, args):
     if not args.username:
         return
@@ -143,15 +162,14 @@ async def configure_client_security(client, args):
         raise ValueError('Use both --client-cert and --client-key together')
 
     if client_cert is None and not args.no_auto_client_cert:
-        base_dir = Path(tempfile.gettempdir()) / 'rp2040_opcua_config'
-        client_cert = base_dir / 'client_cert.der'
-        client_key = base_dir / 'client_key.pem'
-        await ensure_client_certificate(
-            client_cert,
-            client_key,
-            getattr(client, 'application_uri', 'urn:freeopcua:client'),
-        )
-        print(f'Using temporary client certificate: {client_cert}')
+        client_cert, client_key = resolve_auto_client_certificate_paths()
+        if not client_cert.is_file() or not client_key.is_file():
+            await ensure_client_certificate(
+                client_cert,
+                client_key,
+                getattr(client, 'application_uri', 'urn:freeopcua:client'),
+            )
+        print(f'Using auto client certificate: {client_cert}')
 
     if client_cert is None or client_key is None:
         raise ValueError(
@@ -415,6 +433,7 @@ def load_and_prepare_config(config_path, schema_override=None):
 
 
 async def connect_client(args):
+    load_asyncua()
     client = Client(url=args.server_url, timeout=args.timeout)
     await configure_client_security(client, args)
     if args.username:
@@ -570,6 +589,7 @@ async def run_import(args):
 
 
 def main():
+    load_asyncua()
     args = parse_args()
     if args.username and args.password is None:
         args.password = getpass.getpass(f'Password for {args.username}: ')
@@ -577,7 +597,11 @@ def main():
     try:
         asyncio.run(args.handler(args))
     except Exception as exc:
-        print(f'ERROR: {exc}')
+        detail = str(exc).strip()
+        if detail:
+            print(f'ERROR: {type(exc).__name__}: {detail}')
+        else:
+            print(f'ERROR: {type(exc).__name__}')
         sys.exit(1)
 
 

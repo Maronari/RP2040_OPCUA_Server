@@ -1,5 +1,6 @@
 set(TARGET_NAME device_profile_basic)
 set(DEVICE_PROFILE_FW_REVISION "0.3.0")
+string(TIMESTAMP DEVICE_PROFILE_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
 
 function(ota_pack_firmware_version version_text out_version_number)
     string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _version_match "${version_text}")
@@ -31,6 +32,21 @@ execute_process(
 if(NOT DEVICE_PROFILE_GIT_HASH)
     set(DEVICE_PROFILE_GIT_HASH "unknown")
 endif()
+
+set(DEVICE_PROFILE_CONFIG_EXPORT_PATH "${CMAKE_BINARY_DIR}/config_export.json")
+set(DEVICE_PROFILE_CONFIG_EXPORT_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/generate_config_export.cmake")
+
+add_custom_target(${TARGET_NAME}_config_export
+        COMMAND ${CMAKE_COMMAND}
+        -DOUTPUT_PATH=${DEVICE_PROFILE_CONFIG_EXPORT_PATH}
+        -DFW_REVISION=${DEVICE_PROFILE_FW_REVISION}
+        -DBUILD_TIME=${DEVICE_PROFILE_BUILD_TIME}
+        -DGIT_HASH=${DEVICE_PROFILE_GIT_HASH}
+        -DHW_REVISION=${PICO_BOARD}/${WIZNET_CHIP}
+        -P ${DEVICE_PROFILE_CONFIG_EXPORT_SCRIPT}
+        BYPRODUCTS ${DEVICE_PROFILE_CONFIG_EXPORT_PATH}
+        COMMENT "Generating ${DEVICE_PROFILE_CONFIG_EXPORT_PATH}"
+        VERBATIM)
 
 set(OTA_APP_FIRMWARE_VERSION ${DEVICE_PROFILE_FW_REVISION} CACHE INTERNAL "OTA app firmware version" FORCE)
 set(OTA_APP_FIRMWARE_VERSION_NUMBER ${DEVICE_PROFILE_FW_VERSION_NUMBER} CACHE INTERNAL "OTA app firmware version number" FORCE)
@@ -130,6 +146,8 @@ function(add_device_profile_target target_name use_ota_linker)
             OPCUA_DEVICE_MODEL
             )
 
+    add_dependencies(${target_name} ${TARGET_NAME}_config_export)
+
     pico_enable_stdio_usb(${target_name} 1)
     pico_enable_stdio_uart(${target_name} 0)
     pico_add_extra_outputs(${target_name})
@@ -145,6 +163,7 @@ function(add_device_profile_target target_name use_ota_linker)
             PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
             DEVICE_PROFILE_HW_REVISION=\"${PICO_BOARD}/${WIZNET_CHIP}\"
             DEVICE_PROFILE_FW_REVISION=\"${DEVICE_PROFILE_FW_REVISION}\"
+            DEVICE_PROFILE_BUILD_TIME=\"${DEVICE_PROFILE_BUILD_TIME}\"
             DEVICE_PROFILE_GIT_HASH=\"${DEVICE_PROFILE_GIT_HASH}\"
             )
 endfunction()

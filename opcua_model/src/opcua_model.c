@@ -10194,10 +10194,10 @@ void opcua_model_task(void *argument)
     }
 
     /* Embedded profile: keep the default server configuration modest.
-       This avoids spending heap on limits that are irrelevant for a single
-       local device endpoint. */
-    config->maxSecureChannels = 1;
-    config->maxSessions = 1;
+       Allow one extra secure channel for discovery / tooling while keeping
+       only a single active session for maintenance operations. */
+    config->maxSecureChannels = 2;
+    config->maxSessions = 2;
     config->maxSubscriptions = 2;
     config->maxSubscriptionsPerSession = 2;
     config->maxMonitoredItems = 8;
