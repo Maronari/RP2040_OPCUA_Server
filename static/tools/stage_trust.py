@@ -245,6 +245,24 @@ def print_json(prefix, payload):
     print(f'{prefix}: {json.dumps(payload, indent=2, sort_keys=False)}')
 
 
+def print_trust_expiry_summary(payload):
+    expiry = payload.get('expiry') if isinstance(payload, dict) else None
+    if not isinstance(expiry, dict):
+        return
+
+    state = expiry.get('trustExpiryState', 'unknown')
+    earliest_days = expiry.get('daysUntilEarliestTrustedClientCertExpiry', 0)
+    expired = expiry.get('trustedClientCertsExpiredCount', 0)
+    expiring_soon = expiry.get('trustedClientCertsExpiringSoonCount', 0)
+    print(
+        'Trust expiry summary: '
+        f'state={state} '
+        f'earliest_days={earliest_days} '
+        f'expiring_soon={expiring_soon} '
+        f'expired={expired}'
+    )
+
+
 def print_progress(sent_bytes, total_bytes):
     percent = (100.0 * sent_bytes / total_bytes) if total_bytes else 100.0
     print(f'\rUploaded {sent_bytes}/{total_bytes} bytes ({percent:5.1f}%)', end='', flush=True)
@@ -281,7 +299,9 @@ async def run_status(args):
     client = await connect_client(args)
     try:
         security = client.get_node(ua.NodeId.from_string(SECURITY_NODE_ID))
-        print_json('Trust state', await get_trust_state(security))
+        trust_state = await get_trust_state(security)
+        print_json('Trust state', trust_state)
+        print_trust_expiry_summary(trust_state)
     finally:
         await client.disconnect()
         print('Disconnected')
@@ -328,6 +348,7 @@ async def run_import(args):
         if not args.skip_pre_status:
             status_before = await get_trust_state(security)
             print_json('Pre-import status', status_before)
+            print_trust_expiry_summary(status_before)
             max_chunk_bytes = int(status_before.get('maxChunkBytes', DEFAULT_CHUNK_SIZE))
             if args.chunk_size > max_chunk_bytes:
                 raise ValueError(
@@ -392,7 +413,9 @@ async def run_import(args):
         print('Trust list applied successfully')
 
         if not args.skip_post_status:
-            print_json('Post-import status', await get_trust_state(security))
+            status_after = await get_trust_state(security)
+            print_json('Post-import status', status_after)
+            print_trust_expiry_summary(status_after)
 
         if args.reboot_after_apply:
             reboot_ok = await request_reboot(system)

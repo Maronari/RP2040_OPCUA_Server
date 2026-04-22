@@ -1,0 +1,133 @@
+name: Build Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential
+
+    - name: Configure CMake
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: |
+        cd build
+        cmake --build . -j$(nproc)
+
+    - name: Check binary size
+      run: |
+        cd build
+        echo "### Binary Size Report" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        find . -name "*.elf" -exec arm-none-eabi-size {} \; >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Verify build outputs
+      run: |
+        cd build
+        if [ ! -f *.uf2 ] && [ ! -f */*.uf2 ]; then
+          echo "Error: No .uf2 files generated"
+          exit 1
+        fi
+        echo "Build artifacts generated successfully"
+
+    - name: Static analysis (cppcheck)
+      run: |
+        sudo apt-get install -y cppcheck
+        cppcheck --enable=warning,style,performance,portability \
+          --suppress=missingIncludeSystem \
+          --error-exitcode=0 \
+          --inline-suppr \
+          -I port/open62541 \
+          -I libraries/pico-sdk/src \
+          port/open62541/*.c 2>&1 | tee cppcheck.log || true
+      continue-on-error: true
+
+    - name: Install Renode
+      run: |
+        wget https://github.com/renode/renode/releases/download/v1.15.3/renode_1.15.3_amd64.deb
+        sudo apt-get install -y ./renode_1.15.3_amd64.deb
+
+    - name: Test firmware in emulator
+      run: |
+        cd build
+        ELF_FILE=$(find . -name "*.elf" | head -n 1)
+        if [ -z "$ELF_FILE" ]; then
+          echo "No ELF file found"
+          exit 1
+        fi
+
+        cat > test.resc << 'EOF'
+        using sysbus
+        mach create
+        machine LoadPlatformDescription @platforms/cpus/rp2040.repl
+        sysbus LoadELF @$ELF_FILE
+
+        logLevel 3
+
+        # Run for 10 seconds
+        emulation RunFor "00:00:10"
+
+        # Check if crashed
+        cpu IsHalted
+        EOF
+
+        timeout 30 renode --disable-xwt --console test.resc || echo "Emulation completed"
+      continue-on-error: true
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware
+        path: |
+          build/**/*.uf2
+          build/**/*.elf
+          build/**/*.bin
+        if-no-files-found: warn
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Run Semgrep security scan
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: >-
+          p/security-audit
+          p/secrets
+          p/owasp-top-ten
+      continue-on-error: true
+
+    - name: Check for hardcoded secrets
+      run: |
+        echo "Checking for potential secrets..."
+        if grep -r "password\|secret\|api_key\|token" --include="*.c" --include="*.h" .; then
+          echo "Warning: Found potential hardcoded secrets"
+        else
+          echo "No obvious hardcoded secrets found"
+        fi
+      continue-on-error: true

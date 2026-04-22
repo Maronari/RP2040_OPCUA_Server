@@ -28,11 +28,14 @@
 #include "services/security_certificate_group_service.h"
 #include "services/security_service.h"
 #include "services/security_state_service.h"
+#include "services/security_trust_expiry_service.h"
 #include "services/security_trust_import_service.h"
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+#include <mbedtls/sha1.h>
+#include <mbedtls/x509_crt.h>
 #include "test_certs.h"
 #endif
 
@@ -154,6 +157,11 @@ typedef struct
     network_manager_status_t network_status;
     sensor_manager_snapshot_t sensor_snapshot;
     alarm_service_status_t alarm_status;
+    bool server_certificate_expiry_seen;
+    uint32_t server_certificate_expiry_state;
+    bool trust_expiry_seen;
+    bool trust_expiry_commissioning_mode;
+    security_trust_expiry_service_report_t trust_expiry_report;
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     bool security_condition_active;
     uint32_t security_condition_reason;
@@ -294,6 +302,15 @@ typedef enum
     MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH = 4,
     MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED = 5,
 } model_certificate_expiry_state_t;
+
+typedef struct
+{
+    model_certificate_expiry_state_t state;
+    uint32_t days_until_expiry;
+    uint32_t not_after_epoch_s;
+    bool time_check_performed;
+    char thumbprint[SECURITY_SERVICE_CERT_THUMBPRINT_LEN + 1u];
+} model_remote_certificate_expiry_info_t;
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
 typedef enum
@@ -622,6 +639,10 @@ static void model_set_bytestring_method_output(size_t output_size,
 static void model_set_default_variant_value(UA_VariableAttributes *attributes, UA_NodeId data_type);
 static const UA_ByteString *model_session_get_username_bytes(const void *session_context);
 static bool model_copy_session_username(const void *session_context, char *buffer, size_t buffer_size);
+static void model_copy_string_safe(char *buffer, size_t buffer_size, const char *text);
+static void model_emit_client_certificate_expiry_notice(UA_Server *server,
+                                                        const UA_ByteString *remote_certificate,
+                                                        void *session_context);
 static bool model_is_admin_only_method(const UA_NodeId *method_id);
 static bool model_string_changed(const char *lhs, const char *rhs);
 
@@ -1218,6 +1239,12 @@ static UA_StatusCode model_activate_session_secure_wrapper(UA_Server *server,
                                       !UA_ByteString_equal(&endpoint_description->securityPolicyUri,
                                                            &UA_SECURITY_POLICY_NONE_URI);
     *session_context = wrapped_context;
+    if (wrapped_context->secure_channel)
+    {
+        model_emit_client_certificate_expiry_notice(server,
+                                                    secure_channel_remote_certificate,
+                                                    wrapped_context);
+    }
     return UA_STATUSCODE_GOOD;
 }
 
@@ -1744,6 +1771,182 @@ static const char *model_certificate_expiry_state_to_string(model_certificate_ex
     default:
         return "unknown";
     }
+}
+
+static bool model_certificate_expiry_requires_attention(model_certificate_expiry_state_t state)
+{
+    return state == MODEL_CERTIFICATE_EXPIRY_STATE_MISSING ||
+           state == MODEL_CERTIFICATE_EXPIRY_STATE_UNKNOWN ||
+           state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM ||
+           state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH ||
+           state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED;
+}
+
+static bool model_format_certificate_expiry_notice(model_certificate_expiry_state_t state,
+                                                   uint32_t days_until_expiry,
+                                                   char *message,
+                                                   size_t message_size,
+                                                   UA_UInt16 *out_severity)
+{
+    if (message == NULL || message_size == 0u || out_severity == NULL)
+    {
+        return false;
+    }
+
+    if (state == MODEL_CERTIFICATE_EXPIRY_STATE_MISSING)
+    {
+        model_copy_string_safe(message, message_size, model_certificate_expiry_state_to_string(state));
+        *out_severity = 900u;
+        return true;
+    }
+
+    if (state == MODEL_CERTIFICATE_EXPIRY_STATE_UNKNOWN)
+    {
+        model_copy_string_safe(message, message_size, model_certificate_expiry_state_to_string(state));
+        *out_severity = 350u;
+        return true;
+    }
+
+    if (state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED)
+    {
+        model_copy_string_safe(message, message_size, model_certificate_expiry_state_to_string(state));
+        *out_severity = 900u;
+        return true;
+    }
+
+    if (state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH)
+    {
+        model_copy_string_safe(message, message_size, model_certificate_expiry_state_to_string(state));
+        *out_severity = 750u;
+        return true;
+    }
+
+    if (state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM)
+    {
+        model_copy_string_safe(message, message_size, model_certificate_expiry_state_to_string(state));
+        *out_severity = 550u;
+        return true;
+    }
+
+    (void)state;
+    (void)days_until_expiry;
+    return false;
+}
+
+static bool model_build_certificate_expiry_notice(model_certificate_expiry_state_t state,
+                                                  uint32_t days_until_expiry,
+                                                  char *message,
+                                                  size_t message_size,
+                                                  UA_UInt16 *out_severity)
+{
+    if (message == NULL || message_size == 0u || out_severity == NULL)
+    {
+        return false;
+    }
+
+    return model_format_certificate_expiry_notice(state,
+                                                  days_until_expiry,
+                                                  message,
+                                                  message_size,
+                                                  out_severity);
+}
+
+static bool model_trust_expiry_requires_attention(const security_trust_expiry_service_report_t *report,
+                                                  bool commissioning_mode)
+{
+    if (report == NULL)
+    {
+        return false;
+    }
+
+    if (report->state == SECURITY_TRUST_EXPIRY_STATE_EMPTY)
+    {
+        return !commissioning_mode;
+    }
+
+    if (report->state == SECURITY_TRUST_EXPIRY_STATE_UNKNOWN ||
+        report->state == SECURITY_TRUST_EXPIRY_STATE_EXPIRES_SOON ||
+        report->state == SECURITY_TRUST_EXPIRY_STATE_EXPIRES_SOON_HIGH ||
+        report->state == SECURITY_TRUST_EXPIRY_STATE_EXPIRED ||
+        report->state == SECURITY_TRUST_EXPIRY_STATE_PARSE_FAILED ||
+        report->state == SECURITY_TRUST_EXPIRY_STATE_INTERNAL_ERROR)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+static bool model_build_trust_expiry_notice(const security_trust_expiry_service_report_t *report,
+                                            bool commissioning_mode,
+                                            char *message,
+                                            size_t message_size,
+                                            UA_UInt16 *out_severity)
+{
+    if (report == NULL || message == NULL || message_size == 0u || out_severity == NULL)
+    {
+        return false;
+    }
+
+    if (!model_trust_expiry_requires_attention(report, commissioning_mode))
+    {
+        return false;
+    }
+
+    model_copy_string_safe(message,
+                           message_size,
+                           security_trust_expiry_service_state_to_string(report->state));
+
+    if (report->state == SECURITY_TRUST_EXPIRY_STATE_EMPTY)
+    {
+        *out_severity = 850u;
+        return true;
+    }
+
+    if (report->state == SECURITY_TRUST_EXPIRY_STATE_UNKNOWN)
+    {
+        *out_severity = 350u;
+        return true;
+    }
+
+    if (report->state == SECURITY_TRUST_EXPIRY_STATE_EXPIRES_SOON)
+    {
+        *out_severity = 550u;
+        return true;
+    }
+
+    if (report->state == SECURITY_TRUST_EXPIRY_STATE_EXPIRES_SOON_HIGH)
+    {
+        *out_severity = 750u;
+        return true;
+    }
+
+    if (report->state == SECURITY_TRUST_EXPIRY_STATE_EXPIRED)
+    {
+        *out_severity = 880u;
+        return true;
+    }
+
+    *out_severity = 820u;
+    return true;
+}
+
+static bool model_trust_expiry_report_changed(const security_trust_expiry_service_report_t *lhs,
+                                              const security_trust_expiry_service_report_t *rhs)
+{
+    if (lhs == NULL || rhs == NULL)
+    {
+        return false;
+    }
+
+    return lhs->state != rhs->state ||
+           lhs->have_trust_list != rhs->have_trust_list ||
+           lhs->parse_ok != rhs->parse_ok ||
+           lhs->time_check_performed != rhs->time_check_performed ||
+           lhs->trusted_client_count != rhs->trusted_client_count ||
+           lhs->trusted_client_expiring_soon_count != rhs->trusted_client_expiring_soon_count ||
+           lhs->trusted_client_expiring_high_count != rhs->trusted_client_expiring_high_count ||
+           lhs->trusted_client_expired_count != rhs->trusted_client_expired_count;
 }
 
 static const char *model_security_commissioning_state_to_string(void)
@@ -3913,6 +4116,195 @@ static void model_emit_maintenance_event(UA_Server *server,
                               MODEL_EVENT_LAST_KIND_GENERIC);
 }
 
+#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+static int64_t model_x509_days_from_civil(int32_t year, uint32_t month, uint32_t day)
+{
+    const int32_t adjusted_year = year - (month <= 2u ? 1 : 0);
+    const int32_t era = (adjusted_year >= 0 ? adjusted_year : adjusted_year - 399) / 400;
+    const uint32_t year_of_era = (uint32_t)(adjusted_year - era * 400);
+    const uint32_t shifted_month = (month > 2u) ? (month - 3u) : (month + 9u);
+    const uint32_t day_of_year = (153u * shifted_month + 2u) / 5u + day - 1u;
+    const uint32_t day_of_era = year_of_era * 365u + year_of_era / 4u - year_of_era / 100u + day_of_year;
+
+    return (int64_t)era * 146097 + (int64_t)day_of_era - 719468;
+}
+
+static bool model_x509_time_to_epoch(const mbedtls_x509_time *time, uint32_t *out_epoch_s)
+{
+    int64_t days;
+    int64_t seconds;
+
+    if (time == NULL || out_epoch_s == NULL ||
+        time->year < 1970 ||
+        time->mon < 1 || time->mon > 12 ||
+        time->day < 1 || time->day > 31 ||
+        time->hour < 0 || time->hour > 23 ||
+        time->min < 0 || time->min > 59 ||
+        time->sec < 0 || time->sec > 60)
+    {
+        return false;
+    }
+
+    days = model_x509_days_from_civil(time->year, (uint32_t)time->mon, (uint32_t)time->day);
+    if (days < 0)
+    {
+        return false;
+    }
+
+    seconds = days * 86400 +
+              (int64_t)time->hour * 3600 +
+              (int64_t)time->min * 60 +
+              (int64_t)time->sec;
+    if (seconds < 0 || (uint64_t)seconds > UINT32_MAX)
+    {
+        return false;
+    }
+
+    *out_epoch_s = (uint32_t)seconds;
+    return true;
+}
+
+static bool model_remote_certificate_thumbprint(const UA_ByteString *remote_certificate,
+                                                char *buffer,
+                                                size_t buffer_size)
+{
+    unsigned char digest[20];
+    static const char hex[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', '\0'};
+
+    if (remote_certificate == NULL || remote_certificate->data == NULL || remote_certificate->length == 0u ||
+        buffer == NULL || buffer_size < (SECURITY_SERVICE_CERT_THUMBPRINT_LEN + 1u))
+    {
+        return false;
+    }
+
+    if (mbedtls_sha1(remote_certificate->data, remote_certificate->length, digest) != 0)
+    {
+        return false;
+    }
+
+    for (size_t i = 0u; i < sizeof(digest); ++i)
+    {
+        buffer[i * 2u] = hex[(digest[i] >> 4u) & 0x0Fu];
+        buffer[i * 2u + 1u] = hex[digest[i] & 0x0Fu];
+    }
+    buffer[SECURITY_SERVICE_CERT_THUMBPRINT_LEN] = '\0';
+    return true;
+}
+
+static bool model_get_remote_certificate_expiry_info(const UA_ByteString *remote_certificate,
+                                                     model_remote_certificate_expiry_info_t *out_info)
+{
+    mbedtls_x509_crt certificate;
+    time_service_status_t time_status = {0};
+
+    if (remote_certificate == NULL || remote_certificate->data == NULL || remote_certificate->length == 0u ||
+        out_info == NULL)
+    {
+        return false;
+    }
+
+    memset(out_info, 0, sizeof(*out_info));
+    out_info->state = MODEL_CERTIFICATE_EXPIRY_STATE_UNKNOWN;
+    (void)model_remote_certificate_thumbprint(remote_certificate,
+                                              out_info->thumbprint,
+                                              sizeof(out_info->thumbprint));
+
+    mbedtls_x509_crt_init(&certificate);
+    if (mbedtls_x509_crt_parse(&certificate, remote_certificate->data, remote_certificate->length) != 0)
+    {
+        mbedtls_x509_crt_free(&certificate);
+        return false;
+    }
+
+    if (!model_x509_time_to_epoch(&certificate.valid_to, &out_info->not_after_epoch_s) ||
+        out_info->not_after_epoch_s == 0u)
+    {
+        mbedtls_x509_crt_free(&certificate);
+        return true;
+    }
+
+    time_service_get_status(&time_status);
+    if (time_status.quality == SERVICE_QUALITY_BAD)
+    {
+        mbedtls_x509_crt_free(&certificate);
+        return true;
+    }
+
+    out_info->time_check_performed = true;
+    if (time_status.unix_time_s >= out_info->not_after_epoch_s)
+    {
+        out_info->state = MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED;
+        mbedtls_x509_crt_free(&certificate);
+        return true;
+    }
+
+    out_info->days_until_expiry = (out_info->not_after_epoch_s - time_status.unix_time_s + 86399u) / 86400u;
+    if (out_info->days_until_expiry <= MODEL_CERTIFICATE_EXPIRY_HIGH_WARN_DAYS)
+    {
+        out_info->state = MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH;
+    }
+    else if (out_info->days_until_expiry <= MODEL_CERTIFICATE_EXPIRY_WARN_DAYS)
+    {
+        out_info->state = MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM;
+    }
+    else
+    {
+        out_info->state = MODEL_CERTIFICATE_EXPIRY_STATE_VALID;
+    }
+
+    mbedtls_x509_crt_free(&certificate);
+    return true;
+}
+
+static void model_emit_client_certificate_expiry_notice(UA_Server *server,
+                                                        const UA_ByteString *remote_certificate,
+                                                        void *session_context)
+{
+    model_remote_certificate_expiry_info_t info = {0};
+    char message[224];
+    char actor[SECURITY_SERVICE_USERNAME_MAX_LEN] = {0};
+    const char *actor_name;
+    UA_UInt16 severity = 0u;
+
+    if (server == NULL || !model_get_remote_certificate_expiry_info(remote_certificate, &info) ||
+        info.state == MODEL_CERTIFICATE_EXPIRY_STATE_VALID ||
+        info.state == MODEL_CERTIFICATE_EXPIRY_STATE_MISSING)
+    {
+        return;
+    }
+
+    actor_name = model_session_actor_name(session_context, actor, sizeof(actor));
+
+    if (info.state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED)
+    {
+        severity = 900u;
+    }
+    else if (info.state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_HIGH)
+    {
+        severity = 750u;
+    }
+    else if (info.state == MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRES_SOON_MEDIUM)
+    {
+        severity = 550u;
+    }
+    else
+    {
+        severity = 350u;
+    }
+
+    model_copy_string_safe(message, sizeof(message), model_certificate_expiry_state_to_string(info.state));
+
+    model_emit_maintenance_event(server,
+                                 message,
+                                 severity,
+                                 model_certificate_expiry_state_to_string(info.state),
+                                 (uint32_t)info.state,
+                                 actor_name);
+    puts(message);
+    fflush(stdout);
+}
+#endif
+
 static void model_emit_config_changed_event(UA_Server *server,
                                             const char *message,
                                             UA_UInt16 severity,
@@ -4065,6 +4457,179 @@ static void model_event_runtime_state_init(model_event_runtime_state_t *state)
     state->initialized = true;
 }
 
+static void model_process_certificate_expiry_runtime(UA_Server *server,
+                                                     model_event_runtime_state_t *state,
+                                                     char *message,
+                                                     size_t message_size)
+{
+    model_certificate_expiry_state_t current_state;
+    uint32_t days_until_expiry = 0u;
+    UA_UInt16 severity = 0u;
+    bool current_attention;
+    bool previous_attention;
+
+    if (server == NULL || state == NULL || message == NULL || message_size == 0u)
+    {
+        return;
+    }
+
+    current_state = model_get_certificate_expiry_state(&days_until_expiry, NULL);
+    current_attention = model_certificate_expiry_requires_attention(current_state);
+    previous_attention = state->server_certificate_expiry_seen &&
+                         model_certificate_expiry_requires_attention(state->server_certificate_expiry_state);
+
+    if (!state->server_certificate_expiry_seen)
+    {
+        state->server_certificate_expiry_seen = true;
+        state->server_certificate_expiry_state = current_state;
+        if (current_attention)
+        {
+            if (model_build_certificate_expiry_notice(current_state,
+                                                      days_until_expiry,
+                                                      message,
+                                                      message_size,
+                                                      &severity))
+            {
+                model_emit_maintenance_event(server,
+                                             message,
+                                             severity,
+                                             model_certificate_expiry_state_to_string(current_state),
+                                             (uint32_t)current_state,
+                                             model_security_commissioning_state_to_string());
+                puts(message);
+                fflush(stdout);
+            }
+        }
+        return;
+    }
+
+    if (state->server_certificate_expiry_state == current_state)
+    {
+        return;
+    }
+
+    state->server_certificate_expiry_state = current_state;
+    if (current_attention &&
+        model_build_certificate_expiry_notice(current_state,
+                                              days_until_expiry,
+                                              message,
+                                              message_size,
+                                              &severity))
+    {
+        model_emit_maintenance_event(server,
+                                     message,
+                                     severity,
+                                     model_certificate_expiry_state_to_string(current_state),
+                                     (uint32_t)current_state,
+                                     model_security_commissioning_state_to_string());
+        puts(message);
+        fflush(stdout);
+    }
+    else if (previous_attention)
+    {
+        model_copy_string_safe(message, message_size, model_certificate_expiry_state_to_string(current_state));
+        model_emit_maintenance_event(server,
+                                     message,
+                                     200u,
+                                     model_certificate_expiry_state_to_string(current_state),
+                                     (uint32_t)current_state,
+                                     model_security_commissioning_state_to_string());
+        puts(message);
+        fflush(stdout);
+    }
+}
+
+static void model_process_trust_expiry_runtime(UA_Server *server,
+                                               model_event_runtime_state_t *state,
+                                               char *message,
+                                               size_t message_size)
+{
+    security_trust_expiry_service_report_t report = {0};
+    UA_UInt16 severity = 0u;
+    const bool commissioning_mode = security_service_is_commissioning_mode();
+    bool current_attention;
+    bool previous_attention;
+
+    if (server == NULL || state == NULL || message == NULL || message_size == 0u)
+    {
+        return;
+    }
+
+    if (!security_trust_expiry_service_get_report(&report))
+    {
+        return;
+    }
+
+    current_attention = model_trust_expiry_requires_attention(&report, commissioning_mode);
+    previous_attention = state->trust_expiry_seen &&
+                         model_trust_expiry_requires_attention(&state->trust_expiry_report,
+                                                               state->trust_expiry_commissioning_mode);
+
+    if (!state->trust_expiry_seen)
+    {
+        state->trust_expiry_seen = true;
+        state->trust_expiry_report = report;
+        state->trust_expiry_commissioning_mode = commissioning_mode;
+        if (current_attention &&
+            model_build_trust_expiry_notice(&report,
+                                            commissioning_mode,
+                                            message,
+                                            message_size,
+                                            &severity))
+        {
+            model_emit_maintenance_event(server,
+                                         message,
+                                         severity,
+                                         security_trust_expiry_service_state_to_string(report.state),
+                                         (uint32_t)report.state,
+                                         model_security_commissioning_state_to_string());
+            puts(message);
+            fflush(stdout);
+        }
+        return;
+    }
+
+    if (!model_trust_expiry_report_changed(&state->trust_expiry_report, &report) &&
+        state->trust_expiry_commissioning_mode == commissioning_mode)
+    {
+        return;
+    }
+
+    state->trust_expiry_report = report;
+    state->trust_expiry_commissioning_mode = commissioning_mode;
+
+    if (current_attention &&
+        model_build_trust_expiry_notice(&report,
+                                        commissioning_mode,
+                                        message,
+                                        message_size,
+                                        &severity))
+    {
+        model_emit_maintenance_event(server,
+                                     message,
+                                     severity,
+                                     security_trust_expiry_service_state_to_string(report.state),
+                                     (uint32_t)report.state,
+                                     model_security_commissioning_state_to_string());
+        puts(message);
+        fflush(stdout);
+    }
+    else if (previous_attention)
+    {
+        model_copy_string_safe(message,
+                               message_size,
+                               security_trust_expiry_service_state_to_string(report.state));
+        model_emit_maintenance_event(server,
+                                     message,
+                                     200u,
+                                     security_trust_expiry_service_state_to_string(report.state),
+                                     (uint32_t)report.state,
+                                     model_security_commissioning_state_to_string());
+        puts(message);
+        fflush(stdout);
+    }
+}
+
 static void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t *state)
 {
     network_manager_status_t current_network = {0};
@@ -4166,6 +4731,9 @@ static void model_process_runtime_events(UA_Server *server, model_event_runtime_
                                         model_quality_to_string(current_alarm.quality),
                                         current_sensor.temperature_c);
     }
+
+    model_process_certificate_expiry_runtime(server, state, message, sizeof(message));
+    model_process_trust_expiry_runtime(server, state, message, sizeof(message));
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     model_process_alarm_conditions(server, state);
@@ -6703,12 +7271,48 @@ static void model_write_trust_import_report_json(char *buffer,
              security_trust_import_service_result_to_string(report->result));
 }
 
+static void model_append_json_object_field(char *buffer,
+                                           size_t buffer_size,
+                                           const char *field_name,
+                                           const char *object_json)
+{
+    size_t length;
+    const char quote = '"';
+    int written;
+
+    if (buffer == NULL || buffer_size == 0u || field_name == NULL || field_name[0] == '\0' ||
+        object_json == NULL || object_json[0] == '\0')
+    {
+        return;
+    }
+
+    length = strlen(buffer);
+    if (length == 0u || buffer[length - 1u] != '}')
+    {
+        return;
+    }
+
+    buffer[length - 1u] = '\0';
+    written = snprintf(buffer + length - 1u,
+                       buffer_size - (length - 1u),
+                       ",%c%s%c:%s}",
+                       quote,
+                       field_name,
+                       quote,
+                       object_json);
+    if (written < 0 || (size_t)written >= (buffer_size - (length - 1u)))
+    {
+        buffer[buffer_size - 1u] = '\0';
+    }
+}
+
 static void model_write_trust_state_json(char *buffer, size_t buffer_size)
 {
     security_service_blob_view_t trust_list = {0};
     security_trust_import_service_status_t import_status = {0};
     security_trust_import_service_report_t report = {0};
     security_state_service_snapshot_t snapshot = {0};
+    char expiry_summary[SECURITY_TRUST_EXPIRY_SERVICE_SUMMARY_MAX_LEN] = "{}";
     uint32_t trust_list_version = 0u;
     const bool have_trust_list = security_service_get_trust_list(&trust_list);
     const uint32_t trusted_client_count = security_service_get_trusted_client_count();
@@ -6732,6 +7336,7 @@ static void model_write_trust_state_json(char *buffer, size_t buffer_size)
 
     (void)security_service_get_trust_list_version(&trust_list_version);
     (void)security_state_service_get_snapshot(&snapshot);
+    (void)security_trust_expiry_service_get_summary_json(expiry_summary, sizeof(expiry_summary));
     snprintf(buffer,
              buffer_size,
              "{\"commissioningMode\":%s,\"commissioningState\":\"%s\",\"haveTrustList\":%s,\"trustListSizeBytes\":%lu,\"trustListVersion\":%lu,\"activeTrustGeneration\":%lu,\"pendingTrustGeneration\":%lu,\"trustedClientCount\":%lu,\"maxChunkBytes\":%u,\"import\":{\"sessionActive\":%s,\"expectedPayloadSizeBytes\":%lu,\"payloadCrc32\":%lu,\"schemaVersion\":%lu,\"bytesWritten\":%lu,\"remainingBytes\":%lu,\"payloadComplete\":%s,\"payloadCrc32Matches\":%s,\"lastResult\":\"%s\"},\"stagedValidation\":{\"available\":%s,\"valid\":%s,\"certificateCount\":%lu,\"result\":\"%s\"}}",
@@ -6757,6 +7362,7 @@ static void model_write_trust_state_json(char *buffer, size_t buffer_size)
              validation_valid ? "true" : "false",
              (unsigned long)validation_cert_count,
              validation_result);
+    model_append_json_object_field(buffer, buffer_size, "expiry", expiry_summary);
 }
 
 static UA_StatusCode model_get_trust_state(UA_Server *server,
@@ -6772,7 +7378,7 @@ static UA_StatusCode model_get_trust_state(UA_Server *server,
                                            UA_Variant *output)
 {
     UA_StatusCode status_code;
-    char payload[896] = {0};
+    char payload[1408] = {0};
     (void)server;
     (void)session_id;
     (void)method_context;

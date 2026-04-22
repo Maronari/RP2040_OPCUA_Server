@@ -16,6 +16,7 @@ add_library(FIRMWARE_SERVICES STATIC
         src/security_certificate_group_service.c
         src/security_service.c
         src/security_state_service.c
+        src/security_trust_expiry_service.c
         src/security_trust_import_service.c
         src/sensor_manager.c
         src/time_service.c
