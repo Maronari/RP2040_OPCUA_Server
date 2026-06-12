@@ -1,14 +1,18 @@
 #include "ua_port_alloc.h"
 
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include <FreeRTOS.h>
 #include "pico/stdio.h"
+#include "psram_allocator.h"
 
 #define UA_PORT_ALLOC_MAGIC 0x55414c4cu
+#define UA_PORT_ALLOC_SOURCE_FREERTOS 0x4652544fu
+#define UA_PORT_ALLOC_SOURCE_PSRAM 0x50535241u
 
 #define fflush(_stream) stdio_flush()
 
@@ -18,9 +22,12 @@ typedef union
     {
         size_t size;
         uint32_t magic;
+        uint32_t source;
     } meta;
     max_align_t alignment;
 } ua_port_alloc_header_t;
+
+static bool g_ua_port_psram_alloc_enabled = true;
 
 static ua_port_alloc_header_t *ua_port_header_from_payload(void *mem)
 {
@@ -46,13 +53,27 @@ static void *ua_port_alloc_raw(size_t size, bool zero_init, const void *caller_p
 {
     ua_port_alloc_header_t *header = NULL;
     const size_t total_size = sizeof(*header) + size;
+    bool from_psram = false;
 
     if (size == 0u || total_size < size)
     {
         return NULL;
     }
 
-    header = (ua_port_alloc_header_t *)pvPortMalloc(total_size);
+    if (g_ua_port_psram_alloc_enabled)
+    {
+        header = (ua_port_alloc_header_t *)psram_malloc(total_size);
+        if (header != NULL)
+        {
+            from_psram = true;
+        }
+    }
+
+    if (header == NULL)
+    {
+        header = (ua_port_alloc_header_t *)pvPortMalloc(total_size);
+    }
+
     if (header == NULL)
     {
         printf("[ALLOC]\t\tallocation failed, size=%u, caller=%p\n",
@@ -72,6 +93,7 @@ static void *ua_port_alloc_raw(size_t size, bool zero_init, const void *caller_p
 
     header->meta.size = size;
     header->meta.magic = UA_PORT_ALLOC_MAGIC;
+    header->meta.source = from_psram ? UA_PORT_ALLOC_SOURCE_PSRAM : UA_PORT_ALLOC_SOURCE_FREERTOS;
 
     if (zero_init)
     {
@@ -118,8 +140,21 @@ void ua_port_free(void *mem)
     }
 
     configASSERT(header->meta.magic == UA_PORT_ALLOC_MAGIC);
+    configASSERT(header->meta.source == UA_PORT_ALLOC_SOURCE_PSRAM ||
+                 header->meta.source == UA_PORT_ALLOC_SOURCE_FREERTOS);
+
+    const uint32_t source = header->meta.source;
     header->meta.magic = 0u;
-    vPortFree(header);
+    header->meta.source = 0u;
+
+    if (source == UA_PORT_ALLOC_SOURCE_PSRAM)
+    {
+        psram_free(header);
+    }
+    else
+    {
+        vPortFree(header);
+    }
 }
 
 void *ua_port_realloc(void *mem, size_t new_size)
@@ -152,4 +187,24 @@ void *ua_port_realloc(void *mem, size_t new_size)
     ua_port_free(mem);
 
     return new_mem;
+}
+
+void ua_port_alloc_set_psram_enabled(bool enabled)
+{
+    g_ua_port_psram_alloc_enabled = enabled;
+    printf("[ALLOC]\t\tPSRAM allocation %s for new UA allocations\n",
+           enabled ? "enabled" : "disabled");
+    fflush(stdout);
+}
+
+void ua_port_alloc_log_stats(const char *stage)
+{
+    printf("[ALLOC]\t\t%s: psram=%s mode=%s total=%u free=%u largest=%u\n",
+           stage != NULL ? stage : "stats",
+           psram_allocator_is_ready() ? "ready" : "unavailable",
+           g_ua_port_psram_alloc_enabled ? "psram-first" : "sram-runtime",
+           (unsigned)psram_total_size(),
+           (unsigned)psram_free_size(),
+           (unsigned)psram_largest_free_block());
+    fflush(stdout);
 }

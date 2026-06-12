@@ -842,7 +842,7 @@ unsigned dtoa(double d, char* buffer);
 /* musl as a whole is licensed under the following standard MIT license:
 *
  * ----------------------------------------------------------------------
- * Copyright © 2005-2020 Rich Felker, et al.
+ * Copyright Р’В© 2005-2020 Rich Felker, et al.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -1353,7 +1353,7 @@ size_t parseDouble(const char *str, size_t size, double *result);
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  *    Copyright 2014-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2015 (c) Sten Grüner
+ *    Copyright 2015 (c) Sten GrР“Сner
  *    Copyright 2014, 2017 (c) Florian Palm
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  *    Copyright 2017 (c) Mark Giraud, Fraunhofer IOSB
@@ -2251,7 +2251,7 @@ _UA_END_DECLS
  *    Copyright 2014-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2017 (c) Florian Palm
  *    Copyright 2015 (c) LEvertz
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
@@ -2907,7 +2907,7 @@ _UA_END_DECLS
  *
  *    Copyright 2015-2018, 2021-2022 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2015 (c) Chris Iatrou
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Florian Palm
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
@@ -3036,11 +3036,11 @@ struct UA_MonitoredItem {
                                   * one publishing cycle after the triggering. */
 
     /* If the filter is a UA_DataChangeFilter: The DataChangeFilter always
-     * contains an absolute deadband definition. Part 8, §6.2 gives the
+     * contains an absolute deadband definition. Part 8, Р’В§6.2 gives the
      * following formula to test for percentage deadbands:
      *
      * DataChange if (absolute value of (last cached value - current value)
-     *                > (deadbandValue/100.0) * ((high–low) of EURange)))
+     *                > (deadbandValue/100.0) * ((highРІР‚вЂњlow) of EURange)))
      *
      * So we can convert from a percentage to an absolute deadband and keep
      * the hot code path simple.
@@ -3186,7 +3186,7 @@ struct UA_Subscription {
     size_t retransmissionQueueSize;
 
     /* Statistics for the server diagnostics. The fields are defined according
-     * to the SubscriptionDiagnosticsDataType (Part 5, §12.15). */
+     * to the SubscriptionDiagnosticsDataType (Part 5, Р’В§12.15). */
 #ifdef UA_ENABLE_DIAGNOSTICS
     UA_NodeId ns0Id; /* Representation in the Session object */
 
@@ -3404,7 +3404,7 @@ _UA_END_DECLS
  *
  *    Copyright 2014-2017, 2024 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014-2017 (c) Florian Palm
- *    Copyright 2015 (c) Sten Grüner
+ *    Copyright 2015 (c) Sten GrР“Сner
  *    Copyright 2014 (c) LEvertz
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015 (c) Christian Fimmers
@@ -3676,7 +3676,7 @@ _UA_END_DECLS
  * based on
  *    Copyright 2014-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2017 (c) Florian Palm
- *    Copyright 2015 (c) Sten Grüner
+ *    Copyright 2015 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  */
@@ -3819,7 +3819,7 @@ _UA_END_DECLS
  *    Copyright 2019 (c) Fraunhofer IOSB (Author: Klaus Schick)
  *    Copyright 2014-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2017 (c) Florian Palm
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2016-2017 (c) Stefan Profanter, fortiss GmbH
@@ -4761,7 +4761,7 @@ _UA_END_DECLS
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2016-2017 (c) Florian Palm
@@ -5014,7 +5014,7 @@ _UA_END_DECLS
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
- *    Copyright 2023-2024 (c) Fraunhofer IOSB (Author: Florian Düwel)
+ *    Copyright 2023-2024 (c) Fraunhofer IOSB (Author: Florian DР“Сwel)
  */
 
 
@@ -6331,7 +6331,7 @@ _UA_BEGIN_DECLS
  *                     +------------------------------------------+
  *                     |activateKeysToAllPubSubGroupChannelContext|
  *                     +------------------------------------------+
- *                                    |                        Ʌ
+ *                                    |                        Р™вЂ¦
  *                                    V                        |
  *                     +-----------------------+               |
  *                     |addKeyRolloverCallbacks|               |
@@ -6870,7 +6870,7 @@ _UA_END_DECLS
  *
  *    Copyright 2014-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2017 (c) Florian Palm
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2016-2017 (c) Stefan Profanter, fortiss GmbH
@@ -7000,7 +7000,7 @@ _UA_END_DECLS
  *    Copyright 2020 (c) Fraunhofer IOSB (Author: Andreas Ebner)
  *    Copyright 2014-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2016-2017 (c) Florian Palm
- *    Copyright 2014-2016 (c) Sten Grüner
+ *    Copyright 2014-2016 (c) Sten GrР“Сner
  *    Copyright 2014 (c) Leon Urbas
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015 (c) Markus Graube
@@ -10503,7 +10503,7 @@ UA_DataType_toDescription(const UA_DataType *type, UA_ExtensionObject *descr) {
  *    Copyright 2020 (c) Grigory Fridman
  *    Copyright 2014-2021 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014-2017 (c) Florian Palm
- *    Copyright 2014-2016 (c) Sten Grüner
+ *    Copyright 2014-2016 (c) Sten GrР“Сner
  *    Copyright 2014 (c) Leon Urbas
  *    Copyright 2015 (c) LEvertz
  *    Copyright 2015 (c) Chris Iatrou
@@ -10528,7 +10528,7 @@ UA_DataType_toDescription(const UA_DataType *type, UA_ExtensionObject *descr) {
  * buffer as a chunk and exchanges the encoding buffer "underneath" the ongoing
  * encoding. This reduces the RAM requirements and unnecessary copying. */
 
-/* Part 6 §5.1.5: Decoders shall support at least 100 nesting levels */
+/* Part 6 Р’В§5.1.5: Decoders shall support at least 100 nesting levels */
 #define UA_ENCODING_MAX_RECURSION 100
 
 void *
@@ -32426,7 +32426,7 @@ decryptSecretLegacy(const UA_SecurityPolicy *sp, void *spContext,
  *
  *    Copyright 2014-2020 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2016-2017 (c) Florian Palm
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2016 (c) TorbenD
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
@@ -33485,7 +33485,7 @@ UA_SecureChannel_persistBuffer(UA_SecureChannel *channel) {
  *
  *    Copyright 2014-2020 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2016-2017 (c) Florian Palm
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2016 (c) TorbenD
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
@@ -34511,7 +34511,7 @@ UA_Server_getSessionAttribute_scalar(UA_Server *server,
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  *    Copyright 2015-2018, 2021 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015, 2017 (c) Florian Palm
  *    Copyright 2015 (c) Oleksiy Vasylyev
@@ -35727,7 +35727,7 @@ UA_Node_insertOrUpdateDescription(UA_Node *node,
  *
  *    Copyright 2014-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014-2017 (c) Florian Palm
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015-2016 (c) Chris Iatrou
  *    Copyright 2015 (c) LEvertz
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
@@ -35736,7 +35736,7 @@ UA_Node_insertOrUpdateDescription(UA_Node *node,
  *    Copyright 2016 (c) Lorenz Haas
  *    Copyright 2017 (c) frax2222
  *    Copyright 2017 (c) Mark Giraud, Fraunhofer IOSB
- *    Copyright 2018 (c) Hilscher Gesellschaft für Systemautomation mbH (Author: Martin Lang)
+ *    Copyright 2018 (c) Hilscher Gesellschaft fР“Сr Systemautomation mbH (Author: Martin Lang)
  *    Copyright 2019 (c) Kalycito Infotech Private Limited
  *    Copyright 2021 (c) Fraunhofer IOSB (Author: Jan Hermes)
  *    Copyright 2022-2025 (c) Fraunhofer IOSB (Author: Andreas Ebner)
@@ -38666,6 +38666,12 @@ readSubscriptionDiagnosticsArray(UA_Server *server,
 void
 createSubscriptionObject(UA_Server *server, UA_Session *session,
                          UA_Subscription *sub) {
+#ifdef RP2_OPEN62541_SKIP_DIAGNOSTICS_NODES
+    (void)server;
+    (void)session;
+    (void)sub;
+    return;
+#endif
     UA_ExpandedNodeId *children = NULL;
     size_t childrenSize = 0;
     UA_ReferenceTypeSet refTypes;
@@ -38982,6 +38988,11 @@ readSessionSecurityDiagnostics(UA_Server *server,
 
 void
 createSessionObject(UA_Server *server, UA_Session *session) {
+#ifdef RP2_OPEN62541_SKIP_DIAGNOSTICS_NODES
+    (void)server;
+    (void)session;
+    return;
+#endif
     UA_ExpandedNodeId *children = NULL;
     size_t childrenSize = 0;
     UA_ReferenceTypeSet refTypes;
@@ -40989,7 +41000,7 @@ UA_ServerConfig_clear(UA_ServerConfig *config) {
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  *    Copyright 2014-2022 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2014-2016 (c) Sten Grüner
+ *    Copyright 2014-2016 (c) Sten GrР“Сner
  *    Copyright 2014-2015, 2017 (c) Florian Palm
  *    Copyright 2015-2016 (c) Chris Iatrou
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
@@ -40999,7 +41010,7 @@ UA_ServerConfig_clear(UA_ServerConfig *config) {
  *    Copyright 2017 (c) frax2222
  *    Copyright 2017 (c) Mark Giraud, Fraunhofer IOSB
  *    Copyright 2019 (c) Kalycito Infotech Private Limited
- *    Copyright 2023 (c) Hilscher Gesellschaft für Systemautomation mbH (Author: Phuong Nguyen)
+ *    Copyright 2023 (c) Hilscher Gesellschaft fР“Сr Systemautomation mbH (Author: Phuong Nguyen)
  */
 
 
@@ -43891,7 +43902,7 @@ UA_Server_setAsyncCallMethodResult(UA_Server *server, UA_Variant *output,
  *    Copyright 2015-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015 (c) Joakim L. Gilje
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2016-2017 (c) Florian Palm
  *    Copyright 2017 (c) frax2222
@@ -43899,7 +43910,7 @@ UA_Server_setAsyncCallMethodResult(UA_Server *server, UA_Variant *output,
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  *    Copyright 2017-2018 (c) Thomas Stalder, Blue Time Concept SA
  *    Copyright 2017-2018 (c) Ari Breitkreuz, fortiss GmbH
- *    Copyright 2018 (c) Hilscher Gesellschaft für Systemautomation mbH (Author: Martin Lang)
+ *    Copyright 2018 (c) Hilscher Gesellschaft fР“Сr Systemautomation mbH (Author: Martin Lang)
  *    Copyright 2018 (c) Fabian Arndt, Root-Core
  *    Copyright 2019 (c) HMS Industrial Networks AB (Author: Jonas Green)
  *    Copyright 2020-2021 (c) Christian von Arnim, ISW University of Stuttgart (for VDW and umati)
@@ -44833,7 +44844,7 @@ UA_Subscription_resendData(UA_Server *server, UA_Subscription *sub) {
     UA_assert(server);
     UA_assert(sub);
 
-    /* Part 4, §6.7: If this Method is called, subsequent Publish responses
+    /* Part 4, Р’В§6.7: If this Method is called, subsequent Publish responses
      * shall contain the current values of all data MonitoredItems in the
      * Subscription where the MonitoringMode is set to Reporting. If a value is
      * queued for a data MonitoredItem, the next value in the queue is sent in
@@ -47620,7 +47631,7 @@ UA_Server_createEventEx(UA_Server *server,
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
- *    Copyright 2018 (c) Hilscher Gesellschaft für Systemautomation mbH (Author: Sameer AL-Qadasi)
+ *    Copyright 2018 (c) Hilscher Gesellschaft fР“Сr Systemautomation mbH (Author: Sameer AL-Qadasi)
  *    Copyright 2020-2022 (c) Christian von Arnim, ISW University of Stuttgart (for VDW and umati)
  */
 
@@ -50667,7 +50678,7 @@ UA_Server_setExpirationDate(UA_Server *server, const UA_NodeId conditionId,
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  *    Copyright 2014-2024 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2014-2016 (c) Sten Grüner
+ *    Copyright 2014-2016 (c) Sten GrР“Сner
  *    Copyright 2014-2015, 2017 (c) Florian Palm
  *    Copyright 2015-2016 (c) Chris Iatrou
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
@@ -50677,7 +50688,7 @@ UA_Server_setExpirationDate(UA_Server *server, const UA_NodeId conditionId,
  *    Copyright 2017 (c) frax2222
  *    Copyright 2017 (c) Mark Giraud, Fraunhofer IOSB
  *    Copyright 2019 (c) Kalycito Infotech Private Limited
- *    Copyright 2023 (c) Hilscher Gesellschaft für Systemautomation mbH (Author: Phuong Nguyen)
+ *    Copyright 2023 (c) Hilscher Gesellschaft fР“Сr Systemautomation mbH (Author: Phuong Nguyen)
  */
 
 /* This file contains the service invocation logic that is called from all
@@ -51048,7 +51059,7 @@ processRequest(UA_Server *server, UA_SecureChannel *channel,
  *
  *    Copyright 2014-2019 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014-2017 (c) Florian Palm
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) LEvertz
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015 (c) Ecosmos
@@ -52589,12 +52600,12 @@ Service_UnregisterNodes(UA_Server *server, UA_Session *session,
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015-2017 (c) Florian Palm
  *    Copyright 2015-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2016 (c) LEvertz
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  *    Copyright 2017 (c) Julian Grothoff
- *    Copyright 2020 (c) Hilscher Gesellschaft für Systemautomation mbH (Author: Martin Lang)
+ *    Copyright 2020 (c) Hilscher Gesellschaft fР“Сr Systemautomation mbH (Author: Martin Lang)
  *    Copyright (c) 2025 Pilz GmbH & Co. KG, Author: Marcel Patzlaff
  */
 
@@ -52982,7 +52993,7 @@ UA_Server_call(UA_Server *server, const UA_CallMethodRequest *request) {
  *
  *    Copyright 2014-2020 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014-2017 (c) Florian Palm
- *    Copyright 2014-2016 (c) Sten Grüner
+ *    Copyright 2014-2016 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
@@ -53954,7 +53965,7 @@ Service_ActivateSession(UA_Server *server, UA_SecureChannel *channel,
         UA_SESSION_REJECT;
     }
 
-    /* Part 4, §5.6.3: When the ActivateSession Service is called for the
+    /* Part 4, Р’В§5.6.3: When the ActivateSession Service is called for the
      * first time then the Server shall reject the request if the
      * SecureChannel is not same as the one associated with the
      * CreateSession request. Subsequent calls to ActivateSession may be
@@ -54083,7 +54094,7 @@ Service_ActivateSession(UA_Server *server, UA_SecureChannel *channel,
 
     /* Set the Locale */
     if(req->localeIdsSize > 0) {
-        /* Part 4, §5.6.3.2: This parameter only needs to be specified during
+        /* Part 4, Р’В§5.6.3.2: This parameter only needs to be specified during
          * the first call to ActivateSession during a single application
          * Session. If it is not specified the Server shall keep using the
          * current localeIds for the Session. */
@@ -54273,7 +54284,7 @@ Service_Cancel(UA_Server *server, UA_Session *session,
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  *    Copyright 2014-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2014-2017 (c) Florian Palm
  *    Copyright 2015 (c) Christian Fimmers
  *    Copyright 2015-2016 (c) Chris Iatrou
@@ -56582,7 +56593,7 @@ UA_Session_getNodeDescription(const UA_Session *session,
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  *    Copyright 2014-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2014-2016 (c) Sten Grüner
+ *    Copyright 2014-2016 (c) Sten GrР“Сner
  *    Copyright 2014, 2017 (c) Florian Palm
  *    Copyright 2016 (c) Oleksiy Vasylyev
  *    Copyright 2016-2017 (c) Stefan Profanter, fortiss GmbH
@@ -56962,7 +56973,7 @@ updateEndpointUserIdentityToken(UA_Server *server,
            UA_String_equal(&ed->securityPolicyUri, &UA_SECURITY_POLICY_NONE_URI) &&
            (!sc->allowNonePolicyPassword || utp->tokenType != UA_USERTOKENTYPE_USERNAME)) {
             /* Use the SecurityPolicy for the SecureChannel also for the
-             * username/password. Otherwise pick the "bëst" SecurityPolicÿ. */
+             * username/password. Otherwise pick the "bР“В«st" SecurityPolicР“С—. */
             UA_SecurityPolicy *encSP;
             if(ed->securityMode == UA_MESSAGESECURITYMODE_NONE)
                 encSP = getDefaultEncryptedSecurityPolicy(server, policyType);
@@ -57358,7 +57369,7 @@ Service_RegisterServer2(UA_Server *server, UA_Session *session,
  *    Copyright 2014-2018, 2022 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2016-2017 (c) Florian Palm
  *    Copyright 2015 (c) Chris Iatrou
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  *    Copyright 2018 (c) Ari Breitkreuz, fortiss GmbH
@@ -57452,6 +57463,8 @@ Service_CreateSubscription(UA_Server *server, UA_Session *session,
                            const UA_CreateSubscriptionRequest *request,
                            UA_CreateSubscriptionResponse *response) {
     UA_LOCK_ASSERT(&server->serviceMutex);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: begin");
 
     /* Check limits for the number of subscriptions */
     if(((server->config.maxSubscriptions != 0) &&
@@ -57470,6 +57483,8 @@ Service_CreateSubscription(UA_Server *server, UA_Session *session,
         response->responseHeader.serviceResult = UA_STATUSCODE_BADOUTOFMEMORY;
         return true;
     }
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: allocated");
 
     /* Set the subscription parameters */
     setSubscriptionSettings(server, sub, request->requestedPublishingInterval,
@@ -57488,42 +57503,57 @@ Service_CreateSubscription(UA_Server *server, UA_Session *session,
 
     /* Attach the Subscription to the session */
     UA_Session_attachSubscription(session, sub);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: attached id=%" PRIu32,
+                        sub->subscriptionId);
 
     /* Create representation in the Session object */
 #ifdef UA_ENABLE_DIAGNOSTICS
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: diagnostics begin");
     createSubscriptionObject(server, session, sub);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: diagnostics end");
 #endif
 
     /* Set the subscription state. This also registers the callback.
      * Note that also a disabled subscription publishes keepalives. */
     UA_SubscriptionState sState = (request->publishingEnabled) ?
         UA_SUBSCRIPTIONSTATE_ENABLED : UA_SUBSCRIPTIONSTATE_ENABLED_NOPUBLISH;
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: set state begin");
     UA_StatusCode res = Subscription_setState(server, sub, sState);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: set state end status=0x%08" PRIx32,
+                        (UA_UInt32)res);
     if(res != UA_STATUSCODE_GOOD) {
         UA_LOG_DEBUG_SESSION(server->config.logging, sub->session,
                              "Subscription %" PRIu32 " | Could not register "
-                             "publish callback with error code %s",
-                             sub->subscriptionId, UA_StatusCode_name(res));
+                             "publish callback with error code 0x%08" PRIx32,
+                             sub->subscriptionId, (UA_UInt32)res);
         response->responseHeader.serviceResult = res;
         UA_Subscription_delete(server, sub);
         return true;
     }
 
-    UA_LOG_INFO_SUBSCRIPTION(server->config.logging, sub,
-                             "Subscription created (Publishing interval %.2fms, "
-                             "max %lu notifications per publish)",
-                             sub->publishingInterval,
-                             (long unsigned)sub->notificationsPerPublish);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: state ok");
 
     /* Notify the application */
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: notify begin");
     notifySubscription(server, sub,
                        UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_CREATED);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: notify end");
 
     /* Prepare the response */
     response->subscriptionId = sub->subscriptionId;
     response->revisedPublishingInterval = sub->publishingInterval;
     response->revisedLifetimeCount = sub->lifeTimeCount;
     response->revisedMaxKeepAliveCount = sub->maxKeepAliveCount;
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateSubscription: response ready");
 
     return true;
 }
@@ -58069,7 +58099,7 @@ Service_TransferSubscriptions(UA_Server *server, UA_Session *session,
  *    Copyright 2014-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2016-2017 (c) Florian Palm
  *    Copyright 2015 (c) Chris Iatrou
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  *    Copyright 2018 (c) Ari Breitkreuz, fortiss GmbH
@@ -58594,10 +58624,8 @@ Operation_CreateMonitoredItem(UA_Server *server, UA_Session *session,
                                                          &result->filterResult);
 
     if(result->statusCode != UA_STATUSCODE_GOOD) {
-        UA_LOG_INFO_SUBSCRIPTION(server->config.logging, cmc->sub,
-                                 "Could not create a MonitoredItem "
-                                 "with StatusCode %s",
-                                 UA_StatusCode_name(result->statusCode));
+        UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: create failed");
         UA_MonitoredItem_delete(server, newMon);
         return;
     }
@@ -58607,24 +58635,28 @@ Operation_CreateMonitoredItem(UA_Server *server, UA_Session *session,
     newMon->lastValue.status = ~(UA_StatusCode)0;
 
     /* Register the Monitoreditem in the server and subscription */
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: register begin");
     UA_MonitoredItem_register(server, newMon);
-
-    UA_LOG_INFO_SUBSCRIPTION(server->config.logging, cmc->sub,
-                             "MonitoredItem %" PRIi32 " | "
-                             "Created the MonitoredItem "
-                             "(Sampling Interval: %.2fms, Queue Size: %lu)",
-                             newMon->monitoredItemId,
-                             newMon->parameters.samplingInterval,
-                             (unsigned long)newMon->parameters.queueSize);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: register end");
 
     /* Notify the application. Do this before setting the MonitoringMode.
      * Because this can trigger a _sample internally. */
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: notify begin");
     notifyMonitoredItem(server, newMon,
                         UA_APPLICATIONNOTIFICATIONTYPE_MONITOREDITEM_CREATED);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: notify end");
 
     /* Activate the MonitoredItem */
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: set mode begin");
     result->statusCode = UA_MonitoredItem_setMonitoringMode(server, newMon,
                                                             request->monitoringMode);
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: set mode end");
     if(result->statusCode != UA_STATUSCODE_GOOD) {
         /* Notify again if the MonitoringMode could not be set */
         notifyMonitoredItem(server, newMon,
@@ -58637,6 +58669,8 @@ Operation_CreateMonitoredItem(UA_Server *server, UA_Session *session,
     result->revisedSamplingInterval = newMon->parameters.samplingInterval;
     result->revisedQueueSize = newMon->parameters.queueSize;
     result->monitoredItemId = newMon->monitoredItemId;
+    UA_LOG_DEBUG_SESSION(server->config.logging, session,
+                        "CreateMonitoredItems: response ready");
 }
 
 UA_Boolean
@@ -59103,7 +59137,7 @@ UA_Server_deleteMonitoredItem(UA_Server *server, UA_UInt32 monitoredItemId) {
  *    Copyright 2015 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  *    Copyright 2017 (c) Mark Giraud, Fraunhofer IOSB
- *    Copyright 2023 (c) Hilscher Gesellschaft für Systemautomation mbH (Author: Phuong Nguyen)
+ *    Copyright 2023 (c) Hilscher Gesellschaft fР“Сr Systemautomation mbH (Author: Phuong Nguyen)
  *    Copyright 2026 (c) o6 Automation GmbH (Author: Julius Pfrommer)
  */
 
@@ -59387,7 +59421,7 @@ notifySecureChannel(UA_Server *server, UA_SecureChannel *channel,
  *
  *    Copyright 2014-2017 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014-2017 (c) Florian Palm
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015-2016 (c) Chris Iatrou
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2017 (c) Julian Grothoff
@@ -62484,7 +62518,7 @@ UA_Server_setNodeTypeLifecycle(UA_Server *server, UA_NodeId nodeId,
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
  *    Copyright 2015-2020 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
- *    Copyright 2015-2016 (c) Sten Grüner
+ *    Copyright 2015-2016 (c) Sten GrР“Сner
  *    Copyright 2015-2016 (c) Chris Iatrou
  *    Copyright 2015 (c) hfaham
  *    Copyright 2015-2017 (c) Florian Palm
@@ -69009,10 +69043,10 @@ UA_CLIENT_ASYNCWRITE_IMPL(UA_Client_writeAccessLevelExAttribute_async, ACCESSLEV
  *
  *    Copyright 2015-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2015 (c) Oleksiy Vasylyev
- *    Copyright 2016 (c) Sten Grüner
+ *    Copyright 2016 (c) Sten GrР“Сner
  *    Copyright 2017-2018 (c) Thomas Stalder, Blue Time Concept SA
  *    Copyright 2016-2017 (c) Florian Palm
- *    Copyright 2017 (c) Frank Meerkötter
+ *    Copyright 2017 (c) Frank MeerkР“В¶tter
  *    Copyright 2017 (c) Stefan Profanter, fortiss GmbH
  *    Copyright 2026 (c) o6 Automation GmbH (Author: Julius Pfrommer)
  */
@@ -71710,7 +71744,7 @@ unsigned dtoa(double d, char* buffer) {
 /* musl as a whole is licensed under the following standard MIT license:
  *
  * ----------------------------------------------------------------------
- * Copyright © 2005-2020 Rich Felker, et al.
+ * Copyright Р’В© 2005-2020 Rich Felker, et al.
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -73075,7 +73109,7 @@ size_t parseDouble(const char *str, size_t size, double *result) {
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  *
- *    Copyright 2023-2024 (c) Fraunhofer IOSB (Author: Florian Düwel)
+ *    Copyright 2023-2024 (c) Fraunhofer IOSB (Author: Florian DР“Сwel)
  *    Copyright 2024 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  */
 
@@ -85066,7 +85100,7 @@ addMultiArrayContentJSON(CtxJson *ctx, void* array, const UA_DataType *type,
 
 ENCODE_JSON(Variant) {
     /* If type is 0 (NULL) the Variant contains a NULL value and the containing
-     * JSON object shall be omitted or replaced by the JSON literal ‘null’ (when
+     * JSON object shall be omitted or replaced by the JSON literal РІР‚ВnullРІР‚в„ў (when
      * an element of a JSON array). */
     status ret = UA_STATUSCODE_GOOD;
     if(!src->type) {
@@ -87514,7 +87548,7 @@ encodeArrayJsonWrapExtensionObject(CtxJson *ctx, const void *data,
 static UA_StatusCode
 encodeVariantInner(CtxJson *ctx, const UA_Variant *src) {
     /* If type is 0 (NULL) the Variant contains a NULL value and the containing
-     * JSON object shall be omitted or replaced by the JSON literal ‘null’ (when
+     * JSON object shall be omitted or replaced by the JSON literal РІР‚ВnullРІР‚в„ў (when
      * an element of a JSON array). */
     if(!src->type)
         return UA_STATUSCODE_GOOD;
@@ -89439,7 +89473,7 @@ UA_NetworkMessage_encodeJsonInternal(PubSubEncodeJsonCtx *ctx,
 
     status rv = writeJsonObjStart(&ctx->ctx);
 
-    /* Table 91 – JSON NetworkMessage Definition
+    /* Table 91 РІР‚вЂњ JSON NetworkMessage Definition
      * MessageId | String | A globally unique identifier for the message.
      * This value is mandatory. But we don't check uniqueness in the
      * encoding layer. */
@@ -106947,7 +106981,7 @@ UA_decodeXml(const UA_ByteString *src, void *dst, const UA_DataType *type,
  *
  *    Copyright 2014-2018 (c) Fraunhofer IOSB (Author: Julius Pfrommer)
  *    Copyright 2014, 2017 (c) Florian Palm
- *    Copyright 2015-2016, 2019 (c) Sten Grüner
+ *    Copyright 2015-2016, 2019 (c) Sten GrР“Сner
  *    Copyright 2015 (c) Chris Iatrou
  *    Copyright 2015-2016 (c) Oleksiy Vasylyev
  *    Copyright 2016-2017 (c) Stefan Profanter, fortiss GmbH
@@ -107732,7 +107766,7 @@ _UA_END_DECLS
 
 /* 
  * Define fallback for MBEDTLS_ASN1_CHK_CLEANUP_ADD if not already defined.
- * Some versions of mbedTLS (≥3.x) provide this macro via <mbedtls/asn1write.h>,
+ * Some versions of mbedTLS (РІвЂ°Тђ3.x) provide this macro via <mbedtls/asn1write.h>,
  * but it may be missing in others, or unavailable in amalgamation builds.
  *
  * This guard ensures compatibility across mbedTLS versions without redefining
@@ -111340,7 +111374,7 @@ batchTimerEntry(UA_Timer *t, UA_TimerEntry *te) {
 
 /* Adding repeated callbacks: Add an entry with the "nextTime" timestamp in the
  * future. This will be picked up in the next iteration and inserted at the
- * correct place. So that the next execution takes place ät "nextTime". */
+ * correct place. So that the next execution takes place Р“В¤t "nextTime". */
 UA_StatusCode
 UA_Timer_add(UA_Timer *t, UA_Callback callback,
              void *application, void *data, UA_Double interval_ms,

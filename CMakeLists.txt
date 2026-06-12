@@ -25,7 +25,7 @@ else()
 endif()
 
 if(NOT DEFINED PICO_BOARD)
-    set(PICO_BOARD weact_studio_rp2350a_16mb CACHE STRING "Pico board")
+    set(PICO_BOARD waveshare_core2350b_16mb_psram8mb CACHE STRING "Pico board")
 endif()
 
 if(NOT DEFINED WIZNET_CHIP)

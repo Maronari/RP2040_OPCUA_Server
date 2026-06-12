@@ -631,6 +631,178 @@ static void log_opcua_heap(const char *stage)
     fflush(stdout);
 }
 
+static void model_log_node_id_compact(const UA_NodeId *node_id)
+{
+    if (node_id == NULL)
+    {
+        printf("null");
+        return;
+    }
+
+    printf("ns=%u;", (unsigned)node_id->namespaceIndex);
+    if (node_id->identifierType == UA_NODEIDTYPE_NUMERIC)
+    {
+        printf("i=%lu", (unsigned long)node_id->identifier.numeric);
+    }
+    else if (node_id->identifierType == UA_NODEIDTYPE_STRING)
+    {
+        printf("s=%.*s",
+               (int)node_id->identifier.string.length,
+               (const char *)node_id->identifier.string.data);
+    }
+    else
+    {
+        printf("type=%u", (unsigned)node_id->identifierType);
+    }
+}
+
+static void model_monitored_item_register_callback(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *node_id,
+                                                   void *node_context,
+                                                   UA_UInt32 attribute_id,
+                                                   UA_Boolean removed)
+{
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)node_context;
+
+    printf("[OPC UA]\tMonitoredItem %s attr=%lu node=",
+           removed ? "removed" : "created",
+           (unsigned long)attribute_id);
+    model_log_node_id_compact(node_id);
+    putchar('\n');
+    fflush(stdout);
+    ua_port_alloc_log_stats(removed ? "MonitoredItem removed" : "MonitoredItem created");
+}
+
+static const char *model_notification_type_name(UA_ApplicationNotificationType type)
+{
+    switch (type)
+    {
+    case UA_APPLICATIONNOTIFICATIONTYPE_LIFECYCLE_STARTED:
+        return "lifecycle-started";
+    case UA_APPLICATIONNOTIFICATIONTYPE_LIFECYCLE_SHUTDOWN:
+        return "lifecycle-shutdown";
+    case UA_APPLICATIONNOTIFICATIONTYPE_LIFECYCLE_STOPPING:
+        return "lifecycle-stopping";
+    case UA_APPLICATIONNOTIFICATIONTYPE_LIFECYCLE_STOPPED:
+        return "lifecycle-stopped";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SECURECHANNEL_OPENED:
+        return "securechannel-opened";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SECURECHANNEL_CLOSED:
+        return "securechannel-closed";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SESSION_CREATED:
+        return "session-created";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SESSION_ACTIVATED:
+        return "session-activated";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SESSION_DEACTIVATED:
+        return "session-deactivated";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SESSION_CLOSED:
+        return "session-closed";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SERVICE_BEGIN:
+        return "service-begin";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SERVICE_ASYNC:
+        return "service-async";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SERVICE_END:
+        return "service-end";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_CREATED:
+        return "subscription-created";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_MODIFIED:
+        return "subscription-modified";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_PUBLISHINGMODE:
+        return "subscription-publishing-mode";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_TRANSFERRED:
+        return "subscription-transferred";
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_DELETED:
+        return "subscription-deleted";
+    case UA_APPLICATIONNOTIFICATIONTYPE_MONITOREDITEM_CREATED:
+        return "monitoreditem-created";
+    case UA_APPLICATIONNOTIFICATIONTYPE_MONITOREDITEM_MODIFIED:
+        return "monitoreditem-modified";
+    case UA_APPLICATIONNOTIFICATIONTYPE_MONITOREDITEM_MONITORINGMODE:
+        return "monitoreditem-monitoring-mode";
+    case UA_APPLICATIONNOTIFICATIONTYPE_MONITOREDITEM_DELETE:
+        return "monitoreditem-delete";
+    default:
+        return "unknown";
+    }
+}
+
+static void model_server_notification_callback(UA_Server *server,
+                                               UA_ApplicationNotificationType type,
+                                               const UA_KeyValueMap payload)
+{
+    const UA_UInt32 *request_id = NULL;
+    const UA_UInt32 *subscription_id = NULL;
+    const UA_UInt32 *monitored_item_id = NULL;
+    const UA_NodeId *service_type = NULL;
+    (void)server;
+
+    printf("[OPC UA]\tNotification: %s (%u)\n",
+           model_notification_type_name(type),
+           (unsigned)type);
+    printf("[OPC UA]\tNotification payload entries=%u\n", (unsigned)payload.mapSize);
+
+    request_id = (const UA_UInt32 *)UA_KeyValueMap_getScalar(&payload,
+                                                             UA_QUALIFIEDNAME(0, "request-id"),
+                                                             &UA_TYPES[UA_TYPES_UINT32]);
+    if (request_id != NULL)
+    {
+        printf("[OPC UA]\tNotification request-id=%lu\n", (unsigned long)*request_id);
+    }
+
+    service_type = (const UA_NodeId *)UA_KeyValueMap_getScalar(&payload,
+                                                               UA_QUALIFIEDNAME(0, "service-type"),
+                                                               &UA_TYPES[UA_TYPES_NODEID]);
+    if (service_type != NULL)
+    {
+        printf("[OPC UA]\tNotification service-type=");
+        model_log_node_id_compact(service_type);
+        putchar('\n');
+    }
+
+    subscription_id = (const UA_UInt32 *)UA_KeyValueMap_getScalar(&payload,
+                                                                  UA_QUALIFIEDNAME(0, "subscription-id"),
+                                                                  &UA_TYPES[UA_TYPES_UINT32]);
+    if (subscription_id != NULL)
+    {
+        printf("[OPC UA]\tNotification subscription-id=%lu\n",
+               (unsigned long)*subscription_id);
+    }
+
+    monitored_item_id = (const UA_UInt32 *)UA_KeyValueMap_getScalar(&payload,
+                                                                    UA_QUALIFIEDNAME(0, "monitoreditem-id"),
+                                                                    &UA_TYPES[UA_TYPES_UINT32]);
+    if (monitored_item_id != NULL)
+    {
+        printf("[OPC UA]\tNotification monitoreditem-id=%lu\n",
+               (unsigned long)*monitored_item_id);
+    }
+
+    fflush(stdout);
+
+    switch (type)
+    {
+    case UA_APPLICATIONNOTIFICATIONTYPE_SERVICE_BEGIN:
+        ua_port_alloc_log_stats("Service begin");
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_SERVICE_END:
+        ua_port_alloc_log_stats("Service end");
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_CREATED:
+        ua_port_alloc_log_stats("Subscription created");
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_MONITOREDITEM_CREATED:
+        ua_port_alloc_log_stats("MonitoredItem notification created");
+        break;
+    default:
+        break;
+    }
+}
+
 static void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result);
 static void model_set_string_method_output(size_t output_size, UA_Variant *output, const char *result);
 static void model_set_bytestring_method_output(size_t output_size,
@@ -1245,6 +1417,7 @@ static UA_StatusCode model_activate_session_secure_wrapper(UA_Server *server,
                                                     secure_channel_remote_certificate,
                                                     wrapped_context);
     }
+    ua_port_alloc_log_stats("ActivateSession completed");
     return UA_STATUSCODE_GOOD;
 }
 
@@ -1263,6 +1436,7 @@ static void model_close_session_secure_wrapper(UA_Server *server,
 
     model_free_session_username(base_context);
     UA_free(wrapped_context);
+    ua_port_alloc_log_stats("CloseSession completed");
 }
 
 static UA_Boolean model_get_user_executable_wrapper(UA_Server *server,
@@ -4300,7 +4474,7 @@ static void model_emit_client_certificate_expiry_notice(UA_Server *server,
                                  model_certificate_expiry_state_to_string(info.state),
                                  (uint32_t)info.state,
                                  actor_name);
-    puts(message);
+    printf("[OPC UA]\tClientCertificateExpiry: %s\n", message);
     fflush(stdout);
 }
 #endif
@@ -4496,7 +4670,7 @@ static void model_process_certificate_expiry_runtime(UA_Server *server,
                                              model_certificate_expiry_state_to_string(current_state),
                                              (uint32_t)current_state,
                                              model_security_commissioning_state_to_string());
-                puts(message);
+                printf("[OPC UA]\tCertificateExpiry: %s\n", message);
                 fflush(stdout);
             }
         }
@@ -4522,7 +4696,7 @@ static void model_process_certificate_expiry_runtime(UA_Server *server,
                                      model_certificate_expiry_state_to_string(current_state),
                                      (uint32_t)current_state,
                                      model_security_commissioning_state_to_string());
-        puts(message);
+        printf("[OPC UA]\tCertificateExpiry: %s\n", message);
         fflush(stdout);
     }
     else if (previous_attention)
@@ -4534,7 +4708,7 @@ static void model_process_certificate_expiry_runtime(UA_Server *server,
                                      model_certificate_expiry_state_to_string(current_state),
                                      (uint32_t)current_state,
                                      model_security_commissioning_state_to_string());
-        puts(message);
+        printf("[OPC UA]\tCertificateExpiry: %s\n", message);
         fflush(stdout);
     }
 }
@@ -4583,7 +4757,7 @@ static void model_process_trust_expiry_runtime(UA_Server *server,
                                          security_trust_expiry_service_state_to_string(report.state),
                                          (uint32_t)report.state,
                                          model_security_commissioning_state_to_string());
-            puts(message);
+            printf("[OPC UA]\tTrustExpiry: %s\n", message);
             fflush(stdout);
         }
         return;
@@ -4611,7 +4785,7 @@ static void model_process_trust_expiry_runtime(UA_Server *server,
                                      security_trust_expiry_service_state_to_string(report.state),
                                      (uint32_t)report.state,
                                      model_security_commissioning_state_to_string());
-        puts(message);
+        printf("[OPC UA]\tTrustExpiry: %s\n", message);
         fflush(stdout);
     }
     else if (previous_attention)
@@ -4625,7 +4799,7 @@ static void model_process_trust_expiry_runtime(UA_Server *server,
                                      security_trust_expiry_service_state_to_string(report.state),
                                      (uint32_t)report.state,
                                      model_security_commissioning_state_to_string());
-        puts(message);
+        printf("[OPC UA]\tTrustExpiry: %s\n", message);
         fflush(stdout);
     }
 }
@@ -12305,6 +12479,7 @@ static void model_bind_open62541_allocators(void)
     UA_callocSingleton = ua_port_calloc;
     UA_reallocSingleton = ua_port_realloc;
     UA_freeSingleton = ua_port_free;
+    ua_port_alloc_log_stats("open62541 allocator bound");
 #endif
 }
 
@@ -12314,6 +12489,7 @@ void opcua_model_task(void *argument)
     UA_ServerConfig *config = NULL;
     UA_StatusCode status = UA_STATUSCODE_GOOD;
     bool wait_for_network_logged = false;
+    TickType_t next_psram_stats_tick = 0;
     model_event_runtime_state_t event_runtime_state = {0};
     (void)argument;
 
@@ -12373,20 +12549,22 @@ void opcua_model_task(void *argument)
         vTaskDelete(NULL);
     }
 
-    /* Embedded profile: keep the default server configuration modest.
-       Allow one extra secure channel for discovery / tooling while keeping
-       only a single active session for maintenance operations. */
+    /* PSRAM profile: keep connection counts bounded, but allow a realistic
+       number of monitored items now that open62541 long-lived allocations live
+       outside the internal SRAM heap. */
     config->maxSecureChannels = 2;
     config->maxSessions = 2;
-    config->maxSubscriptions = 2;
-    config->maxSubscriptionsPerSession = 2;
-    config->maxMonitoredItems = 8;
-    config->maxMonitoredItemsPerSubscription = 4;
-    config->maxNotificationsPerPublish = 4;
+    config->maxSubscriptions = 4;
+    config->maxSubscriptionsPerSession = 4;
+    config->maxMonitoredItems = 128;
+    config->maxMonitoredItemsPerSubscription = 64;
+    config->maxMonitoredItemsPerCall = 32;
+    config->maxNotificationsPerPublish = 32;
     config->enableRetransmissionQueue = false;
     config->queueSizeLimits.min = 1;
-    config->queueSizeLimits.max = 4;
-    config->maxPublishReqPerSession = 2;
+    config->queueSizeLimits.max = 8;
+    config->maxPublishReqPerSession = 4;
+    config->monitoredItemRegisterCallback = model_monitored_item_register_callback;
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     config->maxEventsPerNode = 8;
 #endif
@@ -12496,6 +12674,7 @@ void opcua_model_task(void *argument)
     }
 
     log_opcua_heap("UA_Server_newWithConfig completed");
+    ua_port_alloc_log_stats("UA_Server_newWithConfig completed");
     config = UA_Server_getConfig(server);
 
     status = model_build_address_space(server);
@@ -12520,6 +12699,7 @@ void opcua_model_task(void *argument)
     }
 
     log_opcua_heap("Address space ready");
+    ua_port_alloc_log_stats("Address space ready");
 
 #ifdef UA_ENABLE_PUBSUB
     if (config->pubsubEnabled)
@@ -12556,6 +12736,9 @@ void opcua_model_task(void *argument)
     model_finalize_identity_generation_after_startup();
 
     log_opcua_heap("Server startup complete");
+    ua_port_alloc_log_stats("Server startup complete");
+    ua_port_alloc_log_stats("Runtime allocation mode");
+    next_psram_stats_tick = xTaskGetTickCount() + pdMS_TO_TICKS(30000u);
 
 #ifdef UA_ENABLE_PUBSUB
     if (g_model_pubsub.configured)
@@ -12572,6 +12755,7 @@ void opcua_model_task(void *argument)
         }
 
         log_opcua_heap("PubSub enabled");
+        ua_port_alloc_log_stats("PubSub enabled");
     }
 #endif
 
@@ -12622,6 +12806,13 @@ void opcua_model_task(void *argument)
         }
 
         model_process_runtime_events(server, &event_runtime_state);
+
+        if (xTaskGetTickCount() >= next_psram_stats_tick)
+        {
+            log_opcua_heap("Periodic runtime");
+            ua_port_alloc_log_stats("Periodic runtime");
+            next_psram_stats_tick = xTaskGetTickCount() + pdMS_TO_TICKS(30000u);
+        }
 
         UA_UInt16 wait_ms = UA_Server_run_iterate(server, false);
         if (wait_ms == 0u)

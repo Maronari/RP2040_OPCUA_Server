@@ -58,6 +58,7 @@ bool w5x00_ethernet_driver_init(w5x00_ethernet_driver_t *driver, const uint8_t m
     wizchip_spi_initialize();
     wizchip_cris_initialize();
     wizchip_reset();
+    wizchip_soft_reset();
     wizchip_initialize();
     wizchip_check();
 

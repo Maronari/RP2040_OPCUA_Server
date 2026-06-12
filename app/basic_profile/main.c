@@ -7,6 +7,7 @@
 #include "hardware/exception.h"
 #include "hardware/structs/timer.h"
 #include "pico/stdio.h"
+#include "pico/stdio_usb.h"
 #include "pico/stdlib.h"
 
 #include "drivers/led_driver.h"
@@ -14,6 +15,7 @@
 #include "drivers/watchdog_driver.h"
 #include "opcua_model/opcua_model.h"
 #include "ota/ota_flash.h"
+#include "psram_allocator.h"
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
@@ -130,6 +132,37 @@ static uint32_t g_watchdog_timeout_ms_resolved = 0u;
 static volatile bool g_watchdog_kick_enabled = true;
 
 static void app_stop_watchdog_kicks(const char *reason);
+
+static void app_wait_for_usb_console(void)
+{
+    const absolute_time_t deadline = make_timeout_time_ms(15000);
+
+    while (!stdio_usb_connected() && !time_reached(deadline))
+    {
+        sleep_ms(50);
+    }
+
+    if (stdio_usb_connected())
+    {
+        sleep_ms(500);
+    }
+}
+
+static void app_init_psram_allocator(void)
+{
+    if (psram_allocator_init())
+    {
+        printf("[PSRAM]\t\tready total=%u free=%u largest=%u\n",
+               (unsigned)psram_total_size(),
+               (unsigned)psram_free_size(),
+               (unsigned)psram_largest_free_block());
+    }
+    else
+    {
+        printf("[PSRAM]\t\tunavailable; open62541 allocator will use SRAM fallback\n");
+    }
+    fflush(stdout);
+}
 
 static void app_fault_loop(bool blink_led, uint32_t blink_period_ms)
 {
@@ -508,7 +541,8 @@ int main(void)
     platform_clock_init();
     led_driver_init(DEVICE_PROFILE_LED_PIN);
     stdio_init_all();
-    sleep_ms(100);
+    app_wait_for_usb_console();
+    app_init_psram_allocator();
     app_install_exception_handlers();
 
     printf("[APP]\t\tBooting %s FW=%s HW=%s Build=%s Git=%s\n",

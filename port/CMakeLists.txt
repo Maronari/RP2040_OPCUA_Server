@@ -20,6 +20,23 @@ target_link_libraries(IOLIBRARY_FILES PRIVATE
         FREERTOS_FILES
         )
 
+add_library(PSRAM_ALLOCATOR STATIC)
+
+target_sources(PSRAM_ALLOCATOR PRIVATE
+        ${PORT_DIR}/psram/psram_allocator.c
+        )
+
+target_include_directories(PSRAM_ALLOCATOR PUBLIC
+        ${PORT_DIR}/psram
+        )
+
+target_link_libraries(PSRAM_ALLOCATOR PRIVATE
+        pico_stdlib
+        hardware_clocks
+        hardware_gpio
+        hardware_sync
+        )
+
 add_library(UA_PORT_ALLOC STATIC)
 
 target_sources(UA_PORT_ALLOC PRIVATE
@@ -32,6 +49,7 @@ target_include_directories(UA_PORT_ALLOC PUBLIC
 
 target_link_libraries(UA_PORT_ALLOC PRIVATE
         FREERTOS_FILES
+        PSRAM_ALLOCATOR
         pico_stdlib
         )
 
@@ -102,6 +120,8 @@ target_include_directories(OPEN62541_FILES PUBLIC
 
 target_compile_definitions(OPEN62541_FILES PUBLIC
         MBEDTLS_USER_CONFIG_FILE="ssl_config.h"
+        UA_LOGLEVEL=300
+        RP2_OPEN62541_SKIP_DIAGNOSTICS_NODES=1
         )
 
 target_link_libraries(OPEN62541_FILES

@@ -23,6 +23,9 @@
  */
 static critical_section_t g_wizchip_cri_sec;
 
+#define W5X00_PHY_LINK_POLL_INTERVAL_MS 10u
+#define W5X00_PHY_LINK_TIMEOUT_MS 3000u
+
 #ifdef USE_SPI_DMA
 static uint dma_tx;
 static uint dma_rx;
@@ -47,6 +50,7 @@ static inline void wizchip_deselect(void)
 
 void wizchip_reset()
 {
+#if PIN_RST >= 0
     gpio_init(PIN_RST);
     gpio_set_dir(PIN_RST, GPIO_OUT);
 
@@ -57,6 +61,33 @@ void wizchip_reset()
     sleep_ms(100);
 
     bi_decl(bi_1pin_with_name(PIN_RST, "W5x00 RESET"));
+#else
+    printf(" W5x00 reset pin not connected, relying on power-on reset\n");
+    sleep_ms(250);
+#endif
+}
+
+void wizchip_soft_reset(void)
+{
+#if (_WIZCHIP_ == W5500)
+    const uint8_t version = getVERSIONR();
+    if (version != 0x04)
+    {
+        printf(" W5x00 software reset skipped, VERSIONR=0x%02x\n", version);
+        return;
+    }
+#elif (_WIZCHIP_ == W5100S)
+    const uint8_t version = getVER();
+    if (version != 0x51)
+    {
+        printf(" W5x00 software reset skipped, VERSION=0x%02x\n", version);
+        return;
+    }
+#endif
+
+    printf(" W5x00 software reset\n");
+    setMR(MR_RST);
+    sleep_ms(100);
 }
 
 static uint8_t wizchip_read(void)
@@ -208,8 +239,9 @@ void wizchip_initialize(void)
         return;
     }
 
-    /* Check PHY link status */
-    do
+    /* Check PHY link status, but do not hang forever when the W5x00 module
+     * is not populated during board bring-up. */
+    for (uint32_t elapsed_ms = 0; elapsed_ms < W5X00_PHY_LINK_TIMEOUT_MS; elapsed_ms += W5X00_PHY_LINK_POLL_INTERVAL_MS)
     {
         if (ctlwizchip(CW_GET_PHYLINK, (void *)&temp) == -1)
         {
@@ -217,7 +249,16 @@ void wizchip_initialize(void)
 
             return;
         }
-    } while (temp == PHY_LINK_OFF);
+
+        if (temp != PHY_LINK_OFF)
+        {
+            return;
+        }
+
+        sleep_ms(W5X00_PHY_LINK_POLL_INTERVAL_MS);
+    }
+
+    printf(" W5x00 PHY link is down, continuing without link\n");
 }
 
 void wizchip_check(void)
@@ -228,8 +269,7 @@ void wizchip_check(void)
     {
         printf(" ACCESS ERR : VERSION != 0x51, read value = 0x%02x\n", getVER());
 
-        while (1)
-            ;
+        return;
     }
 #elif (_WIZCHIP_ == W5500)
     /* Read version register */
@@ -237,8 +277,7 @@ void wizchip_check(void)
     {
         printf(" ACCESS ERR : VERSION != 0x04, read value = 0x%02x\n", getVERSIONR());
 
-        while (1)
-            ;
+        return;
     }
 #endif
 }

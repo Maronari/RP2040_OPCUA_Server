@@ -144,6 +144,7 @@ function(add_device_profile_target target_name use_ota_linker)
             FIRMWARE_DRIVERS
             FIRMWARE_SERVICES
             OPCUA_DEVICE_MODEL
+            PSRAM_ALLOCATOR
             )
 
     add_dependencies(${target_name} ${TARGET_NAME}_config_export)
@@ -156,9 +157,9 @@ function(add_device_profile_target target_name use_ota_linker)
             PICO_CORE1_STACK_SIZE=0
             PICO_HEAP_SIZE=0x400
             PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=1
-            PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=0
-            PICO_STDIO_USB_POST_CONNECT_WAIT_DELAY_MS=0
-            PICO_STDIO_USB_STDOUT_TIMEOUT_US=0
+            PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=1000
+            PICO_STDIO_USB_POST_CONNECT_WAIT_DELAY_MS=500
+            PICO_STDIO_USB_STDOUT_TIMEOUT_US=500000
             PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
             PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
             DEVICE_PROFILE_HW_REVISION=\"${PICO_BOARD}/${WIZNET_CHIP}\"
