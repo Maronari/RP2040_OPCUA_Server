@@ -94,6 +94,31 @@ target_link_libraries(TIMER_FILES PRIVATE
         pico_stdlib      
         )
 
+# MQTT-C is included directly by the open62541 amalgamation when PubSub MQTT
+# transport is enabled. Pin the same revision used by open62541 v1.5.3 so a
+# clean build does not depend on the ignored open62541 source checkout.
+include(FetchContent)
+cmake_policy(PUSH)
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+endif()
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+FetchContent_Declare(
+        mqtt_c
+        URL https://github.com/LiamBindle/MQTT-C/archive/0f4c34c8cc00b16cfee094745d68b8cdbaecd8e0.tar.gz
+        URL_HASH SHA256=985898405912dbddf50d8b446226763696e6390fbd6f38b66cede6f38e703086
+        )
+
+# CMake 3.30 deprecated direct population, but it is required while this
+# project supports CMake 3.13 and avoids building MQTT-C's host PAL target.
+FetchContent_GetProperties(mqtt_c)
+if(NOT mqtt_c_POPULATED)
+    FetchContent_Populate(mqtt_c)
+endif()
+cmake_policy(POP)
+
 #open62541
 add_library(OPEN62541_FILES STATIC)
 
@@ -110,8 +135,8 @@ target_include_directories(OPEN62541_FILES PUBLIC
         ${PORT_DIR}
         ${PORT_DIR}/lwip
         ${PORT_DIR}/open62541/include
-        ${CMAKE_SOURCE_DIR}/open62541_v1.5.3/deps/mqtt-c/include
-        ${CMAKE_SOURCE_DIR}/open62541_v1.5.3/deps/mqtt-c/src
+        ${mqtt_c_SOURCE_DIR}/include
+        ${mqtt_c_SOURCE_DIR}/src
         ${PICO_SDK_PATH}/lib/lwip/src/include
         ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
         ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
