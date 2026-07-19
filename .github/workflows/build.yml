@@ -43,10 +43,12 @@ jobs:
     - name: Verify build outputs
       run: |
         cd build
-        if [ ! -f *.uf2 ] && [ ! -f */*.uf2 ]; then
+        UF2_FILES=$(find . -type f -name "*.uf2" -print)
+        if [ -z "$UF2_FILES" ]; then
           echo "Error: No .uf2 files generated"
           exit 1
         fi
+        echo "$UF2_FILES"
         echo "Build artifacts generated successfully"
 
     - name: Static analysis (cppcheck)
