@@ -11,7 +11,8 @@
 
 #define CONFIG_SERVICE_TEXT_MAX_LEN 64
 #define CONFIG_SERVICE_URI_MAX_LEN 64
-#define CONFIG_SERVICE_ASSET_ID_MAX_LEN 32
+/* 40 Unicode code points require up to 160 bytes in UTF-8, plus NUL. */
+#define CONFIG_SERVICE_ASSET_ID_MAX_LEN 161
 #define CONFIG_SERVICE_LOCATION_MAX_LEN 48
 #define CONFIG_SERVICE_ASSET_CLASS_MAX_LEN 32
 #define CONFIG_SERVICE_MAX_CHANNELS 4u
@@ -111,6 +112,7 @@ const device_profile_config_t *config_service_get_staged(void);
 bool config_service_reset_to_defaults(void);
 bool config_service_apply(void);
 bool config_service_set_timezone_offset_minutes(int16_t value);
+bool config_service_set_asset_id(const char *value);
 bool config_service_stage_set_mqtt_pubsub_enabled(bool enabled);
 bool config_service_stage_set_identity(const device_identity_config_t *identity);
 bool config_service_stage_set_network(const device_network_config_t *network);

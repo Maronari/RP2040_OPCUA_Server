@@ -82,6 +82,13 @@ addDeviceHealthEnumeration(UA_Server *server, UA_UInt16 ns) {
 }
 
 static UA_StatusCode
+addFunctionalGroupType(UA_Server *server, UA_UInt16 ns) {
+    return addObjectType(server, ns, UA_DIID_FUNCTIONALGROUPTYPE,
+                         "FunctionalGroupType",
+                         UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), false);
+}
+
+static UA_StatusCode
 addDeviceHealthInterface(UA_Server *server, UA_UInt16 ns) {
     UA_VariableAttributes healthAttr = UA_VariableAttributes_default;
     UA_ObjectAttributes alarmsAttr = UA_ObjectAttributes_default;
@@ -160,9 +167,176 @@ addDeviceHealthAlarmTypes(UA_Server *server, UA_UInt16 ns) {
                          UA_NODEID_NUMERIC(ns, UA_DIID_DEVICEHEALTHDIAGNOSTICALARMTYPE), false);
 }
 
+static UA_StatusCode
+addAmbFindAliasMethod(UA_Server *server, UA_UInt16 ns, UA_UInt32 parentId,
+                      UA_UInt32 methodId, UA_UInt32 inputArgumentsId,
+                      UA_UInt32 outputArgumentsId) {
+#ifdef UA_ENABLE_METHODCALLS
+    UA_MethodAttributes attr = UA_MethodAttributes_default;
+    UA_Argument inputArguments[2];
+    UA_Argument outputArgument;
+    UA_UInt32 outputArrayDimension = 0u;
+
+    UA_Argument_init(&inputArguments[0]);
+    inputArguments[0].name = UA_STRING((char *)"AliasNameSearchPattern");
+    inputArguments[0].dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    inputArguments[0].valueRank = UA_VALUERANK_SCALAR;
+
+    UA_Argument_init(&inputArguments[1]);
+    inputArguments[1].name = UA_STRING((char *)"ReferenceTypeFilter");
+    inputArguments[1].dataType = UA_TYPES[UA_TYPES_NODEID].typeId;
+    inputArguments[1].valueRank = UA_VALUERANK_SCALAR;
+
+    UA_Argument_init(&outputArgument);
+    outputArgument.name = UA_STRING((char *)"AliasNodeList");
+    outputArgument.dataType = UA_TYPES[UA_TYPES_ALIASNAMEDATATYPE].typeId;
+    outputArgument.valueRank = 1;
+    outputArgument.arrayDimensionsSize = 1u;
+    outputArgument.arrayDimensions = &outputArrayDimension;
+
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"FindAlias");
+    attr.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                        (char *)"Find assets by AliasName");
+    attr.executable = true;
+    attr.userExecutable = true;
+
+    return UA_Server_addMethodNodeEx(
+        server,
+        UA_NODEID_NUMERIC(ns, methodId),
+        UA_NODEID_NUMERIC(ns, parentId),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(0, (char *)"FindAlias"),
+        attr,
+        NULL,
+        2u,
+        inputArguments,
+        UA_NODEID_NUMERIC(ns, inputArgumentsId),
+        NULL,
+        1u,
+        &outputArgument,
+        UA_NODEID_NUMERIC(ns, outputArgumentsId),
+        NULL,
+        NULL,
+        NULL);
+#else
+    (void)server;
+    (void)ns;
+    (void)parentId;
+    (void)methodId;
+    (void)inputArgumentsId;
+    (void)outputArgumentsId;
+    return UA_STATUSCODE_GOOD;
+#endif
+}
+
+static UA_StatusCode
+addAmbNodeVersion(UA_Server *server, UA_UInt16 ns, UA_UInt32 parentId,
+                  UA_UInt32 nodeId) {
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+    UA_String initialVersion = UA_STRING((char *)"1");
+    UA_StatusCode res;
+
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"NodeVersion");
+    attr.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                        (char *)"Version of the asset alias category");
+    attr.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    attr.valueRank = UA_VALUERANK_SCALAR;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    res = UA_Variant_setScalarCopy(&attr.value, &initialVersion,
+                                   &UA_TYPES[UA_TYPES_STRING]);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    res = UA_Server_addVariableNode(
+        server,
+        UA_NODEID_NUMERIC(ns, nodeId),
+        UA_NODEID_NUMERIC(ns, parentId),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+        UA_QUALIFIEDNAME(0, (char *)"NodeVersion"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+        attr,
+        NULL,
+        NULL);
+    UA_Variant_clear(&attr.value);
+    return res;
+}
+
+static UA_StatusCode
+addAmbAliasCategory(UA_Server *server, UA_UInt16 ns, UA_UInt32 nodeId,
+                    const char *browseName, UA_NodeId parentId,
+                    UA_UInt32 methodId, UA_UInt32 inputArgumentsId,
+                    UA_UInt32 outputArgumentsId, UA_UInt32 nodeVersionId) {
+    UA_ObjectAttributes attr = UA_ObjectAttributes_default;
+    UA_StatusCode res;
+
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browseName);
+    attr.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browseName);
+    res = UA_Server_addNode_begin(
+        server,
+        UA_NODECLASS_OBJECT,
+        UA_NODEID_NUMERIC(ns, nodeId),
+        parentId,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+        UA_QUALIFIEDNAME(ns, (char *)browseName),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ALIASNAMECATEGORYTYPE),
+        &attr,
+        &UA_TYPES[UA_TYPES_OBJECTATTRIBUTES],
+        NULL,
+        NULL);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    res = addAmbFindAliasMethod(server, ns, nodeId, methodId,
+                                inputArgumentsId, outputArgumentsId);
+    if(res == UA_STATUSCODE_GOOD && nodeVersionId != 0u)
+        res = addAmbNodeVersion(server, ns, nodeId, nodeVersionId);
+    if(res == UA_STATUSCODE_GOOD)
+        res = UA_Server_addNode_finish(server, UA_NODEID_NUMERIC(ns, nodeId));
+    if(res != UA_STATUSCODE_GOOD)
+        (void)UA_Server_deleteNode(server, UA_NODEID_NUMERIC(ns, nodeId), true);
+    return res;
+}
+
+static UA_StatusCode
+addAmbAssetDiscovery(UA_Server *server, UA_UInt16 ns) {
+    UA_StatusCode res;
+
+    res = addAmbAliasCategory(
+        server, ns, UA_AMBID_ASSETS, "Assets",
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ALIASES),
+        UA_AMBID_ASSETS_FIND_ALIAS,
+        UA_AMBID_ASSETS_FIND_ALIAS_INPUT_ARGUMENTS,
+        UA_AMBID_ASSETS_FIND_ALIAS_OUTPUT_ARGUMENTS,
+        0u);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    res = addAmbAliasCategory(
+        server, ns, UA_AMBID_ASSETS_BY_PRODUCT_INSTANCE_URI,
+        "AssetsByProductInstanceUri",
+        UA_NODEID_NUMERIC(ns, UA_AMBID_ASSETS),
+        UA_AMBID_PRODUCT_INSTANCE_URI_FIND_ALIAS,
+        UA_AMBID_PRODUCT_INSTANCE_URI_FIND_ALIAS_INPUT_ARGUMENTS,
+        UA_AMBID_PRODUCT_INSTANCE_URI_FIND_ALIAS_OUTPUT_ARGUMENTS,
+        UA_AMBID_PRODUCT_INSTANCE_URI_NODE_VERSION);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    return addAmbAliasCategory(
+        server, ns, UA_AMBID_ASSETS_BY_ASSET_ID,
+        "AssetsByAssetId",
+        UA_NODEID_NUMERIC(ns, UA_AMBID_ASSETS),
+        UA_AMBID_ASSET_ID_FIND_ALIAS,
+        UA_AMBID_ASSET_ID_FIND_ALIAS_INPUT_ARGUMENTS,
+        UA_AMBID_ASSET_ID_FIND_ALIAS_OUTPUT_ARGUMENTS,
+        UA_AMBID_ASSET_ID_NODE_VERSION);
+}
+
 UA_StatusCode
 UA_Server_injectNodesets(UA_Server *server) {
     UA_UInt16 diNamespace;
+    UA_UInt16 ambNamespace;
     UA_StatusCode res;
 
     if(!server)
@@ -172,6 +346,9 @@ UA_Server_injectNodesets(UA_Server *server) {
     if(diNamespace == 0u)
         return UA_STATUSCODE_BADOUTOFMEMORY;
 
+    res = addFunctionalGroupType(server, diNamespace);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
     res = addDeviceHealthEnumeration(server, diNamespace);
     if(res != UA_STATUSCODE_GOOD)
         return res;
@@ -182,8 +359,15 @@ UA_Server_injectNodesets(UA_Server *server) {
     if(res != UA_STATUSCODE_GOOD)
         return res;
 
-    printf("[open62541/DI]\tsubset ready, namespace=%u\n",
-           (unsigned int)diNamespace);
+    ambNamespace = UA_Server_addNamespace(server, UA_AMB_NAMESPACE_URI);
+    if(ambNamespace == 0u)
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    res = addAmbAssetDiscovery(server, ambNamespace);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    printf("[open62541/nodesets]\tDI subset ns=%u, AMB discovery ns=%u\n",
+           (unsigned int)diNamespace, (unsigned int)ambNamespace);
     fflush(stdout);
     return UA_STATUSCODE_GOOD;
 }
