@@ -111,6 +111,7 @@ target_include_directories(OPEN62541_FILES PUBLIC
         ${PORT_DIR}/lwip
         ${PORT_DIR}/open62541/include
         ${CMAKE_SOURCE_DIR}/open62541_v1.5.3/deps/mqtt-c/include
+        ${CMAKE_SOURCE_DIR}/open62541_v1.5.3/deps/mqtt-c/src
         ${PICO_SDK_PATH}/lib/lwip/src/include
         ${PICO_SDK_PATH}/lib/lwip/contrib/ports/freertos/include
         ${PICO_SDK_PATH}/src/rp2_common/pico_lwip/include

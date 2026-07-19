@@ -197,6 +197,25 @@ void ua_port_alloc_set_psram_enabled(bool enabled)
     fflush(stdout);
 }
 
+bool ua_port_alloc_is_psram_enabled(void)
+{
+    return g_ua_port_psram_alloc_enabled;
+}
+
+void ua_port_alloc_get_stats(ua_port_alloc_stats_t *stats)
+{
+    if (stats == NULL)
+    {
+        return;
+    }
+
+    stats->psram_ready = psram_allocator_is_ready();
+    stats->psram_enabled = g_ua_port_psram_alloc_enabled;
+    stats->total_bytes = psram_total_size();
+    stats->free_bytes = psram_free_size();
+    stats->largest_free_block_bytes = psram_largest_free_block();
+}
+
 void ua_port_alloc_log_stats(const char *stage)
 {
     printf("[ALLOC]\t\t%s: psram=%s mode=%s total=%u free=%u largest=%u\n",

@@ -40,8 +40,8 @@
 #define ALARM_TASK_STACK_SIZE STACK_DEPTH_BYTES(2u * 1024u)
 #define WATCHDOG_TASK_STACK_SIZE STACK_DEPTH_BYTES(1u * 1024u)
 #define INIT_TASK_STACK_SIZE STACK_DEPTH_BYTES(6u * 1024u)
-#define OPCUA_TASK_STACK_SIZE STACK_DEPTH_BYTES(24u * 1024u)
-#define APP_DEFAULT_WATCHDOG_TIMEOUT_MS 8000u
+#define OPCUA_TASK_STACK_SIZE STACK_DEPTH_BYTES(64u * 1024u)
+#define APP_DEFAULT_WATCHDOG_TIMEOUT_MS 80000u
 
 #define fflush(_stream) stdio_flush()
 
@@ -401,8 +401,9 @@ static bool provision_trust_list_if_configured(void)
 
 static void watchdog_task(void *argument)
 {
-    const uint32_t timeout_ms = *(const uint32_t *)argument;
-    const TickType_t delay_ticks = pdMS_TO_TICKS(timeout_ms > 1u ? timeout_ms / 2u : 1u);
+    (void)argument;
+    const uint32_t timeout_ms = watchdog_driver_get_timeout_ms();
+    const TickType_t delay_ticks = pdMS_TO_TICKS(timeout_ms > 2000u ? 1000u : timeout_ms / 2u);
 
     while (1)
     {
@@ -479,8 +480,9 @@ static void app_init_task(void *argument)
            DEVICE_PROFILE_FW_REVISION,
            DEVICE_PROFILE_BUILD_TIME,
            DEVICE_PROFILE_GIT_HASH);
-    printf("[APP]\t\tWatchdog enabled, timeout=%u ms%s\n",
+    printf("[APP]\t\tWatchdog enabled, requested=%u ms effective=%u ms%s\n",
            (unsigned)g_watchdog_timeout_ms_resolved,
+           (unsigned)watchdog_driver_get_timeout_ms(),
            (config != NULL && config->watchdog_timeout_ms == 0u) ? " (fallback default)" : "");
     fflush(stdout);
 

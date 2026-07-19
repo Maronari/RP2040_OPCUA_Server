@@ -75,6 +75,12 @@ typedef enum
     MODEL_NODE_DIAG_RESET_CAUSE,
     MODEL_NODE_DIAG_FREE_HEAP,
     MODEL_NODE_DIAG_MIN_EVER_FREE_HEAP,
+    MODEL_NODE_DIAG_PSRAM_READY,
+    MODEL_NODE_DIAG_PSRAM_TOTAL_BYTES,
+    MODEL_NODE_DIAG_PSRAM_USED_BYTES,
+    MODEL_NODE_DIAG_PSRAM_FREE_BYTES,
+    MODEL_NODE_DIAG_PSRAM_LARGEST_FREE_BLOCK_BYTES,
+    MODEL_NODE_DIAG_PSRAM_ALLOCATOR_MODE,
     MODEL_NODE_DIAG_CPU_LOAD_APPROX,
     MODEL_NODE_DIAG_LAST_FAULT_CODE,
     MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER,
@@ -407,6 +413,12 @@ enum
     FIXED_CTX_DIAG_RESET_CAUSE,
     FIXED_CTX_DIAG_FREE_HEAP,
     FIXED_CTX_DIAG_MIN_EVER_FREE_HEAP,
+    FIXED_CTX_DIAG_PSRAM_READY,
+    FIXED_CTX_DIAG_PSRAM_TOTAL_BYTES,
+    FIXED_CTX_DIAG_PSRAM_USED_BYTES,
+    FIXED_CTX_DIAG_PSRAM_FREE_BYTES,
+    FIXED_CTX_DIAG_PSRAM_LARGEST_FREE_BLOCK_BYTES,
+    FIXED_CTX_DIAG_PSRAM_ALLOCATOR_MODE,
     FIXED_CTX_DIAG_CPU_LOAD_APPROX,
     FIXED_CTX_DIAG_LAST_FAULT_CODE,
     FIXED_CTX_NETWORK_MAC_ADDRESS,
@@ -612,11 +624,36 @@ static void model_ua_logger_log(void *context,
                                 const char *msg,
                                 va_list args)
 {
+    char message_buffer[768];
+    UA_String formatted = {
+        .length = sizeof(message_buffer) - 1u,
+        .data = (UA_Byte *)message_buffer,
+    };
+    const UA_StatusCode status = UA_String_vformat(&formatted, msg, args);
+
     (void)context;
     (void)category;
-    printf("[open62541/%s]\t", model_log_level_name(level));
-    vprintf(msg, args);
-    putchar('\n');
+
+    if (formatted.length >= sizeof(message_buffer))
+    {
+        formatted.length = sizeof(message_buffer) - 1u;
+    }
+    message_buffer[formatted.length] = '\0';
+
+    if (status == UA_STATUSCODE_GOOD ||
+        status == UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED)
+    {
+        printf("[open62541/%s]\t%.*s\n",
+               model_log_level_name(level),
+               (int)formatted.length,
+               message_buffer);
+    }
+    else
+    {
+        printf("[open62541/%s]\t<log formatting failed: 0x%08lx>\n",
+               model_log_level_name(level),
+               (unsigned long)status);
+    }
     stdio_flush();
 }
 
@@ -1601,6 +1638,12 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_DIAG_RESET_CAUSE, NULL},
     {MODEL_NODE_DIAG_FREE_HEAP, NULL},
     {MODEL_NODE_DIAG_MIN_EVER_FREE_HEAP, NULL},
+    {MODEL_NODE_DIAG_PSRAM_READY, NULL},
+    {MODEL_NODE_DIAG_PSRAM_TOTAL_BYTES, NULL},
+    {MODEL_NODE_DIAG_PSRAM_USED_BYTES, NULL},
+    {MODEL_NODE_DIAG_PSRAM_FREE_BYTES, NULL},
+    {MODEL_NODE_DIAG_PSRAM_LARGEST_FREE_BLOCK_BYTES, NULL},
+    {MODEL_NODE_DIAG_PSRAM_ALLOCATOR_MODE, NULL},
     {MODEL_NODE_DIAG_CPU_LOAD_APPROX, NULL},
     {MODEL_NODE_DIAG_LAST_FAULT_CODE, NULL},
     {MODEL_NODE_NETWORK_MAC_ADDRESS, NULL},
@@ -5779,6 +5822,71 @@ static UA_StatusCode model_read_value(UA_Server *server,
         diag_service_get_heap_stats(&stats);
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_uint32_value(value, stats.minimum_ever_free_bytes, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_DIAG_PSRAM_READY:
+    {
+        ua_port_alloc_stats_t stats = {0};
+
+        ua_port_alloc_get_stats(&stats);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_boolean_value(value,
+                                       stats.psram_ready ? UA_TRUE : UA_FALSE,
+                                       UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_DIAG_PSRAM_TOTAL_BYTES:
+    {
+        ua_port_alloc_stats_t stats = {0};
+
+        ua_port_alloc_get_stats(&stats);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value,
+                                      (UA_UInt32)stats.total_bytes,
+                                      UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_DIAG_PSRAM_USED_BYTES:
+    {
+        ua_port_alloc_stats_t stats = {0};
+
+        ua_port_alloc_get_stats(&stats);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value,
+                                      (UA_UInt32)(stats.total_bytes >= stats.free_bytes
+                                                      ? stats.total_bytes - stats.free_bytes
+                                                      : 0u),
+                                      UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_DIAG_PSRAM_FREE_BYTES:
+    {
+        ua_port_alloc_stats_t stats = {0};
+
+        ua_port_alloc_get_stats(&stats);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value,
+                                      (UA_UInt32)stats.free_bytes,
+                                      UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_DIAG_PSRAM_LARGEST_FREE_BLOCK_BYTES:
+    {
+        ua_port_alloc_stats_t stats = {0};
+
+        ua_port_alloc_get_stats(&stats);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_uint32_value(value,
+                                      (UA_UInt32)stats.largest_free_block_bytes,
+                                      UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_DIAG_PSRAM_ALLOCATOR_MODE:
+    {
+        ua_port_alloc_stats_t stats = {0};
+        const char *mode = "sram-fallback";
+
+        ua_port_alloc_get_stats(&stats);
+        if (stats.psram_ready)
+        {
+            mode = stats.psram_enabled ? "psram-first" : "sram-runtime";
+        }
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_string_value(value, mode, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_DIAG_UPTIME_SEC:
     {
@@ -10437,6 +10545,7 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     UA_NodeId identification_id = UA_NODEID_STRING(1, (char *)"Device.Identification");
     UA_NodeId channels_id = UA_NODEID_STRING(1, (char *)DEVICE_CHANNELS_NODE_ID);
     UA_NodeId diagnostics_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics");
+    UA_NodeId psram_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.PSRAM");
     UA_NodeId task_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.Task");
     UA_NodeId network_id = UA_NODEID_STRING(1, (char *)"Device.Network");
     UA_NodeId time_id = UA_NODEID_STRING(1, (char *)"Device.Time");
@@ -10486,6 +10595,16 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 
     status = model_add_folder(server, "Device.Diagnostics", "Diagnostics", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server,
+                              "Device.Diagnostics.PSRAM",
+                              "PSRAM",
+                              diagnostics_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -11037,6 +11156,72 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         {
             return status;
         }
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Diagnostics.PSRAM.Ready",
+                                         "Ready",
+                                         psram_id,
+                                         UA_TYPES[UA_TYPES_BOOLEAN].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_DIAG_PSRAM_READY]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Diagnostics.PSRAM.TotalBytes",
+                                         "TotalBytes",
+                                         psram_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_DIAG_PSRAM_TOTAL_BYTES]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Diagnostics.PSRAM.UsedBytes",
+                                         "UsedBytes",
+                                         psram_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_DIAG_PSRAM_USED_BYTES]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Diagnostics.PSRAM.FreeBytes",
+                                         "FreeBytes",
+                                         psram_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_DIAG_PSRAM_FREE_BYTES]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Diagnostics.PSRAM.LargestFreeBlockBytes",
+                                         "LargestFreeBlockBytes",
+                                         psram_id,
+                                         UA_TYPES[UA_TYPES_UINT32].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_DIAG_PSRAM_LARGEST_FREE_BLOCK_BYTES]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         "Device.Diagnostics.PSRAM.AllocatorMode",
+                                         "AllocatorMode",
+                                         psram_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         &g_fixed_node_contexts[FIXED_CTX_DIAG_PSRAM_ALLOCATOR_MODE]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
     }
 
     status = model_add_readonly_variable(server,
@@ -12665,6 +12850,8 @@ void opcua_model_task(void *argument)
     log_opcua_heap("Historizing configured");
 #endif
 
+    printf("[OPC UA]\tCreating server with configured namespace\n");
+    fflush(stdout);
     server = UA_Server_newWithConfig(config);
     if (server == NULL)
     {
