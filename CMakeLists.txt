@@ -68,14 +68,20 @@ pico_sdk_init()
 
 include(${CMAKE_SOURCE_DIR}/ota/cmake/ota_layout.cmake)
 
+set(_device_identity_cert_default "")
+set(_device_identity_key_default "")
+if(EXISTS "${CMAKE_SOURCE_DIR}/static/certs/server.crt.der" AND
+   EXISTS "${CMAKE_SOURCE_DIR}/static/certs/server.key.pem")
+    set(_device_identity_cert_default "${CMAKE_SOURCE_DIR}/static/certs/server.crt.der")
+    set(_device_identity_key_default "${CMAKE_SOURCE_DIR}/static/certs/server.key.pem")
+endif()
+
 set(DEVICE_IDENTITY_CERT_DER_FILE
-    "${CMAKE_SOURCE_DIR}/static/certs/server.crt.der"
-    CACHE FILEPATH "DER-encoded OPC UA device certificate to provision into flash"
-    FORCE)
+    "${_device_identity_cert_default}"
+    CACHE FILEPATH "DER-encoded OPC UA device certificate to provision into flash")
 set(DEVICE_IDENTITY_PRIVATE_KEY_FILE
-    "${CMAKE_SOURCE_DIR}/static/certs/server.key.pem"
-    CACHE FILEPATH "PEM or DER OPC UA private key to provision into flash"
-    FORCE)
+    "${_device_identity_key_default}"
+    CACHE FILEPATH "PEM or DER OPC UA private key to provision into flash")
 
 if(${WIZNET_CHIP} STREQUAL W5100S)
     add_definitions(-D_WIZCHIP_=W5100S)
