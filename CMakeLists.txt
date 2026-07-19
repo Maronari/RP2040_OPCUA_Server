@@ -42,6 +42,14 @@ endif()
 option(BUILD_LEGACY_EXAMPLES "Build legacy example targets" OFF)
 option(OTA_BUILD_BOOTLOADER "Build the OTA bootloader target" OFF)
 
+include(${CMAKE_SOURCE_DIR}/patches/apply_submodule_patches.cmake)
+rp2_apply_submodule_patch(
+    libraries/pico-sdk
+    patches/submodules/pico-sdk-lwip-freertos-init.patch)
+rp2_apply_submodule_patch(
+    libraries/FreeRTOS-Kernel
+    patches/submodules/freertos-malloc-diagnostics.patch)
+
 include(pico_sdk_import.cmake)
 include(rp2040_hat_lwip_c_sdk_version.cmake)
 include(rp2040_hat_freertos_c_sdk_version.cmake)

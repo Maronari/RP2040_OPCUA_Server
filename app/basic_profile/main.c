@@ -595,7 +595,9 @@ void vApplicationMallocFailedHook(void)
     vPortGetHeapStats(&heap_stats);
     diag_service_set_last_fault_code(DIAG_FAULT_CODE_MALLOC_FAILED);
     app_stop_watchdog_kicks("malloc failed");
-    printf("[FreeRTOS]\tMalloc failed, free heap=%u, min ever free=%u, largest block=%u, free blocks=%u\n",
+    printf("[FreeRTOS]\tMalloc failed, req=%u, adj=%u, free heap=%u, min ever free=%u, largest block=%u, free blocks=%u\n",
+           (unsigned)xPortGetLastMallocFailedRequestedSize(),
+           (unsigned)xPortGetLastMallocFailedAdjustedSize(),
            (unsigned)xPortGetFreeHeapSize(),
            (unsigned)xPortGetMinimumEverFreeHeapSize(),
            (unsigned)heap_stats.xSizeOfLargestFreeBlockInBytes,

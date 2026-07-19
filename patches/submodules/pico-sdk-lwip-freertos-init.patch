@@ -1,0 +1,12 @@
+diff --git a/src/rp2_common/pico_lwip/lwip_freertos.c b/src/rp2_common/pico_lwip/lwip_freertos.c
+index b0ab3edd..aa186c78 100644
+--- a/src/rp2_common/pico_lwip/lwip_freertos.c
++++ b/src/rp2_common/pico_lwip/lwip_freertos.c
+@@ -33,6 +33,7 @@ bool lwip_freertos_init(async_context_t *context) {
+         SemaphoreHandle_t init_sem = xSemaphoreCreateBinary();
+         tcpip_task_blocker = xSemaphoreCreateBinary();
+         tcpip_init(tcpip_init_done, init_sem);
++        tcpip_init_done(init_sem);
+         xSemaphoreTake(init_sem, portMAX_DELAY);
+         vSemaphoreDelete(init_sem);
+     } else {
