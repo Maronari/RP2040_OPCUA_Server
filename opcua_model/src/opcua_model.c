@@ -10,6 +10,7 @@
 #include "ua_port_alloc.h"
 
 #include "drivers/led_driver.h"
+#include "nodesetinjector.h"
 #include "open62541.h"
 #include "pico/stdio.h"
 #include "services/alarm_service.h"
@@ -21,6 +22,7 @@
 #include <services/config_validate_service.h>
 #include "services/device_channels.h"
 #include "services/diag_service.h"
+#include "services/device_health_service.h"
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
@@ -64,6 +66,7 @@ typedef enum
     MODEL_NODE_IDENT_CALIBRATION_DATE,
     MODEL_NODE_IDENT_LOCATION,
     MODEL_NODE_IDENT_ASSET_CLASS,
+    MODEL_NODE_DEVICE_HEALTH,
     MODEL_NODE_PROCESS_TEMPERATURE_VALUE,
     MODEL_NODE_PROCESS_TEMPERATURE_STATUS,
     MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
@@ -171,8 +174,8 @@ typedef struct
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     bool security_condition_active;
     uint32_t security_condition_reason;
-    bool system_resource_condition_active;
-    uint32_t system_resource_condition_reason;
+    bool device_health_condition_active[5];
+    uint32_t device_health_condition_reason[5];
 #endif
 } model_event_runtime_state_t;
 
@@ -330,15 +333,6 @@ typedef enum
     MODEL_SECURITY_CONDITION_REASON_COMMISSIONING = 6
 } model_security_condition_reason_t;
 
-typedef enum
-{
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_NONE = 0,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_MALLOC_FAILURE = 1,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_STACK_OVERFLOW = 2,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_CONTIGUOUS_HEAP = 3,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_FREE_HEAP = 4,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_SELF_TEST_FAILED = 5
-} model_system_resource_condition_reason_t;
 #endif
 #endif
 
@@ -402,6 +396,7 @@ enum
     FIXED_CTX_IDENT_CALIBRATION_DATE,
     FIXED_CTX_IDENT_LOCATION,
     FIXED_CTX_IDENT_ASSET_CLASS,
+    FIXED_CTX_DEVICE_HEALTH,
     FIXED_CTX_PROCESS_TEMPERATURE_VALUE,
     FIXED_CTX_PROCESS_TEMPERATURE_STATUS,
     FIXED_CTX_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
@@ -536,13 +531,13 @@ enum
 #define MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE "Types.Events.AuditConfigChangeEvent"
 #define MODEL_EVENT_TYPE_AUDIT_SECURITY_CHANGE "Types.Events.AuditSecurityChangeEvent"
 #define MODEL_CONDITION_TYPE_SECURITY_FAULT "Types.Conditions.SecurityFaultConditionType"
-#define MODEL_CONDITION_TYPE_SYSTEM_RESOURCE "Types.Conditions.SystemResourceConditionType"
 #define MODEL_CONDITION_SECURITY_FAULT "Device.Security.SecurityFaultCondition"
-#define MODEL_CONDITION_SYSTEM_RESOURCE "Device.Diagnostics.SystemResourceCondition"
+#define MODEL_CONDITION_DEVICE_HEALTH_FAILURE "Device.DeviceHealthAlarms.Failure"
+#define MODEL_CONDITION_DEVICE_HEALTH_CHECK_FUNCTION "Device.DeviceHealthAlarms.CheckFunction"
+#define MODEL_CONDITION_DEVICE_HEALTH_OFF_SPEC "Device.DeviceHealthAlarms.OffSpec"
+#define MODEL_CONDITION_DEVICE_HEALTH_MAINTENANCE_REQUIRED "Device.DeviceHealthAlarms.MaintenanceRequired"
 #define MODEL_CERTIFICATE_EXPIRY_WARN_DAYS 30u
 #define MODEL_CERTIFICATE_EXPIRY_HIGH_WARN_DAYS 7u
-#define MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES 32768u
-#define MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES 16384u
 #define MODEL_AUDIT_QUEUE_CAPACITY 8u
 #define MODEL_PUBSUB_TOPIC_MAX_LEN 96u
 #define MODEL_PUBSUB_CLIENT_ID_MAX_LEN 64u
@@ -583,6 +578,7 @@ static model_get_user_executable_on_object_fn g_default_get_user_executable_on_o
 static model_get_user_access_level_fn g_default_get_user_access_level = NULL;
 static model_allow_browse_node_fn g_default_allow_browse_node = NULL;
 static uint8_t g_history_backend_context = 0u;
+static UA_UInt16 g_model_di_namespace_index = 0u;
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
 static model_last_event_state_t g_last_event_state = {{0}};
 static model_pending_audit_event_t g_pending_audit_events[MODEL_AUDIT_QUEUE_CAPACITY] = {{0}};
@@ -1627,6 +1623,7 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_IDENT_CALIBRATION_DATE, NULL},
     {MODEL_NODE_IDENT_LOCATION, NULL},
     {MODEL_NODE_IDENT_ASSET_CLASS, NULL},
+    {MODEL_NODE_DEVICE_HEALTH, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_VALUE, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_STATUS, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP, NULL},
@@ -2195,11 +2192,6 @@ static UA_NodeId model_network_node_id(void)
     return UA_NODEID_STRING(1, (char *)"Device.Network");
 }
 
-static UA_NodeId model_diagnostics_node_id(void)
-{
-    return UA_NODEID_STRING(1, (char *)"Device.Diagnostics");
-}
-
 static UA_NodeId model_temperature_node_id(void)
 {
     return UA_NODEID_STRING(1, (char *)DEVICE_CHANNEL_NODE_TEMPERATURE_1);
@@ -2236,9 +2228,26 @@ static UA_NodeId model_security_condition_node_id(void)
     return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_SECURITY_FAULT);
 }
 
-static UA_NodeId model_system_resource_condition_node_id(void)
+static UA_NodeId model_device_health_alarms_node_id(void)
 {
-    return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_SYSTEM_RESOURCE);
+    return UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms");
+}
+
+static UA_NodeId model_device_health_condition_node_id(device_health_state_t state)
+{
+    switch (state)
+    {
+    case DEVICE_HEALTH_FAILURE:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_FAILURE);
+    case DEVICE_HEALTH_CHECK_FUNCTION:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_CHECK_FUNCTION);
+    case DEVICE_HEALTH_OFF_SPEC:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_OFF_SPEC);
+    case DEVICE_HEALTH_MAINTENANCE_REQUIRED:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_MAINTENANCE_REQUIRED);
+    default:
+        return UA_NODEID_NULL;
+    }
 }
 #endif
 
@@ -3229,22 +3238,6 @@ static UA_StatusCode model_set_event_string_field(UA_KeyValueMap *event_fields,
 }
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
-static const char *model_diag_fault_code_to_string(diag_fault_code_t fault_code)
-{
-    switch (fault_code)
-    {
-    case DIAG_FAULT_CODE_MALLOC_FAILED:
-        return "MallocFailed";
-    case DIAG_FAULT_CODE_STACK_OVERFLOW:
-        return "StackOverflow";
-    case DIAG_FAULT_CODE_SELF_TEST_FAILED:
-        return "SelfTestFailed";
-    case DIAG_FAULT_CODE_NONE:
-    default:
-        return "None";
-    }
-}
-
 static UA_StatusCode model_enable_condition_source(UA_Server *server,
                                                    const UA_NodeId parent_id,
                                                    const UA_NodeId source_id)
@@ -3541,11 +3534,48 @@ static UA_StatusCode model_create_condition_instance(UA_Server *server,
     return model_condition_initialize_inactive(server, created_id, normal_message);
 }
 
+static UA_StatusCode model_create_device_health_condition(UA_Server *server,
+                                                           device_health_state_t state,
+                                                           const char *browse_name,
+                                                           UA_UInt32 condition_type_id)
+{
+    UA_NodeId condition_id = model_device_health_condition_node_id(state);
+    UA_NodeId created_id = UA_NODEID_NULL;
+    UA_StatusCode status;
+
+    status = UA_Server_createCondition(
+        server,
+        condition_id,
+        UA_NODEID_NUMERIC(g_model_di_namespace_index, condition_type_id),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)browse_name),
+        model_device_node_id(),
+        UA_NODEID_NULL,
+        &created_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_condition_initialize_inactive(server,
+                                                  created_id,
+                                                  "Device health category inactive");
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return UA_Server_addReference(server,
+                                  model_device_health_alarms_node_id(),
+                                  UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+                                  UA_NODEID2EXPANDEDNODEID(created_id),
+                                  true);
+}
+
 static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
 {
     UA_NodeClass condition_type_class = UA_NODECLASS_UNSPECIFIED;
     UA_NodeClass security_parent_class = UA_NODECLASS_UNSPECIFIED;
-    UA_NodeClass system_parent_class = UA_NODECLASS_UNSPECIFIED;
+    UA_NodeClass device_health_parent_class = UA_NODECLASS_UNSPECIFIED;
     UA_StatusCode status;
 
     status = UA_Server_readNodeClass(server,
@@ -3570,12 +3600,13 @@ static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return UA_STATUSCODE_GOOD;
     }
 
-    status = UA_Server_readNodeClass(server,
-                                     UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMDIAGNOSTICALARMTYPE),
-                                     &system_parent_class);
+    status = UA_Server_readNodeClass(
+        server,
+        UA_NODEID_NUMERIC(g_model_di_namespace_index, UA_DIID_DEVICEHEALTHDIAGNOSTICALARMTYPE),
+        &device_health_parent_class);
     if (status != UA_STATUSCODE_GOOD)
     {
-        printf("[OPC UA]\tA&C disabled: SystemDiagnosticAlarmType is not present in namespace zero\n");
+        printf("[OPC UA]\tA&C disabled: DI DeviceHealth alarm types are unavailable\n");
         fflush(stdout);
         g_model_alarm_conditions_available = false;
         return UA_STATUSCODE_GOOD;
@@ -3590,28 +3621,10 @@ static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return status;
     }
 
-    status = model_enable_condition_source(server,
-                                           model_device_node_id(),
-                                           model_diagnostics_node_id());
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        g_model_alarm_conditions_available = false;
-        return status;
-    }
-
     status = model_add_condition_type(server,
                                       MODEL_CONDITION_TYPE_SECURITY_FAULT,
                                       "SecurityFaultConditionType",
                                       UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMOFFNORMALALARMTYPE));
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
-    status = model_add_condition_type(server,
-                                      MODEL_CONDITION_TYPE_SYSTEM_RESOURCE,
-                                      "SystemResourceConditionType",
-                                      UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMDIAGNOSTICALARMTYPE));
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -3629,20 +3642,34 @@ static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return status;
     }
 
-    status = model_create_condition_instance(server,
-                                             MODEL_CONDITION_SYSTEM_RESOURCE,
-                                             "SystemResourceCondition",
-                                             model_condition_type_node_id(MODEL_CONDITION_TYPE_SYSTEM_RESOURCE),
-                                             model_diagnostics_node_id(),
-                                             "System resources normal");
+    status = model_create_device_health_condition(server,
+                                                   DEVICE_HEALTH_FAILURE,
+                                                   "Failure",
+                                                   UA_DIID_FAILUREALARMTYPE);
     if (status == UA_STATUSCODE_GOOD)
     {
-        g_model_alarm_conditions_available = true;
+        status = model_create_device_health_condition(server,
+                                                       DEVICE_HEALTH_CHECK_FUNCTION,
+                                                       "CheckFunction",
+                                                       UA_DIID_CHECKFUNCTIONALARMTYPE);
     }
-    else
+    if (status == UA_STATUSCODE_GOOD)
     {
-        g_model_alarm_conditions_available = false;
+        status = model_create_device_health_condition(server,
+                                                       DEVICE_HEALTH_OFF_SPEC,
+                                                       "OffSpec",
+                                                       UA_DIID_OFFSPECALARMTYPE);
     }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_create_device_health_condition(
+            server,
+            DEVICE_HEALTH_MAINTENANCE_REQUIRED,
+            "MaintenanceRequired",
+            UA_DIID_MAINTENANCEREQUIREDALARMTYPE);
+    }
+
+    g_model_alarm_conditions_available = status == UA_STATUSCODE_GOOD;
     return status;
 }
 
@@ -3724,73 +3751,6 @@ static model_security_condition_reason_t model_evaluate_security_condition(char 
     return MODEL_SECURITY_CONDITION_REASON_NONE;
 }
 
-static model_system_resource_condition_reason_t model_evaluate_system_resource_condition(char *message,
-                                                                                         size_t message_size,
-                                                                                         UA_UInt16 *out_severity,
-                                                                                         UA_StatusCode *out_quality)
-{
-    diag_service_heap_stats_t heap_stats = {0};
-    diag_service_system_stats_t system_stats = {0};
-    diag_fault_code_t last_fault_code;
-
-    diag_service_get_heap_stats(&heap_stats);
-    diag_service_get_system_stats(&system_stats);
-    last_fault_code = (diag_fault_code_t)system_stats.last_fault_code;
-
-    if (last_fault_code == DIAG_FAULT_CODE_MALLOC_FAILED)
-    {
-        model_copy_string_safe(message, message_size, "Malloc failure detected");
-        *out_severity = 950u;
-        *out_quality = UA_STATUSCODE_BADOUTOFMEMORY;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_MALLOC_FAILURE;
-    }
-
-    if (last_fault_code == DIAG_FAULT_CODE_STACK_OVERFLOW)
-    {
-        model_copy_string_safe(message, message_size, "Stack overflow detected");
-        *out_severity = 975u;
-        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_STACK_OVERFLOW;
-    }
-
-    if (last_fault_code == DIAG_FAULT_CODE_SELF_TEST_FAILED)
-    {
-        model_copy_string_safe(message, message_size, "Self-test failed");
-        *out_severity = 700u;
-        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_SELF_TEST_FAILED;
-    }
-
-    if (heap_stats.largest_free_block_bytes < MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES)
-    {
-        snprintf(message,
-                 message_size,
-                 "Largest free heap block below safe threshold (%" PRIu32 " bytes, last fault=%s)",
-                 heap_stats.largest_free_block_bytes,
-                 model_diag_fault_code_to_string(last_fault_code));
-        *out_severity = 700u;
-        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_CONTIGUOUS_HEAP;
-    }
-
-    if (heap_stats.available_heap_bytes < MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES)
-    {
-        snprintf(message,
-                 message_size,
-                 "Available heap below safe threshold (%" PRIu32 " bytes, last fault=%s)",
-                 heap_stats.available_heap_bytes,
-                 model_diag_fault_code_to_string(last_fault_code));
-        *out_severity = 600u;
-        *out_quality = UA_STATUSCODE_BADOUTOFMEMORY;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_FREE_HEAP;
-    }
-
-    model_copy_string_safe(message, message_size, "System resources normal");
-    *out_severity = 100u;
-    *out_quality = UA_STATUSCODE_GOOD;
-    return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_NONE;
-}
-
 static void model_sync_condition(UA_Server *server,
                                  const UA_NodeId condition_id,
                                  const UA_NodeId source_id,
@@ -3854,13 +3814,73 @@ static void model_sync_condition(UA_Server *server,
     }
 }
 
+static void model_process_device_health_conditions(UA_Server *server,
+                                                   model_event_runtime_state_t *state)
+{
+    device_health_report_t report = {0};
+
+    device_health_service_get_report(&report);
+
+    for (uint32_t raw_state = DEVICE_HEALTH_FAILURE;
+         raw_state <= DEVICE_HEALTH_MAINTENANCE_REQUIRED;
+         ++raw_state)
+    {
+        const device_health_state_t category = (device_health_state_t)raw_state;
+        const uint32_t category_reasons =
+            device_health_service_reasons_for_state(&report, category);
+        const bool active = category_reasons != 0u;
+        device_health_report_t category_report = report;
+        char message[192] = {0};
+        UA_UInt16 severity = 100u;
+        UA_StatusCode quality = UA_STATUSCODE_GOOD;
+
+        category_report.reasons = category_reasons;
+        device_health_service_format_summary(&category_report, message, sizeof(message));
+
+        if (active)
+        {
+            switch (category)
+            {
+            case DEVICE_HEALTH_FAILURE:
+                severity = 700u;
+                quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+                break;
+            case DEVICE_HEALTH_CHECK_FUNCTION:
+                severity = 350u;
+                quality = UA_STATUSCODE_UNCERTAIN;
+                break;
+            case DEVICE_HEALTH_OFF_SPEC:
+                severity = 450u;
+                quality = UA_STATUSCODE_UNCERTAIN;
+                break;
+            case DEVICE_HEALTH_MAINTENANCE_REQUIRED:
+                severity = 350u;
+                quality = UA_STATUSCODE_GOOD;
+                break;
+            default:
+                break;
+            }
+        }
+
+        model_sync_condition(server,
+                             model_device_health_condition_node_id(category),
+                             model_device_node_id(),
+                             &state->device_health_condition_active[raw_state],
+                             &state->device_health_condition_reason[raw_state],
+                             category_reasons,
+                             severity,
+                             quality,
+                             message,
+                             "Device health category inactive");
+    }
+}
+
 static void model_process_alarm_conditions(UA_Server *server, model_event_runtime_state_t *state)
 {
     char message[192];
     UA_UInt16 severity = 100u;
     UA_StatusCode quality = UA_STATUSCODE_GOOD;
     model_security_condition_reason_t security_reason;
-    model_system_resource_condition_reason_t system_resource_reason;
 
     if (server == NULL || state == NULL)
     {
@@ -3887,20 +3907,7 @@ static void model_process_alarm_conditions(UA_Server *server, model_event_runtim
                          message,
                          "Security state normal");
 
-    system_resource_reason = model_evaluate_system_resource_condition(message,
-                                                                      sizeof(message),
-                                                                      &severity,
-                                                                      &quality);
-    model_sync_condition(server,
-                         model_system_resource_condition_node_id(),
-                         model_diagnostics_node_id(),
-                         &state->system_resource_condition_active,
-                         &state->system_resource_condition_reason,
-                         (uint32_t)system_resource_reason,
-                         severity,
-                         quality,
-                         message,
-                         "System resources normal");
+    model_process_device_health_conditions(server, state);
 }
 #endif
 
@@ -4668,8 +4675,6 @@ static void model_event_runtime_state_init(model_event_runtime_state_t *state)
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     state->security_condition_active = false;
     state->security_condition_reason = 0u;
-    state->system_resource_condition_active = false;
-    state->system_resource_condition_reason = 0u;
 #endif
     state->initialized = true;
 }
@@ -5488,6 +5493,14 @@ static UA_StatusCode model_read_value(UA_Server *server,
     case MODEL_NODE_IDENT_ASSET_CLASS:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value, config->asset_class, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_DEVICE_HEALTH:
+    {
+        device_health_report_t report = {0};
+
+        device_health_service_get_report(&report);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_int32_value(value, (UA_Int32)report.state, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_PROCESS_TEMPERATURE_VALUE:
     {
         telemetry_channel_t channel = {0};
@@ -9281,6 +9294,89 @@ static UA_StatusCode model_add_folder(UA_Server *server,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE));
 }
 
+static UA_StatusCode model_build_device_health_nodes(UA_Server *server,
+                                                     UA_NodeId device_id)
+{
+    UA_VariableAttributes health_attributes = UA_VariableAttributes_default;
+    UA_ObjectAttributes alarms_attributes = UA_ObjectAttributes_default;
+    UA_DataSource data_source = {0};
+    UA_NodeId health_id = UA_NODEID_NULL;
+    size_t namespace_index = 0u;
+    UA_StatusCode status;
+
+    status = UA_Server_getNamespaceByName(server,
+                                          UA_STRING((char *)UA_DI_NAMESPACE_URI),
+                                          &namespace_index);
+    if (status != UA_STATUSCODE_GOOD || namespace_index > UINT16_MAX)
+    {
+        return status != UA_STATUSCODE_GOOD ? status : UA_STATUSCODE_BADOUTOFRANGE;
+    }
+    g_model_di_namespace_index = (UA_UInt16)namespace_index;
+
+    status = UA_Server_addReference(
+        server,
+        device_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASINTERFACE),
+        UA_EXPANDEDNODEID_NUMERIC(g_model_di_namespace_index, UA_DIID_IDEVICEHEALTHTYPE),
+        true);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    health_attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"DeviceHealth");
+    health_attributes.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                                      (char *)"Overall device health state");
+    health_attributes.dataType = UA_NODEID_NUMERIC(g_model_di_namespace_index,
+                                                    UA_DIID_DEVICEHEALTHENUMERATION);
+    health_attributes.valueRank = UA_VALUERANK_SCALAR;
+    health_attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+    health_attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    data_source.read = model_read_value;
+
+    status = UA_Server_addVariableNode(
+        server,
+        UA_NODEID_STRING(1, (char *)"Device.DeviceHealth"),
+        device_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)"DeviceHealth"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+        health_attributes,
+        &g_fixed_node_contexts[FIXED_CTX_DEVICE_HEALTH],
+        &health_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = UA_Server_setVariableNode_dataSource(server, health_id, data_source);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    alarms_attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US",
+                                                      (char *)"DeviceHealthAlarms");
+    alarms_attributes.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                                      (char *)"Device health alarm conditions");
+    status = UA_Server_addObjectNode(
+        server,
+        UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms"),
+        device_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)"DeviceHealthAlarms"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE),
+        alarms_attributes,
+        NULL,
+        NULL);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tDeviceHealth model ready, DI namespace=%u\n",
+               (unsigned)g_model_di_namespace_index);
+        fflush(stdout);
+    }
+    return status;
+}
+
 static UA_StatusCode model_add_readonly_variable_ex(UA_Server *server,
                                                     const char *node_id,
                                                     const char *display_name,
@@ -10581,6 +10677,12 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 #endif
+
+    status = model_build_device_health_nodes(server, device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
 
     status = model_add_folder(server, "Device.Identification", "Identification", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
     if (status != UA_STATUSCODE_GOOD)

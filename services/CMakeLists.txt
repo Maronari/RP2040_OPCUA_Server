@@ -9,6 +9,7 @@ add_library(FIRMWARE_SERVICES STATIC
         src/config_validate_service.c
         src/driver_catalog.c
         src/diag_service.c
+        src/device_health_service.c
         src/firmware_update_service.c
         src/history_service.c
         src/network_manager.c
