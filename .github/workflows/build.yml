@@ -12,7 +12,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         submodules: recursive
 
@@ -43,10 +43,12 @@ jobs:
     - name: Verify build outputs
       run: |
         cd build
-        if [ ! -f *.uf2 ] && [ ! -f */*.uf2 ]; then
+        UF2_FILES=$(find . -type f -name "*.uf2" -print)
+        if [ -z "$UF2_FILES" ]; then
           echo "Error: No .uf2 files generated"
           exit 1
         fi
+        echo "$UF2_FILES"
         echo "Build artifacts generated successfully"
 
     - name: Static analysis (cppcheck)
@@ -62,9 +64,19 @@ jobs:
       continue-on-error: true
 
     - name: Install Renode
+      env:
+        RENODE_VERSION: 1.15.3
+        RENODE_SHA256: 1d313e2bca5d066b4b084c581c933b26a665be45e71b18145c1570490a0e439d
       run: |
-        wget https://github.com/renode/renode/releases/download/v1.15.3/renode_1.15.3_amd64.deb
-        sudo apt-get install -y ./renode_1.15.3_amd64.deb
+        RENODE_ARCHIVE="renode-${RENODE_VERSION}.linux-portable.tar.gz"
+        curl --fail --location --retry 3 \
+          --output "$RENODE_ARCHIVE" \
+          "https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/${RENODE_ARCHIVE}"
+        echo "${RENODE_SHA256}  ${RENODE_ARCHIVE}" | sha256sum --check
+        mkdir -p "$RUNNER_TEMP/renode"
+        tar --extract --gzip --file "$RENODE_ARCHIVE" \
+          --directory "$RUNNER_TEMP/renode" --strip-components=1
+        echo "$RUNNER_TEMP/renode" >> "$GITHUB_PATH"
 
     - name: Test firmware in emulator
       run: |
@@ -94,7 +106,7 @@ jobs:
       continue-on-error: true
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: firmware
         path: |
@@ -109,7 +121,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         submodules: recursive
 

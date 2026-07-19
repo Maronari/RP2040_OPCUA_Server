@@ -15,11 +15,14 @@
 /* SPI */
 #define SPI_PORT spi0
 
-#define PIN_SCK 6
-#define PIN_MOSI 7
-#define PIN_MISO 16
-#define PIN_CS 5
-#define PIN_RST 20
+#define PIN_SCK 2
+#define PIN_MOSI 3
+#define PIN_MISO 0
+#define PIN_CS 1
+/* Set PIN_RST to a GPIO number when the W5x00 reset line is wired.
+ * Use -1 for modules where reset is not connected and the chip relies on
+ * its own power-on reset circuit. */
+#define PIN_RST (-1)
 
 /* Use SPI DMA */
 //#define USE_SPI_DMA // if you want to use SPI DMA, uncomment.
@@ -142,6 +145,13 @@ void wizchip_cris_initialize(void);
  *  \param none
  */
 void wizchip_reset(void);
+
+/*! \brief Reset W5x00 through its SPI mode register when the chip responds.
+ *
+ *  This is useful on boards where the hardware reset pin is not connected.
+ *  It cannot recover a chip that is not reachable over SPI.
+ */
+void wizchip_soft_reset(void);
 
 /*! \brief Initialize WIZchip
  *  \ingroup w5x00_spi

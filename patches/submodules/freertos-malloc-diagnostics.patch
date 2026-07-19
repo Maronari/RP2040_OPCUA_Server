@@ -1,0 +1,62 @@
+diff --git a/include/portable.h b/include/portable.h
+index f7afb69792..63ef56591e 100644
+--- a/include/portable.h
++++ b/include/portable.h
+@@ -185,6 +185,8 @@ void vPortFree( void * pv ) PRIVILEGED_FUNCTION;
+ void vPortInitialiseBlocks( void ) PRIVILEGED_FUNCTION;
+ size_t xPortGetFreeHeapSize( void ) PRIVILEGED_FUNCTION;
+ size_t xPortGetMinimumEverFreeHeapSize( void ) PRIVILEGED_FUNCTION;
++size_t xPortGetLastMallocFailedRequestedSize( void ) PRIVILEGED_FUNCTION;
++size_t xPortGetLastMallocFailedAdjustedSize( void ) PRIVILEGED_FUNCTION;
+ 
+ #if ( configSTACK_ALLOCATION_FROM_SEPARATE_HEAP == 1 )
+     void * pvPortMallocStack( size_t xSize ) PRIVILEGED_FUNCTION;
+diff --git a/portable/MemMang/heap_4.c b/portable/MemMang/heap_4.c
+index fe15654edd..d78d3924d1 100644
+--- a/portable/MemMang/heap_4.c
++++ b/portable/MemMang/heap_4.c
+@@ -167,6 +167,8 @@ PRIVILEGED_DATA static size_t xFreeBytesRemaining = ( size_t ) 0U;
+ PRIVILEGED_DATA static size_t xMinimumEverFreeBytesRemaining = ( size_t ) 0U;
+ PRIVILEGED_DATA static size_t xNumberOfSuccessfulAllocations = ( size_t ) 0U;
+ PRIVILEGED_DATA static size_t xNumberOfSuccessfulFrees = ( size_t ) 0U;
++PRIVILEGED_DATA static size_t xLastMallocFailedRequestedSize = ( size_t ) 0U;
++PRIVILEGED_DATA static size_t xLastMallocFailedAdjustedSize = ( size_t ) 0U;
+ 
+ /*-----------------------------------------------------------*/
+ 
+@@ -178,6 +180,7 @@ void * pvPortMalloc( size_t xWantedSize )
+     void * pvReturn = NULL;
+     size_t xAdditionalRequiredSize;
+     size_t xAllocatedBlockSize = 0;
++    size_t xOriginalWantedSize = xWantedSize;
+ 
+     if( xWantedSize > 0 )
+     {
+@@ -337,6 +340,8 @@ void * pvPortMalloc( size_t xWantedSize )
+     {
+         if( pvReturn == NULL )
+         {
++            xLastMallocFailedRequestedSize = xOriginalWantedSize;
++            xLastMallocFailedAdjustedSize = xWantedSize;
+             vApplicationMallocFailedHook();
+         }
+         else
+@@ -422,6 +427,18 @@ size_t xPortGetMinimumEverFreeHeapSize( void )
+ }
+ /*-----------------------------------------------------------*/
+ 
++size_t xPortGetLastMallocFailedRequestedSize( void )
++{
++    return xLastMallocFailedRequestedSize;
++}
++/*-----------------------------------------------------------*/
++
++size_t xPortGetLastMallocFailedAdjustedSize( void )
++{
++    return xLastMallocFailedAdjustedSize;
++}
++/*-----------------------------------------------------------*/
++
+ void vPortInitialiseBlocks( void )
+ {
+     /* This just exists to keep the linker quiet. */
