@@ -202,9 +202,14 @@ static bool config_export_service_write_profile_json(const device_profile_config
     config_json_writer_append_raw(&writer, ",\"assetClass\":");
     config_json_writer_append_quoted(&writer, config->asset_class);
     config_json_writer_append_format(&writer,
-                                     ",\"manufactureDateUtc\":%lld,\"calibrationDateUtc\":%lld},",
+                                     ",\"manufactureDateUtc\":%lld,\"calibrationDateUtc\":%lld",
                                      (long long)config->manufacture_date_utc,
                                      (long long)config->calibration_date_utc);
+    config_json_writer_append_raw(&writer, ",\"hierarchicalLocationPath\":");
+    config_json_writer_append_quoted(&writer, config->hierarchical_location_path);
+    config_json_writer_append_raw(&writer, ",\"operationalLocationPath\":");
+    config_json_writer_append_quoted(&writer, config->operational_location_path);
+    config_json_writer_append_raw(&writer, "},");
 
     config_json_writer_append_raw(&writer, "\"network\":{");
     config_json_writer_append_raw(&writer, "\"mode\":");

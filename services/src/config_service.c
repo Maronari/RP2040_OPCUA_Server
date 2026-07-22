@@ -36,11 +36,13 @@ static bool config_service_decode_persisted(const uint8_t *payload,
 {
     const size_t asset_offset = offsetof(device_profile_config_t, asset_id);
     const size_t current_tail_offset = offsetof(device_profile_config_t, manufacture_date_utc);
+    const size_t previous_payload_size =
+        offsetof(device_profile_config_t, hierarchical_location_path);
     const size_t legacy_tail_offset =
         config_service_align_up(asset_offset + CONFIG_SERVICE_LEGACY_ASSET_ID_MAX_LEN,
                                 _Alignof(int64_t));
-    const size_t tail_size = sizeof(device_profile_config_t) - current_tail_offset;
-    const size_t legacy_payload_size = legacy_tail_offset + tail_size;
+    const size_t previous_tail_size = previous_payload_size - current_tail_offset;
+    const size_t legacy_payload_size = legacy_tail_offset + previous_tail_size;
 
     if (payload == NULL || out_config == NULL)
     {
@@ -51,6 +53,12 @@ static bool config_service_decode_persisted(const uint8_t *payload,
     if (payload_size == sizeof(*out_config))
     {
         memcpy(out_config, payload, sizeof(*out_config));
+        return true;
+    }
+
+    if (payload_size == previous_payload_size)
+    {
+        memcpy(out_config, payload, previous_payload_size);
         return true;
     }
 
@@ -65,7 +73,7 @@ static bool config_service_decode_persisted(const uint8_t *payload,
            CONFIG_SERVICE_LEGACY_ASSET_ID_MAX_LEN);
     memcpy((uint8_t *)out_config + current_tail_offset,
            payload + legacy_tail_offset,
-           tail_size);
+           previous_tail_size);
     return true;
 }
 
@@ -92,6 +100,53 @@ static void config_service_force_terminated(char *text, size_t size)
     }
 
     text[size - 1u] = '\0';
+}
+
+bool config_service_location_path_is_valid(const char *value)
+{
+    size_t depth = 0u;
+    size_t segment_length = 0u;
+
+    if (value == NULL)
+    {
+        return false;
+    }
+    if (value[0] == '\0')
+    {
+        return true;
+    }
+
+    for (const unsigned char *cursor = (const unsigned char *)value;
+         *cursor != '\0';
+         ++cursor)
+    {
+        if (*cursor < 0x20u || *cursor == 0x7fu)
+        {
+            return false;
+        }
+        if (*cursor == (unsigned char)'/')
+        {
+            if (segment_length == 0u)
+            {
+                return false;
+            }
+            depth++;
+            if (depth >= CONFIG_SERVICE_LOCATION_MAX_DEPTH)
+            {
+                return false;
+            }
+            segment_length = 0u;
+            continue;
+        }
+
+        segment_length++;
+        if (segment_length > CONFIG_SERVICE_LOCATION_SEGMENT_MAX_LEN)
+        {
+            return false;
+        }
+    }
+
+    return segment_length > 0u;
 }
 
 static bool config_service_ipv4_is_zero(const uint8_t address[4])
@@ -123,6 +178,10 @@ static void config_service_normalize_text_fields(device_profile_config_t *config
     config_service_force_terminated(config->asset_id, sizeof(config->asset_id));
     config_service_force_terminated(config->location, sizeof(config->location));
     config_service_force_terminated(config->asset_class, sizeof(config->asset_class));
+    config_service_force_terminated(config->hierarchical_location_path,
+                                    sizeof(config->hierarchical_location_path));
+    config_service_force_terminated(config->operational_location_path,
+                                    sizeof(config->operational_location_path));
 }
 
 static void config_service_normalize_channel(config_channel_definition_t *channel, size_t index)
@@ -359,6 +418,29 @@ static void config_service_normalize(device_profile_config_t *config)
 
     config_service_populate_serial_number(config);
     config_service_populate_product_instance_uri(config);
+
+    if (!config_service_location_path_is_valid(config->hierarchical_location_path))
+    {
+        config->hierarchical_location_path[0] = '\0';
+    }
+    if (!config_service_location_path_is_valid(config->operational_location_path))
+    {
+        config->operational_location_path[0] = '\0';
+    }
+    if (config->hierarchical_location_path[0] == '\0' &&
+        config->location[0] != '\0' &&
+        config_service_location_path_is_valid(config->location))
+    {
+        strncpy(config->hierarchical_location_path,
+                config->location,
+                sizeof(config->hierarchical_location_path));
+        config->hierarchical_location_path[sizeof(config->hierarchical_location_path) - 1u] = '\0';
+    }
+    if (config->location[0] == '\0' && config->hierarchical_location_path[0] != '\0')
+    {
+        strncpy(config->location, config->hierarchical_location_path, sizeof(config->location));
+        config->location[sizeof(config->location) - 1u] = '\0';
+    }
 }
 
 void config_service_init(const device_profile_config_t *defaults)
@@ -523,6 +605,57 @@ bool config_service_stage_set_mqtt_pubsub_enabled(bool enabled)
     return true;
 }
 
+bool config_service_stage_set_location_paths(const char *hierarchical_path,
+                                             const char *operational_path)
+{
+    device_profile_config_t updated_config;
+    size_t hierarchical_length;
+    size_t operational_length;
+
+    if (hierarchical_path == NULL || operational_path == NULL ||
+        !config_service_location_path_is_valid(hierarchical_path) ||
+        !config_service_location_path_is_valid(operational_path))
+    {
+        return false;
+    }
+
+    hierarchical_length = strlen(hierarchical_path);
+    operational_length = strlen(operational_path);
+    if (hierarchical_length >= CONFIG_SERVICE_LOCATION_PATH_MAX_LEN ||
+        operational_length >= CONFIG_SERVICE_LOCATION_PATH_MAX_LEN)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    updated_config = g_staged_config;
+    taskEXIT_CRITICAL();
+
+    memset(updated_config.hierarchical_location_path,
+           0,
+           sizeof(updated_config.hierarchical_location_path));
+    memset(updated_config.operational_location_path,
+           0,
+           sizeof(updated_config.operational_location_path));
+    memcpy(updated_config.hierarchical_location_path,
+           hierarchical_path,
+           hierarchical_length + 1u);
+    memcpy(updated_config.operational_location_path,
+           operational_path,
+           operational_length + 1u);
+    memset(updated_config.location, 0, sizeof(updated_config.location));
+    strncpy(updated_config.location,
+            hierarchical_path,
+            sizeof(updated_config.location) - 1u);
+    config_service_normalize(&updated_config);
+
+    taskENTER_CRITICAL();
+    g_staged_config = updated_config;
+    g_staged_revision++;
+    taskEXIT_CRITICAL();
+    return true;
+}
+
 bool config_service_stage_set_identity(const device_identity_config_t *identity)
 {
     device_profile_config_t updated_config;
@@ -547,6 +680,12 @@ bool config_service_stage_set_identity(const device_identity_config_t *identity)
     updated_config.calibration_date_utc = identity->calibration_date_utc;
     memcpy(updated_config.location, identity->location, sizeof(updated_config.location));
     memcpy(updated_config.asset_class, identity->asset_class, sizeof(updated_config.asset_class));
+    memset(updated_config.hierarchical_location_path,
+           0,
+           sizeof(updated_config.hierarchical_location_path));
+    strncpy(updated_config.hierarchical_location_path,
+            identity->location,
+            sizeof(updated_config.hierarchical_location_path) - 1u);
     config_service_normalize(&updated_config);
 
     taskENTER_CRITICAL();

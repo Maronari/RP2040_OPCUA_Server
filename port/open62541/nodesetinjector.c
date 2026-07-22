@@ -333,6 +333,88 @@ addAmbAssetDiscovery(UA_Server *server, UA_UInt16 ns) {
         UA_AMBID_ASSET_ID_NODE_VERSION);
 }
 
+static UA_StatusCode
+addAmbReferenceType(UA_Server *server, UA_UInt16 ns, UA_UInt32 nodeId,
+                    const char *browseName, const char *inverseName,
+                    const char *description,
+                    UA_NodeId parentType, UA_Boolean isAbstract) {
+    UA_ReferenceTypeAttributes attr = UA_ReferenceTypeAttributes_default;
+
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browseName);
+    attr.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)description);
+    attr.inverseName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)inverseName);
+    attr.isAbstract = isAbstract;
+    attr.symmetric = false;
+    return UA_Server_addReferenceTypeNode(
+        server,
+        UA_NODEID_NUMERIC(ns, nodeId),
+        parentType,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
+        UA_QUALIFIEDNAME(ns, (char *)browseName),
+        attr,
+        NULL,
+        NULL);
+}
+
+static UA_StatusCode
+addAmbLocationEntryPoint(UA_Server *server, UA_UInt16 ns, UA_UInt32 nodeId,
+                         const char *browseName, const char *description) {
+    UA_ObjectAttributes attr = UA_ObjectAttributes_default;
+
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browseName);
+    attr.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)description);
+    return UA_Server_addObjectNode(
+        server,
+        UA_NODEID_NUMERIC(ns, nodeId),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_LOCATIONS),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+        UA_QUALIFIEDNAME(ns, (char *)browseName),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE),
+        attr,
+        NULL,
+        NULL);
+}
+
+static UA_StatusCode
+addAmbLocations(UA_Server *server, UA_UInt16 ns) {
+    UA_StatusCode res;
+
+    res = addAmbReferenceType(
+        server, ns, UA_AMBID_CONTAINS, "Contains", "LocatedIn",
+        "Links a location object to assets located in that location",
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES), true);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    res = addAmbReferenceType(
+        server, ns, UA_AMBID_HIERARCHICAL_CONTAINS,
+        "HierarchicalContains", "HierarchicalLocatedIn",
+        "Links a hierarchical location object to contained locations or assets",
+        UA_NODEID_NUMERIC(ns, UA_AMBID_CONTAINS), false);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    res = addAmbReferenceType(
+        server, ns, UA_AMBID_OPERATIONAL_CONTAINS,
+        "OperationalContains", "OperationalLocatedIn",
+        "Links an operational location object to contained locations or assets",
+        UA_NODEID_NUMERIC(ns, UA_AMBID_CONTAINS), false);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    res = addAmbLocationEntryPoint(
+        server, ns, UA_AMBID_HIERARCHICAL_LOCATIONS,
+        "HierarchicalLocations",
+        "Entry point for objects representing the root of a location hierarchy");
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
+
+    return addAmbLocationEntryPoint(
+        server, ns, UA_AMBID_OPERATIONAL_LOCATIONS,
+        "OperationalLocations",
+        "Entry point for objects representing the root of an operational location hierarchy");
+}
+
 UA_StatusCode
 UA_Server_injectNodesets(UA_Server *server) {
     UA_UInt16 diNamespace;
@@ -365,8 +447,11 @@ UA_Server_injectNodesets(UA_Server *server) {
     res = addAmbAssetDiscovery(server, ambNamespace);
     if(res != UA_STATUSCODE_GOOD)
         return res;
+    res = addAmbLocations(server, ambNamespace);
+    if(res != UA_STATUSCODE_GOOD)
+        return res;
 
-    printf("[open62541/nodesets]\tDI subset ns=%u, AMB discovery ns=%u\n",
+    printf("[open62541/nodesets]\tDI subset ns=%u, AMB subset ns=%u\n",
            (unsigned int)diNamespace, (unsigned int)ambNamespace);
     fflush(stdout);
     return UA_STATUSCODE_GOOD;
