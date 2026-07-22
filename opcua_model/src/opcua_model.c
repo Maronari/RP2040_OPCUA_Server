@@ -1,4 +1,4 @@
-﻿#include "opcua_model/opcua_model.h"
+#include "opcua_model/opcua_model.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -587,6 +587,7 @@ static model_allow_browse_node_fn g_default_allow_browse_node = NULL;
 static uint8_t g_history_backend_context = 0u;
 static UA_UInt16 g_model_di_namespace_index = 0u;
 static UA_UInt16 g_model_amb_namespace_index = 0u;
+static UA_DataType g_model_amb_maintenance_method_type;
 static UA_UInt32 g_model_alias_last_change = 0u;
 static UA_StatusCode model_update_asset_id_alias(UA_Server *server,
                                                  const char *asset_id);
@@ -3338,6 +3339,137 @@ static UA_StatusCode model_condition_set_two_state_id(UA_Server *server,
                                                        UA_QUALIFIEDNAME(0, (char *)"Id"));
 }
 
+static UA_StatusCode model_add_amb_maintenance_property(
+    UA_Server *server, const UA_NodeId condition_id, const char *node_id,
+    const char *browse_name, UA_NodeId data_type, const void *value,
+    const UA_DataType *value_type)
+{
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attr.dataType = data_type;
+    attr.valueRank = UA_VALUERANK_SCALAR;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    UA_Variant_setScalar(&attr.value, (void *)value, value_type);
+    return UA_Server_addVariableNode(
+        server, UA_NODEID_STRING(1, (char *)node_id), condition_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)browse_name),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attr, NULL, NULL);
+}
+
+static UA_StatusCode model_set_amb_maintenance_state(
+    UA_Server *server, const UA_NodeId condition_id, const char *state_name,
+    UA_UInt32 state_node_id)
+{
+    UA_QualifiedName path[3] = {
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)"MaintenanceState"),
+        UA_QUALIFIEDNAME(0, (char *)"CurrentState"),
+        UA_QUALIFIEDNAME(0, (char *)"Id")
+    };
+    UA_BrowsePathResult current_state_result;
+    UA_BrowsePathResult state_id_result;
+    UA_LocalizedText state_text =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)state_name);
+    UA_NodeId state_id = UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                                           state_node_id);
+    UA_Variant value;
+    UA_StatusCode status;
+
+    current_state_result = UA_Server_browseSimplifiedBrowsePath(
+        server, condition_id, 2u, path);
+    if(current_state_result.statusCode != UA_STATUSCODE_GOOD ||
+       current_state_result.targetsSize != 1u) {
+        status = current_state_result.statusCode != UA_STATUSCODE_GOOD
+                     ? current_state_result.statusCode
+                     : UA_STATUSCODE_BADNOTFOUND;
+        UA_BrowsePathResult_clear(&current_state_result);
+        return status;
+    }
+    UA_Variant_init(&value);
+    UA_Variant_setScalar(&value, &state_text, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    status = UA_Server_writeValue(
+        server, current_state_result.targets[0].targetId.nodeId, value);
+    UA_BrowsePathResult_clear(&current_state_result);
+    if(status != UA_STATUSCODE_GOOD)
+        return status;
+
+    state_id_result = UA_Server_browseSimplifiedBrowsePath(
+        server, condition_id, 3u, path);
+    if(state_id_result.statusCode != UA_STATUSCODE_GOOD ||
+       state_id_result.targetsSize != 1u) {
+        status = state_id_result.statusCode != UA_STATUSCODE_GOOD
+                     ? state_id_result.statusCode
+                     : UA_STATUSCODE_BADNOTFOUND;
+        UA_BrowsePathResult_clear(&state_id_result);
+        return status;
+    }
+    UA_Variant_init(&value);
+    UA_Variant_setScalar(&value, &state_id, &UA_TYPES[UA_TYPES_NODEID]);
+    status = UA_Server_writeValue(
+        server, state_id_result.targets[0].targetId.nodeId, value);
+    UA_BrowsePathResult_clear(&state_id_result);
+    return status;
+}
+
+static UA_StatusCode model_initialize_amb_maintenance_condition(
+    UA_Server *server, const UA_NodeId condition_id)
+{
+    UA_DateTime planned_date = 0;
+    UA_Double estimated_downtime = 0.0;
+    UA_Int32 maintenance_method = 0;
+    UA_Boolean configuration_changed = false;
+    UA_NodeId condition_class = UA_NODEID_NUMERIC(
+        g_model_amb_namespace_index, UA_AMBID_SERVICING_CONDITION_CLASS_TYPE);
+    UA_LocalizedText condition_class_name =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Servicing");
+    UA_StatusCode status;
+
+    g_model_amb_maintenance_method_type = UA_TYPES[UA_TYPES_INT32];
+    g_model_amb_maintenance_method_type.typeId = UA_NODEID_NUMERIC(
+        g_model_amb_namespace_index, UA_AMBID_MAINTENANCE_METHOD_ENUM);
+    g_model_amb_maintenance_method_type.typeKind = UA_DATATYPEKIND_ENUM;
+
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.PlannedDate",
+        "PlannedDate", UA_NODEID_NUMERIC(0, UA_NS0ID_UTCTIME),
+        &planned_date, &UA_TYPES[UA_TYPES_DATETIME]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.EstimatedDowntime",
+        "EstimatedDowntime", UA_NODEID_NUMERIC(0, UA_NS0ID_DURATION),
+        &estimated_downtime, &UA_TYPES[UA_TYPES_DOUBLE]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.MaintenanceMethod",
+        "MaintenanceMethod",
+        UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                          UA_AMBID_MAINTENANCE_METHOD_ENUM),
+        &maintenance_method, &g_model_amb_maintenance_method_type);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.ConfigurationChanged",
+        "ConfigurationChanged", UA_NODEID_NUMERIC(0, UA_NS0ID_BOOLEAN),
+        &configuration_changed, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+
+    status = model_condition_set_field_scalar(
+        server, condition_id, "ConditionClassId", &condition_class,
+        &UA_TYPES[UA_TYPES_NODEID]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_condition_set_field_scalar(
+        server, condition_id, "ConditionClassName", &condition_class_name,
+        &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    return model_set_amb_maintenance_state(
+        server, condition_id, "Planned", UA_AMBID_MAINTENANCE_STATE_PLANNED);
+}
+
 static UA_StatusCode model_condition_write_common_fields(UA_Server *server,
                                                          const UA_NodeId condition_id,
                                                          UA_UInt16 severity,
@@ -3577,6 +3709,14 @@ static UA_StatusCode model_create_device_health_condition(UA_Server *server,
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
+    }
+    if (state == DEVICE_HEALTH_MAINTENANCE_REQUIRED)
+    {
+        status = model_initialize_amb_maintenance_condition(server, created_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
     }
 
     return UA_Server_addReference(server,
