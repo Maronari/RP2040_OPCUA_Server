@@ -147,6 +147,7 @@ target_include_directories(OPEN62541_FILES PUBLIC
 target_compile_definitions(OPEN62541_FILES PUBLIC
         MBEDTLS_USER_CONFIG_FILE="ssl_config.h"
         UA_LOGLEVEL=300
+        UA_ENABLE_NODESET_INJECTOR
         RP2_OPEN62541_SKIP_DIAGNOSTICS_NODES=1
         )
 

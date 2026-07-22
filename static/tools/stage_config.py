@@ -373,6 +373,12 @@ def canonicalize_config_document(document):
             'assetClass': coerce_string(require_key(device, 'assetClass', 'device'), 'device.assetClass'),
             'manufactureDateUtc': coerce_i64(require_key(device, 'manufactureDateUtc', 'device'), 'device.manufactureDateUtc'),
             'calibrationDateUtc': coerce_i64(require_key(device, 'calibrationDateUtc', 'device'), 'device.calibrationDateUtc'),
+            'hierarchicalLocationPath': coerce_string(
+                device.get('hierarchicalLocationPath', require_key(device, 'location', 'device')),
+                'device.hierarchicalLocationPath'),
+            'operationalLocationPath': coerce_string(
+                device.get('operationalLocationPath', ''),
+                'device.operationalLocationPath'),
         },
         'network': {
             'mode': coerce_string(require_key(network, 'mode', 'network'), 'network.mode'),

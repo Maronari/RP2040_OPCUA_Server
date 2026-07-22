@@ -1,4 +1,4 @@
-﻿#include "opcua_model/opcua_model.h"
+#include "opcua_model/opcua_model.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -10,6 +10,7 @@
 #include "ua_port_alloc.h"
 
 #include "drivers/led_driver.h"
+#include "nodesetinjector.h"
 #include "open62541.h"
 #include "pico/stdio.h"
 #include "services/alarm_service.h"
@@ -21,6 +22,7 @@
 #include <services/config_validate_service.h>
 #include "services/device_channels.h"
 #include "services/diag_service.h"
+#include "services/device_health_service.h"
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
@@ -59,11 +61,13 @@ typedef enum
     MODEL_NODE_IDENT_DEVICE_NAME,
     MODEL_NODE_IDENT_PRODUCT_INSTANCE_URI,
     MODEL_NODE_IDENT_ASSET_ID,
+    MODEL_NODE_IDENT_REVISION_COUNTER,
     MODEL_NODE_IDENT_MAC_ADDRESS,
     MODEL_NODE_IDENT_MANUFACTURE_DATE,
     MODEL_NODE_IDENT_CALIBRATION_DATE,
     MODEL_NODE_IDENT_LOCATION,
     MODEL_NODE_IDENT_ASSET_CLASS,
+    MODEL_NODE_DEVICE_HEALTH,
     MODEL_NODE_PROCESS_TEMPERATURE_VALUE,
     MODEL_NODE_PROCESS_TEMPERATURE_STATUS,
     MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
@@ -171,8 +175,8 @@ typedef struct
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     bool security_condition_active;
     uint32_t security_condition_reason;
-    bool system_resource_condition_active;
-    uint32_t system_resource_condition_reason;
+    bool device_health_condition_active[5];
+    uint32_t device_health_condition_reason[5];
 #endif
 } model_event_runtime_state_t;
 
@@ -330,15 +334,6 @@ typedef enum
     MODEL_SECURITY_CONDITION_REASON_COMMISSIONING = 6
 } model_security_condition_reason_t;
 
-typedef enum
-{
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_NONE = 0,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_MALLOC_FAILURE = 1,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_STACK_OVERFLOW = 2,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_CONTIGUOUS_HEAP = 3,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_FREE_HEAP = 4,
-    MODEL_SYSTEM_RESOURCE_CONDITION_REASON_SELF_TEST_FAILED = 5
-} model_system_resource_condition_reason_t;
 #endif
 #endif
 
@@ -397,11 +392,13 @@ enum
     FIXED_CTX_IDENT_DEVICE_NAME,
     FIXED_CTX_IDENT_PRODUCT_INSTANCE_URI,
     FIXED_CTX_IDENT_ASSET_ID,
+    FIXED_CTX_IDENT_REVISION_COUNTER,
     FIXED_CTX_IDENT_MAC_ADDRESS,
     FIXED_CTX_IDENT_MANUFACTURE_DATE,
     FIXED_CTX_IDENT_CALIBRATION_DATE,
     FIXED_CTX_IDENT_LOCATION,
     FIXED_CTX_IDENT_ASSET_CLASS,
+    FIXED_CTX_DEVICE_HEALTH,
     FIXED_CTX_PROCESS_TEMPERATURE_VALUE,
     FIXED_CTX_PROCESS_TEMPERATURE_STATUS,
     FIXED_CTX_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP,
@@ -484,6 +481,7 @@ enum
 #define MODEL_NODE_MAINTENANCE_DIAGNOSTICS "Device.Maintenance.Diagnostics"
 #define MODEL_NODE_MAINTENANCE_SYSTEM "Device.Maintenance.System"
 #define MODEL_METHOD_SET_DEVICE_IDENTITY "Device.Maintenance.SetDeviceIdentity"
+#define MODEL_METHOD_SET_LOCATION_PATHS "Device.Maintenance.Configuration.SetLocationPaths"
 #define MODEL_METHOD_SET_NETWORK_CONFIG "Device.Maintenance.SetNetworkConfig"
 #define MODEL_METHOD_SET_TRUST_LIST "Device.Security.SetTrustList"
 #define MODEL_METHOD_GET_CERTIFICATE_STATE "Device.Maintenance.Security.GetCertificateState"
@@ -536,13 +534,13 @@ enum
 #define MODEL_EVENT_TYPE_AUDIT_CONFIG_CHANGE "Types.Events.AuditConfigChangeEvent"
 #define MODEL_EVENT_TYPE_AUDIT_SECURITY_CHANGE "Types.Events.AuditSecurityChangeEvent"
 #define MODEL_CONDITION_TYPE_SECURITY_FAULT "Types.Conditions.SecurityFaultConditionType"
-#define MODEL_CONDITION_TYPE_SYSTEM_RESOURCE "Types.Conditions.SystemResourceConditionType"
 #define MODEL_CONDITION_SECURITY_FAULT "Device.Security.SecurityFaultCondition"
-#define MODEL_CONDITION_SYSTEM_RESOURCE "Device.Diagnostics.SystemResourceCondition"
+#define MODEL_CONDITION_DEVICE_HEALTH_FAILURE "Device.DeviceHealthAlarms.Failure"
+#define MODEL_CONDITION_DEVICE_HEALTH_CHECK_FUNCTION "Device.DeviceHealthAlarms.CheckFunction"
+#define MODEL_CONDITION_DEVICE_HEALTH_OFF_SPEC "Device.DeviceHealthAlarms.OffSpec"
+#define MODEL_CONDITION_DEVICE_HEALTH_MAINTENANCE_REQUIRED "Device.DeviceHealthAlarms.MaintenanceRequired"
 #define MODEL_CERTIFICATE_EXPIRY_WARN_DAYS 30u
 #define MODEL_CERTIFICATE_EXPIRY_HIGH_WARN_DAYS 7u
-#define MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES 32768u
-#define MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES 16384u
 #define MODEL_AUDIT_QUEUE_CAPACITY 8u
 #define MODEL_PUBSUB_TOPIC_MAX_LEN 96u
 #define MODEL_PUBSUB_CLIENT_ID_MAX_LEN 64u
@@ -566,6 +564,10 @@ enum
 #define MODEL_NODE_MESSAGING_LAST_EVENT_SEVERITY "Device.Messaging.LastPubSubEventSeverity"
 #define MODEL_NODE_MESSAGING_LAST_EVENT_TIME "Device.Messaging.LastPubSubEventTime"
 
+#define MODEL_NODE_ASSET_ALIAS_PRODUCT_INSTANCE_URI "AssetAliases.ProductInstanceUri"
+#define MODEL_NODE_ASSET_ALIAS_ASSET_ID "AssetAliases.AssetId"
+#define MODEL_ASSET_ALIAS_UNASSIGNED "NoAssetIdAssigned"
+
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
 static const uint8_t g_bootstrap_device_certificate[] = TEST_SRV_CRT_RSA_SHA256_DER;
 static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
@@ -583,6 +585,14 @@ static model_get_user_executable_on_object_fn g_default_get_user_executable_on_o
 static model_get_user_access_level_fn g_default_get_user_access_level = NULL;
 static model_allow_browse_node_fn g_default_allow_browse_node = NULL;
 static uint8_t g_history_backend_context = 0u;
+static UA_UInt16 g_model_di_namespace_index = 0u;
+static UA_UInt16 g_model_amb_namespace_index = 0u;
+static UA_DataType g_model_amb_maintenance_method_type;
+static UA_UInt32 g_model_alias_last_change = 0u;
+static UA_StatusCode model_update_asset_id_alias(UA_Server *server,
+                                                 const char *asset_id);
+static UA_StatusCode model_refresh_amb_locations(UA_Server *server,
+                                                 const device_profile_config_t *config);
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
 static model_last_event_state_t g_last_event_state = {{0}};
 static model_pending_audit_event_t g_pending_audit_events[MODEL_AUDIT_QUEUE_CAPACITY] = {{0}};
@@ -1111,6 +1121,7 @@ static security_user_role_t model_required_role_for_write_kind(model_node_kind_t
 {
     switch (kind)
     {
+    case MODEL_NODE_IDENT_ASSET_ID:
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
     case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
     case MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES:
@@ -1622,11 +1633,13 @@ static model_node_context_t g_fixed_node_contexts[FIXED_CTX_COUNT] = {
     {MODEL_NODE_IDENT_DEVICE_NAME, NULL},
     {MODEL_NODE_IDENT_PRODUCT_INSTANCE_URI, NULL},
     {MODEL_NODE_IDENT_ASSET_ID, NULL},
+    {MODEL_NODE_IDENT_REVISION_COUNTER, NULL},
     {MODEL_NODE_IDENT_MAC_ADDRESS, NULL},
     {MODEL_NODE_IDENT_MANUFACTURE_DATE, NULL},
     {MODEL_NODE_IDENT_CALIBRATION_DATE, NULL},
     {MODEL_NODE_IDENT_LOCATION, NULL},
     {MODEL_NODE_IDENT_ASSET_CLASS, NULL},
+    {MODEL_NODE_DEVICE_HEALTH, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_VALUE, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_STATUS, NULL},
     {MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP, NULL},
@@ -2195,11 +2208,6 @@ static UA_NodeId model_network_node_id(void)
     return UA_NODEID_STRING(1, (char *)"Device.Network");
 }
 
-static UA_NodeId model_diagnostics_node_id(void)
-{
-    return UA_NODEID_STRING(1, (char *)"Device.Diagnostics");
-}
-
 static UA_NodeId model_temperature_node_id(void)
 {
     return UA_NODEID_STRING(1, (char *)DEVICE_CHANNEL_NODE_TEMPERATURE_1);
@@ -2236,9 +2244,26 @@ static UA_NodeId model_security_condition_node_id(void)
     return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_SECURITY_FAULT);
 }
 
-static UA_NodeId model_system_resource_condition_node_id(void)
+static UA_NodeId model_device_health_alarms_node_id(void)
 {
-    return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_SYSTEM_RESOURCE);
+    return UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms");
+}
+
+static UA_NodeId model_device_health_condition_node_id(device_health_state_t state)
+{
+    switch (state)
+    {
+    case DEVICE_HEALTH_FAILURE:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_FAILURE);
+    case DEVICE_HEALTH_CHECK_FUNCTION:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_CHECK_FUNCTION);
+    case DEVICE_HEALTH_OFF_SPEC:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_OFF_SPEC);
+    case DEVICE_HEALTH_MAINTENANCE_REQUIRED:
+        return UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_MAINTENANCE_REQUIRED);
+    default:
+        return UA_NODEID_NULL;
+    }
 }
 #endif
 
@@ -3229,22 +3254,6 @@ static UA_StatusCode model_set_event_string_field(UA_KeyValueMap *event_fields,
 }
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
-static const char *model_diag_fault_code_to_string(diag_fault_code_t fault_code)
-{
-    switch (fault_code)
-    {
-    case DIAG_FAULT_CODE_MALLOC_FAILED:
-        return "MallocFailed";
-    case DIAG_FAULT_CODE_STACK_OVERFLOW:
-        return "StackOverflow";
-    case DIAG_FAULT_CODE_SELF_TEST_FAILED:
-        return "SelfTestFailed";
-    case DIAG_FAULT_CODE_NONE:
-    default:
-        return "None";
-    }
-}
-
 static UA_StatusCode model_enable_condition_source(UA_Server *server,
                                                    const UA_NodeId parent_id,
                                                    const UA_NodeId source_id)
@@ -3328,6 +3337,137 @@ static UA_StatusCode model_condition_set_two_state_id(UA_Server *server,
                                                        &variant,
                                                        UA_QUALIFIEDNAME(0, (char *)field_name),
                                                        UA_QUALIFIEDNAME(0, (char *)"Id"));
+}
+
+static UA_StatusCode model_add_amb_maintenance_property(
+    UA_Server *server, const UA_NodeId condition_id, const char *node_id,
+    const char *browse_name, UA_NodeId data_type, const void *value,
+    const UA_DataType *value_type)
+{
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attr.dataType = data_type;
+    attr.valueRank = UA_VALUERANK_SCALAR;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    UA_Variant_setScalar(&attr.value, (void *)value, value_type);
+    return UA_Server_addVariableNode(
+        server, UA_NODEID_STRING(1, (char *)node_id), condition_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)browse_name),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attr, NULL, NULL);
+}
+
+static UA_StatusCode model_set_amb_maintenance_state(
+    UA_Server *server, const UA_NodeId condition_id, const char *state_name,
+    UA_UInt32 state_node_id)
+{
+    UA_QualifiedName path[3] = {
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)"MaintenanceState"),
+        UA_QUALIFIEDNAME(0, (char *)"CurrentState"),
+        UA_QUALIFIEDNAME(0, (char *)"Id")
+    };
+    UA_BrowsePathResult current_state_result;
+    UA_BrowsePathResult state_id_result;
+    UA_LocalizedText state_text =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)state_name);
+    UA_NodeId state_id = UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                                           state_node_id);
+    UA_Variant value;
+    UA_StatusCode status;
+
+    current_state_result = UA_Server_browseSimplifiedBrowsePath(
+        server, condition_id, 2u, path);
+    if(current_state_result.statusCode != UA_STATUSCODE_GOOD ||
+       current_state_result.targetsSize != 1u) {
+        status = current_state_result.statusCode != UA_STATUSCODE_GOOD
+                     ? current_state_result.statusCode
+                     : UA_STATUSCODE_BADNOTFOUND;
+        UA_BrowsePathResult_clear(&current_state_result);
+        return status;
+    }
+    UA_Variant_init(&value);
+    UA_Variant_setScalar(&value, &state_text, &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    status = UA_Server_writeValue(
+        server, current_state_result.targets[0].targetId.nodeId, value);
+    UA_BrowsePathResult_clear(&current_state_result);
+    if(status != UA_STATUSCODE_GOOD)
+        return status;
+
+    state_id_result = UA_Server_browseSimplifiedBrowsePath(
+        server, condition_id, 3u, path);
+    if(state_id_result.statusCode != UA_STATUSCODE_GOOD ||
+       state_id_result.targetsSize != 1u) {
+        status = state_id_result.statusCode != UA_STATUSCODE_GOOD
+                     ? state_id_result.statusCode
+                     : UA_STATUSCODE_BADNOTFOUND;
+        UA_BrowsePathResult_clear(&state_id_result);
+        return status;
+    }
+    UA_Variant_init(&value);
+    UA_Variant_setScalar(&value, &state_id, &UA_TYPES[UA_TYPES_NODEID]);
+    status = UA_Server_writeValue(
+        server, state_id_result.targets[0].targetId.nodeId, value);
+    UA_BrowsePathResult_clear(&state_id_result);
+    return status;
+}
+
+static UA_StatusCode model_initialize_amb_maintenance_condition(
+    UA_Server *server, const UA_NodeId condition_id)
+{
+    UA_DateTime planned_date = 0;
+    UA_Double estimated_downtime = 0.0;
+    UA_Int32 maintenance_method = 0;
+    UA_Boolean configuration_changed = false;
+    UA_NodeId condition_class = UA_NODEID_NUMERIC(
+        g_model_amb_namespace_index, UA_AMBID_SERVICING_CONDITION_CLASS_TYPE);
+    UA_LocalizedText condition_class_name =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Servicing");
+    UA_StatusCode status;
+
+    g_model_amb_maintenance_method_type = UA_TYPES[UA_TYPES_INT32];
+    g_model_amb_maintenance_method_type.typeId = UA_NODEID_NUMERIC(
+        g_model_amb_namespace_index, UA_AMBID_MAINTENANCE_METHOD_ENUM);
+    g_model_amb_maintenance_method_type.typeKind = UA_DATATYPEKIND_ENUM;
+
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.PlannedDate",
+        "PlannedDate", UA_NODEID_NUMERIC(0, UA_NS0ID_UTCTIME),
+        &planned_date, &UA_TYPES[UA_TYPES_DATETIME]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.EstimatedDowntime",
+        "EstimatedDowntime", UA_NODEID_NUMERIC(0, UA_NS0ID_DURATION),
+        &estimated_downtime, &UA_TYPES[UA_TYPES_DOUBLE]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.MaintenanceMethod",
+        "MaintenanceMethod",
+        UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                          UA_AMBID_MAINTENANCE_METHOD_ENUM),
+        &maintenance_method, &g_model_amb_maintenance_method_type);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_maintenance_property(
+        server, condition_id,
+        "Device.DeviceHealthAlarms.MaintenanceRequired.ConfigurationChanged",
+        "ConfigurationChanged", UA_NODEID_NUMERIC(0, UA_NS0ID_BOOLEAN),
+        &configuration_changed, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+
+    status = model_condition_set_field_scalar(
+        server, condition_id, "ConditionClassId", &condition_class,
+        &UA_TYPES[UA_TYPES_NODEID]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_condition_set_field_scalar(
+        server, condition_id, "ConditionClassName", &condition_class_name,
+        &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    return model_set_amb_maintenance_state(
+        server, condition_id, "Planned", UA_AMBID_MAINTENANCE_STATE_PLANNED);
 }
 
 static UA_StatusCode model_condition_write_common_fields(UA_Server *server,
@@ -3541,11 +3681,56 @@ static UA_StatusCode model_create_condition_instance(UA_Server *server,
     return model_condition_initialize_inactive(server, created_id, normal_message);
 }
 
+static UA_StatusCode model_create_device_health_condition(UA_Server *server,
+                                                           device_health_state_t state,
+                                                           const char *browse_name,
+                                                           UA_UInt32 condition_type_id)
+{
+    UA_NodeId condition_id = model_device_health_condition_node_id(state);
+    UA_NodeId created_id = UA_NODEID_NULL;
+    UA_StatusCode status;
+
+    status = UA_Server_createCondition(
+        server,
+        condition_id,
+        UA_NODEID_NUMERIC(g_model_di_namespace_index, condition_type_id),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)browse_name),
+        model_device_node_id(),
+        UA_NODEID_NULL,
+        &created_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_condition_initialize_inactive(server,
+                                                  created_id,
+                                                  "Device health category inactive");
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    if (state == DEVICE_HEALTH_MAINTENANCE_REQUIRED)
+    {
+        status = model_initialize_amb_maintenance_condition(server, created_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+
+    return UA_Server_addReference(server,
+                                  model_device_health_alarms_node_id(),
+                                  UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+                                  UA_NODEID2EXPANDEDNODEID(created_id),
+                                  true);
+}
+
 static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
 {
     UA_NodeClass condition_type_class = UA_NODECLASS_UNSPECIFIED;
     UA_NodeClass security_parent_class = UA_NODECLASS_UNSPECIFIED;
-    UA_NodeClass system_parent_class = UA_NODECLASS_UNSPECIFIED;
+    UA_NodeClass device_health_parent_class = UA_NODECLASS_UNSPECIFIED;
     UA_StatusCode status;
 
     status = UA_Server_readNodeClass(server,
@@ -3570,12 +3755,13 @@ static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return UA_STATUSCODE_GOOD;
     }
 
-    status = UA_Server_readNodeClass(server,
-                                     UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMDIAGNOSTICALARMTYPE),
-                                     &system_parent_class);
+    status = UA_Server_readNodeClass(
+        server,
+        UA_NODEID_NUMERIC(g_model_di_namespace_index, UA_DIID_DEVICEHEALTHDIAGNOSTICALARMTYPE),
+        &device_health_parent_class);
     if (status != UA_STATUSCODE_GOOD)
     {
-        printf("[OPC UA]\tA&C disabled: SystemDiagnosticAlarmType is not present in namespace zero\n");
+        printf("[OPC UA]\tA&C disabled: DI DeviceHealth alarm types are unavailable\n");
         fflush(stdout);
         g_model_alarm_conditions_available = false;
         return UA_STATUSCODE_GOOD;
@@ -3590,28 +3776,10 @@ static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return status;
     }
 
-    status = model_enable_condition_source(server,
-                                           model_device_node_id(),
-                                           model_diagnostics_node_id());
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        g_model_alarm_conditions_available = false;
-        return status;
-    }
-
     status = model_add_condition_type(server,
                                       MODEL_CONDITION_TYPE_SECURITY_FAULT,
                                       "SecurityFaultConditionType",
                                       UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMOFFNORMALALARMTYPE));
-    if (status != UA_STATUSCODE_GOOD)
-    {
-        return status;
-    }
-
-    status = model_add_condition_type(server,
-                                      MODEL_CONDITION_TYPE_SYSTEM_RESOURCE,
-                                      "SystemResourceConditionType",
-                                      UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMDIAGNOSTICALARMTYPE));
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -3629,20 +3797,34 @@ static UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return status;
     }
 
-    status = model_create_condition_instance(server,
-                                             MODEL_CONDITION_SYSTEM_RESOURCE,
-                                             "SystemResourceCondition",
-                                             model_condition_type_node_id(MODEL_CONDITION_TYPE_SYSTEM_RESOURCE),
-                                             model_diagnostics_node_id(),
-                                             "System resources normal");
+    status = model_create_device_health_condition(server,
+                                                   DEVICE_HEALTH_FAILURE,
+                                                   "Failure",
+                                                   UA_DIID_FAILUREALARMTYPE);
     if (status == UA_STATUSCODE_GOOD)
     {
-        g_model_alarm_conditions_available = true;
+        status = model_create_device_health_condition(server,
+                                                       DEVICE_HEALTH_CHECK_FUNCTION,
+                                                       "CheckFunction",
+                                                       UA_DIID_CHECKFUNCTIONALARMTYPE);
     }
-    else
+    if (status == UA_STATUSCODE_GOOD)
     {
-        g_model_alarm_conditions_available = false;
+        status = model_create_device_health_condition(server,
+                                                       DEVICE_HEALTH_OFF_SPEC,
+                                                       "OffSpec",
+                                                       UA_DIID_OFFSPECALARMTYPE);
     }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_create_device_health_condition(
+            server,
+            DEVICE_HEALTH_MAINTENANCE_REQUIRED,
+            "MaintenanceRequired",
+            UA_DIID_MAINTENANCEREQUIREDALARMTYPE);
+    }
+
+    g_model_alarm_conditions_available = status == UA_STATUSCODE_GOOD;
     return status;
 }
 
@@ -3724,73 +3906,6 @@ static model_security_condition_reason_t model_evaluate_security_condition(char 
     return MODEL_SECURITY_CONDITION_REASON_NONE;
 }
 
-static model_system_resource_condition_reason_t model_evaluate_system_resource_condition(char *message,
-                                                                                         size_t message_size,
-                                                                                         UA_UInt16 *out_severity,
-                                                                                         UA_StatusCode *out_quality)
-{
-    diag_service_heap_stats_t heap_stats = {0};
-    diag_service_system_stats_t system_stats = {0};
-    diag_fault_code_t last_fault_code;
-
-    diag_service_get_heap_stats(&heap_stats);
-    diag_service_get_system_stats(&system_stats);
-    last_fault_code = (diag_fault_code_t)system_stats.last_fault_code;
-
-    if (last_fault_code == DIAG_FAULT_CODE_MALLOC_FAILED)
-    {
-        model_copy_string_safe(message, message_size, "Malloc failure detected");
-        *out_severity = 950u;
-        *out_quality = UA_STATUSCODE_BADOUTOFMEMORY;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_MALLOC_FAILURE;
-    }
-
-    if (last_fault_code == DIAG_FAULT_CODE_STACK_OVERFLOW)
-    {
-        model_copy_string_safe(message, message_size, "Stack overflow detected");
-        *out_severity = 975u;
-        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_STACK_OVERFLOW;
-    }
-
-    if (last_fault_code == DIAG_FAULT_CODE_SELF_TEST_FAILED)
-    {
-        model_copy_string_safe(message, message_size, "Self-test failed");
-        *out_severity = 700u;
-        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_SELF_TEST_FAILED;
-    }
-
-    if (heap_stats.largest_free_block_bytes < MODEL_SYSTEM_RESOURCE_LARGEST_BLOCK_WARN_BYTES)
-    {
-        snprintf(message,
-                 message_size,
-                 "Largest free heap block below safe threshold (%" PRIu32 " bytes, last fault=%s)",
-                 heap_stats.largest_free_block_bytes,
-                 model_diag_fault_code_to_string(last_fault_code));
-        *out_severity = 700u;
-        *out_quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_CONTIGUOUS_HEAP;
-    }
-
-    if (heap_stats.available_heap_bytes < MODEL_SYSTEM_RESOURCE_FREE_HEAP_WARN_BYTES)
-    {
-        snprintf(message,
-                 message_size,
-                 "Available heap below safe threshold (%" PRIu32 " bytes, last fault=%s)",
-                 heap_stats.available_heap_bytes,
-                 model_diag_fault_code_to_string(last_fault_code));
-        *out_severity = 600u;
-        *out_quality = UA_STATUSCODE_BADOUTOFMEMORY;
-        return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_LOW_FREE_HEAP;
-    }
-
-    model_copy_string_safe(message, message_size, "System resources normal");
-    *out_severity = 100u;
-    *out_quality = UA_STATUSCODE_GOOD;
-    return MODEL_SYSTEM_RESOURCE_CONDITION_REASON_NONE;
-}
-
 static void model_sync_condition(UA_Server *server,
                                  const UA_NodeId condition_id,
                                  const UA_NodeId source_id,
@@ -3854,13 +3969,73 @@ static void model_sync_condition(UA_Server *server,
     }
 }
 
+static void model_process_device_health_conditions(UA_Server *server,
+                                                   model_event_runtime_state_t *state)
+{
+    device_health_report_t report = {0};
+
+    device_health_service_get_report(&report);
+
+    for (uint32_t raw_state = DEVICE_HEALTH_FAILURE;
+         raw_state <= DEVICE_HEALTH_MAINTENANCE_REQUIRED;
+         ++raw_state)
+    {
+        const device_health_state_t category = (device_health_state_t)raw_state;
+        const uint32_t category_reasons =
+            device_health_service_reasons_for_state(&report, category);
+        const bool active = category_reasons != 0u;
+        device_health_report_t category_report = report;
+        char message[192] = {0};
+        UA_UInt16 severity = 100u;
+        UA_StatusCode quality = UA_STATUSCODE_GOOD;
+
+        category_report.reasons = category_reasons;
+        device_health_service_format_summary(&category_report, message, sizeof(message));
+
+        if (active)
+        {
+            switch (category)
+            {
+            case DEVICE_HEALTH_FAILURE:
+                severity = 700u;
+                quality = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+                break;
+            case DEVICE_HEALTH_CHECK_FUNCTION:
+                severity = 350u;
+                quality = UA_STATUSCODE_UNCERTAIN;
+                break;
+            case DEVICE_HEALTH_OFF_SPEC:
+                severity = 450u;
+                quality = UA_STATUSCODE_UNCERTAIN;
+                break;
+            case DEVICE_HEALTH_MAINTENANCE_REQUIRED:
+                severity = 350u;
+                quality = UA_STATUSCODE_GOOD;
+                break;
+            default:
+                break;
+            }
+        }
+
+        model_sync_condition(server,
+                             model_device_health_condition_node_id(category),
+                             model_device_node_id(),
+                             &state->device_health_condition_active[raw_state],
+                             &state->device_health_condition_reason[raw_state],
+                             category_reasons,
+                             severity,
+                             quality,
+                             message,
+                             "Device health category inactive");
+    }
+}
+
 static void model_process_alarm_conditions(UA_Server *server, model_event_runtime_state_t *state)
 {
     char message[192];
     UA_UInt16 severity = 100u;
     UA_StatusCode quality = UA_STATUSCODE_GOOD;
     model_security_condition_reason_t security_reason;
-    model_system_resource_condition_reason_t system_resource_reason;
 
     if (server == NULL || state == NULL)
     {
@@ -3887,20 +4062,7 @@ static void model_process_alarm_conditions(UA_Server *server, model_event_runtim
                          message,
                          "Security state normal");
 
-    system_resource_reason = model_evaluate_system_resource_condition(message,
-                                                                      sizeof(message),
-                                                                      &severity,
-                                                                      &quality);
-    model_sync_condition(server,
-                         model_system_resource_condition_node_id(),
-                         model_diagnostics_node_id(),
-                         &state->system_resource_condition_active,
-                         &state->system_resource_condition_reason,
-                         (uint32_t)system_resource_reason,
-                         severity,
-                         quality,
-                         message,
-                         "System resources normal");
+    model_process_device_health_conditions(server, state);
 }
 #endif
 
@@ -4668,8 +4830,6 @@ static void model_event_runtime_state_init(model_event_runtime_state_t *state)
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     state->security_condition_active = false;
     state->security_condition_reason = 0u;
-    state->system_resource_condition_active = false;
-    state->system_resource_condition_reason = 0u;
 #endif
     state->initialized = true;
 }
@@ -5113,6 +5273,21 @@ static UA_StatusCode model_set_string_value(UA_DataValue *value, const char *dat
     return UA_STATUSCODE_GOOD;
 }
 
+static UA_StatusCode model_set_localized_text_value(UA_DataValue *value,
+                                                    const char *data,
+                                                    UA_StatusCode status)
+{
+    UA_LocalizedText localized =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)(data != NULL ? data : ""));
+    UA_Variant_setScalarCopy(&value->value,
+                             &localized,
+                             &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = status;
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_set_datetime_value(UA_DataValue *value, UA_DateTime data, UA_StatusCode status)
 {
     UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_DATETIME]);
@@ -5441,10 +5616,10 @@ static UA_StatusCode model_read_value(UA_Server *server,
     {
     case MODEL_NODE_IDENT_MANUFACTURER:
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_string_value(value, config->manufacturer, UA_STATUSCODE_GOOD);
+        return model_set_localized_text_value(value, config->manufacturer, UA_STATUSCODE_GOOD);
     case MODEL_NODE_IDENT_MODEL:
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        return model_set_string_value(value, config->model, UA_STATUSCODE_GOOD);
+        return model_set_localized_text_value(value, config->model, UA_STATUSCODE_GOOD);
     case MODEL_NODE_IDENT_SERIAL_NUMBER:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value, config->serial_number, UA_STATUSCODE_GOOD);
@@ -5469,6 +5644,11 @@ static UA_StatusCode model_read_value(UA_Server *server,
     case MODEL_NODE_IDENT_ASSET_ID:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value, config->asset_id, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_IDENT_REVISION_COUNTER:
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_int32_value(value,
+                                     (UA_Int32)config_service_get_running_revision(),
+                                     UA_STATUSCODE_GOOD);
     case MODEL_NODE_IDENT_MAC_ADDRESS:
     {
         char mac_address[18] = {0};
@@ -5488,6 +5668,14 @@ static UA_StatusCode model_read_value(UA_Server *server,
     case MODEL_NODE_IDENT_ASSET_CLASS:
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value, config->asset_class, UA_STATUSCODE_GOOD);
+    case MODEL_NODE_DEVICE_HEALTH:
+    {
+        device_health_report_t report = {0};
+
+        device_health_service_get_report(&report);
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        return model_set_int32_value(value, (UA_Int32)report.state, UA_STATUSCODE_GOOD);
+    }
     case MODEL_NODE_PROCESS_TEMPERATURE_VALUE:
     {
         telemetry_channel_t channel = {0};
@@ -6029,7 +6217,6 @@ static UA_StatusCode model_write_value(UA_Server *server,
     telemetry_channel_settings_t channel_settings = {0};
     const char *settings_channel_id = NULL;
     bool save_device_config = false;
-    (void)server;
     (void)session_id;
     (void)session_context;
     (void)node_id;
@@ -6075,6 +6262,34 @@ static UA_StatusCode model_write_value(UA_Server *server,
 
     switch (context->kind)
     {
+    case MODEL_NODE_IDENT_ASSET_ID:
+    {
+        char asset_id[CONFIG_SERVICE_ASSET_ID_MAX_LEN] = {0};
+
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_STRING]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!model_copy_input_string(&value->value, asset_id, sizeof(asset_id)))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        if (!config_service_set_asset_id(asset_id))
+        {
+            return UA_STATUSCODE_BADINTERNALERROR;
+        }
+        {
+            const UA_StatusCode alias_status = model_update_asset_id_alias(server, asset_id);
+            if (alias_status != UA_STATUSCODE_GOOD)
+            {
+                printf("[OPC UA]\tFailed to update AssetId alias: 0x%x (%s)\n",
+                       alias_status,
+                       UA_StatusCode_name(alias_status));
+                fflush(stdout);
+            }
+        }
+        break;
+    }
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
     case MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS:
         if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_UINT32]))
@@ -6508,7 +6723,6 @@ static UA_StatusCode model_apply_config(UA_Server *server,
 {
     UA_StatusCode status;
     UA_Boolean result = false;
-    (void)server;
     (void)session_id;
     (void)method_context;
     (void)object_id;
@@ -6523,6 +6737,17 @@ static UA_StatusCode model_apply_config(UA_Server *server,
     }
 
     result = config_service_apply();
+    if (result)
+    {
+        status = model_refresh_amb_locations(server, config_service_get());
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tLocation model refresh failed: 0x%x (%s)\n",
+                   status,
+                   UA_StatusCode_name(status));
+            result = false;
+        }
+    }
     printf("[OPC UA]\tApplyConfig %s\n", result ? "succeeded" : "failed");
     fflush(stdout);
     model_set_boolean_method_output(output_size, output, result);
@@ -6690,6 +6915,61 @@ static UA_StatusCode model_set_device_identity(UA_Server *server,
     identity.manufacture_date_utc = (int64_t)*(const UA_DateTime *)input[6].data;
     identity.calibration_date_utc = (int64_t)*(const UA_DateTime *)input[7].data;
     result = config_service_stage_set_identity(&identity);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_set_location_paths(UA_Server *server,
+                                              const UA_NodeId *session_id,
+                                              void *session_context,
+                                              const UA_NodeId *method_id,
+                                              void *method_context,
+                                              const UA_NodeId *object_id,
+                                              void *object_context,
+                                              size_t input_size,
+                                              const UA_Variant *input,
+                                              size_t output_size,
+                                              UA_Variant *output)
+{
+    char hierarchical_path[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN] = {0};
+    char operational_path[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN] = {0};
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 2u || input == NULL ||
+        !model_copy_input_string(&input[0],
+                                 hierarchical_path,
+                                 sizeof(hierarchical_path)) ||
+        !model_copy_input_string(&input[1],
+                                 operational_path,
+                                 sizeof(operational_path)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    result = config_service_stage_set_location_paths(hierarchical_path,
+                                                     operational_path);
+    printf("[OPC UA]\tSetLocationPaths %s hierarchical='%s' operational='%s'\n",
+           result ? "accepted" : "rejected",
+           hierarchical_path,
+           operational_path);
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "location-config",
+                              "device-location",
+                              result,
+                              result ? "location paths staged" : "invalid location paths");
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
@@ -8209,6 +8489,11 @@ static UA_StatusCode model_apply_imported_config(UA_Server *server,
     {
         details = "failed to persist imported configuration";
     }
+    else if ((status_code = model_refresh_amb_locations(server,
+                                                        config_service_get())) != UA_STATUSCODE_GOOD)
+    {
+        details = "configuration persisted but location model refresh failed";
+    }
     else
     {
         (void)config_import_service_abort();
@@ -9281,6 +9566,1149 @@ static UA_StatusCode model_add_folder(UA_Server *server,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE));
 }
 
+static UA_StatusCode model_add_amb_folder(UA_Server *server,
+                                         const char *node_id,
+                                         const char *browse_name,
+                                         const char *description,
+                                         UA_NodeId parent_node_id)
+{
+    UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)description);
+
+    return UA_Server_addObjectNode(
+        server,
+        UA_NODEID_STRING(1, (char *)node_id),
+        parent_node_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)browse_name),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE),
+        attributes,
+        NULL,
+        NULL);
+}
+
+static UA_StatusCode model_add_static_organized_variable(UA_Server *server,
+                                                         const char *node_id,
+                                                         const char *browse_name,
+                                                         const char *description,
+                                                         UA_NodeId parent_node_id,
+                                                         const void *value,
+                                                         const UA_DataType *data_type)
+{
+    UA_VariableAttributes attributes = UA_VariableAttributes_default;
+    UA_StatusCode status;
+
+    if (value == NULL || data_type == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)description);
+    attributes.dataType = data_type->typeId;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
+    attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    status = UA_Variant_setScalarCopy(&attributes.value, value, data_type);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = UA_Server_addVariableNode(
+        server,
+        UA_NODEID_STRING(1, (char *)node_id),
+        parent_node_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+        UA_QUALIFIEDNAME(1, (char *)browse_name),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+        attributes,
+        NULL,
+        NULL);
+    UA_Variant_clear(&attributes.value);
+    return status;
+}
+
+static UA_StatusCode model_build_amb_capabilities_and_requirements(UA_Server *server,
+                                                                   UA_NodeId device_id)
+{
+    static const struct
+    {
+        const char *node_id;
+        const char *browse_name;
+        const char *description;
+    } capabilities[] = {
+        {"Device.Capabilities.TemperatureMeasurement", "TemperatureMeasurement",
+         "Measures and exposes temperature telemetry"},
+        {"Device.Capabilities.FirmwareUpdate", "FirmwareUpdate",
+         "Supports staged firmware update with integrity verification"},
+        {"Device.Capabilities.ConfigurationManagement", "ConfigurationManagement",
+         "Supports persistent configuration import, export and reset"},
+        {"Device.Capabilities.CertificateAndTrustManagement", "CertificateAndTrustManagement",
+         "Supports certificate rotation and persistent trust-list management"},
+        {"Device.Capabilities.AssetDiscovery", "AssetDiscovery",
+         "Supports OPC UA AMB discovery by ProductInstanceUri and AssetId"},
+        {"Device.Capabilities.StructuredLocation", "StructuredLocation",
+         "Supports AMB hierarchical and operational asset locations"},
+        {"Device.Capabilities.SecureCommunication", "SecureCommunication",
+         "Supports encrypted OPC UA SecureChannels"},
+#ifdef UA_ENABLE_SUBSCRIPTIONS
+        {"Device.Capabilities.Subscriptions", "Subscriptions",
+         "Supports OPC UA subscriptions and monitored items"},
+#endif
+#ifdef UA_ENABLE_HISTORIZING
+        {"Device.Capabilities.Historizing", "Historizing",
+         "Supports historical data access"},
+#endif
+#if defined(UA_ENABLE_SUBSCRIPTIONS_EVENTS) && defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+        {"Device.Capabilities.AlarmsAndConditions", "AlarmsAndConditions",
+         "Supports OPC UA Alarms and Conditions"},
+#endif
+#ifdef UA_ENABLE_PUBSUB
+        {"Device.Capabilities.PubSub", "PubSub",
+         "Supports OPC UA PubSub"},
+#endif
+#ifdef UA_ENABLE_MQTT
+        {"Device.Capabilities.MQTTTransport", "MQTTTransport",
+         "Supports MQTT transport for OPC UA PubSub"},
+#endif
+    };
+    static const struct
+    {
+        const char *node_id;
+        const char *browse_name;
+        const char *description;
+        const char *value;
+    } requirements[] = {
+        {"Device.Requirements.NetworkTransport", "NetworkTransport",
+         "Network transport required for remote OPC UA services", "Ethernet/IPv4"},
+        {"Device.Requirements.TrustedTimeSource", "TrustedTimeSource",
+         "UTC source required for certificate validation and audit timestamps",
+         "NTP or equivalent UTC source"},
+        {"Device.Requirements.AdministrativeSecurityMode", "AdministrativeSecurityMode",
+         "Required OPC UA MessageSecurityMode for administrative operations",
+         "SignAndEncrypt"},
+    };
+    const UA_Boolean supported = true;
+    const UA_UInt32 max_telemetry_channels = CONFIG_SERVICE_MAX_CHANNELS;
+    UA_NodeId capabilities_id = UA_NODEID_STRING(1, (char *)"Device.Capabilities");
+    UA_NodeId requirements_id = UA_NODEID_STRING(1, (char *)"Device.Requirements");
+    UA_StatusCode status;
+
+    status = model_add_amb_folder(server,
+                                  "Device.Capabilities",
+                                  "Capabilities",
+                                  "Standard AMB entry point for asset capabilities",
+                                  device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = model_add_amb_folder(server,
+                                  "Device.Requirements",
+                                  "Requirements",
+                                  "Standard AMB entry point for asset requirements",
+                                  device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    for (size_t index = 0u; index < sizeof(capabilities) / sizeof(capabilities[0]); ++index)
+    {
+        status = model_add_static_organized_variable(server,
+                                                     capabilities[index].node_id,
+                                                     capabilities[index].browse_name,
+                                                     capabilities[index].description,
+                                                     capabilities_id,
+                                                     &supported,
+                                                     &UA_TYPES[UA_TYPES_BOOLEAN]);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+    status = model_add_static_organized_variable(
+        server,
+        "Device.Capabilities.MaxTelemetryChannels",
+        "MaxTelemetryChannels",
+        "Maximum number of persistently configured telemetry channels",
+        capabilities_id,
+        &max_telemetry_channels,
+        &UA_TYPES[UA_TYPES_UINT32]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    for (size_t index = 0u; index < sizeof(requirements) / sizeof(requirements[0]); ++index)
+    {
+        UA_String requirement_value = UA_STRING((char *)requirements[index].value);
+        status = model_add_static_organized_variable(server,
+                                                     requirements[index].node_id,
+                                                     requirements[index].browse_name,
+                                                     requirements[index].description,
+                                                     requirements_id,
+                                                     &requirement_value,
+                                                     &UA_TYPES[UA_TYPES_STRING]);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+
+    printf("[OPC UA]\tAMB Capabilities and Requirements ready\n");
+    fflush(stdout);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_add_location_node_version(UA_Server *server,
+                                                     const char *node_id,
+                                                     UA_NodeId parent_id)
+{
+    UA_VariableAttributes attributes = UA_VariableAttributes_default;
+    UA_String initial_value = UA_STRING((char *)"0");
+    UA_StatusCode status;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"NodeVersion");
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                               (char *)"Version of the location hierarchy");
+    attributes.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
+    attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    status = UA_Variant_setScalarCopy(&attributes.value,
+                                      &initial_value,
+                                      &UA_TYPES[UA_TYPES_STRING]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = UA_Server_addVariableNode(
+        server,
+        UA_NODEID_STRING(1, (char *)node_id),
+        parent_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+        UA_QUALIFIEDNAME(0, (char *)"NodeVersion"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+        attributes,
+        NULL,
+        NULL);
+    UA_Variant_clear(&attributes.value);
+    return status;
+}
+
+static UA_StatusCode model_write_location_node_version(UA_Server *server,
+                                                       const char *node_id)
+{
+    char revision_text[16];
+    UA_String revision;
+    UA_Variant value;
+
+    snprintf(revision_text,
+             sizeof(revision_text),
+             "%lu",
+             (unsigned long)config_service_get_running_revision());
+    revision = UA_STRING(revision_text);
+    UA_Variant_init(&value);
+    UA_Variant_setScalar(&value, &revision, &UA_TYPES[UA_TYPES_STRING]);
+    return UA_Server_writeValue(server,
+                                UA_NODEID_STRING(1, (char *)node_id),
+                                value);
+}
+
+static UA_StatusCode model_delete_location_tree(UA_Server *server,
+                                                const char *node_id_prefix)
+{
+    char node_id[96];
+
+    for (size_t depth = CONFIG_SERVICE_LOCATION_MAX_DEPTH; depth > 0u; --depth)
+    {
+        UA_StatusCode status;
+
+        if (snprintf(node_id,
+                     sizeof(node_id),
+                     "%s.%u",
+                     node_id_prefix,
+                     (unsigned)(depth - 1u)) >= (int)sizeof(node_id))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        status = UA_Server_deleteNode(server,
+                                      UA_NODEID_STRING(1, node_id),
+                                      true);
+        if (status != UA_STATUSCODE_GOOD && status != UA_STATUSCODE_BADNODEIDUNKNOWN)
+        {
+            return status;
+        }
+    }
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_build_location_path(UA_Server *server,
+                                               const char *path,
+                                               const char *node_id_prefix,
+                                               UA_UInt32 entry_point_id,
+                                               UA_UInt32 contains_reference_id,
+                                               UA_NodeId device_id)
+{
+    char path_buffer[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN];
+    char node_id[96];
+    char parent_node_id[96] = {0};
+    char *save_pointer = NULL;
+    char *segment = NULL;
+    UA_NodeId contains_id = UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                                              contains_reference_id);
+    size_t depth = 0u;
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+
+    if (path == NULL || path[0] == '\0')
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    strncpy(path_buffer, path, sizeof(path_buffer));
+    path_buffer[sizeof(path_buffer) - 1u] = '\0';
+    segment = strtok_r(path_buffer, "/", &save_pointer);
+    while (segment != NULL)
+    {
+        UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
+        UA_NodeId parent_id = depth == 0u
+                                  ? UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                                                      entry_point_id)
+                                  : UA_NODEID_STRING(1, parent_node_id);
+        UA_NodeId reference_type = depth == 0u
+                                       ? UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES)
+                                       : contains_id;
+
+        if (depth >= CONFIG_SERVICE_LOCATION_MAX_DEPTH ||
+            snprintf(node_id,
+                     sizeof(node_id),
+                     "%s.%u",
+                     node_id_prefix,
+                     (unsigned)depth) >= (int)sizeof(node_id))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+
+        attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", segment);
+        attributes.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                                   (char *)"Configured asset location");
+        status = UA_Server_addObjectNode(
+            server,
+            UA_NODEID_STRING(1, node_id),
+            parent_id,
+            reference_type,
+            UA_QUALIFIEDNAME(1, segment),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
+            attributes,
+            NULL,
+            NULL);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        strncpy(parent_node_id, node_id, sizeof(parent_node_id));
+        parent_node_id[sizeof(parent_node_id) - 1u] = '\0';
+        depth++;
+        segment = strtok_r(NULL, "/", &save_pointer);
+    }
+
+    if (depth == 0u)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    return UA_Server_addReference(server,
+                                  UA_NODEID_STRING(1, parent_node_id),
+                                  contains_id,
+                                  UA_NODEID2EXPANDEDNODEID(device_id),
+                                  true);
+}
+
+static UA_StatusCode model_refresh_amb_locations(UA_Server *server,
+                                                 const device_profile_config_t *config)
+{
+    UA_StatusCode status;
+
+    if (server == NULL || config == NULL || g_model_amb_namespace_index == 0u)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    status = model_delete_location_tree(server, "Locations.Hierarchical");
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_delete_location_tree(server, "Locations.Operational");
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_build_location_path(
+            server,
+            config->hierarchical_location_path,
+            "Locations.Hierarchical",
+            UA_AMBID_HIERARCHICAL_LOCATIONS,
+            UA_AMBID_HIERARCHICAL_CONTAINS,
+            UA_NODEID_STRING(1, (char *)"Device"));
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_build_location_path(
+            server,
+            config->operational_location_path,
+            "Locations.Operational",
+            UA_AMBID_OPERATIONAL_LOCATIONS,
+            UA_AMBID_OPERATIONAL_CONTAINS,
+            UA_NODEID_STRING(1, (char *)"Device"));
+    }
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_write_location_node_version(server,
+                                               "Locations.Hierarchical.NodeVersion");
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_location_node_version(server,
+                                                   "Locations.Operational.NodeVersion");
+    }
+    return status;
+}
+
+static UA_StatusCode model_build_amb_locations(UA_Server *server,
+                                               const device_profile_config_t *config)
+{
+    UA_StatusCode status;
+
+    status = model_add_location_node_version(
+        server,
+        "Locations.Hierarchical.NodeVersion",
+        UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                          UA_AMBID_HIERARCHICAL_LOCATIONS));
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_add_location_node_version(
+            server,
+            "Locations.Operational.NodeVersion",
+            UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                              UA_AMBID_OPERATIONAL_LOCATIONS));
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_refresh_amb_locations(server, config);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tAMB Locations ready, hierarchical='%s' operational='%s'\n",
+               config->hierarchical_location_path,
+               config->operational_location_path);
+        fflush(stdout);
+    }
+    return status;
+}
+
+static UA_StatusCode model_add_di_functional_group(UA_Server *server,
+                                                   const char *node_id,
+                                                   const char *browse_name,
+                                                   UA_NodeId parent_node_id)
+{
+    UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+
+    return UA_Server_addObjectNode(
+        server,
+        UA_NODEID_STRING(1, (char *)node_id),
+        parent_node_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)browse_name),
+        UA_NODEID_NUMERIC(g_model_di_namespace_index, UA_DIID_FUNCTIONALGROUPTYPE),
+        attributes,
+        NULL,
+        NULL);
+}
+
+static UA_StatusCode model_add_di_identification_property(
+    UA_Server *server,
+    const char *node_id,
+    const char *browse_name,
+    UA_NodeId parent_node_id,
+    UA_NodeId data_type,
+    model_node_context_t *context,
+    UA_Boolean writable)
+{
+    UA_VariableAttributes attributes = UA_VariableAttributes_default;
+    UA_DataSource data_source = {0};
+    UA_NodeId created_node_id = UA_NODEID_NULL;
+    const UA_Byte access_level = writable
+                                     ? (UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE)
+                                     : UA_ACCESSLEVELMASK_READ;
+    UA_StatusCode status;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.dataType = data_type;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
+    attributes.accessLevel = access_level;
+    attributes.userAccessLevel = access_level;
+    data_source.read = model_read_value;
+    data_source.write = writable ? model_write_value : NULL;
+
+    status = UA_Server_addVariableNode(
+        server,
+        UA_NODEID_STRING(1, (char *)node_id),
+        parent_node_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)browse_name),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+        attributes,
+        context,
+        &created_node_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return UA_Server_setVariableNode_dataSource(server, created_node_id, data_source);
+}
+
+static bool model_alias_match_class(const UA_Byte *pattern,
+                                    size_t pattern_length,
+                                    UA_Byte value,
+                                    size_t *consumed,
+                                    bool *valid)
+{
+    size_t index = 0u;
+    bool negate = false;
+    bool matched = false;
+    bool have_entry = false;
+
+    if (pattern == NULL || consumed == NULL || valid == NULL)
+    {
+        return false;
+    }
+    if (index < pattern_length && pattern[index] == '^')
+    {
+        negate = true;
+        index++;
+    }
+
+    while (index < pattern_length && pattern[index] != ']')
+    {
+        UA_Byte range_start;
+        UA_Byte range_end;
+
+        if (pattern[index] == '\\')
+        {
+            index++;
+            if (index >= pattern_length)
+            {
+                *valid = false;
+                return false;
+            }
+        }
+        range_start = pattern[index++];
+        range_end = range_start;
+        have_entry = true;
+
+        if (index + 1u < pattern_length && pattern[index] == '-' &&
+            pattern[index + 1u] != ']')
+        {
+            index++;
+            if (pattern[index] == '\\')
+            {
+                index++;
+                if (index >= pattern_length)
+                {
+                    *valid = false;
+                    return false;
+                }
+            }
+            range_end = pattern[index++];
+            if (range_start > range_end)
+            {
+                *valid = false;
+                return false;
+            }
+        }
+
+        if (value >= range_start && value <= range_end)
+        {
+            matched = true;
+        }
+    }
+
+    if (index >= pattern_length || pattern[index] != ']' || !have_entry)
+    {
+        *valid = false;
+        return false;
+    }
+
+    *consumed = index + 1u;
+    return negate ? !matched : matched;
+}
+
+static bool model_alias_pattern_matches(const UA_String *pattern,
+                                        const char *value,
+                                        bool *valid)
+{
+    bool current[CONFIG_SERVICE_ASSET_ID_MAX_LEN] = {false};
+    bool next[CONFIG_SERVICE_ASSET_ID_MAX_LEN] = {false};
+    const UA_Byte *value_bytes = (const UA_Byte *)value;
+    const UA_Byte *class_pattern = NULL;
+    size_t class_pattern_length = 0u;
+    size_t pattern_index = 0u;
+    const size_t value_length = value != NULL ? strlen(value) : 0u;
+
+    if (pattern == NULL || value == NULL || valid == NULL)
+    {
+        return false;
+    }
+    if (pattern->length > 256u || value_length >= CONFIG_SERVICE_ASSET_ID_MAX_LEN)
+    {
+        *valid = false;
+        return false;
+    }
+
+    *valid = true;
+    current[0] = true;
+    while (pattern_index < pattern->length)
+    {
+        UA_Byte token = pattern->data[pattern_index++];
+        bool match_any_string = false;
+        bool match_any_character = false;
+        UA_Byte literal = 0u;
+
+        class_pattern = NULL;
+        class_pattern_length = 0u;
+        if (token == '%')
+        {
+            match_any_string = true;
+        }
+        else if (token == '_')
+        {
+            match_any_character = true;
+        }
+        else if (token == '\\')
+        {
+            if (pattern_index >= pattern->length)
+            {
+                *valid = false;
+                return false;
+            }
+            literal = pattern->data[pattern_index++];
+        }
+        else if (token == '[')
+        {
+            size_t consumed = 0u;
+            class_pattern = pattern->data + pattern_index;
+            class_pattern_length = pattern->length - pattern_index;
+            (void)model_alias_match_class(class_pattern,
+                                          class_pattern_length,
+                                          0u,
+                                          &consumed,
+                                          valid);
+            if (!*valid)
+            {
+                return false;
+            }
+            pattern_index += consumed;
+        }
+        else
+        {
+            literal = token;
+        }
+
+        memset(next, 0, sizeof(next));
+        if (match_any_string)
+        {
+            next[0] = current[0];
+            for (size_t value_index = 1u; value_index <= value_length; ++value_index)
+            {
+                next[value_index] = current[value_index] || next[value_index - 1u];
+            }
+        }
+        else
+        {
+            for (size_t value_index = 1u; value_index <= value_length; ++value_index)
+            {
+                bool token_matches = match_any_character;
+                if (class_pattern != NULL)
+                {
+                    size_t ignored = 0u;
+                    token_matches = model_alias_match_class(class_pattern,
+                                                            class_pattern_length,
+                                                            value_bytes[value_index - 1u],
+                                                            &ignored,
+                                                            valid);
+                }
+                else if (!match_any_character)
+                {
+                    token_matches = literal == value_bytes[value_index - 1u];
+                }
+                next[value_index] = current[value_index - 1u] && token_matches;
+            }
+        }
+        memcpy(current, next, sizeof(current));
+    }
+
+    return current[value_length];
+}
+
+static bool model_alias_pattern_is_valid(const UA_String *pattern)
+{
+    size_t index = 0u;
+
+    if (pattern == NULL)
+    {
+        return false;
+    }
+    while (index < pattern->length)
+    {
+        if (pattern->data[index] == '\\')
+        {
+            index += 2u;
+            if (index > pattern->length)
+            {
+                return false;
+            }
+            continue;
+        }
+        if (pattern->data[index] == '[')
+        {
+            size_t consumed = 0u;
+            bool valid = true;
+            (void)model_alias_match_class(pattern->data + index + 1u,
+                                          pattern->length - index - 1u,
+                                          0u,
+                                          &consumed,
+                                          &valid);
+            if (!valid)
+            {
+                return false;
+            }
+            index += consumed + 1u;
+            continue;
+        }
+        index++;
+    }
+    return true;
+}
+
+static UA_StatusCode model_find_asset_alias(UA_Server *server,
+                                            const UA_NodeId *session_id,
+                                            void *session_context,
+                                            const UA_NodeId *method_id,
+                                            void *method_context,
+                                            const UA_NodeId *object_id,
+                                            void *object_context,
+                                            size_t input_size,
+                                            const UA_Variant *input,
+                                            size_t output_size,
+                                            UA_Variant *output)
+{
+    const device_profile_config_t *config = config_service_get();
+    UA_AliasNameDataType matches[2];
+    UA_ExpandedNodeId references[2];
+    const UA_String *pattern;
+    const UA_NodeId *reference_filter;
+    const char *asset_id;
+    size_t matches_size = 0u;
+    bool include_product = false;
+    bool include_asset_id = false;
+    bool valid_pattern = true;
+    UA_NodeId alias_for_id = UA_NODEID_NUMERIC(0, UA_NS0ID_ALIASFOR);
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)method_id;
+    (void)method_context;
+    (void)object_context;
+
+    if (config == NULL || object_id == NULL || input == NULL || output == NULL ||
+        input_size != 2u || output_size != 1u)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    if (!UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_STRING]) ||
+        !UA_Variant_hasScalarType(&input[1], &UA_TYPES[UA_TYPES_NODEID]))
+    {
+        return UA_STATUSCODE_BADTYPEMISMATCH;
+    }
+
+    pattern = (const UA_String *)input[0].data;
+    reference_filter = (const UA_NodeId *)input[1].data;
+    if (!model_alias_pattern_is_valid(pattern))
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    if (!UA_NodeId_isNull(reference_filter) &&
+        !UA_NodeId_equal(reference_filter, &alias_for_id))
+    {
+        return UA_Variant_setArrayCopy(&output[0], NULL, 0u,
+                                       &UA_TYPES[UA_TYPES_ALIASNAMEDATATYPE]);
+    }
+
+    if (object_id->identifierType != UA_NODEIDTYPE_NUMERIC)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    if (object_id->namespaceIndex == 0u &&
+        object_id->identifier.numeric == UA_NS0ID_ALIASES)
+    {
+        include_product = true;
+        include_asset_id = true;
+    }
+    else if (object_id->namespaceIndex != g_model_amb_namespace_index)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    else switch (object_id->identifier.numeric)
+    {
+    case UA_AMBID_ASSETS:
+        include_product = true;
+        include_asset_id = true;
+        break;
+    case UA_AMBID_ASSETS_BY_PRODUCT_INSTANCE_URI:
+        include_product = true;
+        break;
+    case UA_AMBID_ASSETS_BY_ASSET_ID:
+        include_asset_id = true;
+        break;
+    default:
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    memset(matches, 0, sizeof(matches));
+    memset(references, 0, sizeof(references));
+    if (include_product &&
+        model_alias_pattern_matches(pattern, config->product_instance_uri, &valid_pattern))
+    {
+        references[matches_size] = UA_EXPANDEDNODEID_STRING(1, (char *)"Device");
+        matches[matches_size].aliasName =
+            UA_QUALIFIEDNAME(g_model_amb_namespace_index,
+                             (char *)config->product_instance_uri);
+        matches[matches_size].referencedNodesSize = 1u;
+        matches[matches_size].referencedNodes = &references[matches_size];
+        matches_size++;
+    }
+    if (!valid_pattern)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    asset_id = config->asset_id[0] != '\0' ? config->asset_id : MODEL_ASSET_ALIAS_UNASSIGNED;
+    if (include_asset_id &&
+        model_alias_pattern_matches(pattern, asset_id, &valid_pattern))
+    {
+        references[matches_size] = UA_EXPANDEDNODEID_STRING(1, (char *)"Device");
+        matches[matches_size].aliasName =
+            UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)asset_id);
+        matches[matches_size].referencedNodesSize = 1u;
+        matches[matches_size].referencedNodes = &references[matches_size];
+        matches_size++;
+    }
+    if (!valid_pattern)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    return UA_Variant_setArrayCopy(&output[0], matches, matches_size,
+                                   &UA_TYPES[UA_TYPES_ALIASNAMEDATATYPE]);
+}
+
+static UA_StatusCode model_write_asset_alias_node_version(UA_Server *server,
+                                                          UA_UInt32 node_id)
+{
+    char revision_text[16];
+    UA_String revision;
+    UA_Variant value;
+
+    (void)snprintf(revision_text, sizeof(revision_text), "%lu",
+                   (unsigned long)config_service_get_running_revision());
+    revision = UA_STRING(revision_text);
+    UA_Variant_init(&value);
+    UA_Variant_setScalar(&value, &revision, &UA_TYPES[UA_TYPES_STRING]);
+    return UA_Server_writeValue(server,
+                                UA_NODEID_NUMERIC(g_model_amb_namespace_index, node_id),
+                                value);
+}
+
+static UA_StatusCode model_write_alias_last_change(UA_Server *server)
+{
+    const UA_Int64 unix_time = UA_DateTime_toUnixTime(UA_DateTime_now());
+    const UA_Int64 seconds_since_2000 = unix_time - 946684800LL;
+    UA_UInt32 next_value = 0u;
+    UA_Variant value;
+
+    if (seconds_since_2000 > 0LL)
+    {
+        next_value = seconds_since_2000 > (UA_Int64)UINT32_MAX
+                         ? UINT32_MAX
+                         : (UA_UInt32)seconds_since_2000;
+        if (next_value <= g_model_alias_last_change &&
+            g_model_alias_last_change < UINT32_MAX)
+        {
+            next_value = g_model_alias_last_change + 1u;
+        }
+    }
+    g_model_alias_last_change = next_value;
+    UA_Variant_init(&value);
+    UA_Variant_setScalar(&value, &g_model_alias_last_change,
+                         &UA_TYPES[UA_TYPES_UINT32]);
+    return UA_Server_writeValue(server,
+                                UA_NODEID_NUMERIC(0, UA_NS0ID_ALIASES_LASTCHANGE),
+                                value);
+}
+
+static UA_StatusCode model_update_asset_id_alias(UA_Server *server,
+                                                 const char *asset_id)
+{
+    const char *alias_name = asset_id != NULL && asset_id[0] != '\0'
+                                 ? asset_id
+                                 : MODEL_ASSET_ALIAS_UNASSIGNED;
+    UA_NodeId alias_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_ASSET_ALIAS_ASSET_ID);
+    UA_QualifiedName browse_name =
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)alias_name);
+    UA_LocalizedText display_name =
+        UA_LOCALIZEDTEXT((char *)"en-US", (char *)alias_name);
+    UA_StatusCode status;
+
+    status = UA_Server_writeBrowseName(server, alias_id, browse_name);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = UA_Server_writeDisplayName(server, alias_id, display_name);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = model_write_asset_alias_node_version(server,
+                                                  UA_AMBID_ASSET_ID_NODE_VERSION);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    return model_write_alias_last_change(server);
+}
+
+static UA_StatusCode model_add_asset_alias(UA_Server *server,
+                                           const char *node_id,
+                                           const char *alias_name,
+                                           UA_UInt32 category_id,
+                                           UA_NodeId device_id)
+{
+    UA_ObjectAttributes attributes = UA_ObjectAttributes_default;
+    UA_NodeId alias_id = UA_NODEID_STRING(1, (char *)node_id);
+    UA_StatusCode status;
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)alias_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                               (char *)"AMB asset discovery alias");
+    status = UA_Server_addObjectNode(
+        server,
+        alias_id,
+        UA_NODEID_NUMERIC(g_model_amb_namespace_index, category_id),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)alias_name),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ALIASNAMETYPE),
+        attributes,
+        NULL,
+        NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return UA_Server_addReference(server,
+                                  alias_id,
+                                  UA_NODEID_NUMERIC(0, UA_NS0ID_ALIASFOR),
+                                  UA_EXPANDEDNODEID_NODEID(device_id),
+                                  true);
+}
+
+static UA_StatusCode model_build_asset_discovery(UA_Server *server,
+                                                 UA_NodeId device_id,
+                                                 const device_profile_config_t *config)
+{
+    const char *asset_id;
+    size_t namespace_index = 0u;
+    UA_StatusCode status;
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    status = UA_Server_getNamespaceByName(server,
+                                          UA_STRING((char *)UA_AMB_NAMESPACE_URI),
+                                          &namespace_index);
+    if (status != UA_STATUSCODE_GOOD || namespace_index > UINT16_MAX)
+    {
+        return status != UA_STATUSCODE_GOOD ? status : UA_STATUSCODE_BADOUTOFRANGE;
+    }
+    g_model_amb_namespace_index = (UA_UInt16)namespace_index;
+
+    status = UA_Server_setMethodNodeCallback(
+        server,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_ALIASES_FINDALIAS),
+        model_find_asset_alias);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_setMethodNodeCallback(
+            server,
+            UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                              UA_AMBID_ASSETS_FIND_ALIAS),
+            model_find_asset_alias);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_setMethodNodeCallback(
+            server,
+            UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                              UA_AMBID_PRODUCT_INSTANCE_URI_FIND_ALIAS),
+            model_find_asset_alias);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_Server_setMethodNodeCallback(
+            server,
+            UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                              UA_AMBID_ASSET_ID_FIND_ALIAS),
+            model_find_asset_alias);
+    }
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_asset_alias(server,
+                                   MODEL_NODE_ASSET_ALIAS_PRODUCT_INSTANCE_URI,
+                                   config->product_instance_uri,
+                                   UA_AMBID_ASSETS_BY_PRODUCT_INSTANCE_URI,
+                                   device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    asset_id = config->asset_id[0] != '\0' ? config->asset_id : MODEL_ASSET_ALIAS_UNASSIGNED;
+    status = model_add_asset_alias(server,
+                                   MODEL_NODE_ASSET_ALIAS_ASSET_ID,
+                                   asset_id,
+                                   UA_AMBID_ASSETS_BY_ASSET_ID,
+                                   device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_write_asset_alias_node_version(
+        server, UA_AMBID_PRODUCT_INSTANCE_URI_NODE_VERSION);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_asset_alias_node_version(
+            server, UA_AMBID_ASSET_ID_NODE_VERSION);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_alias_last_change(server);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tAMB Asset Discovery ready, namespace=%u\n",
+               (unsigned)g_model_amb_namespace_index);
+        fflush(stdout);
+    }
+    return status;
+}
+
+static UA_StatusCode model_build_device_health_nodes(UA_Server *server,
+                                                     UA_NodeId device_id)
+{
+    UA_VariableAttributes health_attributes = UA_VariableAttributes_default;
+    UA_ObjectAttributes alarms_attributes = UA_ObjectAttributes_default;
+    UA_DataSource data_source = {0};
+    UA_NodeId health_id = UA_NODEID_NULL;
+    size_t namespace_index = 0u;
+    UA_StatusCode status;
+
+    status = UA_Server_getNamespaceByName(server,
+                                          UA_STRING((char *)UA_DI_NAMESPACE_URI),
+                                          &namespace_index);
+    if (status != UA_STATUSCODE_GOOD || namespace_index > UINT16_MAX)
+    {
+        return status != UA_STATUSCODE_GOOD ? status : UA_STATUSCODE_BADOUTOFRANGE;
+    }
+    g_model_di_namespace_index = (UA_UInt16)namespace_index;
+
+    status = UA_Server_addReference(
+        server,
+        device_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASINTERFACE),
+        UA_EXPANDEDNODEID_NUMERIC(g_model_di_namespace_index, UA_DIID_IDEVICEHEALTHTYPE),
+        true);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    health_attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"DeviceHealth");
+    health_attributes.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                                      (char *)"Overall device health state");
+    health_attributes.dataType = UA_NODEID_NUMERIC(g_model_di_namespace_index,
+                                                    UA_DIID_DEVICEHEALTHENUMERATION);
+    health_attributes.valueRank = UA_VALUERANK_SCALAR;
+    health_attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+    health_attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    data_source.read = model_read_value;
+
+    status = UA_Server_addVariableNode(
+        server,
+        UA_NODEID_STRING(1, (char *)"Device.DeviceHealth"),
+        device_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)"DeviceHealth"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+        health_attributes,
+        &g_fixed_node_contexts[FIXED_CTX_DEVICE_HEALTH],
+        &health_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = UA_Server_setVariableNode_dataSource(server, health_id, data_source);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    alarms_attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US",
+                                                      (char *)"DeviceHealthAlarms");
+    alarms_attributes.description = UA_LOCALIZEDTEXT((char *)"en-US",
+                                                      (char *)"Device health alarm conditions");
+    status = UA_Server_addObjectNode(
+        server,
+        UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms"),
+        device_id,
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+        UA_QUALIFIEDNAME(g_model_di_namespace_index, (char *)"DeviceHealthAlarms"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE),
+        alarms_attributes,
+        NULL,
+        NULL);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tDeviceHealth model ready, DI namespace=%u\n",
+               (unsigned)g_model_di_namespace_index);
+        fflush(stdout);
+    }
+    return status;
+}
+
 static UA_StatusCode model_add_readonly_variable_ex(UA_Server *server,
                                                     const char *node_id,
                                                     const char *display_name,
@@ -9716,8 +11144,8 @@ static UA_StatusCode model_add_set_device_identity_method_node(UA_Server *server
     model_fill_string_argument(&input_arguments[1], "ProductInstanceUri", "Stable production URI");
     model_fill_string_argument(&input_arguments[2], "SerialNumber", "Production serial number");
     model_fill_string_argument(&input_arguments[3], "AssetId", "Plant asset identifier");
-    model_fill_string_argument(&input_arguments[4], "HWRevision", "Hardware revision");
-    model_fill_string_argument(&input_arguments[5], "FWRevision", "Firmware revision");
+    model_fill_string_argument(&input_arguments[4], "HardwareRevision", "Hardware revision");
+    model_fill_string_argument(&input_arguments[5], "SoftwareRevision", "Software revision");
     model_fill_datetime_argument(&input_arguments[6], "ManufactureDate", "Manufacturing timestamp in UTC");
     model_fill_datetime_argument(&input_arguments[7], "CalibrationDate", "Calibration timestamp in UTC");
     model_fill_string_argument(&input_arguments[8], "Location", "Site, line and position string");
@@ -9731,6 +11159,31 @@ static UA_StatusCode model_add_set_device_identity_method_node(UA_Server *server
                                                      model_set_device_identity,
                                                      10u,
                                                      input_arguments);
+}
+
+static UA_StatusCode model_add_set_location_paths_method_node(UA_Server *server,
+                                                              UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_arguments[2];
+
+    model_fill_string_argument(
+        &input_arguments[0],
+        "HierarchicalLocationPath",
+        "Physical hierarchy separated by '/', for example Factory/Workshop/Cabinet");
+    model_fill_string_argument(
+        &input_arguments[1],
+        "OperationalLocationPath",
+        "Operational hierarchy separated by '/', for example Line/ProcessUnit");
+
+    return model_add_method_node_with_boolean_result(
+        server,
+        maintenance_folder_id,
+        MODEL_METHOD_SET_LOCATION_PATHS,
+        "SetLocationPaths",
+        "Stages AMB hierarchical and operational location paths",
+        model_set_location_paths,
+        2u,
+        input_arguments);
 }
 
 static UA_StatusCode model_add_set_network_config_method_node(UA_Server *server,
@@ -10582,7 +12035,34 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 #endif
 
-    status = model_add_folder(server, "Device.Identification", "Identification", device_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    status = model_build_asset_discovery(server, device_id, device_config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_build_amb_capabilities_and_requirements(server, device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_build_amb_locations(server, device_config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_build_device_health_nodes(server, device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_di_functional_group(server,
+                                           "Device.Identification",
+                                           "Identification",
+                                           device_id);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -10930,56 +12410,66 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
     }
 #endif
 
-    status = model_add_readonly_variable(server,
-                                         "Device.Identification.Manufacturer",
-                                         "Manufacturer",
-                                         identification_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_MANUFACTURER]);
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.Manufacturer",
+        "Manufacturer",
+        identification_id,
+        UA_TYPES[UA_TYPES_LOCALIZEDTEXT].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_MANUFACTURER],
+        false);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
     }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.Identification.Model",
-                                         "Model",
-                                         identification_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_MODEL]);
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.Model",
+        "Model",
+        identification_id,
+        UA_TYPES[UA_TYPES_LOCALIZEDTEXT].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_MODEL],
+        false);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
     }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.Identification.SerialNumber",
-                                         "SerialNumber",
-                                         identification_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_SERIAL_NUMBER]);
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.SerialNumber",
+        "SerialNumber",
+        identification_id,
+        UA_TYPES[UA_TYPES_STRING].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_SERIAL_NUMBER],
+        false);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
     }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.Identification.HWRevision",
-                                         "HWRevision",
-                                         identification_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_HW_REVISION]);
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.HardwareRevision",
+        "HardwareRevision",
+        identification_id,
+        UA_TYPES[UA_TYPES_STRING].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_HW_REVISION],
+        false);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
     }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.Identification.FWRevision",
-                                         "FWRevision",
-                                         identification_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_FW_REVISION]);
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.SoftwareRevision",
+        "SoftwareRevision",
+        identification_id,
+        UA_TYPES[UA_TYPES_STRING].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_FW_REVISION],
+        false);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -11018,23 +12508,40 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.Identification.ProductInstanceUri",
-                                         "ProductInstanceUri",
-                                         identification_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_PRODUCT_INSTANCE_URI]);
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.ProductInstanceUri",
+        "ProductInstanceUri",
+        identification_id,
+        UA_TYPES[UA_TYPES_STRING].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_PRODUCT_INSTANCE_URI],
+        false);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
     }
 
-    status = model_add_readonly_variable(server,
-                                         "Device.Identification.AssetId",
-                                         "AssetId",
-                                         identification_id,
-                                         UA_TYPES[UA_TYPES_STRING].typeId,
-                                         &g_fixed_node_contexts[FIXED_CTX_IDENT_ASSET_ID]);
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.AssetId",
+        "AssetId",
+        identification_id,
+        UA_TYPES[UA_TYPES_STRING].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_ASSET_ID],
+        true);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_di_identification_property(
+        server,
+        "Device.Identification.RevisionCounter",
+        "RevisionCounter",
+        identification_id,
+        UA_TYPES[UA_TYPES_INT32].typeId,
+        &g_fixed_node_contexts[FIXED_CTX_IDENT_REVISION_COUNTER],
+        false);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -11853,6 +13360,12 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
         status = model_add_set_device_identity_method_node(server, maintenance_configuration_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_set_location_paths_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;

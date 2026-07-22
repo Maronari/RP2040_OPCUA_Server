@@ -657,6 +657,27 @@ static config_validate_service_result_t config_json_parse_device_object(config_j
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
     result = config_json_expect_named_i64(reader, false, "calibrationDateUtc", "device.calibrationDateUtc", &candidate->calibration_date_utc);
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+
+    config_json_reader_skip_whitespace(reader);
+    if (config_json_reader_consume_char(reader, ','))
+    {
+        result = config_json_reader_expect_key(reader,
+                                               "hierarchicalLocationPath",
+                                               "device.hierarchicalLocationPath");
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_reader_parse_string_field(reader,
+                                                       "device.hierarchicalLocationPath",
+                                                       candidate->hierarchical_location_path,
+                                                       sizeof(candidate->hierarchical_location_path));
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_expect_named_string(reader,
+                                                 false,
+                                                 "operationalLocationPath",
+                                                 "device.operationalLocationPath",
+                                                 candidate->operational_location_path,
+                                                 sizeof(candidate->operational_location_path));
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+    }
     return config_json_reader_expect_char(reader, '}', "device object");
 }
 
@@ -985,6 +1006,20 @@ static config_validate_service_result_t config_validate_service_validate_candida
                                             "timezone offset must stay within -720..840 minutes");
         return CONFIG_VALIDATE_RESULT_INVALID_TIMEZONE;
     }
+    if (!config_service_location_path_is_valid(candidate->hierarchical_location_path))
+    {
+        config_validate_service_set_message(message,
+                                            message_size,
+                                            "device.hierarchicalLocationPath is invalid");
+        return CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH;
+    }
+    if (!config_service_location_path_is_valid(candidate->operational_location_path))
+    {
+        config_validate_service_set_message(message,
+                                            message_size,
+                                            "device.operationalLocationPath is invalid");
+        return CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH;
+    }
     if (candidate->opcua_port == 0u)
     {
         config_validate_service_set_message(message, message_size, "opc ua port must be non-zero");
@@ -1107,6 +1142,7 @@ const char *config_validate_service_result_to_string(config_validate_service_res
     case CONFIG_VALIDATE_RESULT_INTERNAL_ERROR: return "INTERNAL_ERROR";
     case CONFIG_VALIDATE_RESULT_INVALID_JSON: return "INVALID_JSON";
     case CONFIG_VALIDATE_RESULT_MISSING_FIELD: return "MISSING_FIELD";
+    case CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH: return "INVALID_LOCATION_PATH";
     default: return "UNKNOWN";
     }
 }

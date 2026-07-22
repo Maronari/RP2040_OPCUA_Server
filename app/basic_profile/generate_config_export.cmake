@@ -37,7 +37,9 @@ set(CONFIG_EXPORT_JSON [==[
     "location": "",
     "assetClass": "",
     "manufactureDateUtc": 0,
-    "calibrationDateUtc": 0
+    "calibrationDateUtc": 0,
+    "hierarchicalLocationPath": "",
+    "operationalLocationPath": ""
   },
   "network": {
     "mode": "dhcp",
