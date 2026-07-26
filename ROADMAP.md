@@ -51,6 +51,7 @@ OPC UA remains the primary northbound interface. It must be an adapter over serv
 10. **No fake-green CI.** Required checks must fail the workflow on failure. `continue-on-error`, unconditional `|| true`, or tests that only start an emulator without asserting behavior are not acceptable for release gates.
 11. **Update this file.** When a version is released, mark its acceptance checklist complete and add the release commit SHA.
 12. **Stop at acceptance.** Do not add speculative companion specifications, cloud APIs, REST, GDS, PubSub UDP/TSN, full historian behavior or fleet management unless a later roadmap revision explicitly schedules them.
+13. **Drivers are firmware, configuration is data.** Through `v1.0.0`, every native sensor, actuator and field-protocol driver must be statically compiled into the firmware image. Configuration tools may select and parameterize an installed driver by stable `driver_id`, but must not upload, link, interpret or execute new driver code on the device.
 
 ## 3. Definition of done for every release
 
@@ -126,7 +127,7 @@ This release changed the project from a demo server into a platform prototype, b
 
 ### `v0.3.1` — DI/AMB asset and maintenance model
 
-Tag/main commit: `a91bf946f2b605a1aa9bef8e591bfa95e608803f`.
+Firmware baseline tag commit: `a91bf946f2b605a1aa9bef8e591bfa95e608803f`.
 
 Compared with `v0.3`, this release added:
 
@@ -137,7 +138,7 @@ Compared with `v0.3`, this release added:
 - `verify_amb_model.py` for read-only structural verification;
 - Nodeset injector extensions required by DI/AMB.
 
-`main` is currently identical to `v0.3.1`.
+The firmware source baseline remains `v0.3.1`; later documentation-only commits on `main` do not change that implementation baseline.
 
 ## 5. Current technical constraints
 
@@ -157,6 +158,26 @@ The roadmap below is based on these concrete issues in `v0.3.1`:
 12. OTA integrity is CRC-based, not cryptographically signed. The application clears the ready-to-boot state immediately after startup rather than after a health-confirmation window.
 13. The watchdog task kicks independently of subsystem health, so a deadlocked service can coexist with a healthy watchdog task.
 14. AMB maintenance exists structurally but has no service-owned method workflow, persistent journal or Historical Event Access.
+
+### 5.1 Driver and configurator deployment policy
+
+This policy is mandatory through `v1.0.0` and must be treated as an architectural constraint rather than an implementation suggestion.
+
+- The complete human-facing sensor/module catalog belongs in the desktop configurator or other host tooling. It may contain names, wiring diagrams, supported interfaces, default units, channel templates, register maps and the stable `driver_id` required by each entry.
+- The RP2350 firmware contains only the platform core plus a compile-time-selected set of native drivers. A device configuration may reference only drivers present in that exact firmware image.
+- The configurator sends configuration data, never executable driver code. It must not send native objects, relocatable modules, scripts, bytecode or dynamically loadable plugins for execution on the MCU.
+- Before generating or applying configuration, the configurator must read device capabilities, including at least firmware version, hardware revision/profile, configuration-schema version, `SupportedDrivers`, driver capabilities and available hardware resources.
+- Firmware must reject an unknown or unavailable `driver_id` deterministically before changing running state. The error must identify the missing driver and leave the previous known-good configuration active.
+- Runtime contexts, task state, channel objects and driver buffers are created only for drivers used by the running configuration. Compiled but inactive drivers may consume external Flash, but must not reserve permanent SRAM/PSRAM proportional to the number of available drivers.
+- Driver inclusion must be controlled at build time. Disabled drivers must not remain reachable through a global registry and must be removable from the final ELF by source selection and section garbage collection.
+- Initial firmware driver packs are:
+  - `base`: internal temperature, generic ADC, GPIO input and GPIO output;
+  - `environmental`: `base` plus selected environmental sensors;
+  - `motion`: `base` plus selected IMU/vibration sensors;
+  - `industrial`: `base` plus industrial analog frontends and Modbus adapters;
+  - `development`: all drivers intentionally enabled for integration and test builds.
+- A firmware profile change is a firmware update, not a configuration transaction. Before signed OTA is complete it is installed through the normal development/release flashing process; after `v0.6.0` it may be installed as a compatible signed OTA image.
+- Dynamic native-driver loading is explicitly deferred beyond `v1.0.0`. Any future reconsideration requires a documented ABI, signature verification, compatibility model, resource isolation and fault-containment design.
 
 ## 6. Version roadmap
 
@@ -452,7 +473,9 @@ Make one firmware image safely reconfigurable for multiple device profiles.
 - [ ] Use a controlled OPC UA server restart if safe dynamic node deletion/recreation cannot be proven. Do not implement fragile live mutation merely to avoid a short reconnect.
 - [ ] Recover correctly if power is lost during stage, persist, activation or commit.
 - [ ] Version configuration import/export and reject incompatible schemas with diagnostics.
-- [ ] Add profile presets: sensor node, remote I/O and development/benchmark profile.
+- [ ] Expose firmware/configuration compatibility data through the management model: firmware profile, hardware revision, configuration-schema version, `SupportedDrivers`, per-driver capabilities and available hardware resources.
+- [ ] Reject configurations that reference unavailable drivers before staged configuration can become running; preserve the previous known-good configuration and report every missing `driver_id`.
+- [ ] Add profile presets: sensor node, remote I/O and development/benchmark profile. These runtime configuration presets are distinct from compile-time firmware driver packs.
 
 ### Tests and acceptance
 
@@ -476,6 +499,12 @@ Make third-party sensor/actuator integration a documented extension point.
 ### Required implementation
 
 - [ ] Freeze the pre-1.0 driver API candidate.
+- [ ] Keep all native drivers statically linked into firmware; configuration and host tools may instantiate them only by stable `driver_id`.
+- [ ] Add one compile-time enable/disable option per driver or driver family, and generate the runtime driver catalog only from enabled targets.
+- [ ] Ensure disabled drivers and their private dependencies are absent from the final ELF/UF2 rather than merely hidden from the catalog.
+- [ ] Define firmware driver-pack manifests for `base`, `environmental`, `motion`, `industrial` and `development`, including profile ID, included driver IDs, hardware compatibility and resource budget.
+- [ ] Expose `SupportedDrivers` and `DriverCapabilities` through a bounded OPC UA capability model usable by the configurator before configuration upload.
+- [ ] Define a versioned host-side sensor/module descriptor format that maps catalog entries to required `driver_id`, connection constraints, default channel templates, units and wiring information. This descriptor data remains host-side and is not executable firmware code.
 - [ ] Add driver capability descriptors: readable, writable, polling, interrupt-driven, self-test, calibration and required hardware resources.
 - [ ] Provide reference drivers:
   - internal temperature;
@@ -492,6 +521,9 @@ Make third-party sensor/actuator integration a documented extension point.
 ### Tests and acceptance
 
 - [ ] A new mock driver can be added without editing OPC UA modules or core channel manager logic.
+- [ ] Build two firmware profiles and verify that a disabled driver's code/symbols are absent from the smaller ELF and that the reported `SupportedDrivers` set exactly matches the linked catalog.
+- [ ] Verify that compiled but inactive drivers allocate no per-instance runtime context, task, channel buffer or permanent SRAM/PSRAM block.
+- [ ] A configuration referencing a driver absent from the installed profile is rejected without altering the running configuration.
 - [ ] A failing/slow driver does not stop other channels.
 - [ ] GPIO write authorization and readback are verified.
 - [ ] Driver self-test results contribute to Device Health.
@@ -547,7 +579,7 @@ Upgrade the existing CRC-checked OTA prototype to a production-oriented update c
 
 ### Required implementation
 
-- [ ] Add a signed firmware manifest containing hardware compatibility, image version, size, hash and signature.
+- [ ] Add a signed firmware manifest containing hardware compatibility, firmware-profile ID, included driver-pack/version information, image version, size, hash and signature.
 - [ ] Use SHA-256 plus ECDSA P-256 verification through the existing mbedTLS stack unless a documented evaluation selects another supported algorithm.
 - [ ] Verify the manifest and image before marking an update bootable.
 - [ ] Add anti-rollback policy with an explicit development override.
@@ -913,7 +945,7 @@ Codex must not implement the following before a roadmap revision assigns an exac
 - cloud/fleet-management backend;
 - full database-class historian;
 - additional companion specifications unrelated to a demonstrated device use case;
-- dynamic plugin loading;
+- dynamic native/bytecode driver loading or executable driver upload from the configurator;
 - high-availability clustering.
 
 ## 8. Immediate next action
