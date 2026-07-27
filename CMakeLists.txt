@@ -53,12 +53,13 @@ rp2_apply_submodule_patch(
 include(pico_sdk_import.cmake)
 include(rp2040_hat_lwip_c_sdk_version.cmake)
 include(rp2040_hat_freertos_c_sdk_version.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/firmware_version.cmake)
 
 # Set project name
 set(PROJECT_NAME RP2-HAT-LWIP-C)
 
 # Set project informations
-project(${PROJECT_NAME} C CXX ASM)
+project(${PROJECT_NAME} VERSION ${RP2_FIRMWARE_VERSION} LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)

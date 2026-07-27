@@ -231,15 +231,16 @@ addAmbMaintenanceEnum(UA_Server *server, UA_UInt16 ns) {
 
 static UA_StatusCode
 addAmbMaintenanceProperty(UA_Server *server, UA_UInt16 ns, UA_UInt32 nodeId,
-                           const char *browseName, UA_NodeId dataType) {
+                           const char *browseName, UA_NodeId dataType,
+                           UA_Int32 valueRank) {
     UA_VariableAttributes attr = UA_VariableAttributes_default;
     UA_StatusCode res;
 
     attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browseName);
     attr.dataType = dataType;
-    attr.valueRank = UA_VALUERANK_SCALAR;
-    attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    attr.valueRank = valueRank;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ;
     res = UA_Server_addVariableNode(
         server,
         UA_NODEID_NUMERIC(ns, nodeId),
@@ -379,6 +380,8 @@ addAmbMaintenanceStateMachine(UA_Server *server, UA_UInt16 ns) {
 
 static UA_StatusCode
 addAmbMaintenanceModel(UA_Server *server, UA_UInt16 ns, UA_UInt16 diNs) {
+    UA_DataTypeAttributes nameNodeIdAttr = UA_DataTypeAttributes_default;
+    UA_ObjectAttributes encodingAttr = UA_ObjectAttributes_default;
     UA_ObjectAttributes stateAttr = UA_ObjectAttributes_default;
     UA_StatusCode res;
 
@@ -416,6 +419,42 @@ addAmbMaintenanceModel(UA_Server *server, UA_UInt16 ns, UA_UInt16 diNs) {
 
     res = addAmbMaintenanceEnum(server, ns);
     if(res != UA_STATUSCODE_GOOD) return res;
+    nameNodeIdAttr.displayName = UA_LOCALIZEDTEXT(
+        (char *)"en-US", (char *)"NameNodeIdDataType");
+    nameNodeIdAttr.description = UA_LOCALIZEDTEXT(
+        (char *)"en-US", (char *)"Human-readable name with an optional NodeId");
+    res = UA_Server_addDataTypeNode(
+        server,
+        UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_STRUCTURE),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASSUBTYPE),
+        UA_QUALIFIEDNAME(ns, (char *)"NameNodeIdDataType"),
+        nameNodeIdAttr, NULL, NULL);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    encodingAttr.displayName = UA_LOCALIZEDTEXT(
+        (char *)"en-US", (char *)"Default Binary");
+    res = UA_Server_addObjectNode(
+        server,
+        UA_NODEID_NUMERIC(
+            ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE_ENCODING_DEFAULT_BINARY),
+        UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASENCODING),
+        UA_QUALIFIEDNAME(0, (char *)"Default Binary"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_DATATYPEENCODINGTYPE),
+        encodingAttr, NULL, NULL);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    encodingAttr.displayName = UA_LOCALIZEDTEXT(
+        (char *)"en-US", (char *)"Default XML");
+    res = UA_Server_addObjectNode(
+        server,
+        UA_NODEID_NUMERIC(
+            ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE_ENCODING_DEFAULT_XML),
+        UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASENCODING),
+        UA_QUALIFIEDNAME(0, (char *)"Default XML"),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_DATATYPEENCODINGTYPE),
+        encodingAttr, NULL, NULL);
+    if(res != UA_STATUSCODE_GOOD) return res;
 
     stateAttr.displayName = UA_LOCALIZEDTEXT((char *)"en-US",
                                              (char *)"MaintenanceState");
@@ -436,19 +475,43 @@ addAmbMaintenanceModel(UA_Server *server, UA_UInt16 ns, UA_UInt16 diNs) {
 
     res = addAmbMaintenanceProperty(server, ns, UA_AMBID_PLANNED_DATE,
                                      "PlannedDate",
-                                     UA_NODEID_NUMERIC(0, UA_NS0ID_UTCTIME));
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_UTCTIME),
+                                     UA_VALUERANK_SCALAR);
     if(res != UA_STATUSCODE_GOOD) return res;
     res = addAmbMaintenanceProperty(server, ns, UA_AMBID_ESTIMATED_DOWNTIME,
                                      "EstimatedDowntime",
-                                     UA_NODEID_NUMERIC(0, UA_NS0ID_DURATION));
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_DURATION),
+                                     UA_VALUERANK_SCALAR);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    res = addAmbMaintenanceProperty(server, ns, UA_AMBID_MAINTENANCE_SUPPLIER,
+                                     "MaintenanceSupplier",
+                                     UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+                                     UA_VALUERANK_SCALAR);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    res = addAmbMaintenanceProperty(server, ns, UA_AMBID_QUALIFICATION_OF_PERSONNEL,
+                                     "QualificationOfPersonnel",
+                                     UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+                                     UA_VALUERANK_SCALAR);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    res = addAmbMaintenanceProperty(server, ns, UA_AMBID_PARTS_OF_ASSET_REPLACED,
+                                     "PartsOfAssetReplaced",
+                                     UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+                                     1);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    res = addAmbMaintenanceProperty(server, ns, UA_AMBID_PARTS_OF_ASSET_SERVICED,
+                                     "PartsOfAssetServiced",
+                                     UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+                                     1);
     if(res != UA_STATUSCODE_GOOD) return res;
     res = addAmbMaintenanceProperty(server, ns, UA_AMBID_MAINTENANCE_METHOD,
                                      "MaintenanceMethod",
-                                     UA_NODEID_NUMERIC(ns, UA_AMBID_MAINTENANCE_METHOD_ENUM));
+                                     UA_NODEID_NUMERIC(ns, UA_AMBID_MAINTENANCE_METHOD_ENUM),
+                                     UA_VALUERANK_SCALAR);
     if(res != UA_STATUSCODE_GOOD) return res;
     res = addAmbMaintenanceProperty(server, ns, UA_AMBID_CONFIGURATION_CHANGED,
                                      "ConfigurationChanged",
-                                     UA_NODEID_NUMERIC(0, UA_NS0ID_BOOLEAN));
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_BOOLEAN),
+                                     UA_VALUERANK_SCALAR);
     if(res != UA_STATUSCODE_GOOD) return res;
 
     return UA_Server_addReference(

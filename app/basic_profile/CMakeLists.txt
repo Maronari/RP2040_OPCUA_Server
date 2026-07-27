@@ -1,26 +1,7 @@
 set(TARGET_NAME device_profile_basic)
-set(DEVICE_PROFILE_FW_REVISION "0.3.0")
+set(DEVICE_PROFILE_FW_REVISION ${RP2_FIRMWARE_VERSION})
 string(TIMESTAMP DEVICE_PROFILE_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
-
-function(ota_pack_firmware_version version_text out_version_number)
-    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _version_match "${version_text}")
-    if(NOT _version_match)
-        message(FATAL_ERROR "DEVICE_PROFILE_FW_REVISION must use semantic version format MAJOR.MINOR.PATCH, got: ${version_text}")
-    endif()
-
-    set(_major ${CMAKE_MATCH_1})
-    set(_minor ${CMAKE_MATCH_2})
-    set(_patch ${CMAKE_MATCH_3})
-
-    if(_major GREATER 255 OR _minor GREATER 255 OR _patch GREATER 65535)
-        message(FATAL_ERROR "Firmware version components exceed OTA packing limits: ${version_text}")
-    endif()
-
-    math(EXPR _version_number "(${_major} << 24) | (${_minor} << 16) | ${_patch}")
-    set(${out_version_number} ${_version_number} PARENT_SCOPE)
-endfunction()
-
-ota_pack_firmware_version("${DEVICE_PROFILE_FW_REVISION}" DEVICE_PROFILE_FW_VERSION_NUMBER)
+set(DEVICE_PROFILE_FW_VERSION_NUMBER ${RP2_FIRMWARE_VERSION_NUMBER})
 
 
 execute_process(

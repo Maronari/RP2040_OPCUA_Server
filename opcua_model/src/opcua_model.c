@@ -1,6 +1,7 @@
 #include "opcua_model/opcua_model.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -25,6 +26,7 @@
 #include "services/device_health_service.h"
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
+#include "services/maintenance_service.h"
 #include "services/network_manager.h"
 #include "services/security_identity_import_service.h"
 #include "services/security_certificate_group_service.h"
@@ -262,6 +264,60 @@ typedef struct
     const char *actor;
 } model_maintenance_event_fields_t;
 
+/* AMB NameNodeIdDataType (ns=<AMB>;i=3003).  The optional NodeId is null for
+ * v0.3.2 because the bounded service stores names, not borrowed UA nodes. */
+typedef struct
+{
+    UA_LocalizedText name;
+    UA_NodeId node_id;
+} model_amb_name_node_id_t;
+
+typedef enum
+{
+    MODEL_MAINTENANCE_VALUE_CURRENT_STATE = 0,
+    MODEL_MAINTENANCE_VALUE_CURRENT_STATE_ID,
+    MODEL_MAINTENANCE_VALUE_PLANNED_DATE,
+    MODEL_MAINTENANCE_VALUE_ESTIMATED_DOWNTIME,
+    MODEL_MAINTENANCE_VALUE_METHOD,
+    MODEL_MAINTENANCE_VALUE_SUPPLIER,
+    MODEL_MAINTENANCE_VALUE_PERSONNEL,
+    MODEL_MAINTENANCE_VALUE_PARTS_REPLACED,
+    MODEL_MAINTENANCE_VALUE_PARTS_SERVICED,
+    MODEL_MAINTENANCE_VALUE_CONFIGURATION_CHANGED,
+    MODEL_MAINTENANCE_VALUE_MESSAGE,
+    MODEL_MAINTENANCE_VALUE_SEVERITY,
+    MODEL_MAINTENANCE_VALUE_QUALITY,
+    MODEL_MAINTENANCE_VALUE_TIME,
+    MODEL_MAINTENANCE_VALUE_RECEIVE_TIME
+} model_maintenance_value_kind_t;
+
+typedef struct
+{
+    model_maintenance_value_kind_t kind;
+} model_maintenance_value_context_t;
+
+static const model_maintenance_value_context_t g_model_maintenance_value_contexts[] = {
+    {MODEL_MAINTENANCE_VALUE_CURRENT_STATE},
+    {MODEL_MAINTENANCE_VALUE_CURRENT_STATE_ID},
+    {MODEL_MAINTENANCE_VALUE_PLANNED_DATE},
+    {MODEL_MAINTENANCE_VALUE_ESTIMATED_DOWNTIME},
+    {MODEL_MAINTENANCE_VALUE_METHOD},
+    {MODEL_MAINTENANCE_VALUE_SUPPLIER},
+    {MODEL_MAINTENANCE_VALUE_PERSONNEL},
+    {MODEL_MAINTENANCE_VALUE_PARTS_REPLACED},
+    {MODEL_MAINTENANCE_VALUE_PARTS_SERVICED},
+    {MODEL_MAINTENANCE_VALUE_CONFIGURATION_CHANGED},
+    {MODEL_MAINTENANCE_VALUE_MESSAGE},
+    {MODEL_MAINTENANCE_VALUE_SEVERITY},
+    {MODEL_MAINTENANCE_VALUE_QUALITY},
+    {MODEL_MAINTENANCE_VALUE_TIME},
+    {MODEL_MAINTENANCE_VALUE_RECEIVE_TIME}};
+
+static UA_DataTypeMember g_model_amb_name_node_id_members[2];
+static UA_DataType g_model_amb_name_node_id_type;
+static UA_DataTypeArray g_model_amb_custom_types;
+static bool g_model_amb_custom_types_registered;
+
 typedef struct
 {
     const char *version;
@@ -480,6 +536,14 @@ enum
 #define MODEL_NODE_MAINTENANCE_SECURITY "Device.Maintenance.Security"
 #define MODEL_NODE_MAINTENANCE_DIAGNOSTICS "Device.Maintenance.Diagnostics"
 #define MODEL_NODE_MAINTENANCE_SYSTEM "Device.Maintenance.System"
+#define MODEL_METHOD_PLAN_MAINTENANCE "Device.Maintenance.PlanMaintenance"
+#define MODEL_METHOD_RESCHEDULE_MAINTENANCE "Device.Maintenance.RescheduleMaintenance"
+#define MODEL_METHOD_START_MAINTENANCE "Device.Maintenance.StartMaintenance"
+#define MODEL_METHOD_FINISH_MAINTENANCE "Device.Maintenance.FinishMaintenance"
+#define MODEL_NODE_MAINTENANCE_SUPPLIER "Device.DeviceHealthAlarms.MaintenanceRequired.MaintenanceSupplier"
+#define MODEL_NODE_MAINTENANCE_PERSONNEL "Device.DeviceHealthAlarms.MaintenanceRequired.QualificationOfPersonnel"
+#define MODEL_NODE_MAINTENANCE_REPLACED "Device.DeviceHealthAlarms.MaintenanceRequired.PartsOfAssetReplaced"
+#define MODEL_NODE_MAINTENANCE_SERVICED "Device.DeviceHealthAlarms.MaintenanceRequired.PartsOfAssetServiced"
 #define MODEL_METHOD_SET_DEVICE_IDENTITY "Device.Maintenance.SetDeviceIdentity"
 #define MODEL_METHOD_SET_LOCATION_PATHS "Device.Maintenance.Configuration.SetLocationPaths"
 #define MODEL_METHOD_SET_NETWORK_CONFIG "Device.Maintenance.SetNetworkConfig"
@@ -575,6 +639,9 @@ static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
 
 static opcua_model_config_t g_model_config;
 static bool g_model_initialized = false;
+/* Fail closed only if the service diagnostic itself cannot be recorded after a
+ * public event-API failure. It is not maintenance business state. */
+static bool g_model_maintenance_faulted = false;
 static model_pending_actions_t g_pending_actions = {false, 0, false, 0, 0, false};
 static device_profile_config_t g_model_address_space_config_snapshot;
 static bool g_model_address_space_config_snapshot_valid = false;
@@ -864,6 +931,20 @@ static void model_emit_client_certificate_expiry_notice(UA_Server *server,
                                                         void *session_context);
 static bool model_is_admin_only_method(const UA_NodeId *method_id);
 static bool model_string_changed(const char *lhs, const char *rhs);
+static UA_StatusCode model_set_amb_maintenance_state(UA_Server *server,
+                                                       const UA_NodeId condition_id,
+                                                       const char *state_name,
+                                                       UA_UInt32 state_node_id);
+static UA_StatusCode model_condition_write_common_fields(UA_Server *server,
+                                                         const UA_NodeId condition_id,
+                                                         UA_UInt16 severity,
+                                                         UA_StatusCode quality,
+                                                         const char *message);
+static UA_StatusCode model_read_maintenance_value(
+    UA_Server *server, const UA_NodeId *session_id, void *session_context,
+    const UA_NodeId *node_id, void *node_context,
+    UA_Boolean include_source_timestamp, const UA_NumericRange *range,
+    UA_DataValue *value);
 
 static bool model_session_is_secure(const void *session_context)
 {
@@ -1086,9 +1167,26 @@ static UA_StatusCode model_require_admin_session(void *session_context,
 
 static security_user_role_t model_required_role_for_method(const UA_NodeId *method_id)
 {
+    const UA_NodeId plan_maintenance =
+        UA_NODEID_STRING(1, (char *)MODEL_METHOD_PLAN_MAINTENANCE);
+    const UA_NodeId reschedule_maintenance =
+        UA_NODEID_STRING(1, (char *)MODEL_METHOD_RESCHEDULE_MAINTENANCE);
+    const UA_NodeId start_maintenance =
+        UA_NODEID_STRING(1, (char *)MODEL_METHOD_START_MAINTENANCE);
+    const UA_NodeId finish_maintenance =
+        UA_NODEID_STRING(1, (char *)MODEL_METHOD_FINISH_MAINTENANCE);
+
     if (method_id == NULL)
     {
         return SECURITY_ROLE_ADMIN;
+    }
+
+    if (UA_NodeId_equal(method_id, &plan_maintenance) ||
+        UA_NodeId_equal(method_id, &reschedule_maintenance) ||
+        UA_NodeId_equal(method_id, &start_maintenance) ||
+        UA_NodeId_equal(method_id, &finish_maintenance))
+    {
+        return SECURITY_ROLE_SERVICE;
     }
 
     if (model_is_admin_only_method(method_id))
@@ -3349,14 +3447,409 @@ static UA_StatusCode model_add_amb_maintenance_property(
     attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
     attr.dataType = data_type;
     attr.valueRank = UA_VALUERANK_SCALAR;
-    attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ;
     UA_Variant_setScalar(&attr.value, (void *)value, value_type);
     return UA_Server_addVariableNode(
         server, UA_NODEID_STRING(1, (char *)node_id), condition_id,
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
         UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)browse_name),
         UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attr, NULL, NULL);
+}
+
+static UA_StatusCode model_register_amb_name_node_id_type(UA_Server *server)
+{
+    UA_ServerConfig *config;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    if (g_model_amb_custom_types_registered)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+
+    memset(g_model_amb_name_node_id_members, 0,
+           sizeof(g_model_amb_name_node_id_members));
+#ifdef UA_ENABLE_TYPEDESCRIPTION
+    g_model_amb_name_node_id_members[0].memberName = "Name";
+    g_model_amb_name_node_id_members[1].memberName = "NodeId";
+#endif
+    g_model_amb_name_node_id_members[0].memberType = &UA_TYPES[UA_TYPES_LOCALIZEDTEXT];
+    g_model_amb_name_node_id_members[0].padding =
+        (UA_Byte)offsetof(model_amb_name_node_id_t, name);
+    g_model_amb_name_node_id_members[1].memberType = &UA_TYPES[UA_TYPES_NODEID];
+    g_model_amb_name_node_id_members[1].padding = (UA_Byte)(
+        offsetof(model_amb_name_node_id_t, node_id) -
+        offsetof(model_amb_name_node_id_t, name) - sizeof(UA_LocalizedText));
+
+    memset(&g_model_amb_name_node_id_type, 0, sizeof(g_model_amb_name_node_id_type));
+#ifdef UA_ENABLE_TYPEDESCRIPTION
+    g_model_amb_name_node_id_type.typeName = "NameNodeIdDataType";
+#endif
+    g_model_amb_name_node_id_type.typeId =
+        UA_NODEID_NUMERIC(g_model_amb_namespace_index, UA_AMBID_NAME_NODE_ID_DATA_TYPE);
+    g_model_amb_name_node_id_type.binaryEncodingId =
+        UA_NODEID_NUMERIC(g_model_amb_namespace_index, 5012u);
+    g_model_amb_name_node_id_type.xmlEncodingId =
+        UA_NODEID_NUMERIC(g_model_amb_namespace_index, 5013u);
+    g_model_amb_name_node_id_type.memSize = sizeof(model_amb_name_node_id_t);
+    g_model_amb_name_node_id_type.typeKind = UA_DATATYPEKIND_STRUCTURE;
+    g_model_amb_name_node_id_type.pointerFree = false;
+    g_model_amb_name_node_id_type.overlayable = false;
+    g_model_amb_name_node_id_type.membersSize = 2u;
+    g_model_amb_name_node_id_type.members = g_model_amb_name_node_id_members;
+
+    memset(&g_model_amb_custom_types, 0, sizeof(g_model_amb_custom_types));
+    g_model_amb_custom_types.typesSize = 1u;
+    g_model_amb_custom_types.types = &g_model_amb_name_node_id_type;
+    g_model_amb_custom_types.cleanup = false;
+    config = UA_Server_getConfig(server);
+    g_model_amb_custom_types.next = (UA_DataTypeArray *)config->customDataTypes;
+    config->customDataTypes = &g_model_amb_custom_types;
+    g_model_amb_custom_types_registered = true;
+    return UA_STATUSCODE_GOOD;
+}
+
+static void model_make_amb_name_node_id(model_amb_name_node_id_t *value,
+                                        const char *text)
+{
+    if (value == NULL)
+    {
+        return;
+    }
+    UA_LocalizedText_init(&value->name);
+    value->name = UA_LOCALIZEDTEXT((char *)"en-US", (char *)(text != NULL ? text : ""));
+    value->node_id = UA_NODEID_NULL;
+}
+
+static const char *model_maintenance_state_text(
+    maintenance_service_state_t state)
+{
+    switch (state)
+    {
+    case MAINTENANCE_SERVICE_STATE_FINISHED:
+        return "Finished";
+    case MAINTENANCE_SERVICE_STATE_EXECUTING:
+        return "Executing";
+    case MAINTENANCE_SERVICE_STATE_PLANNED:
+    default:
+        return "Planned";
+    }
+}
+
+static UA_UInt32 model_maintenance_state_node_id(
+    maintenance_service_state_t state)
+{
+    switch (state)
+    {
+    case MAINTENANCE_SERVICE_STATE_FINISHED:
+        return UA_AMBID_MAINTENANCE_STATE_FINISHED;
+    case MAINTENANCE_SERVICE_STATE_EXECUTING:
+        return UA_AMBID_MAINTENANCE_STATE_EXECUTING;
+    case MAINTENANCE_SERVICE_STATE_PLANNED:
+    default:
+        return UA_AMBID_MAINTENANCE_STATE_PLANNED;
+    }
+}
+
+static UA_StatusCode model_maintenance_set_read_error(UA_DataValue *value,
+                                                       UA_StatusCode status)
+{
+    value->hasStatus = true;
+    value->status = status;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_read_maintenance_value(
+    UA_Server *server, const UA_NodeId *session_id, void *session_context,
+    const UA_NodeId *node_id, void *node_context,
+    UA_Boolean include_source_timestamp, const UA_NumericRange *range,
+    UA_DataValue *value)
+{
+    const model_maintenance_value_context_t *context =
+        (const model_maintenance_value_context_t *)node_context;
+    maintenance_service_snapshot_t snapshot = {0};
+    model_amb_name_node_id_t names[MAINTENANCE_SERVICE_MAX_PARTS];
+    UA_StatusCode status;
+    UA_LocalizedText text;
+    UA_NodeId state_id;
+    UA_DateTime planned_date;
+    UA_Double downtime;
+    UA_Int32 method;
+    UA_Boolean configuration_changed;
+    UA_UInt16 severity = 350u;
+    UA_StatusCode quality = UA_STATUSCODE_GOOD;
+    uint8_t index;
+
+    (void)server;
+    (void)session_id;
+    (void)session_context;
+    (void)node_id;
+
+    if (value == NULL || context == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    if (range != NULL)
+    {
+        return model_maintenance_set_read_error(value,
+                                                UA_STATUSCODE_BADINDEXRANGEINVALID);
+    }
+    if (maintenance_service_get_snapshot(&snapshot) != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return model_maintenance_set_read_error(value,
+                                                UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
+    }
+
+    /* The service copies one active revision under its lock. All values below
+     * are consequently derived from that committed revision only. */
+    switch (context->kind)
+    {
+    case MODEL_MAINTENANCE_VALUE_CURRENT_STATE:
+        text = UA_LOCALIZEDTEXT((char *)"en-US",
+                                (char *)model_maintenance_state_text(snapshot.state));
+        status = UA_Variant_setScalarCopy(&value->value, &text,
+                                          &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_CURRENT_STATE_ID:
+        state_id = UA_NODEID_NUMERIC(g_model_amb_namespace_index,
+                                     model_maintenance_state_node_id(snapshot.state));
+        status = UA_Variant_setScalarCopy(&value->value, &state_id,
+                                          &UA_TYPES[UA_TYPES_NODEID]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_PLANNED_DATE:
+        planned_date = (UA_DateTime)snapshot.activity.planned_date_utc_100ns;
+        status = UA_Variant_setScalarCopy(&value->value, &planned_date,
+                                          &UA_TYPES[UA_TYPES_DATETIME]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_ESTIMATED_DOWNTIME:
+        downtime = snapshot.activity.estimated_downtime_ms;
+        status = UA_Variant_setScalarCopy(&value->value, &downtime,
+                                          &UA_TYPES[UA_TYPES_DOUBLE]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_METHOD:
+        method = (UA_Int32)snapshot.activity.method;
+        status = UA_Variant_setScalarCopy(&value->value, &method,
+                                          &g_model_amb_maintenance_method_type);
+        break;
+    case MODEL_MAINTENANCE_VALUE_SUPPLIER:
+        model_make_amb_name_node_id(&names[0], snapshot.activity.supplier);
+        status = UA_Variant_setScalarCopy(&value->value, &names[0],
+                                          &g_model_amb_name_node_id_type);
+        break;
+    case MODEL_MAINTENANCE_VALUE_PERSONNEL:
+        model_make_amb_name_node_id(&names[0], snapshot.activity.personnel);
+        status = UA_Variant_setScalarCopy(&value->value, &names[0],
+                                          &g_model_amb_name_node_id_type);
+        break;
+    case MODEL_MAINTENANCE_VALUE_PARTS_REPLACED:
+        for (index = 0u; index < snapshot.activity.parts_replaced_count; ++index)
+        {
+            model_make_amb_name_node_id(&names[index],
+                                        snapshot.activity.parts_replaced[index]);
+        }
+        status = UA_Variant_setArrayCopy(&value->value, names,
+                                         snapshot.activity.parts_replaced_count,
+                                         &g_model_amb_name_node_id_type);
+        break;
+    case MODEL_MAINTENANCE_VALUE_PARTS_SERVICED:
+        for (index = 0u; index < snapshot.activity.parts_serviced_count; ++index)
+        {
+            model_make_amb_name_node_id(&names[index],
+                                        snapshot.activity.parts_serviced[index]);
+        }
+        status = UA_Variant_setArrayCopy(&value->value, names,
+                                         snapshot.activity.parts_serviced_count,
+                                         &g_model_amb_name_node_id_type);
+        break;
+    case MODEL_MAINTENANCE_VALUE_CONFIGURATION_CHANGED:
+        configuration_changed = snapshot.activity.configuration_changed ? UA_TRUE : UA_FALSE;
+        status = UA_Variant_setScalarCopy(&value->value, &configuration_changed,
+                                          &UA_TYPES[UA_TYPES_BOOLEAN]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_MESSAGE:
+        text = UA_LOCALIZEDTEXT(
+            (char *)"en-US",
+            (char *)(snapshot.activity.result[0] != '\0'
+                         ? snapshot.activity.result
+                         : model_maintenance_state_text(snapshot.state)));
+        status = UA_Variant_setScalarCopy(&value->value, &text,
+                                          &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_SEVERITY:
+        status = UA_Variant_setScalarCopy(&value->value, &severity,
+                                          &UA_TYPES[UA_TYPES_UINT16]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_QUALITY:
+        status = UA_Variant_setScalarCopy(&value->value, &quality,
+                                          &UA_TYPES[UA_TYPES_STATUSCODE]);
+        break;
+    case MODEL_MAINTENANCE_VALUE_TIME:
+    case MODEL_MAINTENANCE_VALUE_RECEIVE_TIME:
+        planned_date = (UA_DateTime)snapshot.committed_at_utc_100ns;
+        status = UA_Variant_setScalarCopy(&value->value, &planned_date,
+                                          &UA_TYPES[UA_TYPES_DATETIME]);
+        break;
+    default:
+        return model_maintenance_set_read_error(value, UA_STATUSCODE_BADNOTFOUND);
+    }
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    value->hasValue = true;
+    value->hasStatus = true;
+    value->status = UA_STATUSCODE_GOOD;
+    (void)include_source_timestamp;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_install_maintenance_value_source(
+    UA_Server *server, UA_NodeId node_id, model_maintenance_value_kind_t kind)
+{
+    UA_CallbackValueSource source = {0};
+    UA_StatusCode status;
+
+    source.read = model_read_maintenance_value;
+    source.write = NULL;
+    status = UA_Server_setNodeContext(
+        server, node_id, (void *)&g_model_maintenance_value_contexts[(size_t)kind]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    return UA_Server_setVariableNode_callbackValueSource(server, node_id, source);
+}
+
+static UA_StatusCode model_install_maintenance_value_source_at_path(
+    UA_Server *server, const UA_NodeId condition_id, size_t path_size,
+    UA_QualifiedName *path, model_maintenance_value_kind_t kind)
+{
+    UA_BrowsePathResult result = UA_Server_browseSimplifiedBrowsePath(
+        server, condition_id, path_size, path);
+    UA_StatusCode status;
+
+    if (result.statusCode != UA_STATUSCODE_GOOD || result.targetsSize != 1u)
+    {
+        status = result.statusCode != UA_STATUSCODE_GOOD
+                     ? result.statusCode
+                     : UA_STATUSCODE_BADNOTFOUND;
+        UA_BrowsePathResult_clear(&result);
+        return status;
+    }
+    status = model_install_maintenance_value_source(
+        server, result.targets[0].targetId.nodeId, kind);
+    UA_BrowsePathResult_clear(&result);
+    return status;
+}
+
+static UA_StatusCode model_install_maintenance_condition_value_sources(
+    UA_Server *server, const UA_NodeId condition_id)
+{
+    UA_QualifiedName state_path[] = {
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)"MaintenanceState"),
+        UA_QUALIFIEDNAME(0, (char *)"CurrentState")};
+    UA_QualifiedName state_id_path[] = {
+        UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)"MaintenanceState"),
+        UA_QUALIFIEDNAME(0, (char *)"CurrentState"),
+        UA_QUALIFIEDNAME(0, (char *)"Id")};
+    UA_QualifiedName message_path[] = {UA_QUALIFIEDNAME(0, (char *)"Message")};
+    UA_QualifiedName severity_path[] = {UA_QUALIFIEDNAME(0, (char *)"Severity")};
+    UA_QualifiedName quality_path[] = {UA_QUALIFIEDNAME(0, (char *)"Quality")};
+    UA_QualifiedName time_path[] = {UA_QUALIFIEDNAME(0, (char *)"Time")};
+    UA_QualifiedName receive_time_path[] = {UA_QUALIFIEDNAME(0, (char *)"ReceiveTime")};
+    UA_StatusCode status;
+
+    status = model_install_maintenance_value_source_at_path(
+        server, condition_id, 2u, state_path, MODEL_MAINTENANCE_VALUE_CURRENT_STATE);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 3u, state_id_path,
+            MODEL_MAINTENANCE_VALUE_CURRENT_STATE_ID);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms.MaintenanceRequired.PlannedDate"),
+            MODEL_MAINTENANCE_VALUE_PLANNED_DATE);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms.MaintenanceRequired.EstimatedDowntime"),
+            MODEL_MAINTENANCE_VALUE_ESTIMATED_DOWNTIME);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms.MaintenanceRequired.MaintenanceMethod"),
+            MODEL_MAINTENANCE_VALUE_METHOD);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_SUPPLIER),
+            MODEL_MAINTENANCE_VALUE_SUPPLIER);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_PERSONNEL),
+            MODEL_MAINTENANCE_VALUE_PERSONNEL);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_REPLACED),
+            MODEL_MAINTENANCE_VALUE_PARTS_REPLACED);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_SERVICED),
+            MODEL_MAINTENANCE_VALUE_PARTS_SERVICED);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source(
+            server, UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms.MaintenanceRequired.ConfigurationChanged"),
+            MODEL_MAINTENANCE_VALUE_CONFIGURATION_CHANGED);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 1u, message_path, MODEL_MAINTENANCE_VALUE_MESSAGE);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 1u, severity_path, MODEL_MAINTENANCE_VALUE_SEVERITY);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 1u, quality_path, MODEL_MAINTENANCE_VALUE_QUALITY);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 1u, time_path, MODEL_MAINTENANCE_VALUE_TIME);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 1u, receive_time_path,
+            MODEL_MAINTENANCE_VALUE_RECEIVE_TIME);
+    return status;
+}
+
+static UA_StatusCode model_add_amb_name_node_id_property(
+    UA_Server *server, const UA_NodeId condition_id, const char *node_id,
+    const char *browse_name, UA_Boolean is_array)
+{
+    UA_VariableAttributes attr = UA_VariableAttributes_default;
+    model_amb_name_node_id_t empty_value;
+
+    model_make_amb_name_node_id(&empty_value, "");
+    attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attr.dataType = g_model_amb_name_node_id_type.typeId;
+    attr.valueRank = is_array ? 1 : UA_VALUERANK_SCALAR;
+    attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attr.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    if (is_array)
+    {
+        UA_Variant_setArrayCopy(&attr.value, NULL, 0u, &g_model_amb_name_node_id_type);
+    }
+    else
+    {
+        UA_Variant_setScalarCopy(&attr.value, &empty_value, &g_model_amb_name_node_id_type);
+    }
+    {
+        UA_StatusCode status = UA_Server_addVariableNode(
+            server, UA_NODEID_STRING(1, (char *)node_id), condition_id,
+            UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+            UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)browse_name),
+            UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attr, NULL, NULL);
+        UA_Variant_clear(&attr.value);
+        return status;
+    }
 }
 
 static UA_StatusCode model_set_amb_maintenance_state(
@@ -3416,6 +3909,7 @@ static UA_StatusCode model_set_amb_maintenance_state(
 static UA_StatusCode model_initialize_amb_maintenance_condition(
     UA_Server *server, const UA_NodeId condition_id)
 {
+    maintenance_service_snapshot_t snapshot = {0};
     UA_DateTime planned_date = 0;
     UA_Double estimated_downtime = 0.0;
     UA_Int32 maintenance_method = 0;
@@ -3425,6 +3919,22 @@ static UA_StatusCode model_initialize_amb_maintenance_condition(
     UA_LocalizedText condition_class_name =
         UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Servicing");
     UA_StatusCode status;
+
+    status = maintenance_service_get_snapshot(&snapshot);
+    if (status != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    }
+    if (snapshot.has_activity)
+    {
+        planned_date = (UA_DateTime)snapshot.activity.planned_date_utc_100ns;
+        estimated_downtime = snapshot.activity.estimated_downtime_ms;
+        maintenance_method = (UA_Int32)snapshot.activity.method;
+        configuration_changed = snapshot.activity.configuration_changed ? UA_TRUE : UA_FALSE;
+    }
+
+    status = model_register_amb_name_node_id_type(server);
+    if (status != UA_STATUSCODE_GOOD) return status;
 
     g_model_amb_maintenance_method_type = UA_TYPES[UA_TYPES_INT32];
     g_model_amb_maintenance_method_type.typeId = UA_NODEID_NUMERIC(
@@ -3436,6 +3946,22 @@ static UA_StatusCode model_initialize_amb_maintenance_condition(
         "Device.DeviceHealthAlarms.MaintenanceRequired.PlannedDate",
         "PlannedDate", UA_NODEID_NUMERIC(0, UA_NS0ID_UTCTIME),
         &planned_date, &UA_TYPES[UA_TYPES_DATETIME]);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_name_node_id_property(
+        server, condition_id, MODEL_NODE_MAINTENANCE_SUPPLIER,
+        "MaintenanceSupplier", UA_FALSE);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_name_node_id_property(
+        server, condition_id, MODEL_NODE_MAINTENANCE_PERSONNEL,
+        "QualificationOfPersonnel", UA_FALSE);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_name_node_id_property(
+        server, condition_id, MODEL_NODE_MAINTENANCE_REPLACED,
+        "PartsOfAssetReplaced", UA_TRUE);
+    if(status != UA_STATUSCODE_GOOD) return status;
+    status = model_add_amb_name_node_id_property(
+        server, condition_id, MODEL_NODE_MAINTENANCE_SERVICED,
+        "PartsOfAssetServiced", UA_TRUE);
     if(status != UA_STATUSCODE_GOOD) return status;
     status = model_add_amb_maintenance_property(
         server, condition_id,
@@ -3466,8 +3992,14 @@ static UA_StatusCode model_initialize_amb_maintenance_condition(
         server, condition_id, "ConditionClassName", &condition_class_name,
         &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
     if(status != UA_STATUSCODE_GOOD) return status;
-    return model_set_amb_maintenance_state(
-        server, condition_id, "Planned", UA_AMBID_MAINTENANCE_STATE_PLANNED);
+    status = model_set_amb_maintenance_state(
+        server, condition_id, model_maintenance_state_text(snapshot.state),
+        model_maintenance_state_node_id(snapshot.state));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    return model_install_maintenance_condition_value_sources(server, condition_id);
 }
 
 static UA_StatusCode model_condition_write_common_fields(UA_Server *server,
@@ -3989,6 +4521,14 @@ static void model_process_device_health_conditions(UA_Server *server,
         UA_UInt16 severity = 100u;
         UA_StatusCode quality = UA_STATUSCODE_GOOD;
 
+        /* v0.3.2 assigns this existing AMB condition to the maintenance
+         * service. Its fields and transition events must never be overwritten
+         * by the periodic DeviceHealth condition synchronizer. */
+        if (category == DEVICE_HEALTH_MAINTENANCE_REQUIRED)
+        {
+            continue;
+        }
+
         category_report.reasons = category_reasons;
         device_health_service_format_summary(&category_report, message, sizeof(message));
 
@@ -4476,7 +5016,7 @@ static void model_emit_sensor_runtime_event(UA_Server *server,
                               MODEL_EVENT_LAST_KIND_FAULT);
 }
 
-static void model_emit_maintenance_event(UA_Server *server,
+static UA_StatusCode model_emit_maintenance_event(UA_Server *server,
                                          const char *message,
                                          UA_UInt16 severity,
                                          const char *operation,
@@ -4484,15 +5024,15 @@ static void model_emit_maintenance_event(UA_Server *server,
                                          const char *actor)
 {
     const model_maintenance_event_fields_t fields = {operation, result_code, actor};
-    (void)model_emit_event_ex(server,
-                              model_event_type_node_id(MODEL_EVENT_TYPE_MAINTENANCE),
-                              model_maintenance_node_id(),
-                              "Device.Maintenance",
-                              message,
-                              severity,
-                              model_write_maintenance_event_fields,
-                              &fields,
-                              MODEL_EVENT_LAST_KIND_GENERIC);
+    return model_emit_event_ex(server,
+                               model_event_type_node_id(MODEL_EVENT_TYPE_MAINTENANCE),
+                               model_maintenance_node_id(),
+                               "Device.Maintenance",
+                               message,
+                               severity,
+                               model_write_maintenance_event_fields,
+                               &fields,
+                               MODEL_EVENT_LAST_KIND_GENERIC);
 }
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
@@ -5272,6 +5812,257 @@ static UA_StatusCode model_set_string_value(UA_DataValue *value, const char *dat
     value->status = status;
     return UA_STATUSCODE_GOOD;
 }
+
+static UA_StatusCode model_maintenance_result_status(maintenance_service_result_t result)
+{
+    switch (result) {
+    case MAINTENANCE_SERVICE_RESULT_OK: return UA_STATUSCODE_GOOD;
+    case MAINTENANCE_SERVICE_RESULT_NOT_INITIALIZED:
+    case MAINTENANCE_SERVICE_RESULT_BUSY:
+    case MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE:
+        return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    case MAINTENANCE_SERVICE_RESULT_INVALID_STATE: return UA_STATUSCODE_BADSTATENOTACTIVE;
+    case MAINTENANCE_SERVICE_RESULT_OUT_OF_RANGE: return UA_STATUSCODE_BADOUTOFRANGE;
+    case MAINTENANCE_SERVICE_RESULT_INVALID_ARGUMENT: return UA_STATUSCODE_BADINVALIDARGUMENT;
+    default: return UA_STATUSCODE_BADINTERNALERROR;
+    }
+}
+
+typedef struct
+{
+    UA_KeyValueMap fields;
+    UA_DateTime event_time;
+    UA_String source_name;
+    UA_LocalizedText message;
+    model_maintenance_event_fields_t maintenance_fields;
+} model_prepared_maintenance_event_t;
+
+static UA_StatusCode model_prepare_maintenance_event(
+    model_prepared_maintenance_event_t *event, const char *message,
+    const char *operation, const char *actor)
+{
+    UA_StatusCode status;
+
+    if (event == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    memset(event, 0, sizeof(*event));
+    event->event_time = UA_DateTime_now();
+    event->source_name = UA_STRING((char *)"Device.Maintenance");
+    event->message = UA_LOCALIZEDTEXT(
+        (char *)"en-US", (char *)(message != NULL ? message : ""));
+    event->maintenance_fields.operation = operation;
+    event->maintenance_fields.result_code = 0u;
+    event->maintenance_fields.actor = actor;
+
+    status = UA_KeyValueMap_setScalar(&event->fields,
+                                      UA_QUALIFIEDNAME(0, (char *)"Time"),
+                                      &event->event_time,
+                                      &UA_TYPES[UA_TYPES_DATETIME]);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_KeyValueMap_setScalar(
+            &event->fields, UA_QUALIFIEDNAME(0, (char *)"ReceiveTime"),
+            &event->event_time, &UA_TYPES[UA_TYPES_DATETIME]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        const UA_NodeId source = model_maintenance_node_id();
+        status = UA_KeyValueMap_setScalar(
+            &event->fields, UA_QUALIFIEDNAME(0, (char *)"SourceNode"),
+            &source, &UA_TYPES[UA_TYPES_NODEID]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = UA_KeyValueMap_setScalar(
+            &event->fields, UA_QUALIFIEDNAME(0, (char *)"SourceName"),
+            &event->source_name, &UA_TYPES[UA_TYPES_STRING]);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_maintenance_event_fields(
+            &event->fields, &event->maintenance_fields);
+    }
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        UA_KeyValueMap_clear(&event->fields);
+    }
+    return status;
+}
+
+static UA_StatusCode model_publish_prepared_maintenance_event(
+    UA_Server *server, model_prepared_maintenance_event_t *event)
+{
+    UA_ByteString event_id = UA_BYTESTRING_NULL;
+    char event_id_hex[33];
+    const UA_NodeId source = model_maintenance_node_id();
+    const UA_NodeId type = model_event_type_node_id(MODEL_EVENT_TYPE_MAINTENANCE);
+    UA_StatusCode status;
+
+    if (server == NULL || event == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    status = UA_Server_createEvent(server, source, type, 350u, event->message,
+                                   &event->fields, NULL, &event_id);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        model_event_id_to_hex(&event_id, event_id_hex, sizeof(event_id_hex));
+        model_store_last_event(MODEL_EVENT_LAST_KIND_GENERIC, event_id_hex,
+                               (const char *)event->message.text.data);
+#ifdef UA_ENABLE_PUBSUB
+        model_pubsub_update_event_mirror(&type, "Device.Maintenance",
+                                         (const char *)event->message.text.data,
+                                         350u, event->event_time, &event_id);
+        model_pubsub_trigger_event_publish(server);
+#endif
+    }
+    UA_ByteString_clear(&event_id);
+    return status;
+}
+
+static UA_StatusCode model_maintenance_mutations_available(void)
+{
+    maintenance_service_event_publication_fault_t fault = {0};
+    maintenance_service_result_t result =
+        maintenance_service_get_event_publication_fault(&fault);
+
+    if (g_model_maintenance_faulted ||
+        result != MAINTENANCE_SERVICE_RESULT_OK || fault.active)
+    {
+        return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_commit_maintenance_transaction(UA_Server *server,
+                                                            const maintenance_service_transaction_t *transaction,
+                                                            const char *operation)
+{
+    maintenance_service_snapshot_t prepared = {0};
+    maintenance_service_snapshot_t committed = {0};
+    model_prepared_maintenance_event_t event = {0};
+    maintenance_service_result_t service_status;
+    UA_StatusCode status = UA_STATUSCODE_GOOD;
+
+    if (server == NULL || transaction == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    service_status = maintenance_service_get_prepared_snapshot(transaction, &prepared);
+    if (service_status != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return model_maintenance_result_status(service_status);
+    }
+    if (transaction->transition != MAINTENANCE_SERVICE_TRANSITION_NONE)
+    {
+        status = model_prepare_maintenance_event(
+            &event,
+            prepared.activity.result[0] != '\0' ? prepared.activity.result : operation,
+            operation, prepared.activity.actor);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            (void)maintenance_service_abort(transaction);
+            return status;
+        }
+    }
+
+    service_status = maintenance_service_apply(transaction);
+    if (service_status != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        UA_KeyValueMap_clear(&event.fields);
+        (void)maintenance_service_abort(transaction);
+        return model_maintenance_result_status(service_status);
+    }
+    service_status = maintenance_service_commit(transaction, &committed);
+    if (service_status != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        UA_KeyValueMap_clear(&event.fields);
+        (void)maintenance_service_abort(transaction);
+        return model_maintenance_result_status(service_status);
+    }
+
+    if (transaction->transition != MAINTENANCE_SERVICE_TRANSITION_NONE)
+    {
+        status = model_publish_prepared_maintenance_event(server, &event);
+        UA_KeyValueMap_clear(&event.fields);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            /* The public event API is the firmware boundary. The committed
+             * snapshot remains authoritative even when that API reports an
+             * error; no rollback or duplicate publication is permitted. */
+            if (maintenance_service_mark_event_publication_fault(
+                    committed.revision, transaction->operation) !=
+                MAINTENANCE_SERVICE_RESULT_OK)
+            {
+                g_model_maintenance_faulted = true;
+            }
+            return status;
+        }
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+static bool model_copy_maintenance_string(const UA_Variant *value, char *out, size_t capacity)
+{
+    return model_copy_input_string(value, out, capacity) && out[0] != '\0';
+}
+
+static bool model_copy_maintenance_parts(const UA_Variant *value,
+    char out[MAINTENANCE_SERVICE_MAX_PARTS][MAINTENANCE_SERVICE_PART_TEXT_CAPACITY], uint8_t *count)
+{
+    size_t index;
+    UA_String *items;
+    if (value == NULL || count == NULL || !UA_Variant_hasArrayType(value, &UA_TYPES[UA_TYPES_STRING]) || value->arrayLength > MAINTENANCE_SERVICE_MAX_PARTS)
+        return false;
+    items = (UA_String *)value->data;
+    for (index = 0u; index < value->arrayLength; ++index) {
+        if (items[index].length == 0u || items[index].length >= MAINTENANCE_SERVICE_PART_TEXT_CAPACITY)
+            return false;
+        memcpy(out[index], items[index].data, items[index].length);
+        out[index][items[index].length] = '\0';
+    }
+    *count = (uint8_t)value->arrayLength;
+    return true;
+}
+
+static UA_StatusCode model_plan_maintenance(UA_Server *server, const UA_NodeId *sid, void *ctx,
+ const UA_NodeId *mid, void *mc, const UA_NodeId *oid, void *oc, size_t n, const UA_Variant *in, size_t no, UA_Variant *out)
+{
+    maintenance_service_plan_request_t request = {0}; maintenance_service_transaction_t tx = {0}; UA_DateTime date; UA_Double downtime; UA_Int32 method; char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    (void)sid;(void)mc;(void)oid;(void)oc;
+    { UA_StatusCode s = model_maintenance_mutations_available(); if (s != UA_STATUSCODE_GOOD) return s; }
+    if (n != 6u || !UA_Variant_hasScalarType(&in[1], &UA_TYPES[UA_TYPES_DATETIME]) || !UA_Variant_hasScalarType(&in[2], &UA_TYPES[UA_TYPES_DOUBLE]) || !UA_Variant_hasScalarType(&in[3], &UA_TYPES[UA_TYPES_INT32]) || !model_copy_maintenance_string(&in[0], request.operation_id, sizeof(request.operation_id)) || !model_copy_maintenance_string(&in[4], request.supplier, sizeof(request.supplier)) || !model_copy_maintenance_string(&in[5], request.personnel, sizeof(request.personnel))) return UA_STATUSCODE_BADINVALIDARGUMENT;
+    date=*(UA_DateTime*)in[1].data; downtime=*(UA_Double*)in[2].data; method=*(UA_Int32*)in[3].data;
+    if (date <= 0 || !isfinite(downtime) || downtime <= 0.0 || downtime > MAINTENANCE_SERVICE_MAX_DOWNTIME_MS || method < 0 || method > 1) return UA_STATUSCODE_BADOUTOFRANGE;
+    { UA_StatusCode s=model_require_method_role(ctx,mid,no,out); if(s!=UA_STATUSCODE_GOOD)return s; }
+    if (!model_copy_session_username(ctx, actor, sizeof(actor))) return UA_STATUSCODE_BADUSERACCESSDENIED;
+    request.command_time_utc_100ns = (int64_t)UA_DateTime_now(); request.planned_date_utc_100ns=date;request.estimated_downtime_ms=downtime;request.method=(maintenance_service_method_t)method;model_copy_string_safe(request.actor,sizeof(request.actor),actor);
+    { UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_plan(&request,&tx)); if(s!=UA_STATUSCODE_GOOD)return s; s=model_commit_maintenance_transaction(server,&tx,"PlanMaintenance"); if(s!=UA_STATUSCODE_GOOD)return s; }
+    model_set_boolean_method_output(no,out,true); return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_start_maintenance(UA_Server *server, const UA_NodeId *sid, void *ctx,
+ const UA_NodeId *mid, void *mc, const UA_NodeId *oid, void *oc, size_t n, const UA_Variant *in, size_t no, UA_Variant *out)
+{
+    maintenance_service_start_request_t request={0}; maintenance_service_transaction_t tx={0}; char actor[SECURITY_SERVICE_USERNAME_MAX_LEN]; (void)sid;(void)mc;(void)oid;(void)oc;(void)in;
+    { UA_StatusCode s = model_maintenance_mutations_available(); if (s != UA_STATUSCODE_GOOD) return s; }
+    if(n!=0u)return UA_STATUSCODE_BADINVALIDARGUMENT; { UA_StatusCode s=model_require_method_role(ctx,mid,no,out);if(s!=UA_STATUSCODE_GOOD)return s; }
+    if(!model_copy_session_username(ctx,actor,sizeof(actor)))return UA_STATUSCODE_BADUSERACCESSDENIED; request.command_time_utc_100ns=(int64_t)UA_DateTime_now(); model_copy_string_safe(request.actor,sizeof(request.actor),actor);
+    { UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_start(&request,&tx));if(s!=UA_STATUSCODE_GOOD)return s;s=model_commit_maintenance_transaction(server,&tx,"StartMaintenance");if(s!=UA_STATUSCODE_GOOD)return s;} model_set_boolean_method_output(no,out,true);return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_reschedule_maintenance(UA_Server *server,const UA_NodeId *sid,void *ctx,const UA_NodeId *mid,void *mc,const UA_NodeId *oid,void *oc,size_t n,const UA_Variant *in,size_t no,UA_Variant *out) {
+ maintenance_service_reschedule_request_t r={0};maintenance_service_transaction_t tx={0};UA_DateTime d;UA_Double x;UA_Int32 m;(void)sid;(void)mc;(void)oid;(void)oc;
+ {UA_StatusCode s=model_maintenance_mutations_available();if(s!=UA_STATUSCODE_GOOD)return s;}
+ if(n!=5u||!UA_Variant_hasScalarType(&in[0],&UA_TYPES[UA_TYPES_DATETIME])||!UA_Variant_hasScalarType(&in[1],&UA_TYPES[UA_TYPES_DOUBLE])||!UA_Variant_hasScalarType(&in[2],&UA_TYPES[UA_TYPES_INT32])||!model_copy_maintenance_string(&in[3],r.supplier,sizeof(r.supplier))||!model_copy_maintenance_string(&in[4],r.personnel,sizeof(r.personnel)))return UA_STATUSCODE_BADINVALIDARGUMENT;
+ d=*(UA_DateTime*)in[0].data;x=*(UA_Double*)in[1].data;m=*(UA_Int32*)in[2].data;if(d<=0||!isfinite(x)||x<=0||x>MAINTENANCE_SERVICE_MAX_DOWNTIME_MS||m<0||m>1)return UA_STATUSCODE_BADOUTOFRANGE;{UA_StatusCode s=model_require_method_role(ctx,mid,no,out);if(s!=UA_STATUSCODE_GOOD)return s;}r.command_time_utc_100ns=(int64_t)UA_DateTime_now();r.planned_date_utc_100ns=d;r.estimated_downtime_ms=x;r.method=(maintenance_service_method_t)m;{UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_reschedule(&r,&tx));if(s!=UA_STATUSCODE_GOOD)return s;s=model_commit_maintenance_transaction(server,&tx,"RescheduleMaintenance");if(s!=UA_STATUSCODE_GOOD)return s;}model_set_boolean_method_output(no,out,true);return UA_STATUSCODE_GOOD; }
+
+static UA_StatusCode model_finish_maintenance(UA_Server *server,const UA_NodeId *sid,void *ctx,const UA_NodeId *mid,void *mc,const UA_NodeId *oid,void *oc,size_t n,const UA_Variant *in,size_t no,UA_Variant *out) {
+ maintenance_service_finish_request_t r={0};maintenance_service_transaction_t tx={0};char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];(void)sid;(void)mc;(void)oid;(void)oc;
+ {UA_StatusCode s=model_maintenance_mutations_available();if(s!=UA_STATUSCODE_GOOD)return s;}
+ if(n!=4u||!model_copy_maintenance_parts(&in[0],r.parts_serviced,&r.parts_serviced_count)||!model_copy_maintenance_parts(&in[1],r.parts_replaced,&r.parts_replaced_count)||!UA_Variant_hasScalarType(&in[2],&UA_TYPES[UA_TYPES_BOOLEAN])||!model_copy_maintenance_string(&in[3],r.result,sizeof(r.result)))return UA_STATUSCODE_BADINVALIDARGUMENT;{UA_StatusCode s=model_require_method_role(ctx,mid,no,out);if(s!=UA_STATUSCODE_GOOD)return s;}if(!model_copy_session_username(ctx,actor,sizeof(actor)))return UA_STATUSCODE_BADUSERACCESSDENIED;r.command_time_utc_100ns=(int64_t)UA_DateTime_now();r.configuration_changed=*(UA_Boolean*)in[2].data==UA_TRUE;model_copy_string_safe(r.actor,sizeof(r.actor),actor);{UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_finish(&r,&tx));if(s!=UA_STATUSCODE_GOOD)return s;s=model_commit_maintenance_transaction(server,&tx,"FinishMaintenance");if(s!=UA_STATUSCODE_GOOD)return s;}model_set_boolean_method_output(no,out,true);return UA_STATUSCODE_GOOD; }
 
 static UA_StatusCode model_set_localized_text_value(UA_DataValue *value,
                                                     const char *data,
@@ -11186,6 +11977,24 @@ static UA_StatusCode model_add_set_location_paths_method_node(UA_Server *server,
         input_arguments);
 }
 
+static UA_StatusCode model_add_maintenance_workflow_methods(UA_Server *server, UA_NodeId maintenance_id)
+{
+    UA_Argument plan[6], reschedule[5], finish[4];
+    UA_StatusCode status;
+    model_fill_string_argument(&plan[0], "OperationId", "Bounded maintenance operation identifier");
+    model_fill_datetime_argument(&plan[1], "PlannedDate", "UTC planned date");
+    model_fill_double_argument(&plan[2], "EstimatedDowntime", "Estimated downtime in milliseconds");
+    model_fill_uint32_argument(&plan[3], "MaintenanceMethod", "AMB MaintenanceMethodEnum: Local=0, Remote=1"); plan[3].dataType=UA_TYPES[UA_TYPES_INT32].typeId;
+    model_fill_string_argument(&plan[4], "MaintenanceSupplier", "Maintenance supplier"); model_fill_string_argument(&plan[5], "QualificationOfPersonnel", "Personnel qualification");
+    status=model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_PLAN_MAINTENANCE,"PlanMaintenance","Plans a finished maintenance activity",model_plan_maintenance,6u,plan); if(status!=UA_STATUSCODE_GOOD)return status;
+    memcpy(reschedule,plan+1,sizeof(reschedule)); status=model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_RESCHEDULE_MAINTENANCE,"RescheduleMaintenance","Updates planned maintenance without a transition",model_reschedule_maintenance,5u,reschedule); if(status!=UA_STATUSCODE_GOOD)return status;
+    status=model_add_boolean_method_node(server,maintenance_id,MODEL_METHOD_START_MAINTENANCE,"StartMaintenance","Starts planned maintenance",model_start_maintenance); if(status!=UA_STATUSCODE_GOOD)return status;
+    model_fill_string_argument(&finish[0],"PartsOfAssetServiced","Bounded array of serviced parts");finish[0].valueRank=1;
+    model_fill_string_argument(&finish[1],"PartsOfAssetReplaced","Bounded array of replaced parts");finish[1].valueRank=1;
+    model_fill_boolean_argument(&finish[2],"ConfigurationChanged","Configuration changed during maintenance");model_fill_string_argument(&finish[3],"Result","Maintenance result");
+    return model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_FINISH_MAINTENANCE,"FinishMaintenance","Finishes executing maintenance",model_finish_maintenance,4u,finish);
+}
+
 static UA_StatusCode model_add_set_network_config_method_node(UA_Server *server,
                                                               UA_NodeId maintenance_folder_id)
 {
@@ -13311,6 +14120,12 @@ static UA_StatusCode model_build_address_space(UA_Server *server)
 
     if (g_model_config.enable_alarm_methods)
     {
+        status = model_add_maintenance_workflow_methods(server, maintenance_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
         status = model_add_alarm_method_node(server, maintenance_diagnostics_id);
         if (status != UA_STATUSCODE_GOOD)
         {
@@ -14376,6 +15191,14 @@ void opcua_model_task(void *argument)
     log_opcua_heap("UA_Server_newWithConfig completed");
     ua_port_alloc_log_stats("UA_Server_newWithConfig completed");
     config = UA_Server_getConfig(server);
+
+    if (maintenance_service_init() != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        printf("[OPC UA]\tMaintenance service initialization failed\n");
+        fflush(stdout);
+        UA_Server_delete(server);
+        vTaskDelete(NULL);
+    }
 
     status = model_build_address_space(server);
     if (status != UA_STATUSCODE_GOOD)

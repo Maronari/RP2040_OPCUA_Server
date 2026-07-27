@@ -204,12 +204,12 @@ async def verify_model(args):
                                           "MaintenanceRequired condition type")
         await audit.check_child_value(condition_id,
                                       [f"{amb_ns}:MaintenanceState", "0:CurrentState"],
-                                      ua.LocalizedText("Planned", "en-US"),
+                                      ua.LocalizedText("Finished", "en-US"),
                                       "MaintenanceRequired.CurrentState")
         state_id_node = await audit.check_child_value(
             condition_id,
             [f"{amb_ns}:MaintenanceState", "0:CurrentState", "0:Id"],
-            ua.NodeId(5006, amb_ns), "MaintenanceRequired.CurrentState.Id")
+            ua.NodeId(5008, amb_ns), "MaintenanceRequired.CurrentState.Id")
         del state_id_node
         for suffix, expected in (("PlannedDate", None),
                                  ("EstimatedDowntime", 0.0),
@@ -219,6 +219,12 @@ async def verify_model(args):
             node = await audit.check_node(node_id, suffix, ua.NodeClass.Variable)
             if node is not None and expected is not None:
                 await audit.check_value(node_id, expected, f"MaintenanceRequired.{suffix}")
+        for suffix in ("MaintenanceSupplier",
+                       "QualificationOfPersonnel",
+                       "PartsOfAssetReplaced",
+                       "PartsOfAssetServiced"):
+            node_id = f"ns=1;s=Device.DeviceHealthAlarms.MaintenanceRequired.{suffix}"
+            await audit.check_node(node_id, suffix, ua.NodeClass.Variable)
         await audit.check_child_value(condition_id, ["0:ConditionClassId"],
                                       ua.NodeId(1016, amb_ns),
                                       "MaintenanceRequired.ConditionClassId")
