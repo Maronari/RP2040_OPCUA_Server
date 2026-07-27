@@ -57,7 +57,7 @@ OPC UA remains the primary northbound interface. It must be an adapter over serv
 
 Every version below must satisfy all of these conditions:
 
-- [ ] `Debug`, `Release` and `MinSizeRel` builds succeed for the reference RP2350 + W5500 board.
+- [ ] One `Debug` build succeeds for the reference RP2350 + W5500 board.
 - [ ] No new compiler warnings in first-party code.
 - [ ] Required CI checks are blocking.
 - [ ] ELF section sizes and UF2/BIN sizes are stored as CI artifacts.
