@@ -49,7 +49,7 @@ OPC UA remains the primary northbound interface. It must be an adapter over serv
 8. **One source of version truth.** Runtime firmware revision, OTA manifest, exported configuration, build artifacts, release tag and documentation must report the same version.
 9. **Tests are part of the feature.** A feature is incomplete until positive, negative, reboot/power-loss where applicable, and resource-limit tests exist.
 10. **No fake-green CI.** Required checks must fail the workflow on failure. `continue-on-error`, unconditional `|| true`, or tests that only start an emulator without asserting behavior are not acceptable for release gates.
-11. **Update this file.** When a version is released, mark its acceptance checklist complete and add the release commit SHA.
+11. **Report release status separately.** When a version is released, report its acceptance checklist status and release commit SHA in the final report without modifying this file. Updating roadmap checklists or release SHAs requires a separate, explicit roadmap-maintenance task.
 12. **Stop at acceptance.** Do not add speculative companion specifications, cloud APIs, REST, GDS, PubSub UDP/TSN, full historian behavior or fleet management unless a later roadmap revision explicitly schedules them.
 13. **Drivers are firmware, configuration is data.** Through `v1.0.0`, every native sensor, actuator and field-protocol driver must be statically compiled into the firmware image. Configuration tools may select and parameterize an installed driver by stable `driver_id`, but must not upload, link, interpret or execute new driver code on the device.
 

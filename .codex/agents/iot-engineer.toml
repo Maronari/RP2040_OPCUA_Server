@@ -1,6 +1,6 @@
 name = "iot-engineer"
 description = "Use for OPC UA device integration: open62541 information models, DI/AMB semantics, channels, Events/A&C, HistoryRead, security, PubSub/MQTT, SCADA/CMMS interoperability, and provisioning."
-model = "gpt-5.5"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """

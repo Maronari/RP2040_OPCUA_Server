@@ -1,6 +1,6 @@
 name = "embedded-systems"
 description = "Use for RP2350/FreeRTOS firmware, drivers, W5500 networking, Flash/OTA, PSRAM, concurrency, timing, resource bounds, and hardware-facing failure analysis."
-model = "gpt-5.6-sol"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """
