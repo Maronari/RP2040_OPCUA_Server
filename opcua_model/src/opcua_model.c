@@ -3826,11 +3826,17 @@ static UA_StatusCode model_add_amb_name_node_id_property(
 {
     UA_VariableAttributes attr = UA_VariableAttributes_default;
     model_amb_name_node_id_t empty_value;
+    UA_UInt32 array_dimension = 0u;
 
     model_make_amb_name_node_id(&empty_value, "");
     attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
     attr.dataType = g_model_amb_name_node_id_type.typeId;
     attr.valueRank = is_array ? 1 : UA_VALUERANK_SCALAR;
+    if (is_array)
+    {
+        attr.arrayDimensions = &array_dimension;
+        attr.arrayDimensionsSize = 1u;
+    }
     attr.accessLevel = UA_ACCESSLEVELMASK_READ;
     attr.userAccessLevel = UA_ACCESSLEVELMASK_READ;
     if (is_array)
@@ -11980,6 +11986,7 @@ static UA_StatusCode model_add_set_location_paths_method_node(UA_Server *server,
 static UA_StatusCode model_add_maintenance_workflow_methods(UA_Server *server, UA_NodeId maintenance_id)
 {
     UA_Argument plan[6], reschedule[5], finish[4];
+    UA_UInt32 finish_array_dimension = 0u;
     UA_StatusCode status;
     model_fill_string_argument(&plan[0], "OperationId", "Bounded maintenance operation identifier");
     model_fill_datetime_argument(&plan[1], "PlannedDate", "UTC planned date");
@@ -11989,8 +11996,8 @@ static UA_StatusCode model_add_maintenance_workflow_methods(UA_Server *server, U
     status=model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_PLAN_MAINTENANCE,"PlanMaintenance","Plans a finished maintenance activity",model_plan_maintenance,6u,plan); if(status!=UA_STATUSCODE_GOOD)return status;
     memcpy(reschedule,plan+1,sizeof(reschedule)); status=model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_RESCHEDULE_MAINTENANCE,"RescheduleMaintenance","Updates planned maintenance without a transition",model_reschedule_maintenance,5u,reschedule); if(status!=UA_STATUSCODE_GOOD)return status;
     status=model_add_boolean_method_node(server,maintenance_id,MODEL_METHOD_START_MAINTENANCE,"StartMaintenance","Starts planned maintenance",model_start_maintenance); if(status!=UA_STATUSCODE_GOOD)return status;
-    model_fill_string_argument(&finish[0],"PartsOfAssetServiced","Bounded array of serviced parts");finish[0].valueRank=1;
-    model_fill_string_argument(&finish[1],"PartsOfAssetReplaced","Bounded array of replaced parts");finish[1].valueRank=1;
+    model_fill_string_argument(&finish[0],"PartsOfAssetServiced","Bounded array of serviced parts");finish[0].valueRank=1;finish[0].arrayDimensions=&finish_array_dimension;finish[0].arrayDimensionsSize=1u;
+    model_fill_string_argument(&finish[1],"PartsOfAssetReplaced","Bounded array of replaced parts");finish[1].valueRank=1;finish[1].arrayDimensions=&finish_array_dimension;finish[1].arrayDimensionsSize=1u;
     model_fill_boolean_argument(&finish[2],"ConfigurationChanged","Configuration changed during maintenance");model_fill_string_argument(&finish[3],"Result","Maintenance result");
     return model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_FINISH_MAINTENANCE,"FinishMaintenance","Finishes executing maintenance",model_finish_maintenance,4u,finish);
 }

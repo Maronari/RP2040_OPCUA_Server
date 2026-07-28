@@ -22,6 +22,24 @@ addMandatoryModellingRule(UA_Server *server, UA_NodeId nodeId) {
 }
 
 static UA_StatusCode
+addVariableNodeWithoutDefault(UA_Server *server, UA_NodeId nodeId,
+                              UA_NodeId parentNodeId, UA_NodeId referenceTypeId,
+                              UA_QualifiedName browseName,
+                              UA_NodeId typeDefinition,
+                              UA_VariableAttributes attr) {
+    UA_ServerConfig *config = UA_Server_getConfig(server);
+    UA_RuleHandling allowEmptyVariables = config->allowEmptyVariables;
+    UA_StatusCode res;
+
+    config->allowEmptyVariables = UA_RULEHANDLING_ACCEPT;
+    res = UA_Server_addVariableNode(server, nodeId, parentNodeId,
+                                    referenceTypeId, browseName, typeDefinition,
+                                    attr, NULL, NULL);
+    config->allowEmptyVariables = allowEmptyVariables;
+    return res;
+}
+
+static UA_StatusCode
 addObjectType(UA_Server *server, UA_UInt16 ns, UA_UInt32 nodeId,
               const char *browseName, UA_NodeId parentType, UA_Boolean isAbstract) {
     UA_ObjectTypeAttributes attr = UA_ObjectTypeAttributes_default;
@@ -115,14 +133,14 @@ addDeviceHealthInterface(UA_Server *server, UA_UInt16 ns) {
     healthAttr.valueRank = UA_VALUERANK_SCALAR;
     healthAttr.accessLevel = UA_ACCESSLEVELMASK_READ;
     healthAttr.userAccessLevel = UA_ACCESSLEVELMASK_READ;
-    res = UA_Server_addVariableNode(
+    res = addVariableNodeWithoutDefault(
         server,
         UA_NODEID_NUMERIC(ns, UA_DIID_IDEVICEHEALTHTYPE_DEVICEHEALTH),
         UA_NODEID_NUMERIC(ns, UA_DIID_IDEVICEHEALTHTYPE),
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
         UA_QUALIFIEDNAME(ns, (char *)"DeviceHealth"),
         UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
-        healthAttr, NULL, NULL);
+        healthAttr);
     if(res != UA_STATUSCODE_GOOD)
         return res;
     res = addOptionalModellingRule(
@@ -234,21 +252,26 @@ addAmbMaintenanceProperty(UA_Server *server, UA_UInt16 ns, UA_UInt32 nodeId,
                            const char *browseName, UA_NodeId dataType,
                            UA_Int32 valueRank) {
     UA_VariableAttributes attr = UA_VariableAttributes_default;
+    UA_UInt32 arrayDimension = 0u;
     UA_StatusCode res;
 
     attr.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browseName);
     attr.dataType = dataType;
     attr.valueRank = valueRank;
+    if(valueRank == 1) {
+        attr.arrayDimensions = &arrayDimension;
+        attr.arrayDimensionsSize = 1u;
+    }
     attr.accessLevel = UA_ACCESSLEVELMASK_READ;
     attr.userAccessLevel = UA_ACCESSLEVELMASK_READ;
-    res = UA_Server_addVariableNode(
+    res = addVariableNodeWithoutDefault(
         server,
         UA_NODEID_NUMERIC(ns, nodeId),
         UA_NODEID_NUMERIC(ns, UA_AMBID_IMAINTENANCE_EVENT_TYPE),
         UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
         UA_QUALIFIEDNAME(ns, (char *)browseName),
         UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
-        attr, NULL, NULL);
+        attr);
     if(res != UA_STATUSCODE_GOOD)
         return res;
     return addOptionalModellingRule(server, UA_NODEID_NUMERIC(ns, nodeId));
@@ -437,8 +460,8 @@ addAmbMaintenanceModel(UA_Server *server, UA_UInt16 ns, UA_UInt16 diNs) {
         server,
         UA_NODEID_NUMERIC(
             ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE_ENCODING_DEFAULT_BINARY),
-        UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASENCODING),
+        UA_NODEID_NULL,
+        UA_NODEID_NULL,
         UA_QUALIFIEDNAME(0, (char *)"Default Binary"),
         UA_NODEID_NUMERIC(0, UA_NS0ID_DATATYPEENCODINGTYPE),
         encodingAttr, NULL, NULL);
@@ -449,11 +472,27 @@ addAmbMaintenanceModel(UA_Server *server, UA_UInt16 ns, UA_UInt16 diNs) {
         server,
         UA_NODEID_NUMERIC(
             ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE_ENCODING_DEFAULT_XML),
-        UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
-        UA_NODEID_NUMERIC(0, UA_NS0ID_HASENCODING),
+        UA_NODEID_NULL,
+        UA_NODEID_NULL,
         UA_QUALIFIEDNAME(0, (char *)"Default XML"),
         UA_NODEID_NUMERIC(0, UA_NS0ID_DATATYPEENCODINGTYPE),
         encodingAttr, NULL, NULL);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    res = UA_Server_addReference(
+        server,
+        UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASENCODING),
+        UA_EXPANDEDNODEID_NUMERIC(
+            ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE_ENCODING_DEFAULT_BINARY),
+        true);
+    if(res != UA_STATUSCODE_GOOD) return res;
+    res = UA_Server_addReference(
+        server,
+        UA_NODEID_NUMERIC(ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE),
+        UA_NODEID_NUMERIC(0, UA_NS0ID_HASENCODING),
+        UA_EXPANDEDNODEID_NUMERIC(
+            ns, UA_AMBID_NAME_NODE_ID_DATA_TYPE_ENCODING_DEFAULT_XML),
+        true);
     if(res != UA_STATUSCODE_GOOD) return res;
 
     stateAttr.displayName = UA_LOCALIZEDTEXT((char *)"en-US",
