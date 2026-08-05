@@ -1,6 +1,7 @@
 #include "rp2_ua_datetime_clock.h"
 
 #include <limits.h>
+#include <stddef.h>
 
 #include "services/time_service.h"
 

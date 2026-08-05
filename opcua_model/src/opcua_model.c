@@ -3542,13 +3542,40 @@ static UA_StatusCode model_add_event_property(UA_Server *server,
                                   true);
 }
 
+#define MODEL_EVENT_FIELD_PATH_CAPACITY 64u
+
+/* open62541 indexes custom fields by UA_SimpleAttributeOperand_print(). For a
+ * BaseEventType select with ns=1 BrowseName this is the namespace-zero map key
+ * "/1:<BrowseName>", not QualifiedName(1, <BrowseName>). */
+static UA_StatusCode model_make_event_field_key(const char *browse_name,
+                                                char field_key[MODEL_EVENT_FIELD_PATH_CAPACITY])
+{
+    int written;
+
+    if (browse_name == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    written = snprintf(field_key, MODEL_EVENT_FIELD_PATH_CAPACITY, "/1:%s", browse_name);
+    return written >= 0 && (size_t)written < MODEL_EVENT_FIELD_PATH_CAPACITY
+               ? UA_STATUSCODE_GOOD
+               : UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED;
+}
+
 static UA_StatusCode model_set_event_string_field(UA_KeyValueMap *event_fields,
                                                   const char *browse_name,
                                                   const char *value)
 {
+    char field_key[MODEL_EVENT_FIELD_PATH_CAPACITY];
     UA_String string_value = UA_STRING((char *)(value != NULL ? value : ""));
+    UA_StatusCode status = model_make_event_field_key(browse_name, field_key);
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
     return UA_KeyValueMap_setScalar(event_fields,
-                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    UA_QUALIFIEDNAME(0, field_key),
                                     &string_value,
                                     &UA_TYPES[UA_TYPES_STRING]);
 }
@@ -5042,8 +5069,15 @@ static UA_StatusCode model_set_event_bool_field(UA_KeyValueMap *event_fields,
                                                 const char *browse_name,
                                                 UA_Boolean value)
 {
+    char field_key[MODEL_EVENT_FIELD_PATH_CAPACITY];
+    UA_StatusCode status = model_make_event_field_key(browse_name, field_key);
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
     return UA_KeyValueMap_setScalar(event_fields,
-                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    UA_QUALIFIEDNAME(0, field_key),
                                     &value,
                                     &UA_TYPES[UA_TYPES_BOOLEAN]);
 }
@@ -5052,8 +5086,15 @@ static UA_StatusCode model_set_event_uint32_field(UA_KeyValueMap *event_fields,
                                                   const char *browse_name,
                                                   UA_UInt32 value)
 {
+    char field_key[MODEL_EVENT_FIELD_PATH_CAPACITY];
+    UA_StatusCode status = model_make_event_field_key(browse_name, field_key);
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
     return UA_KeyValueMap_setScalar(event_fields,
-                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    UA_QUALIFIEDNAME(0, field_key),
                                     &value,
                                     &UA_TYPES[UA_TYPES_UINT32]);
 }
@@ -5062,8 +5103,15 @@ static UA_StatusCode model_set_event_float_field(UA_KeyValueMap *event_fields,
                                                  const char *browse_name,
                                                  UA_Float value)
 {
+    char field_key[MODEL_EVENT_FIELD_PATH_CAPACITY];
+    UA_StatusCode status = model_make_event_field_key(browse_name, field_key);
+
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
     return UA_KeyValueMap_setScalar(event_fields,
-                                    UA_QUALIFIEDNAME(1, (char *)browse_name),
+                                    UA_QUALIFIEDNAME(0, field_key),
                                     &value,
                                     &UA_TYPES[UA_TYPES_FLOAT]);
 }
@@ -6722,7 +6770,9 @@ static UA_StatusCode model_reset_maintenance_journal(
         memset(g_model_maintenance_export_continuations, 0,
                sizeof(g_model_maintenance_export_continuations));
         taskEXIT_CRITICAL();
-        model_audit_maintenance_accept(session_context, "ResetMaintenanceJournal");
+        /* This is the sole successful Reset audit.  Publishing both a
+         * maintenance-call and maintenance-reset audit would violate the
+         * v0.3.3 one-event reset cardinality once the source is reachable. */
         model_audit_session_event(session_context, "maintenance-reset",
                                   "ResetMaintenanceJournal", true,
                                   "logical reset committed");
@@ -8249,10 +8299,12 @@ static UA_StatusCode model_request_reboot(UA_Server *server,
         return status;
     }
 
-    model_schedule_reboot(250u);
+    /* Leave a bounded delivery window for the queued success AuditEvent and
+     * its Publish response before the transport is intentionally torn down. */
+    model_schedule_reboot(1500u);
     printf("[OPC UA]\tReboot requested\n");
     fflush(stdout);
-    model_audit_session_event(session_context, "reboot", "device", true, "reboot scheduled");
+    model_audit_session_event(session_context, "reboot", "Reboot", true, "reboot scheduled");
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     {
         char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
@@ -16038,8 +16090,8 @@ void opcua_model_task(void *argument)
     /* PSRAM profile: keep connection counts bounded, but allow a realistic
        number of monitored items now that open62541 long-lived allocations live
        outside the internal SRAM heap. */
-    config->maxSecureChannels = 2;
-    config->maxSessions = 2;
+    config->maxSecureChannels = 4;
+    config->maxSessions = 4;
     config->maxSubscriptions = 4;
     config->maxSubscriptionsPerSession = 4;
     config->maxMonitoredItems = 128;

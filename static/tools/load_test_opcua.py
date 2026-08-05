@@ -88,7 +88,15 @@ class SubscriptionHandler:
 
 async def configure_client(args):
     opcua_common.load_asyncua()
-    client = opcua_common.Client(url=args.server_url, timeout=args.timeout)
+    # asyncua 2.x otherwise probes the server every second with a one-second
+    # deadline.  Basic256Sha256 session setup on the RP2350 can legitimately
+    # occupy the single OPC UA task for several seconds, so connecting client 2
+    # makes that watchdog falsely mark client 1 disconnected before load starts.
+    client = opcua_common.Client(
+        url=args.server_url,
+        timeout=args.timeout,
+        watchdog_intervall=args.timeout,
+    )
     await opcua_common.configure_client_security(client, args)
     if args.username:
         client.set_user(args.username)
@@ -182,6 +190,16 @@ async def run_stage(args, client_count, item_count):
                 result.errors.append(f"client {index + 1}: {type(exc).__name__}: {exc}")
                 raise
             clients.append(client)
+
+        for index, client in enumerate(clients):
+            try:
+                await client.nodes.server_state.read_value()
+            except Exception as exc:
+                result.connection_errors += 1
+                result.errors.append(
+                    f"client {index + 1} readiness: {type(exc).__name__}: {exc}")
+                raise RuntimeError(
+                    f"client {index + 1} failed readiness after all clients connected") from exc
 
         monitored_nodes = await validate_monitored_nodes(
             clients[0], args.monitor_node or MONITORED_NODE_IDS)
