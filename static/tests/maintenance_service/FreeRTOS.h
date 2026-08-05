@@ -1,0 +1,7 @@
+#ifndef MAINTENANCE_SERVICE_TEST_FREERTOS_H
+#define MAINTENANCE_SERVICE_TEST_FREERTOS_H
+
+#define portENTER_CRITICAL() ((void)0)
+#define portEXIT_CRITICAL() ((void)0)
+
+#endif

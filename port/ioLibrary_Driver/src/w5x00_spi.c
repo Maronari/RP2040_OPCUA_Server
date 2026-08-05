@@ -62,7 +62,7 @@ void wizchip_reset()
 
     bi_decl(bi_1pin_with_name(PIN_RST, "W5x00 RESET"));
 #else
-    printf(" W5x00 reset pin not connected, relying on power-on reset\n");
+    printf("[W5x00]]\t\tReset pin not connected, relying on power-on reset\n");
     sleep_ms(250);
 #endif
 }
@@ -73,19 +73,19 @@ void wizchip_soft_reset(void)
     const uint8_t version = getVERSIONR();
     if (version != 0x04)
     {
-        printf(" W5x00 software reset skipped, VERSIONR=0x%02x\n", version);
+        printf("[W5x00]]\t\tSoftware reset skipped, VERSIONR=0x%02x\n", version);
         return;
     }
 #elif (_WIZCHIP_ == W5100S)
     const uint8_t version = getVER();
     if (version != 0x51)
     {
-        printf(" W5x00 software reset skipped, VERSION=0x%02x\n", version);
+        printf("[W5x00]]\t\tSoftware reset skipped, VERSION=0x%02x\n", version);
         return;
     }
 #endif
 
-    printf(" W5x00 software reset\n");
+    printf("[W5x00]]\t\tSoftware reset\n");
     setMR(MR_RST);
     sleep_ms(100);
 }
@@ -234,7 +234,7 @@ void wizchip_initialize(void)
 
     if (ctlwizchip(CW_INIT_WIZCHIP, (void *)memsize) == -1)
     {
-        printf(" W5x00 initialized fail\n");
+        printf("[W5x00]]\t\tInitialized fail\n");
 
         return;
     }

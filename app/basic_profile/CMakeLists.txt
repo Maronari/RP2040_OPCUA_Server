@@ -1,26 +1,8 @@
 set(TARGET_NAME device_profile_basic)
-set(DEVICE_PROFILE_FW_REVISION "0.3.0")
+set(TARGET_NAME_DIAGNOSTIC device_profile_basic_w5x00_diag)
+set(DEVICE_PROFILE_FW_REVISION ${RP2_FIRMWARE_VERSION})
 string(TIMESTAMP DEVICE_PROFILE_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
-
-function(ota_pack_firmware_version version_text out_version_number)
-    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _version_match "${version_text}")
-    if(NOT _version_match)
-        message(FATAL_ERROR "DEVICE_PROFILE_FW_REVISION must use semantic version format MAJOR.MINOR.PATCH, got: ${version_text}")
-    endif()
-
-    set(_major ${CMAKE_MATCH_1})
-    set(_minor ${CMAKE_MATCH_2})
-    set(_patch ${CMAKE_MATCH_3})
-
-    if(_major GREATER 255 OR _minor GREATER 255 OR _patch GREATER 65535)
-        message(FATAL_ERROR "Firmware version components exceed OTA packing limits: ${version_text}")
-    endif()
-
-    math(EXPR _version_number "(${_major} << 24) | (${_minor} << 16) | ${_patch}")
-    set(${out_version_number} ${_version_number} PARENT_SCOPE)
-endfunction()
-
-ota_pack_firmware_version("${DEVICE_PROFILE_FW_REVISION}" DEVICE_PROFILE_FW_VERSION_NUMBER)
+set(DEVICE_PROFILE_FW_VERSION_NUMBER ${RP2_FIRMWARE_VERSION_NUMBER})
 
 
 execute_process(
@@ -36,7 +18,13 @@ endif()
 set(DEVICE_PROFILE_CONFIG_EXPORT_PATH "${CMAKE_BINARY_DIR}/config_export.json")
 set(DEVICE_PROFILE_CONFIG_EXPORT_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/generate_config_export.cmake")
 
-add_custom_target(${TARGET_NAME}_config_export
+if(W5X00_DIAGNOSTIC_NO_OPCUA)
+    set(DEVICE_PROFILE_TARGET_NAME ${TARGET_NAME_DIAGNOSTIC})
+else()
+    set(DEVICE_PROFILE_TARGET_NAME ${TARGET_NAME})
+endif()
+
+add_custom_target(${DEVICE_PROFILE_TARGET_NAME}_config_export
         COMMAND ${CMAKE_COMMAND}
         -DOUTPUT_PATH=${DEVICE_PROFILE_CONFIG_EXPORT_PATH}
         -DFW_REVISION=${DEVICE_PROFILE_FW_REVISION}
@@ -141,13 +129,19 @@ function(add_device_profile_target target_name use_ota_linker)
 
     target_link_libraries(${target_name} PRIVATE
             OTA_SHARED
+            OTA_FLASH_BACKEND_APPLICATION
             FIRMWARE_DRIVERS
             FIRMWARE_SERVICES
-            OPCUA_DEVICE_MODEL
             PSRAM_ALLOCATOR
             )
 
-    add_dependencies(${target_name} ${TARGET_NAME}_config_export)
+    if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
+        target_link_libraries(${target_name} PRIVATE
+                OPCUA_DEVICE_MODEL
+                )
+    endif()
+
+    add_dependencies(${target_name} ${DEVICE_PROFILE_TARGET_NAME}_config_export)
 
     pico_enable_stdio_usb(${target_name} 1)
     pico_enable_stdio_uart(${target_name} 0)
@@ -167,10 +161,15 @@ function(add_device_profile_target target_name use_ota_linker)
             DEVICE_PROFILE_BUILD_TIME=\"${DEVICE_PROFILE_BUILD_TIME}\"
             DEVICE_PROFILE_GIT_HASH=\"${DEVICE_PROFILE_GIT_HASH}\"
             )
+
+    target_compile_definitions(${target_name} PRIVATE
+            $<$<BOOL:${W5X00_DIAGNOSTIC_NO_OPCUA}>:W5X00_DIAGNOSTIC_NO_OPCUA>
+            $<$<BOOL:${W5X00_DIAGNOSTIC_NO_OPCUA}>:W5X00_LWIP_ALL_DEBUG>
+            )
 endfunction()
 
-add_device_profile_target(${TARGET_NAME} FALSE)
+add_device_profile_target(${DEVICE_PROFILE_TARGET_NAME} FALSE)
 
 if(OTA_BUILD_BOOTLOADER)
-    add_device_profile_target(${TARGET_NAME}_bank_a TRUE)
+    add_device_profile_target(${DEVICE_PROFILE_TARGET_NAME}_bank_a TRUE)
 endif()

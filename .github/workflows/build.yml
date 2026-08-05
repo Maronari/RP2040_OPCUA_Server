@@ -25,7 +25,7 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release
+        cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel
 
     - name: Build
       run: |
@@ -50,6 +50,9 @@ jobs:
         fi
         echo "$UF2_FILES"
         echo "Build artifacts generated successfully"
+
+    - name: Verify OPC UA event field contract
+      run: python3 static/tools/test_opcua_event_field_key_contract.py
 
     - name: Static analysis (cppcheck)
       run: |

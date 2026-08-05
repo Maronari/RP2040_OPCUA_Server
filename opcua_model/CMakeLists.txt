@@ -15,3 +15,7 @@ target_link_libraries(OPCUA_DEVICE_MODEL PUBLIC
         OPEN62541_FILES
         pico_stdlib
         )
+
+target_link_libraries(OPCUA_DEVICE_MODEL PRIVATE
+        PSRAM_ALLOCATOR
+        )

@@ -41,6 +41,13 @@ endif()
 
 option(BUILD_LEGACY_EXAMPLES "Build legacy example targets" OFF)
 option(OTA_BUILD_BOOTLOADER "Build the OTA bootloader target" OFF)
+option(W5X00_DIAGNOSTIC_NO_OPCUA "Build network diagnostics firmware without open62541/opcua model" OFF)
+
+if(W5X00_DIAGNOSTIC_NO_OPCUA AND OTA_BUILD_BOOTLOADER)
+    message(FATAL_ERROR
+            "W5X00_DIAGNOSTIC_NO_OPCUA cannot be combined with OTA_BUILD_BOOTLOADER; "
+            "the network-only diagnostic image is not a release/factory artifact")
+endif()
 
 include(${CMAKE_SOURCE_DIR}/patches/apply_submodule_patches.cmake)
 rp2_apply_submodule_patch(
@@ -53,12 +60,13 @@ rp2_apply_submodule_patch(
 include(pico_sdk_import.cmake)
 include(rp2040_hat_lwip_c_sdk_version.cmake)
 include(rp2040_hat_freertos_c_sdk_version.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/firmware_version.cmake)
 
 # Set project name
 set(PROJECT_NAME RP2-HAT-LWIP-C)
 
 # Set project informations
-project(${PROJECT_NAME} C CXX ASM)
+project(${PROJECT_NAME} VERSION ${RP2_FIRMWARE_VERSION} LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -123,7 +131,9 @@ add_subdirectory(${PORT_DIR})
 add_subdirectory(drivers)
 add_subdirectory(ota)
 add_subdirectory(services)
-add_subdirectory(opcua_model)
+if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
+    add_subdirectory(opcua_model)
+endif()
 add_subdirectory(app)
 
 if(OTA_BUILD_BOOTLOADER AND EXISTS ${CMAKE_SOURCE_DIR}/bootloader/CMakeLists.txt)

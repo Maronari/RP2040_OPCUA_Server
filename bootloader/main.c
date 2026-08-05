@@ -9,6 +9,7 @@
 #include "hardware/watchdog.h"
 #include "ota/ota_flash.h"
 #include "ota/ota_state.h"
+#include "ota_flash_backend.h"
 #include "pico/flash.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
@@ -165,6 +166,18 @@ static ota_flash_status_t bootloader_execute_program(uint32_t flash_offset,
     }
 
     return OTA_FLASH_STATUS_OK;
+}
+
+ota_flash_status_t ota_flash_backend_erase(uint32_t flash_offset, size_t byte_count)
+{
+    return bootloader_execute_erase(flash_offset, byte_count);
+}
+
+ota_flash_status_t ota_flash_backend_program(uint32_t flash_offset,
+                                             const uint8_t *data,
+                                             size_t byte_count)
+{
+    return bootloader_execute_program(flash_offset, data, byte_count);
 }
 
 static ota_image_error_t bootloader_map_flash_status_to_error(ota_flash_status_t status)

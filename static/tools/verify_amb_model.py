@@ -41,13 +41,16 @@ class ModelAudit:
             self.fail(f"Node {node_id} exists", f"{type(exc).__name__}: {exc}")
             return None
 
+        valid = True
         if browse_name is not None and actual_name.Name != browse_name:
             self.fail(f"Node {node_id} BrowseName",
                       f"expected {browse_name!r}, got {actual_name.Name!r}")
-        elif node_class is not None and actual_class != node_class:
+            valid = False
+        if node_class is not None and actual_class != node_class:
             self.fail(f"Node {node_id} NodeClass",
                       f"expected {node_class.name}, got {actual_class.name}")
-        else:
+            valid = False
+        if valid:
             self.ok(f"{node_id} {actual_name.Name} ({actual_class.name})")
         return node
 
@@ -136,6 +139,19 @@ async def verify_model(args):
                                     f"ns={amb_ns};i=1012",
                                     "MaintenanceRequiredAlarmType HasInterface IMaintenanceEventType")
 
+        # NameNodeIdDataType encodings.
+        await audit.check_node(f"ns={amb_ns};i=3003", "NameNodeIdDataType",
+                               ua.NodeClass.DataType)
+        for encoding_id, name in ((5012, "Default Binary"),
+                                  (5013, "Default XML")):
+            node_id = f"ns={amb_ns};i={encoding_id}"
+            await audit.check_node(node_id, name, ua.NodeClass.Object)
+            await audit.check_type_definition(
+                node_id, "i=76", f"NameNodeIdDataType.{name} type definition")
+            await audit.check_reference(
+                f"ns={amb_ns};i=3003", "i=38", node_id,
+                f"NameNodeIdDataType HasEncoding {name}")
+
         # MaintenanceMethodEnum.
         enum_node = await audit.check_node(f"ns={amb_ns};i=6029", "EnumValues", ua.NodeClass.Variable)
         if enum_node is not None:
@@ -204,12 +220,12 @@ async def verify_model(args):
                                           "MaintenanceRequired condition type")
         await audit.check_child_value(condition_id,
                                       [f"{amb_ns}:MaintenanceState", "0:CurrentState"],
-                                      ua.LocalizedText("Planned", "en-US"),
+                                      ua.LocalizedText("Finished", "en-US"),
                                       "MaintenanceRequired.CurrentState")
         state_id_node = await audit.check_child_value(
             condition_id,
             [f"{amb_ns}:MaintenanceState", "0:CurrentState", "0:Id"],
-            ua.NodeId(5006, amb_ns), "MaintenanceRequired.CurrentState.Id")
+            ua.NodeId(5008, amb_ns), "MaintenanceRequired.CurrentState.Id")
         del state_id_node
         for suffix, expected in (("PlannedDate", None),
                                  ("EstimatedDowntime", 0.0),
@@ -219,6 +235,12 @@ async def verify_model(args):
             node = await audit.check_node(node_id, suffix, ua.NodeClass.Variable)
             if node is not None and expected is not None:
                 await audit.check_value(node_id, expected, f"MaintenanceRequired.{suffix}")
+        for suffix in ("MaintenanceSupplier",
+                       "QualificationOfPersonnel",
+                       "PartsOfAssetReplaced",
+                       "PartsOfAssetServiced"):
+            node_id = f"ns=1;s=Device.DeviceHealthAlarms.MaintenanceRequired.{suffix}"
+            await audit.check_node(node_id, suffix, ua.NodeClass.Variable)
         await audit.check_child_value(condition_id, ["0:ConditionClassId"],
                                       ua.NodeId(1016, amb_ns),
                                       "MaintenanceRequired.ConditionClassId")

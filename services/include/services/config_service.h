@@ -111,6 +111,13 @@ typedef struct
     char operational_location_path[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN];
 } device_profile_config_t;
 
+/*
+ * fw_revision, build_time, and git_hash are runtime identity owned by the
+ * compiled profile passed to config_service_init(). They remain present in
+ * the persisted binary schema for compatibility, but persisted/imported
+ * values never override the currently running firmware identity.
+ */
+
 void config_service_init(const device_profile_config_t *defaults);
 const device_profile_config_t *config_service_get(void);
 const device_profile_config_t *config_service_get_staged(void);

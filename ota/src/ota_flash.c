@@ -2,22 +2,9 @@
 
 #include <string.h>
 
-#include "hardware/flash.h"
+#include "ota_flash_backend.h"
 #include "ota_layout.h"
-#include "pico/flash.h"
-#include "pico/platform.h"
 #include "pico/stdlib.h"
-
-typedef struct {
-    uint32_t flash_offset;
-    size_t byte_count;
-} ota_flash_erase_context_t;
-
-typedef struct {
-    uint32_t flash_offset;
-    const uint8_t *data;
-    size_t byte_count;
-} ota_flash_program_context_t;
 
 static uint8_t __scratch_x("ota_flash") g_ota_state_sector_buffer[OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES];
 
@@ -49,61 +36,6 @@ static bool ota_flash_range_is_within_bank_b(uint32_t offset, size_t size)
 static const uint8_t *ota_flash_bank_b_pointer(uint32_t offset)
 {
     return (const uint8_t *)(OTA_LAYOUT_BANK_B_ORIGIN + offset);
-}
-
-static void __not_in_flash_func(ota_flash_erase_range)(void *param)
-{
-    const ota_flash_erase_context_t *context = (const ota_flash_erase_context_t *)param;
-
-    flash_range_erase(context->flash_offset, context->byte_count);
-}
-
-static void __not_in_flash_func(ota_flash_program_range)(void *param)
-{
-    const ota_flash_program_context_t *context = (const ota_flash_program_context_t *)param;
-
-    flash_range_program(context->flash_offset, context->data, context->byte_count);
-}
-
-static ota_flash_status_t ota_flash_execute_erase(uint32_t flash_offset, size_t byte_count)
-{
-    ota_flash_erase_context_t context = {
-        .flash_offset = flash_offset,
-        .byte_count = byte_count,
-    };
-
-    if (byte_count == 0u || (byte_count % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES) != 0u)
-    {
-        return OTA_FLASH_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (flash_safe_execute(ota_flash_erase_range, &context, 1000u) != PICO_OK)
-    {
-        return OTA_FLASH_STATUS_FLASH_OP_FAILED;
-    }
-
-    return OTA_FLASH_STATUS_OK;
-}
-
-static ota_flash_status_t ota_flash_execute_program(uint32_t flash_offset, const uint8_t *data, size_t byte_count)
-{
-    ota_flash_program_context_t context = {
-        .flash_offset = flash_offset,
-        .data = data,
-        .byte_count = byte_count,
-    };
-
-    if (data == NULL || byte_count == 0u || (byte_count % OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES) != 0u)
-    {
-        return OTA_FLASH_STATUS_INVALID_ARGUMENT;
-    }
-
-    if (flash_safe_execute(ota_flash_program_range, &context, 1000u) != PICO_OK)
-    {
-        return OTA_FLASH_STATUS_FLASH_OP_FAILED;
-    }
-
-    return OTA_FLASH_STATUS_OK;
 }
 
 static ota_flash_status_t ota_flash_flush_writer_page(ota_flash_writer_t *writer, bool final_page)
@@ -139,7 +71,7 @@ static ota_flash_status_t ota_flash_flush_writer_page(ota_flash_writer_t *writer
         return OTA_FLASH_STATUS_OUT_OF_RANGE;
     }
 
-    return ota_flash_execute_program(OTA_LAYOUT_BANK_B_OFFSET_BYTES + page_offset,
+    return ota_flash_backend_program(OTA_LAYOUT_BANK_B_OFFSET_BYTES + page_offset,
                                      writer->page_buffer,
                                      page_size);
 }
@@ -173,13 +105,14 @@ ota_flash_status_t ota_flash_write_state(const ota_state_record_t *record)
     memset(g_ota_state_sector_buffer, 0xFF, sizeof(g_ota_state_sector_buffer));
     memcpy(g_ota_state_sector_buffer, &local_record, sizeof(local_record));
 
-    status = ota_flash_execute_erase(OTA_LAYOUT_STATE_OFFSET_BYTES, OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES);
+    status = ota_flash_backend_erase(OTA_LAYOUT_STATE_OFFSET_BYTES,
+                                     OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES);
     if (status != OTA_FLASH_STATUS_OK)
     {
         return status;
     }
 
-    return ota_flash_execute_program(OTA_LAYOUT_STATE_OFFSET_BYTES,
+    return ota_flash_backend_program(OTA_LAYOUT_STATE_OFFSET_BYTES,
                                      g_ota_state_sector_buffer,
                                      OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES);
 }
@@ -201,7 +134,7 @@ ota_flash_status_t ota_flash_prepare_bank_b(uint32_t image_size)
         return OTA_FLASH_STATUS_INVALID_ARGUMENT;
     }
 
-    return ota_flash_execute_erase(OTA_LAYOUT_BANK_B_OFFSET_BYTES, erase_bytes);
+    return ota_flash_backend_erase(OTA_LAYOUT_BANK_B_OFFSET_BYTES, erase_bytes);
 }
 
 ota_flash_status_t ota_flash_program_bank_b(uint32_t image_offset, const void *data, size_t size)
@@ -222,7 +155,7 @@ ota_flash_status_t ota_flash_program_bank_b(uint32_t image_offset, const void *d
         return OTA_FLASH_STATUS_OUT_OF_RANGE;
     }
 
-    return ota_flash_execute_program(OTA_LAYOUT_BANK_B_OFFSET_BYTES + image_offset,
+    return ota_flash_backend_program(OTA_LAYOUT_BANK_B_OFFSET_BYTES + image_offset,
                                      (const uint8_t *)data,
                                      size);
 }

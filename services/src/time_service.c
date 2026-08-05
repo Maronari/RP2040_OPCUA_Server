@@ -28,7 +28,12 @@ bool time_service_init(void)
     g_initialized = rtc_driver_init();
     strncpy(g_status.ntp_server, config->ntp_server, sizeof(g_status.ntp_server));
     g_status.ntp_server[sizeof(g_status.ntp_server) - 1] = '\0';
-    g_status.quality = g_initialized ? SERVICE_QUALITY_UNCERTAIN : SERVICE_QUALITY_BAD;
+    g_status.rtc_valid = g_initialized && rtc_driver_is_valid();
+    if (g_status.rtc_valid)
+    {
+        g_status.unix_time_s = rtc_driver_get_unix_time();
+    }
+    g_status.quality = g_status.rtc_valid ? SERVICE_QUALITY_UNCERTAIN : SERVICE_QUALITY_BAD;
     return g_initialized;
 }
 
@@ -56,6 +61,27 @@ uint32_t get_system_time(void)
 uint64_t get_system_time_us(void)
 {
     return rtc_driver_get_unix_time_us();
+}
+
+bool time_service_get_utc_time_us(uint64_t *out_unix_time_us)
+{
+    time_service_status_t status = {0};
+    uint64_t unix_time_us;
+
+    if (out_unix_time_us == NULL)
+    {
+        return false;
+    }
+
+    time_service_get_status(&status);
+    if (!g_initialized || !status.rtc_valid || !rtc_driver_is_valid())
+    {
+        return false;
+    }
+
+    unix_time_us = rtc_driver_get_unix_time_us();
+    *out_unix_time_us = unix_time_us;
+    return true;
 }
 
 int16_t get_system_timezone_offset_minutes(void)

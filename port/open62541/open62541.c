@@ -53,7 +53,7 @@ rp2_open62541_ns0_progress(unsigned step, UA_StatusCode retVal) {
     const unsigned filled = (boundedStep * BAR_WIDTH) / TOTAL_STEPS;
 
     if(!started || boundedStep <= 1u) {
-        printf("[open62541/ns0]\t[");
+        printf("[open62541/ns0]\t\t[");
         emitted = 0u;
         started = true;
     }
@@ -203335,1727 +203335,2158 @@ retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU,
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12882LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12882LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17612LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17612LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11527LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11527LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11489LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11489LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12871LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12871LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12746LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12746LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12883LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12883LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19809LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19809LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11549LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11549LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11550LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11550LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12910LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12910LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11551LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11551LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16295LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16295LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24088LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24088LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24089LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24089LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24090LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24090LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24091LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24091LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24103LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24103LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24092LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24092LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24093LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24093LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31770LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31770LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24094LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24094LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2022LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2022LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19303LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19303LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32410LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32410LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11565LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11565LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12161LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12161LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12162LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12162LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11567LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11567LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12163LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12163LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12164LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12164LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11569LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11569LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11570LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11570LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11571LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11571LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11572LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11572LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11573LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11573LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11574LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11574LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 13341LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 13341LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24244LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24244LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25200LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25200LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11615LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11615LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11624LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11624LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16137LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16137LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16138LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16138LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16139LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16139LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25267LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25267LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32419LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32419LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 3190LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 3190LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31771LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31771LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31772LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31772LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31773LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31773LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31774LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 31774LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19811LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19811LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17615LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17615LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24135LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24135LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19304LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19304LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19305LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19305LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19306LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19306LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11701LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11701LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17633LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17633LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16312LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16312LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17988LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17988LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17989LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17989LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17990LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17990LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2770LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2770LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2757LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2757LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2758LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2758LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2759LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2759LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2764LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2764LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2765LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2765LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2766LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2766LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11456LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11456LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2773LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2773LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17635LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17635LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17636LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17636LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17715LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17715LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18773LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18773LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18780LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18780LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18788LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18788LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18789LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18789LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18790LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18790LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15410LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15410LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16174LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16174LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15411LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15411LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16175LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16175LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24139LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24139LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15624LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15624LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15626LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15626LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16176LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16176LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16178LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16178LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16180LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16180LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16182LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16182LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23525LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23525LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2366LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2366LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2367LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2367LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17567LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17567LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17568LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17568LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17569LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17569LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12024LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 12024LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32446LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32446LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32452LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32452LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32462LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32462LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32472LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32472LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32473LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32473LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32474LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32474LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32476LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32476LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32478LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32478LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32479LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32479LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9000LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9000LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9001LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9001LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11110LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11110LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11111LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11111LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16363LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16363LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16364LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16364LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9015LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9015LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9016LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9016LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9017LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9017LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9060LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9060LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24312LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24312LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9098LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9098LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9102LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9102LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9107LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9107LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9113LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9113LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9164LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9164LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9165LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9165LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9166LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9166LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9169LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9169LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9174LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9174LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16371LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16371LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16376LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16376LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9178LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9178LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9184LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9184LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9188LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9188LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9216LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9216LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16389LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16389LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16390LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16390LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16380LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16380LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16385LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16385LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16395LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16395LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16396LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16396LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16397LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16397LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16398LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16398LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18190LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18190LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18195LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18195LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16400LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16400LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16401LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16401LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16402LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16402LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16403LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16403LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24316LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24316LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17868LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17868LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24318LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24318LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17869LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17869LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24320LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24320LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17870LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17870LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24322LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24322LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18199LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18199LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24324LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24324LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24744LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24744LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24756LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24756LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24758LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24758LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24760LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24760LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11124LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11124LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11125LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11125LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11126LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11126LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11127LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11127LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16572LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16572LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16573LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16573LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16574LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16574LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16575LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16575LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24770LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24770LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24771LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24771LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24772LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24772LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24773LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24773LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24774LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24774LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24775LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24775LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24776LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24776LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24777LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24777LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9461LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9461LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9465LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 9465LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10020LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10020LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10025LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10025LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10029LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10029LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10034LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10034LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10038LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10038LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10043LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10043LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10047LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10047LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10052LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 10052LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16776LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16776LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16858LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16858LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16817LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16817LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16899LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16899LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14900LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14900LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17217LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17217LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11855LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11855LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2399LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2399LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 3850LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 3850LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11876LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11876LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2324LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2324LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2325LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2325LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2326LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2326LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2327LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2327LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2328LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 2328LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11499LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11499LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11500LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 11500LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19092LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19092LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32619LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32619LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32620LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32620LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32623LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32623LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32624LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32624LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18644LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18644LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32626LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32626LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32627LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32627LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32628LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32628LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32629LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32629LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32630LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32630LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32631LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32631LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19094LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19094LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19296LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19296LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32254LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32254LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23563LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23563LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19398LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19398LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19450LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19450LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20143LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20143LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23526LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23526LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 13848LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 13848LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 13882LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 13882LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25696LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25696LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25724LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25724LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25697LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25697LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18660LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18660LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23593LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23593LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18661LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18661LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19308LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19308LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19337LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19337LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19340LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19340LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32296LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32296LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25698LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25698LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25699LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25699LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32299LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32299LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15564LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15564LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23741LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23741LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19423LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19423LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19427LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19427LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17522LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17522LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18004LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18004LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18657LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18657LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18005LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18005LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17534LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17534LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18006LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18006LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18008LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18008LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15907LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15907LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15910LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15910LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15913LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15913LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25277LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25277LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25293LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25293LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25296LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25296LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25298LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25298LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25312LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25312LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25315LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25315LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25317LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25317LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25624LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25624LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25625LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25625LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25353LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25353LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25356LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25356LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25371LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25371LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25374LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25374LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17296LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17296LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16598LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16598LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14432LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14432LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23622LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23622LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25403LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25403LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18715LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18715LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23642LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23642LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23649LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23649LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25432LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25432LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25433LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25433LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32396LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32396LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32397LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32397LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16759LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16759LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25521LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25521LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15481LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15481LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14555LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14555LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14558LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14558LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15052LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15052LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14479LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14479LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14482LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14482LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16842LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16842LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16881LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16881LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14485LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14485LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16884LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16884LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16923LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16923LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14493LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14493LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14496LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14496LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16935LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16935LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16960LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16960LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14499LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14499LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16994LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16994LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16997LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 16997LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17203LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17203LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19241LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19241LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17427LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17427LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17465LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17465LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14225LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14225LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15927LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15927LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15928LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15928LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17741LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17741LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17742LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17742LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17812LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17812LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17969LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17969LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17992LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17992LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21015LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21015LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21080LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21080LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21081LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21081LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21082LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21082LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21085LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21085LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21094LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21094LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15303LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15303LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21095LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21095LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19550LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19550LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15932LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15932LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15933LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15933LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15934LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15934LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15311LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15311LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21103LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21103LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19609LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19609LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17386LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17386LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17389LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 17389LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15115LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15115LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15118LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 15118LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23797LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23797LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23800LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23800LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23802LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23802LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23805LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23805LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23811LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23811LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23814LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23814LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23816LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23816LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23819LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23819LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14645LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14645LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14646LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 14646LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19729LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19729LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19899LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19899LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19901LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19901LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19954LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19954LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19959LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19959LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20019LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20019LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20021LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20021LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20023LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20023LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20025LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20025LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20078LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20078LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20083LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20083LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20085LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20085LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20087LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20087LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20089LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20089LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20091LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20091LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20093LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 20093LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32651LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32651LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32844LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32844LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32845LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32845LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32846LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32846LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32847LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32847LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32652LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32652LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32653LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32653LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32654LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32654LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32655LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32655LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32848LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32848LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21109LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21109LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23839LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23839LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23840LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23840LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25525LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25525LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25526LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25526LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21134LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21134LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21135LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 21135LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23842LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23842LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25527LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25527LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23847LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23847LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23848LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23848LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23849LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 23849LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24017LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24017LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25528LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25528LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24022LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24022LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24023LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24023LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32849LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32849LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32850LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32850LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24268LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24268LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19083LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19083LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 26875LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 26875LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24151LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24151LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24177LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24177LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24178LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24178LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24184LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24184LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24185LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24185LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24190LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24190LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24194LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24194LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24198LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24198LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24201LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24201LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24208LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24208LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24209LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 24209LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25224LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25224LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25229LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25229LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25231LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 25231LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18974LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 18974LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19007LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19007LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19008LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19008LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19014LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19014LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19015LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19015LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19016LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19016LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19040LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19040LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19041LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19041LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19042LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19042LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19043LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19043LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19044LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19044LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19045LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19045LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19046LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19046LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19047LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19047LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19078LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19078LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32658LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 32658LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19826LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19826LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19827LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19827LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19828LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19828LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19829LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19829LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19830LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19830LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19835LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19835LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19836LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19836LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19837LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19837LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19838LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19838LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19839LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19839LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19356LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19356LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19357LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19357LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19744LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19744LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19365LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19365LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
-retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19366LU, false);
+retVal |= rp2_open62541_ns0_add_numeric_reference(server, nsMapping, 80LU, 37LU, 19366LU, false);
+
 ++referenceCount4428;
 if(referenceCount4428 <= 20u || referenceCount4428 >= 425u || (referenceCount4428 % 25u) == 0u)
     rp2_open62541_ns0_4428_stage("reference", referenceCount4428, retVal);
@@ -294933,15 +295364,21 @@ UA_SecurityPolicy_None(UA_SecurityPolicy *sp, const UA_ByteString localCertifica
 #include <FreeRTOS.h>
 #include <task.h>
 
+#include "rp2_ua_datetime_clock.h"
+
 /* The current time in UTC time */
 UA_DateTime UA_DateTime_now(void) {
-    UA_DateTime microSeconds = ((UA_DateTime)xTaskGetTickCount()) * (1000000 / configTICK_RATE_HZ);
-    return ((microSeconds / 1000000) * UA_DATETIME_SEC) + ((microSeconds % 1000000) * UA_DATETIME_USEC) + UA_DATETIME_UNIX_EPOCH;
+    int64_t datetime_100ns;
+
+    if(!rp2_ua_datetime_now(&datetime_100ns))
+        return 0;
+
+    return (UA_DateTime)datetime_100ns;
 }
 
 /* Offset between local time and UTC time */
 UA_Int64 UA_DateTime_localTimeUtcOffset(void) {
-    return 0; //TODO: this is set to zero since UA_DateTime_now() is just the local time, and not UTC.
+    return 0;
 }
 
 /* CPU clock invariant to system time changes. Use only to measure durations,
