@@ -1,13 +1,17 @@
 # Maintenance workflow
 
-Firmware `0.3.2` exposes a volatile, service-owned AMB maintenance workflow.
-Maintenance state is reset when the device restarts; persistence and historical
-event access are not part of this release.
+Firmware `0.3.3` exposes a bounded, service-owned AMB maintenance workflow.
+The live state machine is unchanged from `v0.3.2`, but successful workflow
+mutations, bounded logical export, and admin reset are now backed by the
+maintenance journal described in [maintenance_journal.md](maintenance_journal.md).
+Historical Event Access remains out of scope.
 
 ## State model
 
 The initial state is `Finished`, allowing the first planned activity to use the
-standard `Finished -> Planned` transition. The only supported transitions are:
+standard `Finished -> Planned` transition. Recovery restores the newest
+unambiguous committed snapshot before the OPC UA maintenance model is exposed.
+The only supported transitions are:
 
 | Method | Source | Result | Transition event |
 | --- | --- | --- | --- |
@@ -22,8 +26,8 @@ state and do not emit a transition event.
 ## Methods and authorization
 
 All methods are components of `ns=1;s=Device.Maintenance`. They require a
-secure authenticated session with the `service` or `admin` role. `viewer` and
-`operator` receive `BadUserAccessDenied`.
+secure authenticated session. `viewer` and `operator` receive
+`BadUserAccessDenied`.
 
 | Method NodeId | Inputs | Output |
 | --- | --- | --- |
@@ -31,6 +35,15 @@ secure authenticated session with the `service` or `admin` role. `viewer` and
 | `Device.Maintenance.RescheduleMaintenance` | `PlannedDate: DateTime`, `EstimatedDowntime: Duration`, `MaintenanceMethod: Int32`, `MaintenanceSupplier: String`, `QualificationOfPersonnel: String` | `Success: Boolean` |
 | `Device.Maintenance.StartMaintenance` | none | `Success: Boolean` |
 | `Device.Maintenance.FinishMaintenance` | `PartsOfAssetServiced: String[]`, `PartsOfAssetReplaced: String[]`, `ConfigurationChanged: Boolean`, `Result: String` | `Success: Boolean` |
+| `Device.Maintenance.ExportMaintenanceJournal` | `ContinuationToken: String` | `Result: String` |
+| `Device.Maintenance.ResetMaintenanceJournal` | none | `Success: Boolean` |
+
+Roles:
+
+- `PlanMaintenance`, `RescheduleMaintenance`, `StartMaintenance`,
+  `FinishMaintenance`, and `ExportMaintenanceJournal` require `service` or
+  `admin`.
+- `ResetMaintenanceJournal` is admin-only.
 
 `MaintenanceMethod` accepts `Local=0` and `Remote=1`. Duration is expressed in
 milliseconds and is limited to 30 days.
@@ -48,8 +61,9 @@ Capacities below include the terminating NUL in native storage:
 | Replaced parts | 4 elements |
 
 The service stores one logical current activity using two fixed snapshot slots
-and one bounded pending transaction. It uses no Flash, hardware driver,
-persistence journal, or unbounded allocation.
+and one bounded pending transaction. `v0.3.3` adds one bounded Flash journal
+and one bounded export scratch buffer in PSRAM. There is no unbounded
+allocation.
 
 ## OPC UA model
 
@@ -73,10 +87,45 @@ Supplier, qualification, and part values use AMB `NameNodeIdDataType`
 (`ns=<AMB>;i=3003`). Existing NodeIds and BrowseNames remain unchanged; new
 properties use the condition NodeId followed by `.<BrowseName>`.
 
+The maintenance root also exposes:
+
+- `ns=1;s=Device.Maintenance.ExportMaintenanceJournal`
+- `ns=1;s=Device.Maintenance.ResetMaintenanceJournal`
+
+The existing device diagnostics remain available, including:
+
+- `ns=1;s=Device.Diagnostics.PSRAM.Ready`
+- `ns=1;s=Device.Diagnostics.PSRAM.TotalBytes`
+- `ns=1;s=Device.Diagnostics.PSRAM.UsedBytes`
+- `ns=1;s=Device.Diagnostics.PSRAM.FreeBytes`
+- `ns=1;s=Device.Diagnostics.PSRAM.LargestFreeBlockBytes`
+- `ns=1;s=Device.Diagnostics.PSRAM.AllocatorMode`
+
 Invalid argument shape or type returns `BadInvalidArgument`; values outside
 documented bounds return `BadOutOfRange`; illegal transitions return
 `BadStateNotActive`; authorization and secure-channel failures return
 `BadUserAccessDenied` and `BadSecurityModeInsufficient`, respectively.
+Invalid, expired, or reset-invalidated maintenance export tokens return
+`BadContinuationPointInvalid`; continuation exhaustion returns
+`BadNoContinuationPoints`.
+
+## Persistence, export, and reset
+
+Every successful workflow mutation appends one logical journal record and only
+becomes public after the persisted record is classified `COMMITTED`. A reset
+creates a new logical epoch, preserves the workflow snapshot and revision, and
+invalidates active export continuations.
+
+`ExportMaintenanceJournal` returns validated logical records only. A page
+contains at most four records and the returned JSON includes:
+
+- `records`
+- `continuationToken`
+- `more`
+
+Each record includes epoch, sequence, operation, transition, state, revision,
+timestamps, bounded text fields, `configurationChanged`, and bounded part
+lists. Raw Flash addresses and slot bytes are never exported.
 
 ## Atomic publication and event recovery
 
@@ -90,7 +139,7 @@ public open62541 event API only after commit. A successful API return is
 successful firmware publication. If that API reports failure, the committed
 transition is retained, an `event_publication_fault` diagnostic records its
 revision and operation, and subsequent state-changing maintenance Methods
-return `BadResourceUnavailable` until volatile reinitialization or a
-deterministic event health check. Delivery failures hidden inside open62541's
-internal subscriber fan-out are platform limitations outside the firmware
-correctness boundary.
+return `BadResourceUnavailable` until reconciliation. Recovery restores state
+and condition semantics silently; it does not replay transition events or audit
+events. Delivery failures hidden inside open62541's internal subscriber fan-out
+are platform limitations outside the firmware correctness boundary.

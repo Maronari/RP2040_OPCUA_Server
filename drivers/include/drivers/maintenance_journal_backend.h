@@ -17,6 +17,7 @@
 #define MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS 15u
 #define MAINTENANCE_JOURNAL_MAX_TRANSIENT_RECORDS 16u
 #define MAINTENANCE_JOURNAL_MIN_ERASED_SECTORS 2u
+#define MAINTENANCE_JOURNAL_EXPORT_PAGE_MAX 4u
 
 #define MAINTENANCE_JOURNAL_HEADER_MAGIC 0x31484a4du /* "MJH1", little endian */
 #define MAINTENANCE_JOURNAL_HEADER_FORMAT_VERSION 1u
@@ -89,6 +90,14 @@ typedef struct
 
 typedef struct
 {
+    uint64_t epoch;
+    uint64_t upper_sequence;
+    uint64_t next_sequence;
+    uint32_t generation;
+} maintenance_journal_export_cursor_t;
+
+typedef struct
+{
     maintenance_journal_storage_t storage;
     maintenance_journal_recovery_state_t recovery;
     maintenance_journal_record_location_t active;
@@ -102,6 +111,9 @@ typedef struct
     uint8_t transient_record_peak;
     uint8_t erased_sector_count;
     uint8_t unknown_sector_mask;
+    uint64_t allocated_epoch;
+    uint64_t allocated_sequence;
+    uint32_t logical_generation;
     maintenance_journal_capacity_state_t capacity_state;
     maintenance_journal_backend_result_t last_error;
     bool has_active;
@@ -133,6 +145,13 @@ maintenance_journal_backend_result_t maintenance_journal_backend_append(
 maintenance_journal_backend_result_t maintenance_journal_backend_reset(
     maintenance_journal_backend_t *backend, const maintenance_journal_record_t *snapshot,
     maintenance_journal_record_location_t *out_location);
+maintenance_journal_backend_result_t maintenance_journal_backend_export_begin(
+    const maintenance_journal_backend_t *backend,
+    maintenance_journal_export_cursor_t *out_cursor);
+maintenance_journal_backend_result_t maintenance_journal_backend_export_page(
+    maintenance_journal_backend_t *backend, maintenance_journal_export_cursor_t *cursor,
+    maintenance_journal_record_t out_records[MAINTENANCE_JOURNAL_EXPORT_PAGE_MAX],
+    uint8_t *out_count, bool *out_more);
 
 /* RP2350 application binding. The buffers are static internal SRAM and never
  * live on a FreeRTOS task stack. Host tests should use the storage callbacks. */

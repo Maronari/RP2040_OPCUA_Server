@@ -406,7 +406,7 @@ static bool decode_activity(const uint8_t *slot, maintenance_activity_t *activit
 
     if ((slot[OFFSET_CONFIGURATION_CHANGED] != 0u &&
          slot[OFFSET_CONFIGURATION_CHANGED] != 1u) ||
-        slot[OFFSET_PLANNED_TIME] == 0u || !method_is_valid(slot[OFFSET_METHOD]) ||
+        get_u64(&slot[OFFSET_PLANNED_TIME]) == 0u || !method_is_valid(slot[OFFSET_METHOD]) ||
         slot[OFFSET_SERVICED_COUNT] > MAINTENANCE_SERVICE_MAX_PARTS ||
         slot[OFFSET_REPLACED_COUNT] > MAINTENANCE_SERVICE_MAX_PARTS)
     {
@@ -464,7 +464,7 @@ static bool activity_is_canonical(const uint8_t *slot)
 
     if ((slot[OFFSET_CONFIGURATION_CHANGED] != 0u &&
          slot[OFFSET_CONFIGURATION_CHANGED] != 1u) ||
-        slot[OFFSET_PLANNED_TIME] == 0u || !method_is_valid(slot[OFFSET_METHOD]) ||
+        get_u64(&slot[OFFSET_PLANNED_TIME]) == 0u || !method_is_valid(slot[OFFSET_METHOD]) ||
         slot[OFFSET_SERVICED_COUNT] > MAINTENANCE_SERVICE_MAX_PARTS ||
         slot[OFFSET_REPLACED_COUNT] > MAINTENANCE_SERVICE_MAX_PARTS ||
         (int64_t)get_u64(&slot[OFFSET_PLANNED_TIME]) <= 0)

@@ -124,6 +124,7 @@ add_library(OPEN62541_FILES STATIC)
 
 target_sources(OPEN62541_FILES PRIVATE
         ${PORT_DIR}/open62541/open62541.c
+        ${PORT_DIR}/open62541/rp2_ua_datetime_clock.c
         ${PORT_DIR}/open62541/nodesetinjector.c
         ${PORT_DIR}/mbedtls/mbedtls_alt_alloc.c
         ${PORT_DIR}/mbedtls/mbedtls_alt_time.c
@@ -135,6 +136,7 @@ target_include_directories(OPEN62541_FILES PUBLIC
         ${PORT_DIR}
         ${PORT_DIR}/lwip
         ${PORT_DIR}/open62541/include
+        ${CMAKE_SOURCE_DIR}/services/include
         ${mqtt_c_SOURCE_DIR}/include
         ${mqtt_c_SOURCE_DIR}/src
         ${PICO_SDK_PATH}/lib/lwip/src/include

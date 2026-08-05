@@ -17,11 +17,13 @@ def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[2]
     test_dir = root / "static" / "tests" / "maintenance_service"
     source = root / "services" / "src" / "maintenance_service.c"
-    test_source = test_dir / "maintenance_service_atomic_test.c"
+    test_sources = [test_dir / "maintenance_service_atomic_test.c",
+                    test_dir / "maintenance_service_journal_test.c"]
 
     with tempfile.TemporaryDirectory(prefix="maintenance-atomic-") as directory:
-        executable = pathlib.Path(directory) / "maintenance_service_atomic_test.exe"
-        compile_command = [
+        for test_source in test_sources:
+            executable = pathlib.Path(directory) / f"{test_source.stem}.exe"
+            compile_command = [
             args.cc,
             "-std=c11",
             "-Wall",
@@ -29,14 +31,17 @@ def main() -> int:
             "-Werror",
             f"-I{test_dir}",
             f"-I{root / 'services' / 'include'}",
+            f"-I{root / 'drivers' / 'include'}",
+            str(root / "drivers" / "src" / "maintenance_journal_backend.c"),
+            str(root / "services" / "src" / "maintenance_journal_codec.c"),
             str(source),
             str(test_source),
             "-lm",
             "-o",
             str(executable),
-        ]
-        subprocess.run(compile_command, check=True)
-        subprocess.run([str(executable)], check=True)
+            ]
+            subprocess.run(compile_command, check=True)
+            subprocess.run([str(executable)], check=True)
 
     print("maintenance service transaction and fault policy: PASS")
     return 0

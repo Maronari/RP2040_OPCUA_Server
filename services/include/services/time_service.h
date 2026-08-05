@@ -27,6 +27,14 @@ void time_service_get_status(time_service_status_t *out_status);
 bool time_service_request_sync_now(void);
 uint32_t get_system_time(void);
 uint64_t get_system_time_us(void);
+/*
+ * Read the RTC-backed wall clock for consumers that require an absolute UTC
+ * timestamp.  Returns false without modifying out_unix_time_us when the RTC
+ * has not been initialized or its time is invalid.  Unix epoch zero is a
+ * valid reading and must be distinguished from an invalid clock by this
+ * result.
+ */
+bool time_service_get_utc_time_us(uint64_t *out_unix_time_us);
 int16_t get_system_timezone_offset_minutes(void);
 void set_system_time(uint32_t seconds);
 

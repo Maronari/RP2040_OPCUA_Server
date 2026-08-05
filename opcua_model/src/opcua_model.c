@@ -14,6 +14,7 @@
 #include "nodesetinjector.h"
 #include "open62541.h"
 #include "pico/stdio.h"
+#include "psram_allocator.h"
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
@@ -160,6 +161,13 @@ typedef struct
 {
     void *base_context;
     bool secure_channel;
+    /* Fixed per-session rejected-call limiter. This belongs to the OPC UA
+     * adapter session, never to maintenance service state. */
+    bool maintenance_reject_limiter_initialized;
+    TickType_t maintenance_reject_last_refill;
+    uint8_t maintenance_reject_tokens;
+    uint16_t maintenance_reject_suppressed;
+    UA_StatusCode maintenance_reject_last_reason;
 } model_session_context_t;
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
@@ -540,6 +548,8 @@ enum
 #define MODEL_METHOD_RESCHEDULE_MAINTENANCE "Device.Maintenance.RescheduleMaintenance"
 #define MODEL_METHOD_START_MAINTENANCE "Device.Maintenance.StartMaintenance"
 #define MODEL_METHOD_FINISH_MAINTENANCE "Device.Maintenance.FinishMaintenance"
+#define MODEL_METHOD_RESET_MAINTENANCE_JOURNAL "Device.Maintenance.ResetMaintenanceJournal"
+#define MODEL_METHOD_EXPORT_MAINTENANCE_JOURNAL "Device.Maintenance.ExportMaintenanceJournal"
 #define MODEL_NODE_MAINTENANCE_SUPPLIER "Device.DeviceHealthAlarms.MaintenanceRequired.MaintenanceSupplier"
 #define MODEL_NODE_MAINTENANCE_PERSONNEL "Device.DeviceHealthAlarms.MaintenanceRequired.QualificationOfPersonnel"
 #define MODEL_NODE_MAINTENANCE_REPLACED "Device.DeviceHealthAlarms.MaintenanceRequired.PartsOfAssetReplaced"
@@ -606,6 +616,13 @@ enum
 #define MODEL_CERTIFICATE_EXPIRY_WARN_DAYS 30u
 #define MODEL_CERTIFICATE_EXPIRY_HIGH_WARN_DAYS 7u
 #define MODEL_AUDIT_QUEUE_CAPACITY 8u
+#define MODEL_MAINTENANCE_REJECT_SESSION_BURST 4u
+#define MODEL_MAINTENANCE_REJECT_GLOBAL_BURST 16u
+#define MODEL_MAINTENANCE_REJECT_SUPPRESSION_MAX UINT16_MAX
+#define MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY 4u
+#define MODEL_MAINTENANCE_EXPORT_TOKEN_CAPACITY 16u
+#define MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY 24576u
+#define MODEL_MAINTENANCE_EXPORT_EXPIRY_MS 30000u
 #define MODEL_PUBSUB_TOPIC_MAX_LEN 96u
 #define MODEL_PUBSUB_CLIENT_ID_MAX_LEN 64u
 #define MODEL_PUBSUB_TELEMETRY_TOPIC_SUFFIX "telemetry"
@@ -642,6 +659,29 @@ static bool g_model_initialized = false;
 /* Fail closed only if the service diagnostic itself cannot be recorded after a
  * public event-API failure. It is not maintenance business state. */
 static bool g_model_maintenance_faulted = false;
+static bool g_model_maintenance_reject_limiter_initialized = false;
+static TickType_t g_model_maintenance_reject_last_refill = 0u;
+static uint8_t g_model_maintenance_reject_tokens = MODEL_MAINTENANCE_REJECT_GLOBAL_BURST;
+typedef struct
+{
+    bool active;
+    uint32_t token;
+    TickType_t expires_at;
+    maintenance_service_export_cursor_t cursor;
+} model_maintenance_export_continuation_t;
+static model_maintenance_export_continuation_t
+    g_model_maintenance_export_continuations[MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY];
+static uint32_t g_model_maintenance_export_next_token = 0u;
+static char *g_model_maintenance_export_payload = NULL;
+_Static_assert(MAINTENANCE_SERVICE_EXPORT_PAGE_MAX == 4u,
+               "v0.3.3 export page contract changed");
+_Static_assert(MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY == 4u,
+               "v0.3.3 continuation contract changed");
+_Static_assert(MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY >=
+                   MAINTENANCE_SERVICE_EXPORT_PAGE_MAX * 6u * 734u,
+               "logical JSON buffer must cover fully escaped maximum records");
+_Static_assert(MODEL_MAINTENANCE_EXPORT_EXPIRY_MS == 30000u,
+               "v0.3.3 continuation expiry contract changed");
 static model_pending_actions_t g_pending_actions = {false, 0, false, 0, 0, false};
 static device_profile_config_t g_model_address_space_config_snapshot;
 static bool g_model_address_space_config_snapshot_valid = false;
@@ -667,6 +707,7 @@ static size_t g_pending_audit_event_head = 0u;
 static size_t g_pending_audit_event_count = 0u;
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
 static bool g_model_alarm_conditions_available = false;
+static bool g_model_maintenance_condition_available = false;
 #endif
 #endif
 #ifdef UA_ENABLE_PUBSUB
@@ -940,6 +981,9 @@ static UA_StatusCode model_condition_write_common_fields(UA_Server *server,
                                                          UA_UInt16 severity,
                                                          UA_StatusCode quality,
                                                          const char *message);
+static const char *model_maintenance_state_text(maintenance_service_state_t state);
+static UA_StatusCode model_sync_maintenance_condition(UA_Server *server,
+                                                       const maintenance_service_snapshot_t *snapshot);
 static UA_StatusCode model_read_maintenance_value(
     UA_Server *server, const UA_NodeId *session_id, void *session_context,
     const UA_NodeId *node_id, void *node_context,
@@ -1133,6 +1177,152 @@ static void model_audit_session_event(void *session_context,
                                details);
 }
 
+/* Rejected maintenance calls are useful operational evidence but must not let
+ * one client consume the fixed audit-event queue.  The limiter is intentionally
+ * adapter-owned: it is volatile, bounded by the existing session table, and is
+ * cleared when a session closes. */
+static bool model_maintenance_rejected_audit_admit(void *session_context,
+                                                   UA_StatusCode reason,
+                                                   uint16_t *out_suppressed,
+                                                   UA_StatusCode *out_last_reason)
+{
+    model_session_context_t *session = (model_session_context_t *)session_context;
+    const TickType_t now = xTaskGetTickCount();
+    TickType_t interval = pdMS_TO_TICKS(1000u);
+    bool admitted = false;
+
+    if (out_suppressed != NULL)
+    {
+        *out_suppressed = 0u;
+    }
+    if (out_last_reason != NULL)
+    {
+        *out_last_reason = reason;
+    }
+    if (session == NULL)
+    {
+        return false;
+    }
+    if (interval == 0u)
+    {
+        interval = 1u;
+    }
+
+    taskENTER_CRITICAL();
+    if (!session->maintenance_reject_limiter_initialized)
+    {
+        session->maintenance_reject_limiter_initialized = true;
+        session->maintenance_reject_last_refill = now;
+        session->maintenance_reject_tokens = MODEL_MAINTENANCE_REJECT_SESSION_BURST;
+    }
+    if (!g_model_maintenance_reject_limiter_initialized)
+    {
+        g_model_maintenance_reject_limiter_initialized = true;
+        g_model_maintenance_reject_last_refill = now;
+        g_model_maintenance_reject_tokens = MODEL_MAINTENANCE_REJECT_GLOBAL_BURST;
+    }
+    {
+        const TickType_t elapsed = now - session->maintenance_reject_last_refill;
+        const uint32_t periods = (uint32_t)(elapsed / interval);
+        if (periods > 0u)
+        {
+            const uint32_t replenished = session->maintenance_reject_tokens + periods;
+            session->maintenance_reject_tokens = (uint8_t)(replenished > MODEL_MAINTENANCE_REJECT_SESSION_BURST
+                ? MODEL_MAINTENANCE_REJECT_SESSION_BURST : replenished);
+            session->maintenance_reject_last_refill += (TickType_t)(periods * interval);
+        }
+    }
+    {
+        const TickType_t elapsed = now - g_model_maintenance_reject_last_refill;
+        const uint32_t periods = (uint32_t)(elapsed / interval);
+        if (periods > 0u)
+        {
+            const uint32_t replenished = g_model_maintenance_reject_tokens + periods * 8u;
+            g_model_maintenance_reject_tokens = (uint8_t)(replenished > MODEL_MAINTENANCE_REJECT_GLOBAL_BURST
+                ? MODEL_MAINTENANCE_REJECT_GLOBAL_BURST : replenished);
+            g_model_maintenance_reject_last_refill += (TickType_t)(periods * interval);
+        }
+    }
+    if (session->maintenance_reject_tokens > 0u && g_model_maintenance_reject_tokens > 0u)
+    {
+        --session->maintenance_reject_tokens;
+        --g_model_maintenance_reject_tokens;
+        admitted = true;
+        if (out_suppressed != NULL)
+        {
+            *out_suppressed = session->maintenance_reject_suppressed;
+        }
+        if (out_last_reason != NULL)
+        {
+            *out_last_reason = session->maintenance_reject_last_reason;
+        }
+        session->maintenance_reject_suppressed = 0u;
+    }
+    else
+    {
+        if (session->maintenance_reject_suppressed < MODEL_MAINTENANCE_REJECT_SUPPRESSION_MAX)
+        {
+            ++session->maintenance_reject_suppressed;
+        }
+        session->maintenance_reject_last_reason = reason;
+    }
+    taskEXIT_CRITICAL();
+    return admitted;
+}
+
+static void model_audit_maintenance_rejection(void *session_context,
+                                              const char *method,
+                                              UA_StatusCode reason)
+{
+    char details[96];
+    uint16_t suppressed = 0u;
+    UA_StatusCode last_reason = reason;
+
+    if (!model_maintenance_rejected_audit_admit(session_context, reason,
+                                                &suppressed, &last_reason))
+    {
+        return;
+    }
+    if (suppressed > 0u)
+    {
+        (void)snprintf(details, sizeof(details),
+                       "rejected=0x%08x; suppressed=%u; last=0x%08x",
+                       (unsigned)reason, (unsigned)suppressed,
+                       (unsigned)last_reason);
+    }
+    else
+    {
+        (void)snprintf(details, sizeof(details), "rejected=0x%08x",
+                       (unsigned)reason);
+    }
+    model_audit_session_event(session_context, "maintenance-call", method,
+                              false, details);
+}
+
+static void model_audit_maintenance_accept(void *session_context,
+                                           const char *method)
+{
+    model_audit_session_event(session_context, "maintenance-call", method,
+                              true, "accepted");
+}
+
+static void model_audit_maintenance_state_change(void *session_context,
+                                                  const char *method,
+                                                  const maintenance_service_snapshot_t *snapshot)
+{
+    char details[96];
+
+    if (snapshot == NULL)
+    {
+        return;
+    }
+    (void)snprintf(details, sizeof(details), "revision=%lu; state=%s",
+                   (unsigned long)snapshot->revision,
+                   model_maintenance_state_text(snapshot->state));
+    model_audit_session_event(session_context, "maintenance-state", method,
+                              true, details);
+}
+
 static UA_StatusCode model_require_session_role(void *session_context,
                                                 security_user_role_t required_role,
                                                 size_t output_size,
@@ -1253,13 +1443,16 @@ static bool model_is_admin_only_method(const UA_NodeId *method_id)
     const UA_NodeId set_role = UA_NODEID_STRING(1, (char *)MODEL_METHOD_SET_ROLE);
     const UA_NodeId disable_user = UA_NODEID_STRING(1, (char *)MODEL_METHOD_DISABLE_USER);
     const UA_NodeId delete_user = UA_NODEID_STRING(1, (char *)MODEL_METHOD_DELETE_USER);
+    const UA_NodeId reset_maintenance_journal =
+        UA_NODEID_STRING(1, (char *)MODEL_METHOD_RESET_MAINTENANCE_JOURNAL);
 
     return method_id != NULL &&
            (UA_NodeId_equal(method_id, &add_user) ||
             UA_NodeId_equal(method_id, &change_password) ||
             UA_NodeId_equal(method_id, &set_role) ||
             UA_NodeId_equal(method_id, &disable_user) ||
-            UA_NodeId_equal(method_id, &delete_user));
+            UA_NodeId_equal(method_id, &delete_user) ||
+            UA_NodeId_equal(method_id, &reset_maintenance_journal));
 }
 
 static bool model_copy_input_string(const UA_Variant *value, char *buffer, size_t buffer_size)
@@ -3554,6 +3747,47 @@ static UA_UInt32 model_maintenance_state_node_id(
     }
 }
 
+/* The MaintenanceRequired condition represents outstanding work only.  A
+ * completed activity remains readable as the last service snapshot, but is no
+ * longer active/retained.  These values deliberately depend on no local model
+ * state so recovery and live reads expose the same condition semantics. */
+static bool model_maintenance_condition_is_active(
+    const maintenance_service_snapshot_t *snapshot)
+{
+    return snapshot != NULL && snapshot->has_activity &&
+           snapshot->state != MAINTENANCE_SERVICE_STATE_FINISHED;
+}
+
+static UA_UInt16 model_maintenance_condition_severity(
+    const maintenance_service_snapshot_t *snapshot)
+{
+    if (snapshot == NULL || !snapshot->has_activity ||
+        snapshot->state == MAINTENANCE_SERVICE_STATE_FINISHED)
+    {
+        return 100u;
+    }
+    return snapshot->state == MAINTENANCE_SERVICE_STATE_EXECUTING ? 500u : 350u;
+}
+
+static const char *model_maintenance_condition_message(
+    const maintenance_service_snapshot_t *snapshot)
+{
+    if (snapshot == NULL || !snapshot->has_activity)
+    {
+        return "Maintenance finished";
+    }
+    if (snapshot->state == MAINTENANCE_SERVICE_STATE_FINISHED &&
+        snapshot->activity.result[0] != '\0')
+    {
+        return snapshot->activity.result;
+    }
+    return snapshot->state == MAINTENANCE_SERVICE_STATE_EXECUTING
+               ? "Maintenance executing"
+               : (snapshot->state == MAINTENANCE_SERVICE_STATE_PLANNED
+                      ? "Maintenance planned"
+                      : "Maintenance finished");
+}
+
 static UA_StatusCode model_maintenance_set_read_error(UA_DataValue *value,
                                                        UA_StatusCode status)
 {
@@ -3579,7 +3813,7 @@ static UA_StatusCode model_read_maintenance_value(
     UA_Double downtime;
     UA_Int32 method;
     UA_Boolean configuration_changed;
-    UA_UInt16 severity = 350u;
+    UA_UInt16 severity;
     UA_StatusCode quality = UA_STATUSCODE_GOOD;
     uint8_t index;
 
@@ -3602,6 +3836,7 @@ static UA_StatusCode model_read_maintenance_value(
         return model_maintenance_set_read_error(value,
                                                 UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
     }
+    severity = model_maintenance_condition_severity(&snapshot);
 
     /* The service copies one active revision under its lock. All values below
      * are consequently derived from that committed revision only. */
@@ -3672,9 +3907,7 @@ static UA_StatusCode model_read_maintenance_value(
     case MODEL_MAINTENANCE_VALUE_MESSAGE:
         text = UA_LOCALIZEDTEXT(
             (char *)"en-US",
-            (char *)(snapshot.activity.result[0] != '\0'
-                         ? snapshot.activity.result
-                         : model_maintenance_state_text(snapshot.state)));
+            (char *)model_maintenance_condition_message(&snapshot));
         status = UA_Variant_setScalarCopy(&value->value, &text,
                                           &UA_TYPES[UA_TYPES_LOCALIZEDTEXT]);
         break;
@@ -4005,7 +4238,20 @@ static UA_StatusCode model_initialize_amb_maintenance_condition(
     {
         return status;
     }
-    return model_install_maintenance_condition_value_sources(server, condition_id);
+    status = model_install_maintenance_condition_value_sources(server, condition_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    /* The service has already completed bounded recovery before model
+     * construction. This deliberately writes no event. */
+    g_model_maintenance_condition_available = true;
+    status = model_sync_maintenance_condition(server, &snapshot);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        g_model_maintenance_condition_available = false;
+    }
+    return status;
 }
 
 static UA_StatusCode model_condition_write_common_fields(UA_Server *server,
@@ -4192,6 +4438,53 @@ static UA_StatusCode model_condition_deactivate(UA_Server *server,
     }
 
     return status;
+}
+
+/* Recovery and live commits update condition state silently.  Condition value
+ * sources supply the state text/Id, message, severity, timestamps and AMB
+ * properties directly from the same service snapshot; only A&C lifecycle
+ * fields without a value source need an explicit write here.  Do not trigger a
+ * condition event: recovery never replays events and the v0.3.2 transition
+ * event remains the single live workflow notification. */
+static UA_StatusCode model_sync_maintenance_condition(
+    UA_Server *server, const maintenance_service_snapshot_t *snapshot)
+{
+#if defined(UA_ENABLE_SUBSCRIPTIONS_EVENTS) && \
+    defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+    const UA_NodeId condition_id =
+        UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_MAINTENANCE_REQUIRED);
+    const UA_Boolean active = model_maintenance_condition_is_active(snapshot) ? UA_TRUE : UA_FALSE;
+    const UA_Boolean retain = active;
+    UA_StatusCode status;
+
+    if (server == NULL || snapshot == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    if (!g_model_maintenance_condition_available)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+    status = model_condition_set_field_scalar(server, condition_id, "Retain",
+                                              &retain, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_condition_set_two_state_id(server, condition_id,
+                                                  "ActiveState", active == UA_TRUE);
+    }
+    if (status == UA_STATUSCODE_GOOD && active == UA_FALSE)
+    {
+        /* A cleared condition cannot remain unacknowledged solely because the
+         * process rebooted; this is state reconciliation, not an Ack action. */
+        status = model_condition_set_two_state_id(server, condition_id,
+                                                  "AckedState", true);
+    }
+    return status;
+#else
+    (void)server;
+    (void)snapshot;
+    return UA_STATUSCODE_GOOD;
+#endif
 }
 
 static UA_StatusCode model_create_condition_instance(UA_Server *server,
@@ -5944,7 +6237,8 @@ static UA_StatusCode model_maintenance_mutations_available(void)
 
 static UA_StatusCode model_commit_maintenance_transaction(UA_Server *server,
                                                             const maintenance_service_transaction_t *transaction,
-                                                            const char *operation)
+                                                            const char *operation,
+                                                            void *session_context)
 {
     maintenance_service_snapshot_t prepared = {0};
     maintenance_service_snapshot_t committed = {0};
@@ -5989,6 +6283,21 @@ static UA_StatusCode model_commit_maintenance_transaction(UA_Server *server,
         return model_maintenance_result_status(service_status);
     }
 
+    status = model_sync_maintenance_condition(server, &committed);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        /* The durable/service snapshot cannot be rolled back. Fail closed on
+         * later mutations if the northbound condition can no longer be kept
+         * coherent with it. */
+        if (maintenance_service_mark_event_publication_fault(
+                committed.revision, transaction->operation) !=
+            MAINTENANCE_SERVICE_RESULT_OK)
+        {
+            g_model_maintenance_faulted = true;
+        }
+        return status;
+    }
+
     if (transaction->transition != MAINTENANCE_SERVICE_TRANSITION_NONE)
     {
         status = model_publish_prepared_maintenance_event(server, &event);
@@ -6006,6 +6315,12 @@ static UA_StatusCode model_commit_maintenance_transaction(UA_Server *server,
             }
             return status;
         }
+    }
+    model_audit_maintenance_accept(session_context, operation);
+    if (transaction->transition != MAINTENANCE_SERVICE_TRANSITION_NONE)
+    {
+        model_audit_maintenance_state_change(session_context, operation,
+                                             &committed);
     }
     return UA_STATUSCODE_GOOD;
 }
@@ -6036,39 +6351,508 @@ static bool model_copy_maintenance_parts(const UA_Variant *value,
 static UA_StatusCode model_plan_maintenance(UA_Server *server, const UA_NodeId *sid, void *ctx,
  const UA_NodeId *mid, void *mc, const UA_NodeId *oid, void *oc, size_t n, const UA_Variant *in, size_t no, UA_Variant *out)
 {
-    maintenance_service_plan_request_t request = {0}; maintenance_service_transaction_t tx = {0}; UA_DateTime date; UA_Double downtime; UA_Int32 method; char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
-    (void)sid;(void)mc;(void)oid;(void)oc;
-    { UA_StatusCode s = model_maintenance_mutations_available(); if (s != UA_STATUSCODE_GOOD) return s; }
-    if (n != 6u || !UA_Variant_hasScalarType(&in[1], &UA_TYPES[UA_TYPES_DATETIME]) || !UA_Variant_hasScalarType(&in[2], &UA_TYPES[UA_TYPES_DOUBLE]) || !UA_Variant_hasScalarType(&in[3], &UA_TYPES[UA_TYPES_INT32]) || !model_copy_maintenance_string(&in[0], request.operation_id, sizeof(request.operation_id)) || !model_copy_maintenance_string(&in[4], request.supplier, sizeof(request.supplier)) || !model_copy_maintenance_string(&in[5], request.personnel, sizeof(request.personnel))) return UA_STATUSCODE_BADINVALIDARGUMENT;
-    date=*(UA_DateTime*)in[1].data; downtime=*(UA_Double*)in[2].data; method=*(UA_Int32*)in[3].data;
-    if (date <= 0 || !isfinite(downtime) || downtime <= 0.0 || downtime > MAINTENANCE_SERVICE_MAX_DOWNTIME_MS || method < 0 || method > 1) return UA_STATUSCODE_BADOUTOFRANGE;
-    { UA_StatusCode s=model_require_method_role(ctx,mid,no,out); if(s!=UA_STATUSCODE_GOOD)return s; }
-    if (!model_copy_session_username(ctx, actor, sizeof(actor))) return UA_STATUSCODE_BADUSERACCESSDENIED;
-    request.command_time_utc_100ns = (int64_t)UA_DateTime_now(); request.planned_date_utc_100ns=date;request.estimated_downtime_ms=downtime;request.method=(maintenance_service_method_t)method;model_copy_string_safe(request.actor,sizeof(request.actor),actor);
-    { UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_plan(&request,&tx)); if(s!=UA_STATUSCODE_GOOD)return s; s=model_commit_maintenance_transaction(server,&tx,"PlanMaintenance"); if(s!=UA_STATUSCODE_GOOD)return s; }
-    model_set_boolean_method_output(no,out,true); return UA_STATUSCODE_GOOD;
+    maintenance_service_plan_request_t request = {0};
+    maintenance_service_transaction_t tx = {0};
+    UA_DateTime date;
+    UA_Double downtime;
+    UA_Int32 method;
+    UA_StatusCode status;
+    char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    (void)sid; (void)mc; (void)oid; (void)oc;
+
+    status = model_maintenance_mutations_available();
+    if (status == UA_STATUSCODE_GOOD &&
+        (n != 6u || !UA_Variant_hasScalarType(&in[1], &UA_TYPES[UA_TYPES_DATETIME]) ||
+         !UA_Variant_hasScalarType(&in[2], &UA_TYPES[UA_TYPES_DOUBLE]) ||
+         !UA_Variant_hasScalarType(&in[3], &UA_TYPES[UA_TYPES_INT32]) ||
+         !model_copy_maintenance_string(&in[0], request.operation_id, sizeof(request.operation_id)) ||
+         !model_copy_maintenance_string(&in[4], request.supplier, sizeof(request.supplier)) ||
+         !model_copy_maintenance_string(&in[5], request.personnel, sizeof(request.personnel))))
+        status = UA_STATUSCODE_BADINVALIDARGUMENT;
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        date = *(UA_DateTime *)in[1].data;
+        downtime = *(UA_Double *)in[2].data;
+        method = *(UA_Int32 *)in[3].data;
+        if (date <= 0 || !isfinite(downtime) || downtime <= 0.0 ||
+            downtime > MAINTENANCE_SERVICE_MAX_DOWNTIME_MS || method < 0 || method > 1)
+            status = UA_STATUSCODE_BADOUTOFRANGE;
+    }
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_require_method_role(ctx, mid, no, out);
+    if (status == UA_STATUSCODE_GOOD && !model_copy_session_username(ctx, actor, sizeof(actor)))
+        status = UA_STATUSCODE_BADUSERACCESSDENIED;
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "PlanMaintenance", status);
+        return status;
+    }
+    request.command_time_utc_100ns = (int64_t)UA_DateTime_now();
+    request.planned_date_utc_100ns = date;
+    request.estimated_downtime_ms = downtime;
+    request.method = (maintenance_service_method_t)method;
+    model_copy_string_safe(request.actor, sizeof(request.actor), actor);
+    status = model_maintenance_result_status(maintenance_service_prepare_plan(&request, &tx));
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_commit_maintenance_transaction(server, &tx, "PlanMaintenance", ctx);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "PlanMaintenance", status);
+        return status;
+    }
+    model_set_boolean_method_output(no, out, true);
+    return UA_STATUSCODE_GOOD;
 }
 
 static UA_StatusCode model_start_maintenance(UA_Server *server, const UA_NodeId *sid, void *ctx,
  const UA_NodeId *mid, void *mc, const UA_NodeId *oid, void *oc, size_t n, const UA_Variant *in, size_t no, UA_Variant *out)
 {
-    maintenance_service_start_request_t request={0}; maintenance_service_transaction_t tx={0}; char actor[SECURITY_SERVICE_USERNAME_MAX_LEN]; (void)sid;(void)mc;(void)oid;(void)oc;(void)in;
-    { UA_StatusCode s = model_maintenance_mutations_available(); if (s != UA_STATUSCODE_GOOD) return s; }
-    if(n!=0u)return UA_STATUSCODE_BADINVALIDARGUMENT; { UA_StatusCode s=model_require_method_role(ctx,mid,no,out);if(s!=UA_STATUSCODE_GOOD)return s; }
-    if(!model_copy_session_username(ctx,actor,sizeof(actor)))return UA_STATUSCODE_BADUSERACCESSDENIED; request.command_time_utc_100ns=(int64_t)UA_DateTime_now(); model_copy_string_safe(request.actor,sizeof(request.actor),actor);
-    { UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_start(&request,&tx));if(s!=UA_STATUSCODE_GOOD)return s;s=model_commit_maintenance_transaction(server,&tx,"StartMaintenance");if(s!=UA_STATUSCODE_GOOD)return s;} model_set_boolean_method_output(no,out,true);return UA_STATUSCODE_GOOD;
+    maintenance_service_start_request_t request = {0};
+    maintenance_service_transaction_t tx = {0};
+    UA_StatusCode status;
+    char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    (void)sid; (void)mc; (void)oid; (void)oc; (void)in;
+    status = model_maintenance_mutations_available();
+    if (status == UA_STATUSCODE_GOOD && n != 0u)
+        status = UA_STATUSCODE_BADINVALIDARGUMENT;
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_require_method_role(ctx, mid, no, out);
+    if (status == UA_STATUSCODE_GOOD && !model_copy_session_username(ctx, actor, sizeof(actor)))
+        status = UA_STATUSCODE_BADUSERACCESSDENIED;
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "StartMaintenance", status);
+        return status;
+    }
+    request.command_time_utc_100ns = (int64_t)UA_DateTime_now();
+    model_copy_string_safe(request.actor, sizeof(request.actor), actor);
+    status = model_maintenance_result_status(maintenance_service_prepare_start(&request, &tx));
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_commit_maintenance_transaction(server, &tx, "StartMaintenance", ctx);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "StartMaintenance", status);
+        return status;
+    }
+    model_set_boolean_method_output(no, out, true);
+    return UA_STATUSCODE_GOOD;
 }
 
 static UA_StatusCode model_reschedule_maintenance(UA_Server *server,const UA_NodeId *sid,void *ctx,const UA_NodeId *mid,void *mc,const UA_NodeId *oid,void *oc,size_t n,const UA_Variant *in,size_t no,UA_Variant *out) {
- maintenance_service_reschedule_request_t r={0};maintenance_service_transaction_t tx={0};UA_DateTime d;UA_Double x;UA_Int32 m;(void)sid;(void)mc;(void)oid;(void)oc;
- {UA_StatusCode s=model_maintenance_mutations_available();if(s!=UA_STATUSCODE_GOOD)return s;}
- if(n!=5u||!UA_Variant_hasScalarType(&in[0],&UA_TYPES[UA_TYPES_DATETIME])||!UA_Variant_hasScalarType(&in[1],&UA_TYPES[UA_TYPES_DOUBLE])||!UA_Variant_hasScalarType(&in[2],&UA_TYPES[UA_TYPES_INT32])||!model_copy_maintenance_string(&in[3],r.supplier,sizeof(r.supplier))||!model_copy_maintenance_string(&in[4],r.personnel,sizeof(r.personnel)))return UA_STATUSCODE_BADINVALIDARGUMENT;
- d=*(UA_DateTime*)in[0].data;x=*(UA_Double*)in[1].data;m=*(UA_Int32*)in[2].data;if(d<=0||!isfinite(x)||x<=0||x>MAINTENANCE_SERVICE_MAX_DOWNTIME_MS||m<0||m>1)return UA_STATUSCODE_BADOUTOFRANGE;{UA_StatusCode s=model_require_method_role(ctx,mid,no,out);if(s!=UA_STATUSCODE_GOOD)return s;}r.command_time_utc_100ns=(int64_t)UA_DateTime_now();r.planned_date_utc_100ns=d;r.estimated_downtime_ms=x;r.method=(maintenance_service_method_t)m;{UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_reschedule(&r,&tx));if(s!=UA_STATUSCODE_GOOD)return s;s=model_commit_maintenance_transaction(server,&tx,"RescheduleMaintenance");if(s!=UA_STATUSCODE_GOOD)return s;}model_set_boolean_method_output(no,out,true);return UA_STATUSCODE_GOOD; }
+    maintenance_service_reschedule_request_t request = {0};
+    maintenance_service_transaction_t tx = {0};
+    UA_DateTime date;
+    UA_Double downtime;
+    UA_Int32 method;
+    UA_StatusCode status;
+    (void)sid; (void)mc; (void)oid; (void)oc;
+    status = model_maintenance_mutations_available();
+    if (status == UA_STATUSCODE_GOOD &&
+        (n != 5u || !UA_Variant_hasScalarType(&in[0], &UA_TYPES[UA_TYPES_DATETIME]) ||
+         !UA_Variant_hasScalarType(&in[1], &UA_TYPES[UA_TYPES_DOUBLE]) ||
+         !UA_Variant_hasScalarType(&in[2], &UA_TYPES[UA_TYPES_INT32]) ||
+         !model_copy_maintenance_string(&in[3], request.supplier, sizeof(request.supplier)) ||
+         !model_copy_maintenance_string(&in[4], request.personnel, sizeof(request.personnel))))
+        status = UA_STATUSCODE_BADINVALIDARGUMENT;
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        date = *(UA_DateTime *)in[0].data;
+        downtime = *(UA_Double *)in[1].data;
+        method = *(UA_Int32 *)in[2].data;
+        if (date <= 0 || !isfinite(downtime) || downtime <= 0.0 ||
+            downtime > MAINTENANCE_SERVICE_MAX_DOWNTIME_MS || method < 0 || method > 1)
+            status = UA_STATUSCODE_BADOUTOFRANGE;
+    }
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_require_method_role(ctx, mid, no, out);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "RescheduleMaintenance", status);
+        return status;
+    }
+    request.command_time_utc_100ns = (int64_t)UA_DateTime_now();
+    request.planned_date_utc_100ns = date;
+    request.estimated_downtime_ms = downtime;
+    request.method = (maintenance_service_method_t)method;
+    status = model_maintenance_result_status(maintenance_service_prepare_reschedule(&request, &tx));
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_commit_maintenance_transaction(server, &tx, "RescheduleMaintenance", ctx);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "RescheduleMaintenance", status);
+        return status;
+    }
+    model_set_boolean_method_output(no, out, true);
+    return UA_STATUSCODE_GOOD;
+}
 
 static UA_StatusCode model_finish_maintenance(UA_Server *server,const UA_NodeId *sid,void *ctx,const UA_NodeId *mid,void *mc,const UA_NodeId *oid,void *oc,size_t n,const UA_Variant *in,size_t no,UA_Variant *out) {
- maintenance_service_finish_request_t r={0};maintenance_service_transaction_t tx={0};char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];(void)sid;(void)mc;(void)oid;(void)oc;
- {UA_StatusCode s=model_maintenance_mutations_available();if(s!=UA_STATUSCODE_GOOD)return s;}
- if(n!=4u||!model_copy_maintenance_parts(&in[0],r.parts_serviced,&r.parts_serviced_count)||!model_copy_maintenance_parts(&in[1],r.parts_replaced,&r.parts_replaced_count)||!UA_Variant_hasScalarType(&in[2],&UA_TYPES[UA_TYPES_BOOLEAN])||!model_copy_maintenance_string(&in[3],r.result,sizeof(r.result)))return UA_STATUSCODE_BADINVALIDARGUMENT;{UA_StatusCode s=model_require_method_role(ctx,mid,no,out);if(s!=UA_STATUSCODE_GOOD)return s;}if(!model_copy_session_username(ctx,actor,sizeof(actor)))return UA_STATUSCODE_BADUSERACCESSDENIED;r.command_time_utc_100ns=(int64_t)UA_DateTime_now();r.configuration_changed=*(UA_Boolean*)in[2].data==UA_TRUE;model_copy_string_safe(r.actor,sizeof(r.actor),actor);{UA_StatusCode s=model_maintenance_result_status(maintenance_service_prepare_finish(&r,&tx));if(s!=UA_STATUSCODE_GOOD)return s;s=model_commit_maintenance_transaction(server,&tx,"FinishMaintenance");if(s!=UA_STATUSCODE_GOOD)return s;}model_set_boolean_method_output(no,out,true);return UA_STATUSCODE_GOOD; }
+    maintenance_service_finish_request_t request = {0};
+    maintenance_service_transaction_t tx = {0};
+    UA_StatusCode status;
+    char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+    (void)sid; (void)mc; (void)oid; (void)oc;
+    status = model_maintenance_mutations_available();
+    if (status == UA_STATUSCODE_GOOD &&
+        (n != 4u || !model_copy_maintenance_parts(&in[0], request.parts_serviced,
+                                                   &request.parts_serviced_count) ||
+         !model_copy_maintenance_parts(&in[1], request.parts_replaced,
+                                       &request.parts_replaced_count) ||
+         !UA_Variant_hasScalarType(&in[2], &UA_TYPES[UA_TYPES_BOOLEAN]) ||
+         !model_copy_maintenance_string(&in[3], request.result, sizeof(request.result))))
+        status = UA_STATUSCODE_BADINVALIDARGUMENT;
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_require_method_role(ctx, mid, no, out);
+    if (status == UA_STATUSCODE_GOOD && !model_copy_session_username(ctx, actor, sizeof(actor)))
+        status = UA_STATUSCODE_BADUSERACCESSDENIED;
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "FinishMaintenance", status);
+        return status;
+    }
+    request.command_time_utc_100ns = (int64_t)UA_DateTime_now();
+    request.configuration_changed = *(UA_Boolean *)in[2].data == UA_TRUE;
+    model_copy_string_safe(request.actor, sizeof(request.actor), actor);
+    status = model_maintenance_result_status(maintenance_service_prepare_finish(&request, &tx));
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_commit_maintenance_transaction(server, &tx, "FinishMaintenance", ctx);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(ctx, "FinishMaintenance", status);
+        return status;
+    }
+    model_set_boolean_method_output(no, out, true);
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_reset_maintenance_journal(
+    UA_Server *server, const UA_NodeId *session_id, void *session_context,
+    const UA_NodeId *method_id, void *method_context,
+    const UA_NodeId *object_id, void *object_context, size_t input_size,
+    const UA_Variant *input, size_t output_size, UA_Variant *output)
+{
+    maintenance_service_reset_outcome_t outcome = MAINTENANCE_SERVICE_RESET_NO_CHANGE;
+    maintenance_service_snapshot_t snapshot = {0};
+    UA_StatusCode status;
+
+    (void)session_id; (void)method_context; (void)object_id; (void)object_context;
+    (void)input;
+    if (input_size != 0u)
+    {
+        status = UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    else
+    {
+        status = model_require_method_role(session_context, method_id,
+                                           output_size, output);
+    }
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(session_context,
+                                          "ResetMaintenanceJournal", status);
+        return status;
+    }
+    status = model_maintenance_result_status(
+        maintenance_service_reset_journal_ex(&outcome));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        model_audit_maintenance_rejection(session_context,
+                                          "ResetMaintenanceJournal", status);
+        return status;
+    }
+    status = model_maintenance_result_status(
+        maintenance_service_get_snapshot(&snapshot));
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_sync_maintenance_condition(server, &snapshot);
+    }
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        /* A committed reset cannot be reversed; do not publish a success
+         * audit when readback/reconciliation could not complete. */
+        model_audit_maintenance_rejection(session_context,
+                                          "ResetMaintenanceJournal", status);
+        return status;
+    }
+    if (outcome == MAINTENANCE_SERVICE_RESET_APPLIED)
+    {
+        taskENTER_CRITICAL();
+        memset(g_model_maintenance_export_continuations, 0,
+               sizeof(g_model_maintenance_export_continuations));
+        taskEXIT_CRITICAL();
+        model_audit_maintenance_accept(session_context, "ResetMaintenanceJournal");
+        model_audit_session_event(session_context, "maintenance-reset",
+                                  "ResetMaintenanceJournal", true,
+                                  "logical reset committed");
+    }
+    model_set_boolean_method_output(output_size, output, true);
+    return UA_STATUSCODE_GOOD;
+}
+
+static bool model_export_append(size_t *offset, const char *format, ...)
+{
+    va_list args;
+    int written;
+
+    if (offset == NULL || g_model_maintenance_export_payload == NULL ||
+        *offset >= MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY)
+    {
+        return false;
+    }
+    va_start(args, format);
+    written = vsnprintf(&g_model_maintenance_export_payload[*offset],
+                        MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY - *offset,
+                        format, args);
+    va_end(args);
+    if (written < 0 ||
+        (size_t)written >= MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY - *offset)
+    {
+        return false;
+    }
+    *offset += (size_t)written;
+    return true;
+}
+
+static bool model_export_append_json_string(size_t *offset, const char *text)
+{
+    const unsigned char *cursor = (const unsigned char *)(text != NULL ? text : "");
+
+    if (!model_export_append(offset, "\""))
+        return false;
+    while (*cursor != '\0')
+    {
+        if (*cursor == '"' || *cursor == '\\')
+        {
+            if (!model_export_append(offset, "\\%c", *cursor)) return false;
+        }
+        else if (*cursor < 0x20u)
+        {
+            if (!model_export_append(offset, "\\u%04x", (unsigned)*cursor)) return false;
+        }
+        else if (!model_export_append(offset, "%c", *cursor))
+        {
+            return false;
+        }
+        ++cursor;
+    }
+    return model_export_append(offset, "\"");
+}
+
+static bool model_export_append_parts(
+    size_t *offset,
+    const char parts[MAINTENANCE_SERVICE_MAX_PARTS][MAINTENANCE_SERVICE_PART_TEXT_CAPACITY],
+    uint8_t count)
+{
+    uint8_t index;
+
+    if (parts == NULL || count > MAINTENANCE_SERVICE_MAX_PARTS ||
+        !model_export_append(offset, "["))
+    {
+        return false;
+    }
+    for (index = 0u; index < count; ++index)
+    {
+        if ((index > 0u && !model_export_append(offset, ",")) ||
+            !model_export_append_json_string(offset, parts[index]))
+        {
+            return false;
+        }
+    }
+    return model_export_append(offset, "]");
+}
+
+static bool model_parse_maintenance_export_token(const UA_Variant *input,
+                                                  uint32_t *out_token)
+{
+    const UA_String *text;
+    uint32_t value = 0u;
+    size_t index;
+
+    if (input == NULL || out_token == NULL ||
+        !UA_Variant_hasScalarType(input, &UA_TYPES[UA_TYPES_STRING]) || input->data == NULL)
+        return false;
+    text = (const UA_String *)input->data;
+    if (text->length != 8u)
+        return false;
+    for (index = 0u; index < text->length; ++index)
+    {
+        const uint8_t c = text->data[index];
+        uint8_t digit;
+        if (c >= '0' && c <= '9') digit = (uint8_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint8_t)(c - 'a' + 10u);
+        else if (c >= 'A' && c <= 'F') digit = (uint8_t)(c - 'A' + 10u);
+        else return false;
+        value = (value << 4u) | digit;
+    }
+    *out_token = value;
+    return value != 0u;
+}
+
+/* Every rejected export path goes through this one volatile audit boundary.
+ * A failed page cannot safely retain its cursor because a retry might otherwise
+ * expose an incompletely constructed response after reset/reclaim. */
+static UA_StatusCode model_export_maintenance_failure(
+    void *session_context, model_maintenance_export_continuation_t *continuation,
+    UA_StatusCode status)
+{
+    if (continuation != NULL)
+    {
+        taskENTER_CRITICAL();
+        continuation->active = false;
+        taskEXIT_CRITICAL();
+    }
+    model_audit_maintenance_rejection(session_context,
+                                      "ExportMaintenanceJournal", status);
+    return status;
+}
+
+static UA_StatusCode model_export_maintenance_journal(
+    UA_Server *server, const UA_NodeId *session_id, void *session_context,
+    const UA_NodeId *method_id, void *method_context,
+    const UA_NodeId *object_id, void *object_context, size_t input_size,
+    const UA_Variant *input, size_t output_size, UA_Variant *output)
+{
+    maintenance_service_export_record_t records[MAINTENANCE_SERVICE_EXPORT_PAGE_MAX] = {{0}};
+    maintenance_service_export_cursor_t cursor = {0};
+    model_maintenance_export_continuation_t *continuation = NULL;
+    maintenance_service_result_t service_result;
+    UA_StatusCode status;
+    uint32_t token = 0u;
+    uint8_t count = 0u;
+    bool more = false;
+    size_t offset = 0u;
+    size_t index;
+    TickType_t expiry;
+
+    (void)server; (void)session_id; (void)method_context; (void)object_id; (void)object_context;
+    if (input_size != 1u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_STRING]))
+        status = UA_STATUSCODE_BADINVALIDARGUMENT;
+    else
+        status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return model_export_maintenance_failure(session_context, NULL, status);
+    }
+    {
+        const UA_String *requested = (const UA_String *)input[0].data;
+        if (requested == NULL)
+            return model_export_maintenance_failure(
+                session_context, NULL, UA_STATUSCODE_BADINVALIDARGUMENT);
+        if (requested->length == 0u)
+        {
+            service_result = maintenance_service_export_begin(&cursor);
+            status = model_maintenance_result_status(service_result);
+            if (status != UA_STATUSCODE_GOOD)
+                return model_export_maintenance_failure(session_context, NULL, status);
+            taskENTER_CRITICAL();
+            for (index = 0u; index < MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY; ++index)
+                if (!g_model_maintenance_export_continuations[index].active) { continuation = &g_model_maintenance_export_continuations[index]; break; }
+            if (continuation != NULL)
+            {
+                token = ++g_model_maintenance_export_next_token;
+                if (token == 0u) token = ++g_model_maintenance_export_next_token;
+                continuation->active = true;
+                continuation->token = token;
+                continuation->cursor = cursor;
+                continuation->expires_at = xTaskGetTickCount() +
+                                           pdMS_TO_TICKS(MODEL_MAINTENANCE_EXPORT_EXPIRY_MS);
+            }
+            taskEXIT_CRITICAL();
+            if (continuation == NULL)
+                return model_export_maintenance_failure(
+                    session_context, NULL, UA_STATUSCODE_BADNOCONTINUATIONPOINTS);
+        }
+        else
+        {
+            if (!model_parse_maintenance_export_token(&input[0], &token))
+                return model_export_maintenance_failure(
+                    session_context, NULL, UA_STATUSCODE_BADCONTINUATIONPOINTINVALID);
+            taskENTER_CRITICAL();
+            for (index = 0u; index < MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY; ++index)
+                if (g_model_maintenance_export_continuations[index].active &&
+                    g_model_maintenance_export_continuations[index].token == token) { continuation = &g_model_maintenance_export_continuations[index]; break; }
+            expiry = xTaskGetTickCount();
+            if (continuation != NULL &&
+                (TickType_t)(expiry - continuation->expires_at) <
+                    (TickType_t)(1u << ((sizeof(TickType_t) * 8u) - 1u)))
+            {
+                continuation->active = false;
+                continuation = NULL;
+            }
+            taskEXIT_CRITICAL();
+            if (continuation == NULL)
+                return model_export_maintenance_failure(
+                    session_context, NULL, UA_STATUSCODE_BADCONTINUATIONPOINTINVALID);
+        }
+    }
+    service_result = maintenance_service_export_page(&continuation->cursor, records, &count, &more);
+    status = model_maintenance_result_status(service_result);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        status = service_result == MAINTENANCE_SERVICE_RESULT_INVALID_STATE
+                     ? UA_STATUSCODE_BADCONTINUATIONPOINTINVALID : status;
+        return model_export_maintenance_failure(session_context, continuation, status);
+    }
+    if (g_model_maintenance_export_payload == NULL)
+    {
+        return model_export_maintenance_failure(
+            session_context, continuation, UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
+    }
+    if (!model_export_append(&offset, "{\"records\":["))
+        return model_export_maintenance_failure(
+            session_context, continuation, UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
+    for (index = 0u; index < count; ++index)
+    {
+        const maintenance_service_export_record_t *record = &records[index];
+        if (index > 0u && !model_export_append(&offset, ","))
+            return model_export_maintenance_failure(
+                session_context, continuation, UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
+        if (!model_export_append(&offset, "{\"epoch\":%llu,\"sequence\":%llu,\"operation\":%u,\"transition\":%u,\"state\":%u,\"revision\":%lu,\"committedAt\":%lld,\"plannedDate\":%lld,\"estimatedDowntime\":%.17g,\"method\":%u,\"configurationChanged\":%s,\"operationId\":",
+                                 (unsigned long long)record->epoch, (unsigned long long)record->sequence,
+                                 (unsigned)record->operation, (unsigned)record->transition,
+                                 (unsigned)record->snapshot.state, (unsigned long)record->snapshot.revision,
+                                 (long long)record->snapshot.committed_at_utc_100ns,
+                                 (long long)record->snapshot.activity.planned_date_utc_100ns,
+                                 record->snapshot.activity.estimated_downtime_ms,
+                                 (unsigned)record->snapshot.activity.method,
+                                 record->snapshot.activity.configuration_changed ? "true" : "false") ||
+            !model_export_append_json_string(&offset, record->snapshot.activity.operation_id) ||
+            !model_export_append(&offset, ",\"supplier\":") || !model_export_append_json_string(&offset, record->snapshot.activity.supplier) ||
+            !model_export_append(&offset, ",\"personnel\":") || !model_export_append_json_string(&offset, record->snapshot.activity.personnel) ||
+            !model_export_append(&offset, ",\"actor\":") || !model_export_append_json_string(&offset, record->snapshot.activity.actor) ||
+            !model_export_append(&offset, ",\"result\":") || !model_export_append_json_string(&offset, record->snapshot.activity.result) ||
+            !model_export_append(&offset, ",\"partsServicedCount\":%u,\"partsServiced\":",
+                                 (unsigned)record->snapshot.activity.parts_serviced_count) ||
+            !model_export_append_parts(&offset, record->snapshot.activity.parts_serviced,
+                                       record->snapshot.activity.parts_serviced_count) ||
+            !model_export_append(&offset, ",\"partsReplacedCount\":%u,\"partsReplaced\":",
+                                 (unsigned)record->snapshot.activity.parts_replaced_count) ||
+            !model_export_append_parts(&offset, record->snapshot.activity.parts_replaced,
+                                       record->snapshot.activity.parts_replaced_count) ||
+            !model_export_append(&offset, "}"))
+            return model_export_maintenance_failure(
+                session_context, continuation, UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
+    }
+    if (more)
+    {
+        continuation->expires_at = xTaskGetTickCount() +
+                                   pdMS_TO_TICKS(MODEL_MAINTENANCE_EXPORT_EXPIRY_MS);
+        if (!model_export_append(&offset, "],\"continuationToken\":\"%08lx\",\"more\":true}", (unsigned long)token))
+            return model_export_maintenance_failure(
+                session_context, continuation, UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
+    }
+    else
+    {
+        continuation->active = false;
+        if (!model_export_append(&offset, "],\"continuationToken\":\"\",\"more\":false}"))
+            return model_export_maintenance_failure(
+                session_context, continuation, UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
+    }
+    model_set_string_method_output(output_size, output, g_model_maintenance_export_payload);
+    model_audit_maintenance_accept(session_context, "ExportMaintenanceJournal");
+    return UA_STATUSCODE_GOOD;
+}
 
 static UA_StatusCode model_set_localized_text_value(UA_DataValue *value,
                                                     const char *data,
@@ -11985,7 +12769,7 @@ static UA_StatusCode model_add_set_location_paths_method_node(UA_Server *server,
 
 static UA_StatusCode model_add_maintenance_workflow_methods(UA_Server *server, UA_NodeId maintenance_id)
 {
-    UA_Argument plan[6], reschedule[5], finish[4];
+    UA_Argument plan[6], reschedule[5], finish[4], export_input;
     UA_UInt32 finish_array_dimension = 0u;
     UA_StatusCode status;
     model_fill_string_argument(&plan[0], "OperationId", "Bounded maintenance operation identifier");
@@ -11999,7 +12783,27 @@ static UA_StatusCode model_add_maintenance_workflow_methods(UA_Server *server, U
     model_fill_string_argument(&finish[0],"PartsOfAssetServiced","Bounded array of serviced parts");finish[0].valueRank=1;finish[0].arrayDimensions=&finish_array_dimension;finish[0].arrayDimensionsSize=1u;
     model_fill_string_argument(&finish[1],"PartsOfAssetReplaced","Bounded array of replaced parts");finish[1].valueRank=1;finish[1].arrayDimensions=&finish_array_dimension;finish[1].arrayDimensionsSize=1u;
     model_fill_boolean_argument(&finish[2],"ConfigurationChanged","Configuration changed during maintenance");model_fill_string_argument(&finish[3],"Result","Maintenance result");
-    return model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_FINISH_MAINTENANCE,"FinishMaintenance","Finishes executing maintenance",model_finish_maintenance,4u,finish);
+    status = model_add_method_node_with_boolean_result(server,maintenance_id,MODEL_METHOD_FINISH_MAINTENANCE,"FinishMaintenance","Finishes executing maintenance",model_finish_maintenance,4u,finish);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    model_fill_string_argument(&export_input, "ContinuationToken",
+                               "Empty to begin; returned token expires after 30 seconds");
+    status = model_add_method_node_with_string_result(
+        server, maintenance_id, MODEL_METHOD_EXPORT_MAINTENANCE_JOURNAL,
+        "ExportMaintenanceJournal",
+        "Exports at most four validated logical journal records per page",
+        model_export_maintenance_journal, 1u, &export_input);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    return model_add_boolean_method_node(
+        server, maintenance_id, MODEL_METHOD_RESET_MAINTENANCE_JOURNAL,
+        "ResetMaintenanceJournal",
+        "Admin-only logical journal reset; preserves workflow state and revision",
+        model_reset_maintenance_journal);
 }
 
 static UA_StatusCode model_add_set_network_config_method_node(UA_Server *server,
@@ -14452,6 +15256,26 @@ bool opcua_model_init(const opcua_model_config_t *config)
         return false;
     }
 
+    if (g_model_maintenance_export_payload == NULL)
+    {
+        if (!psram_allocator_is_ready())
+        {
+            printf("[OPC UA]\tMaintenance export scratch requires PSRAM\n");
+            fflush(stdout);
+            return false;
+        }
+
+        g_model_maintenance_export_payload =
+            (char *)psram_malloc(MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY);
+        if (g_model_maintenance_export_payload == NULL)
+        {
+            printf("[OPC UA]\tMaintenance export scratch allocation failed (%u bytes)\n",
+                   (unsigned)MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY);
+            fflush(stdout);
+            return false;
+        }
+    }
+
     g_model_config = *config;
     g_pending_actions.reboot_pending = false;
     g_pending_actions.reboot_due_tick = 0;
@@ -15382,6 +16206,12 @@ void opcua_model_task(void *argument)
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     security_service_set_audit_callback(NULL, NULL);
 #endif
+
+    if (g_model_maintenance_export_payload != NULL)
+    {
+        psram_free(g_model_maintenance_export_payload);
+        g_model_maintenance_export_payload = NULL;
+    }
 
     vTaskDelete(NULL);
 }

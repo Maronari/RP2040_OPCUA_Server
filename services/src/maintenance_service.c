@@ -6,11 +6,14 @@
 
 #include <FreeRTOS.h>
 
+#include "drivers/maintenance_journal_backend.h"
+
 typedef enum
 {
     MAINTENANCE_PENDING_NONE = 0,
     MAINTENANCE_PENDING_PREPARED = 1,
-    MAINTENANCE_PENDING_APPLIED = 2
+    MAINTENANCE_PENDING_PERSISTING = 2,
+    MAINTENANCE_PENDING_APPLIED = 3
 } maintenance_service_pending_phase_t;
 
 typedef struct
@@ -19,6 +22,12 @@ typedef struct
     maintenance_service_snapshot_t pending_snapshot;
     maintenance_service_transaction_t pending_transaction;
     maintenance_service_event_publication_fault_t event_fault;
+    maintenance_journal_backend_t journal;
+    bool journal_enabled;
+    bool journal_mutations_blocked;
+    /* Serializes the driver's static RAM scratch without holding a critical
+     * section across Flash I/O. */
+    bool journal_io_busy;
     uint32_t next_token;
     uint8_t active_index;
     maintenance_service_pending_phase_t pending_phase;
@@ -26,6 +35,44 @@ typedef struct
 } maintenance_service_runtime_t;
 
 static maintenance_service_runtime_t g_maintenance_service_runtime;
+/* Driver records are decoded into this bounded service-owned staging array
+ * before copies cross the service boundary. Never allocate it on a task stack. */
+static maintenance_journal_record_t
+    g_maintenance_service_export_records[MAINTENANCE_JOURNAL_EXPORT_PAGE_MAX];
+
+static maintenance_service_result_t maintenance_service_backend_result(
+    maintenance_journal_backend_result_t result)
+{
+    return result == MAINTENANCE_JOURNAL_BACKEND_OK ||
+                   result == MAINTENANCE_JOURNAL_BACKEND_DEGRADED
+               ? MAINTENANCE_SERVICE_RESULT_OK
+               : (result == MAINTENANCE_JOURNAL_BACKEND_CAPACITY ||
+                  result == MAINTENANCE_JOURNAL_BACKEND_IO ||
+                  result == MAINTENANCE_JOURNAL_BACKEND_INDETERMINATE ||
+                  result == MAINTENANCE_JOURNAL_BACKEND_UNSUPPORTED ||
+                  result == MAINTENANCE_JOURNAL_BACKEND_FATAL
+                      ? MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE
+                      : MAINTENANCE_SERVICE_RESULT_INTERNAL_ERROR);
+}
+
+static maintenance_journal_operation_t maintenance_service_journal_operation(
+    maintenance_service_operation_t operation)
+{
+    return (maintenance_journal_operation_t)operation;
+}
+
+static maintenance_journal_record_t maintenance_service_make_record(
+    const maintenance_service_snapshot_t *snapshot,
+    const maintenance_service_transaction_t *transaction)
+{
+    maintenance_journal_record_t record = {0};
+    record.command_time_utc_100ns = snapshot->committed_at_utc_100ns;
+    record.type = MAINTENANCE_JOURNAL_RECORD_SNAPSHOT;
+    record.operation = maintenance_service_journal_operation(transaction->operation);
+    record.transition = transaction->transition;
+    record.snapshot = *snapshot;
+    return record;
+}
 
 static bool maintenance_service_has_terminated_string(const char *text,
                                                        size_t capacity)
@@ -281,6 +328,11 @@ static maintenance_service_result_t maintenance_service_store_prepared(
         maintenance_service_unlock();
         return MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE;
     }
+    if (g_maintenance_service_runtime.journal_mutations_blocked)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE;
+    }
     if (g_maintenance_service_runtime.pending_phase != MAINTENANCE_PENDING_NONE)
     {
         maintenance_service_unlock();
@@ -310,9 +362,11 @@ static maintenance_service_result_t maintenance_service_store_prepared(
     return MAINTENANCE_SERVICE_RESULT_OK;
 }
 
-maintenance_service_result_t maintenance_service_init(void)
+maintenance_service_result_t maintenance_service_init_with_journal(
+    const maintenance_service_journal_storage_t *storage)
 {
     maintenance_service_snapshot_t initial_snapshot;
+    maintenance_journal_backend_result_t journal_result = MAINTENANCE_JOURNAL_BACKEND_OK;
 
     if (g_maintenance_service_runtime.initialized)
     {
@@ -327,8 +381,54 @@ maintenance_service_result_t maintenance_service_init(void)
     g_maintenance_service_runtime.snapshots[0] = initial_snapshot;
     g_maintenance_service_runtime.snapshots[1] = initial_snapshot;
     g_maintenance_service_runtime.active_index = 0u;
+
+    if (storage != NULL)
+    {
+        const maintenance_journal_storage_t backend_storage = {
+            .context = storage->context,
+            .read = storage->read,
+            .program_page = storage->program_page,
+            .erase_sector = storage->erase_sector};
+        maintenance_journal_backend_init(&g_maintenance_service_runtime.journal,
+                                         &backend_storage);
+        g_maintenance_service_runtime.journal_enabled = true;
+    }
+#if defined(PICO_ON_DEVICE)
+    else
+    {
+        maintenance_journal_backend_init_flash(&g_maintenance_service_runtime.journal);
+        g_maintenance_service_runtime.journal_enabled = true;
+    }
+#endif
+    if (g_maintenance_service_runtime.journal_enabled)
+    {
+        journal_result = maintenance_journal_backend_recover(
+            &g_maintenance_service_runtime.journal);
+        if (g_maintenance_service_runtime.journal.has_active)
+        {
+            initial_snapshot = g_maintenance_service_runtime.journal.active.record.snapshot;
+            g_maintenance_service_runtime.snapshots[0] = initial_snapshot;
+            g_maintenance_service_runtime.snapshots[1] = initial_snapshot;
+        }
+        g_maintenance_service_runtime.journal_mutations_blocked =
+            g_maintenance_service_runtime.journal.mutations_blocked;
+        /* Recovery has a coherent read snapshot even when mutation is blocked. */
+        if (journal_result != MAINTENANCE_JOURNAL_BACKEND_OK &&
+            journal_result != MAINTENANCE_JOURNAL_BACKEND_DEGRADED &&
+            journal_result != MAINTENANCE_JOURNAL_BACKEND_INDETERMINATE &&
+            journal_result != MAINTENANCE_JOURNAL_BACKEND_FATAL &&
+            journal_result != MAINTENANCE_JOURNAL_BACKEND_UNSUPPORTED)
+        {
+            return maintenance_service_backend_result(journal_result);
+        }
+    }
     g_maintenance_service_runtime.initialized = true;
     return MAINTENANCE_SERVICE_RESULT_OK;
+}
+
+maintenance_service_result_t maintenance_service_init(void)
+{
+    return maintenance_service_init_with_journal(NULL);
 }
 
 maintenance_service_result_t maintenance_service_get_snapshot(
@@ -545,6 +645,11 @@ maintenance_service_result_t maintenance_service_get_prepared_snapshot(
         maintenance_service_unlock();
         return MAINTENANCE_SERVICE_RESULT_BUSY;
     }
+    if (g_maintenance_service_runtime.pending_phase == MAINTENANCE_PENDING_PERSISTING)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_BUSY;
+    }
     *out_snapshot = g_maintenance_service_runtime.pending_snapshot;
     maintenance_service_unlock();
     return MAINTENANCE_SERVICE_RESULT_OK;
@@ -554,6 +659,10 @@ maintenance_service_result_t maintenance_service_apply(
     const maintenance_service_transaction_t *transaction)
 {
     maintenance_service_result_t result;
+    maintenance_service_snapshot_t candidate;
+    maintenance_service_transaction_t persisted_transaction;
+    maintenance_journal_record_t record;
+    maintenance_journal_backend_result_t journal_result;
     uint8_t inactive_index;
 
     result = maintenance_service_lock();
@@ -561,11 +670,68 @@ maintenance_service_result_t maintenance_service_apply(
     {
         return result;
     }
-    if (!maintenance_service_transaction_matches(transaction) ||
-        g_maintenance_service_runtime.pending_phase != MAINTENANCE_PENDING_PREPARED)
+    if (!maintenance_service_transaction_matches(transaction))
     {
         maintenance_service_unlock();
         return MAINTENANCE_SERVICE_RESULT_BUSY;
+    }
+    if (g_maintenance_service_runtime.pending_phase == MAINTENANCE_PENDING_APPLIED)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_OK;
+    }
+    if (g_maintenance_service_runtime.pending_phase != MAINTENANCE_PENDING_PREPARED ||
+        g_maintenance_service_runtime.journal_mutations_blocked ||
+        g_maintenance_service_runtime.journal_io_busy)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE;
+    }
+
+    /* The pending transaction serializes persistence but the critical section
+     * ends before any driver/Flash operation. */
+    candidate = g_maintenance_service_runtime.pending_snapshot;
+    persisted_transaction = g_maintenance_service_runtime.pending_transaction;
+    g_maintenance_service_runtime.pending_phase = MAINTENANCE_PENDING_PERSISTING;
+    if (g_maintenance_service_runtime.journal_enabled)
+    {
+        g_maintenance_service_runtime.journal_io_busy = true;
+    }
+    maintenance_service_unlock();
+
+    if (g_maintenance_service_runtime.journal_enabled)
+    {
+        record = maintenance_service_make_record(&candidate, &persisted_transaction);
+        journal_result = maintenance_journal_backend_append(
+            &g_maintenance_service_runtime.journal, &record, NULL);
+        result = maintenance_service_backend_result(journal_result);
+    }
+    else
+    {
+        result = MAINTENANCE_SERVICE_RESULT_OK;
+    }
+
+    if (maintenance_service_lock() != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INTERNAL_ERROR;
+    }
+    g_maintenance_service_runtime.journal_io_busy = false;
+    if (!maintenance_service_transaction_matches(&persisted_transaction) ||
+        g_maintenance_service_runtime.pending_phase != MAINTENANCE_PENDING_PERSISTING)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_BUSY;
+    }
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        if (g_maintenance_service_runtime.journal_enabled &&
+            g_maintenance_service_runtime.journal.mutations_blocked)
+        {
+            g_maintenance_service_runtime.journal_mutations_blocked = true;
+        }
+        g_maintenance_service_runtime.pending_phase = MAINTENANCE_PENDING_PREPARED;
+        maintenance_service_unlock();
+        return result;
     }
 
     inactive_index = (uint8_t)(g_maintenance_service_runtime.active_index ^ 1u);
@@ -628,6 +794,11 @@ maintenance_service_result_t maintenance_service_abort(
         return result;
     }
     if (!maintenance_service_transaction_matches(transaction))
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_BUSY;
+    }
+    if (g_maintenance_service_runtime.pending_phase == MAINTENANCE_PENDING_PERSISTING)
     {
         maintenance_service_unlock();
         return MAINTENANCE_SERVICE_RESULT_BUSY;
@@ -709,6 +880,247 @@ maintenance_service_result_t maintenance_service_clear_event_publication_fault(v
     memset(&g_maintenance_service_runtime.event_fault, 0,
            sizeof(g_maintenance_service_runtime.event_fault));
     maintenance_service_unlock();
+    return MAINTENANCE_SERVICE_RESULT_OK;
+}
+
+maintenance_service_result_t maintenance_service_reset_journal_ex(
+    maintenance_service_reset_outcome_t *out_outcome)
+{
+    maintenance_service_result_t result;
+    maintenance_service_snapshot_t snapshot;
+    maintenance_journal_record_t reset_record = {0};
+    maintenance_journal_backend_result_t backend_result;
+    bool already_empty;
+
+    if (out_outcome != NULL)
+    {
+        *out_outcome = MAINTENANCE_SERVICE_RESET_NO_CHANGE;
+    }
+
+    result = maintenance_service_lock();
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return result;
+    }
+    if (!g_maintenance_service_runtime.journal_enabled ||
+        g_maintenance_service_runtime.journal_mutations_blocked ||
+        g_maintenance_service_runtime.pending_phase != MAINTENANCE_PENDING_NONE ||
+        g_maintenance_service_runtime.journal_io_busy)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE;
+    }
+    snapshot = g_maintenance_service_runtime.snapshots[
+        g_maintenance_service_runtime.active_index];
+    already_empty = !g_maintenance_service_runtime.journal.has_active ||
+                    g_maintenance_service_runtime.journal.active.record.type ==
+                        MAINTENANCE_JOURNAL_RECORD_RESET;
+    g_maintenance_service_runtime.pending_phase = MAINTENANCE_PENDING_PERSISTING;
+    g_maintenance_service_runtime.journal_io_busy = true;
+    maintenance_service_unlock();
+
+    reset_record.command_time_utc_100ns = snapshot.committed_at_utc_100ns;
+    reset_record.type = MAINTENANCE_JOURNAL_RECORD_RESET;
+    reset_record.operation = MAINTENANCE_JOURNAL_OPERATION_RESET;
+    reset_record.transition = MAINTENANCE_SERVICE_TRANSITION_NONE;
+    reset_record.snapshot = snapshot;
+    backend_result = maintenance_journal_backend_reset(
+        &g_maintenance_service_runtime.journal, &reset_record, NULL);
+    result = maintenance_service_backend_result(backend_result);
+
+    if (maintenance_service_lock() != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INTERNAL_ERROR;
+    }
+    if (g_maintenance_service_runtime.pending_phase != MAINTENANCE_PENDING_PERSISTING)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_BUSY;
+    }
+    g_maintenance_service_runtime.journal_io_busy = false;
+    if (result != MAINTENANCE_SERVICE_RESULT_OK &&
+        g_maintenance_service_runtime.journal.mutations_blocked)
+    {
+        g_maintenance_service_runtime.journal_mutations_blocked = true;
+    }
+    g_maintenance_service_runtime.pending_phase = MAINTENANCE_PENDING_NONE;
+    if (result == MAINTENANCE_SERVICE_RESULT_OK && !already_empty &&
+        out_outcome != NULL)
+    {
+        *out_outcome = MAINTENANCE_SERVICE_RESET_APPLIED;
+    }
+    maintenance_service_unlock();
+    return result;
+}
+
+maintenance_service_result_t maintenance_service_reset_journal(void)
+{
+    return maintenance_service_reset_journal_ex(NULL);
+}
+
+maintenance_service_result_t maintenance_service_get_journal_diagnostics(
+    maintenance_service_journal_diagnostics_t *out_diagnostics)
+{
+    maintenance_service_result_t result;
+    const maintenance_journal_backend_t *journal;
+
+    if (out_diagnostics == NULL)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INVALID_ARGUMENT;
+    }
+    result = maintenance_service_lock();
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return result;
+    }
+    journal = &g_maintenance_service_runtime.journal;
+    memset(out_diagnostics, 0, sizeof(*out_diagnostics));
+    out_diagnostics->enabled = g_maintenance_service_runtime.journal_enabled;
+    out_diagnostics->mutation_blocked = g_maintenance_service_runtime.journal_mutations_blocked;
+    out_diagnostics->recovery = (maintenance_service_journal_recovery_t)journal->recovery;
+    out_diagnostics->last_backend_result = (uint8_t)journal->last_error;
+    out_diagnostics->corrupt_record_count = journal->corrupt_record_count;
+    out_diagnostics->unknown_record_count = journal->unknown_record_count;
+    out_diagnostics->retained_record_count = journal->retained_record_count;
+    out_diagnostics->erased_sector_count = journal->erased_sector_count;
+    maintenance_service_unlock();
+    return MAINTENANCE_SERVICE_RESULT_OK;
+}
+
+maintenance_service_result_t maintenance_service_reconcile_operation_id(
+    const char *operation_id, maintenance_service_snapshot_t *out_snapshot,
+    bool *out_committed)
+{
+    maintenance_service_result_t result;
+    const maintenance_service_snapshot_t *active;
+
+    if (!maintenance_service_has_nonempty_string(operation_id,
+                                                  MAINTENANCE_SERVICE_OPERATION_ID_CAPACITY) ||
+        out_snapshot == NULL || out_committed == NULL)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INVALID_ARGUMENT;
+    }
+    result = maintenance_service_lock();
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return result;
+    }
+    active = &g_maintenance_service_runtime.snapshots[
+        g_maintenance_service_runtime.active_index];
+    *out_committed = active->has_activity &&
+                     strcmp(active->activity.operation_id, operation_id) == 0;
+    if (*out_committed)
+    {
+        *out_snapshot = *active;
+    }
+    maintenance_service_unlock();
+    return MAINTENANCE_SERVICE_RESULT_OK;
+}
+
+maintenance_service_result_t maintenance_service_export_begin(
+    maintenance_service_export_cursor_t *out_cursor)
+{
+    maintenance_service_result_t result;
+    maintenance_journal_export_cursor_t cursor;
+    maintenance_journal_backend_result_t backend_result;
+
+    if (out_cursor == NULL)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INVALID_ARGUMENT;
+    }
+    result = maintenance_service_lock();
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return result;
+    }
+    if (!g_maintenance_service_runtime.journal_enabled ||
+        g_maintenance_service_runtime.journal_io_busy)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE;
+    }
+    backend_result = maintenance_journal_backend_export_begin(
+        &g_maintenance_service_runtime.journal, &cursor);
+    maintenance_service_unlock();
+    if (backend_result == MAINTENANCE_JOURNAL_BACKEND_NOT_FOUND)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INVALID_STATE;
+    }
+    result = maintenance_service_backend_result(backend_result);
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return result;
+    }
+    out_cursor->epoch = cursor.epoch;
+    out_cursor->upper_sequence = cursor.upper_sequence;
+    out_cursor->next_sequence = cursor.next_sequence;
+    out_cursor->generation = cursor.generation;
+    return MAINTENANCE_SERVICE_RESULT_OK;
+}
+
+maintenance_service_result_t maintenance_service_export_page(
+    maintenance_service_export_cursor_t *cursor,
+    maintenance_service_export_record_t
+        out_records[MAINTENANCE_SERVICE_EXPORT_PAGE_MAX],
+    uint8_t *out_count, bool *out_more)
+{
+    maintenance_service_result_t result;
+    maintenance_journal_export_cursor_t backend_cursor;
+    maintenance_journal_backend_result_t backend_result;
+    uint8_t count;
+
+    if (cursor == NULL || out_records == NULL || out_count == NULL || out_more == NULL)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INVALID_ARGUMENT;
+    }
+    result = maintenance_service_lock();
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return result;
+    }
+    if (!g_maintenance_service_runtime.journal_enabled ||
+        g_maintenance_service_runtime.journal_io_busy)
+    {
+        maintenance_service_unlock();
+        return MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE;
+    }
+    backend_cursor.epoch = cursor->epoch;
+    backend_cursor.upper_sequence = cursor->upper_sequence;
+    backend_cursor.next_sequence = cursor->next_sequence;
+    backend_cursor.generation = cursor->generation;
+    g_maintenance_service_runtime.journal_io_busy = true;
+    maintenance_service_unlock();
+
+    backend_result = maintenance_journal_backend_export_page(
+        &g_maintenance_service_runtime.journal, &backend_cursor,
+        g_maintenance_service_export_records, &count, out_more);
+
+    if (maintenance_service_lock() != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INTERNAL_ERROR;
+    }
+    g_maintenance_service_runtime.journal_io_busy = false;
+    maintenance_service_unlock();
+    if (backend_result == MAINTENANCE_JOURNAL_BACKEND_NOT_FOUND)
+    {
+        return MAINTENANCE_SERVICE_RESULT_INVALID_STATE;
+    }
+    result = maintenance_service_backend_result(backend_result);
+    if (result != MAINTENANCE_SERVICE_RESULT_OK)
+    {
+        return result;
+    }
+    for (uint8_t index = 0u; index < count; ++index)
+    {
+        out_records[index].epoch = g_maintenance_service_export_records[index].epoch;
+        out_records[index].sequence = g_maintenance_service_export_records[index].sequence;
+        out_records[index].operation =
+            (maintenance_service_operation_t)g_maintenance_service_export_records[index].operation;
+        out_records[index].transition = g_maintenance_service_export_records[index].transition;
+        out_records[index].snapshot = g_maintenance_service_export_records[index].snapshot;
+    }
+    cursor->next_sequence = backend_cursor.next_sequence;
+    *out_count = count;
     return MAINTENANCE_SERVICE_RESULT_OK;
 }
 

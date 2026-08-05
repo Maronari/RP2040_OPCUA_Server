@@ -1,4 +1,5 @@
 build/
+build-*/
 .vscode/
 examples/blink_led/
 static/certs

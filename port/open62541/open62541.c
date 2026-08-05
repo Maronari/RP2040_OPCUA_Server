@@ -294933,15 +294933,21 @@ UA_SecurityPolicy_None(UA_SecurityPolicy *sp, const UA_ByteString localCertifica
 #include <FreeRTOS.h>
 #include <task.h>
 
+#include "rp2_ua_datetime_clock.h"
+
 /* The current time in UTC time */
 UA_DateTime UA_DateTime_now(void) {
-    UA_DateTime microSeconds = ((UA_DateTime)xTaskGetTickCount()) * (1000000 / configTICK_RATE_HZ);
-    return ((microSeconds / 1000000) * UA_DATETIME_SEC) + ((microSeconds % 1000000) * UA_DATETIME_USEC) + UA_DATETIME_UNIX_EPOCH;
+    int64_t datetime_100ns;
+
+    if(!rp2_ua_datetime_now(&datetime_100ns))
+        return 0;
+
+    return (UA_DateTime)datetime_100ns;
 }
 
 /* Offset between local time and UTC time */
 UA_Int64 UA_DateTime_localTimeUtcOffset(void) {
-    return 0; //TODO: this is set to zero since UA_DateTime_now() is just the local time, and not UTC.
+    return 0;
 }
 
 /* CPU clock invariant to system time changes. Use only to measure durations,
