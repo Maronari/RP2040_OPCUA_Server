@@ -2,11 +2,14 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.3.1`, commit `a91bf946f2b605a1aa9bef8e591bfa95e608803f`.
+> **Current baseline:** `v0.3.2`, commit `f9336396f1102002eeb28bc7241c05de268d72aa`.
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 
-This file defines the implementation order from `v0.3.1` to `v1.0.0`. Codex must follow the versions sequentially and must not pull work from a later version into the current one unless this file is deliberately updated first.
+This file defines the implementation order from the `v0.3.2` baseline to
+`v1.0.0`. Codex must follow the versions sequentially and must not pull work
+from a later version into the current one unless this file is deliberately
+updated first.
 
 ## 1. Product target
 
@@ -138,11 +141,12 @@ Compared with `v0.3`, this release added:
 - `verify_amb_model.py` for read-only structural verification;
 - Nodeset injector extensions required by DI/AMB.
 
-The firmware source baseline remains `v0.3.1`; later documentation-only commits on `main` do not change that implementation baseline.
+The historical firmware source baseline for this section remains `v0.3.1`.
 
 ## 5. Current technical constraints
 
-The roadmap below is based on these concrete issues in `v0.3.1`:
+The roadmap below is based on these concrete issues remaining at the `v0.3.2`
+baseline:
 
 1. `opcua_model` builds from one large `opcua_model.c`; identity, channels, security, events, configuration, OTA, PubSub and DI/AMB are tightly coupled.
 2. `CONFIG_SERVICE_MAX_CHANNELS` is `4`, while `CHANNEL_MANAGER_MAX_CHANNELS` is `16`.
@@ -152,12 +156,14 @@ The roadmap below is based on these concrete issues in `v0.3.1`:
 6. `driver_catalog.c` is under `services/` but directly accesses ADC and GPIO hardware.
 7. The generic value enum includes 64-bit integers and strings, while current conversion/polling paths do not fully support them.
 8. Raw channel pointers are returned by registry APIs, so cross-task ownership and synchronization are not explicit.
-9. `DEVICE_PROFILE_FW_REVISION` is still `0.3.0` in the `v0.3.1` source snapshot.
+9. Version metadata now derives from the v0.3.2 CMake source, but release-wide
+   version and artifact consistency remains a required gate.
 10. README still presents the project as an RP2040 firmware skeleton although the reference build is RP2350 + PSRAM.
 11. CI static/security/emulator checks are non-blocking; the Renode job loads an RP2040 platform while the default firmware target is RP2350 and does not assert expected boot behavior.
 12. OTA integrity is CRC-based, not cryptographically signed. The application clears the ready-to-boot state immediately after startup rather than after a health-confirmation window.
 13. The watchdog task kicks independently of subsystem health, so a deadlocked service can coexist with a healthy watchdog task.
-14. AMB maintenance exists structurally but has no service-owned method workflow, persistent journal or Historical Event Access.
+14. AMB maintenance has a volatile service-owned method workflow, but no
+    persistent journal or Historical Event Access.
 
 ### 5.1 Driver and configurator deployment policy
 
@@ -950,14 +956,14 @@ Codex must not implement the following before a roadmap revision assigns an exac
 
 ## 8. Immediate next action
 
-The next implementation target is **`v0.3.2 — Maintenance Workflow Core`**.
+The next implementation target is
+**`v0.3.3 — Maintenance Journal and Condition Semantics`**.
 
 Before coding, Codex must:
 
-1. inspect the current AMB condition construction in `opcua_model/src/opcua_model.c`;
-2. inspect `verify_amb_model.py` and the imported AMB state/transition NodeIds;
-3. design `maintenance_service` with no open62541 types in its public API;
-4. document method signatures and role permissions;
-5. identify every current direct write to maintenance condition fields;
-6. produce a file-level implementation plan limited to `v0.3.2`;
-7. only then start the implementation.
+1. use tag `v0.3.2` as the immutable implementation baseline;
+2. follow the file-level execution plan in `docs/releases/v0.3.3.md`;
+3. preserve the v0.3.2 maintenance workflow and public OPC UA contracts;
+4. define the storage-independent journal format and recovery invariants;
+5. confirm the reserved QSPI Flash region and hardware write boundary;
+6. only then start implementation limited to `v0.3.3`.

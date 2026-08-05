@@ -483,6 +483,18 @@ void config_service_init(const device_profile_config_t *defaults)
                                                &persisted_payload_size) &&
              config_service_decode_persisted(g_persisted_payload,
                                              persisted_payload_size,
+                                             &g_persisted_config) &&
+             config_store_save_payload(g_persisted_payload,
+                                       persisted_payload_size,
+                                       CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                       CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                       NULL) &&
+             config_store_load_active(g_persisted_payload,
+                                      sizeof(g_persisted_payload),
+                                      &persisted_payload_size,
+                                      &persisted_info) &&
+             config_service_decode_persisted(g_persisted_payload,
+                                             persisted_payload_size,
                                              &g_persisted_config))
     {
         g_running_config = g_persisted_config;

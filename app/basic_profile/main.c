@@ -11,6 +11,7 @@
 #include "pico/stdlib.h"
 
 #include "drivers/led_driver.h"
+#include "drivers/flash_operation_coordinator.h"
 #include "drivers/platform_clock.h"
 #include "drivers/watchdog_driver.h"
 #include "opcua_model/opcua_model.h"
@@ -423,6 +424,13 @@ static void app_init_task(void *argument)
     const device_profile_config_t *config = NULL;
     (void)argument;
 
+    if (!flash_operation_coordinator_init())
+    {
+        printf("[APP]\t\tFlash operation coordinator init failed\n");
+        fflush(stdout);
+        app_fault_loop(true, 250u);
+    }
+
     config_service_init(&g_basic_profile);
     config = config_service_get();
 
@@ -605,6 +613,28 @@ void vApplicationMallocFailedHook(void)
     fflush(stdout);
 
     app_fault_loop(true, 250u);
+}
+
+void vApplicationGetIdleTaskMemory(StaticTask_t **task_buffer,
+                                   StackType_t **stack_buffer,
+                                   configSTACK_DEPTH_TYPE *stack_size)
+{
+    static StaticTask_t idle_task;
+    static StackType_t idle_stack[configMINIMAL_STACK_SIZE];
+    *task_buffer = &idle_task;
+    *stack_buffer = idle_stack;
+    *stack_size = configMINIMAL_STACK_SIZE;
+}
+
+void vApplicationGetTimerTaskMemory(StaticTask_t **task_buffer,
+                                    StackType_t **stack_buffer,
+                                    configSTACK_DEPTH_TYPE *stack_size)
+{
+    static StaticTask_t timer_task;
+    static StackType_t timer_stack[configTIMER_TASK_STACK_DEPTH];
+    *task_buffer = &timer_task;
+    *stack_buffer = timer_stack;
+    *stack_size = configTIMER_TASK_STACK_DEPTH;
 }
 
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)

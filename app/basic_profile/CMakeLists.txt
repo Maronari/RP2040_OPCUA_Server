@@ -122,6 +122,7 @@ function(add_device_profile_target target_name use_ota_linker)
 
     target_link_libraries(${target_name} PRIVATE
             OTA_SHARED
+            OTA_FLASH_BACKEND_APPLICATION
             FIRMWARE_DRIVERS
             FIRMWARE_SERVICES
             OPCUA_DEVICE_MODEL

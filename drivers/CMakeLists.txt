@@ -8,6 +8,18 @@ add_library(FIRMWARE_DRIVERS STATIC
         src/watchdog_driver.c
         )
 
+add_library(FLASH_OPERATION_COORDINATOR STATIC
+        src/flash_operation_coordinator.c
+        )
+target_include_directories(FLASH_OPERATION_COORDINATOR PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+target_link_libraries(FLASH_OPERATION_COORDINATOR PUBLIC
+        FREERTOS_FILES
+        pico_flash
+        hardware_flash
+        )
+
 target_include_directories(FIRMWARE_DRIVERS PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${PICO_SDK_PATH}/lib/lwip/src/include
@@ -22,6 +34,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC
+        FLASH_OPERATION_COORDINATOR
         pico_stdlib
         pico_aon_timer
         pico_flash

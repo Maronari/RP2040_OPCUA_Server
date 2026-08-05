@@ -5,10 +5,8 @@
 
 #include <FreeRTOS.h>
 
-#include "hardware/flash.h"
+#include "drivers/flash_operation_coordinator.h"
 #include "ota_layout.h"
-#include "pico/flash.h"
-#include "pico/platform.h"
 #include "services/time_service.h"
 
 #define SECURITY_STATE_SERVICE_STORE_MAGIC 0x53545331u /* "STS1" */
@@ -31,12 +29,6 @@ typedef struct
     uint32_t reserved[4];
     uint32_t crc32;
 } security_state_store_t;
-
-typedef struct
-{
-    const uint8_t *image;
-    size_t image_size;
-} security_state_program_context_t;
 
 static bool g_security_state_ready = false;
 
@@ -136,17 +128,8 @@ static bool security_state_service_store_is_valid(const security_state_store_t *
                                         offsetof(security_state_store_t, crc32)) == store->crc32;
 }
 
-static void __not_in_flash_func(security_state_service_program_region)(void *param)
-{
-    const security_state_program_context_t *context = (const security_state_program_context_t *)param;
-
-    flash_range_erase(OTA_LAYOUT_SECURITY_STATE_OFFSET_BYTES, OTA_LAYOUT_SECURITY_STATE_SIZE_BYTES);
-    flash_range_program(OTA_LAYOUT_SECURITY_STATE_OFFSET_BYTES, context->image, context->image_size);
-}
-
 static bool security_state_service_commit_store(security_state_store_t *store)
 {
-    security_state_program_context_t context;
     uint8_t *program_image = NULL;
     const size_t program_size = security_state_service_get_program_size(sizeof(*store));
     bool committed = false;
@@ -170,12 +153,21 @@ static bool security_state_service_commit_store(security_state_store_t *store)
     memset(program_image, 0xFF, program_size);
     memcpy(program_image, store, sizeof(*store));
 
-    context.image = program_image;
-    context.image_size = program_size;
-
-    if (flash_safe_execute(security_state_service_program_region, &context, 1000u) != PICO_OK)
+    for (uint32_t offset = 0u; offset < OTA_LAYOUT_SECURITY_STATE_SIZE_BYTES;
+         offset += OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES)
     {
-        goto cleanup;
+        if (flash_operation_erase_sector(OTA_LAYOUT_SECURITY_STATE_OFFSET_BYTES + offset) != FLASH_OPERATION_OK)
+        {
+            goto cleanup;
+        }
+    }
+    for (size_t offset = 0u; offset < program_size; offset += OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES)
+    {
+        if (flash_operation_program_page(OTA_LAYOUT_SECURITY_STATE_OFFSET_BYTES + (uint32_t)offset,
+                                         program_image + offset) != FLASH_OPERATION_OK)
+        {
+            goto cleanup;
+        }
     }
 
     g_security_state_ready = true;

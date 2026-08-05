@@ -4,3 +4,5 @@ examples/blink_led/
 static/certs
 open62541_v1.5.3/
 .claude
+__pycache__/
+*.py[cod]

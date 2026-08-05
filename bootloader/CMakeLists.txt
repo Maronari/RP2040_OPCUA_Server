@@ -3,6 +3,9 @@ set(BOOTLOADER_TARGET ota_bootloader)
 add_executable(${BOOTLOADER_TARGET}
         main.c
         )
+target_include_directories(${BOOTLOADER_TARGET} PRIVATE
+        ${CMAKE_SOURCE_DIR}/ota/src
+        )
 
 ota_layout_apply_to_target(${BOOTLOADER_TARGET})
 ota_layout_set_bootloader_linker_script(${BOOTLOADER_TARGET})
@@ -10,7 +13,9 @@ ota_layout_set_bootloader_linker_script(${BOOTLOADER_TARGET})
 target_link_libraries(${BOOTLOADER_TARGET} PRIVATE
         OTA_SHARED
         pico_stdlib
+        pico_flash
         pico_multicore
+        hardware_flash
         hardware_watchdog
         )
 

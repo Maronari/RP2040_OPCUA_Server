@@ -3,7 +3,6 @@
 #include <string.h>
 
 #include "hardware/flash.h"
-#include "pico/flash.h"
 #include "pico/stdlib.h"
 
 #define FLASH_STORAGE_MAGIC       0x43464731u /* "CFG1" */
@@ -18,12 +17,6 @@ typedef struct {
     uint32_t payload_size;
     uint32_t crc32;
 } flash_storage_header_t;
-
-typedef struct {
-    const uint8_t *image;
-} flash_storage_program_context_t;
-
-static uint8_t g_flash_storage_sector_buffer[FLASH_STORAGE_REGION_SIZE];
 
 static size_t flash_storage_payload_capacity(void)
 {
@@ -65,14 +58,6 @@ static bool flash_storage_validate_header(const flash_storage_header_t *header, 
     }
 
     return true;
-}
-
-static void __not_in_flash_func(flash_storage_program_sector)(void *param)
-{
-    const flash_storage_program_context_t *context = (const flash_storage_program_context_t *)param;
-
-    flash_range_erase(FLASH_STORAGE_OFFSET, FLASH_STORAGE_REGION_SIZE);
-    flash_range_program(FLASH_STORAGE_OFFSET, context->image, FLASH_STORAGE_REGION_SIZE);
 }
 
 bool flash_storage_driver_load(void *buffer, size_t size)
@@ -136,27 +121,10 @@ bool flash_storage_driver_load_partial(void *buffer, size_t buffer_size, size_t 
     return true;
 }
 
-bool flash_storage_driver_save(const void *buffer, size_t size)
-{
-    flash_storage_header_t *header = (flash_storage_header_t *)g_flash_storage_sector_buffer;
-    flash_storage_program_context_t context = {
-        .image = g_flash_storage_sector_buffer,
-    };
-
-    if (buffer == NULL || size == 0u || size > flash_storage_payload_capacity())
-    {
-        return false;
-    }
-
-    memset(g_flash_storage_sector_buffer, 0xFF, sizeof(g_flash_storage_sector_buffer));
-
-    header->magic = FLASH_STORAGE_MAGIC;
-    header->version = FLASH_STORAGE_VERSION;
-    header->reserved = 0u;
-    header->payload_size = (uint32_t)size;
-    header->crc32 = flash_storage_crc32((const uint8_t *)buffer, size);
-
-    memcpy(g_flash_storage_sector_buffer + sizeof(flash_storage_header_t), buffer, size);
-
-    return flash_safe_execute(flash_storage_program_sector, &context, 1000u) == PICO_OK;
-}
+/*
+ * Read-only compatibility importer for pre-slot configuration.  The legacy
+ * sector overlaps the authoritative OTA-state allocation, so this driver must
+ * never erase or program it.  Callers additionally decode and validate the
+ * configuration, migrate it to an authoritative slot, and read-verify that
+ * slot before selecting the data.
+ */

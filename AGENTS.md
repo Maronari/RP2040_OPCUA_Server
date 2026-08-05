@@ -13,7 +13,7 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.3.2 - Maintenance Workflow Core**.
+  **v0.3.3 - Maintenance Journal and Condition Semantics**.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -88,25 +88,12 @@ Delegation rules:
 8. Subagent work does not expand authorization or roadmap scope. Preserve
    unrelated user changes shared through the working tree.
 
-For v0.3.2, do not start implementation until all of the following have been
-done:
-
-1. Use `code-mapper` to inspect AMB condition construction in
-   `opcua_model/src/opcua_model.c`, `static/tools/verify_amb_model.py`, imported
-   AMB state/transition NodeIds, and every direct maintenance-field write.
-2. Use the mapping to produce a file-level implementation plan.
-3. Have `embedded-systems` define the bounded native state, synchronization,
-   atomic transaction, and open62541-free `maintenance_service` API.
-4. Have `iot-engineer` define OPC UA method signatures, the
-   viewer/operator/service/admin permission matrix, status mapping, model
-   synchronization, and event rules.
-5. Reconcile both designs in the primary agent before any code is changed.
-
-For v0.3.2 implementation, keep assignments aligned with
-`docs/releases/v0.3.2.md`: `embedded-systems` owns the maintenance service,
-`iot-engineer` owns OPC UA/model and automated client verification,
-`build-engineer` owns version/build/artifact checks, and `code-reviewer`
-performs the final independent review.
+For v0.3.3 implementation, keep assignments aligned with
+`docs/releases/v0.3.3.md`: `embedded-systems` owns the journal codec, Flash
+backend, recovery, and maintenance-service integration; `iot-engineer` owns
+OPC UA export/reset, condition and audit semantics, and automated client
+verification; `build-engineer` owns build/artifact and Flash-layout checks; and
+`code-reviewer` performs the final independent review.
 
 ## Architecture boundaries
 
@@ -141,24 +128,38 @@ performs the final independent review.
 - Use a single version source for runtime firmware revision, OTA metadata,
   configuration export, artifacts, tags, and documentation.
 
-## v0.3.2 constraints
+## v0.3.3 constraints
 
-- Add `maintenance_service.[ch]` as the sole owner of volatile maintenance
-  runtime state.
-- Implement only `PlanMaintenance`, `RescheduleMaintenance`,
-  `StartMaintenance`, and `FinishMaintenance`.
-- Permit only `Planned -> Executing`, `Executing -> Finished`, and
-  `Finished -> Planned`. Rescheduling updates a planned activity without a
-  transition.
-- Do not invent `Cancelled`, `Failed`, or `Aborted` AMB states.
-- Emit exactly one live OPC UA event after each successful transition and none
-  after a rejected call.
-- Include the roadmap-required bounded activity fields and deterministic
-  validation/authorization/transition errors.
-- Maintenance persistence, Flash journal, Historical Event Access, and general
-  event history are out of scope until their scheduled releases.
-- Set the release version to `0.3.2` through one source of truth; do not patch
-  independent version strings.
+- Treat tag `v0.3.2` and commit
+  `f9336396f1102002eeb28bc7241c05de268d72aa` as the immutable implementation
+  and compatibility baseline.
+- Add only the bounded maintenance journal scheduled by the roadmap. Historical
+  Event Access, arbitrary event history, and new AMB states remain out of scope.
+- Keep the record codec storage-independent and host-testable. Define byte
+  order, schema version, lengths, CRC coverage, erased/commit values, sequence
+  ordering, and compatibility rules explicitly; never persist native structs.
+- Put QSPI erase/program/XIP behavior behind a driver/backend boundary.
+  Reserve a non-overlapping, sector-aligned region in the authoritative Flash
+  layout and use RAM-resident, multicore-safe Flash operations.
+- A record becomes visible only after payload validation and an atomic commit
+  marker. Torn, corrupt, unknown-version, and incomplete records are ignored
+  deterministically without accepting partially written state.
+- Recovery scans bounded storage, handles sequence wrap-around, restores the
+  latest valid committed snapshot before OPC UA exposure, and reports
+  corruption or degraded recovery without silently resetting history.
+- Journal append and `maintenance_service` commit form one documented
+  transaction boundary. A successful method must not expose state that cannot
+  be recovered according to the declared power-loss guarantee.
+- Export is paged and bounded, uses stable logical records rather than raw
+  Flash bytes, and has explicit continuation/capacity behavior. Reset is
+  admin-only, power-loss safe, and emits an audit event only on success.
+- Preserve all v0.3.2 NodeIds, BrowseNames, method signatures, role permissions,
+  status mappings, transitions, and live transition-event cardinality.
+- Define `ActiveState`, `Retain`, `Severity`, `Message`, and
+  `ConfigurationChanged` semantics from recovered service state. Emit bounded
+  audit events for method calls, state changes, and successful reset.
+- Track bounded utilization, erase count, corrupt-record count, and recovery
+  status. Document wear assumptions and deterministic full/wrap behavior.
 
 ## Build and verification
 
@@ -177,9 +178,10 @@ For every feature:
 
 - Add positive, negative, authorization, illegal-state, and resource-limit tests.
   Add reboot/power-loss tests when persistence is involved.
-- For v0.3.2, extend `static/tools/verify_amb_model.py` or add
-  `static/tools/verify_maintenance_workflow.py`; cover all allowed and forbidden
-  transitions, every role, and two simultaneous subscribers.
+- For v0.3.3, add storage-independent codec/recovery tests and extend
+  `static/tools/verify_maintenance_workflow.py` for bounded export/reset,
+  recovered condition state, audit events, every role, and two simultaneous
+  subscribers.
 - Verification scripts must exit nonzero on failure. CI release gates must
   actually fail; do not use `continue-on-error`, unconditional `|| true`, or
   smoke tests that assert no behavior.

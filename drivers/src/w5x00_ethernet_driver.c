@@ -15,6 +15,10 @@
 
 #define W5X00_MACRAW_SOCKET 0
 
+#if configSUPPORT_STATIC_ALLOCATION
+static StackType_t g_w5x00_async_context_stack[ASYNC_CONTEXT_DEFAULT_FREERTOS_TASK_STACK_SIZE];
+#endif
+
 static bool configure_netif(w5x00_ethernet_driver_t *driver)
 {
     if (netif_add(&driver->netif, IP_ADDR_ANY, IP_ADDR_ANY, IP_ADDR_ANY, NULL, netif_initialize, tcpip_input) == NULL)
@@ -43,6 +47,8 @@ static bool configure_netif(w5x00_ethernet_driver_t *driver)
 
 bool w5x00_ethernet_driver_init(w5x00_ethernet_driver_t *driver, const uint8_t mac[6])
 {
+    async_context_freertos_config_t async_config = async_context_freertos_default_config();
+
     if (driver == NULL)
     {
         return false;
@@ -66,7 +72,20 @@ bool w5x00_ethernet_driver_init(w5x00_ethernet_driver_t *driver, const uint8_t m
     setSHAR(driver->mac);
     ctlwizchip(CW_RESET_PHY, NULL);
 
-    async_context_freertos_init_with_defaults(&driver->async_context_freertos);
+/*
+ * Pico SDK switches all async-context objects to static allocation when
+ * configSUPPORT_STATIC_ALLOCATION is enabled.  The default helper leaves the
+ * required stack pointer unset, so provide the driver's bounded permanent
+ * stack explicitly.
+ */
+#if configSUPPORT_STATIC_ALLOCATION
+    async_config.task_stack = g_w5x00_async_context_stack;
+#endif
+    if (!async_context_freertos_init(&driver->async_context_freertos, &async_config))
+    {
+        printf("[NET]\t\tFailed to initialize FreeRTOS async context\n");
+        return false;
+    }
     lwip_freertos_init(&driver->async_context_freertos.core);
 
     if (!configure_netif(driver))

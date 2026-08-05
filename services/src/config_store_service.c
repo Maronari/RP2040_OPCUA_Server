@@ -3,23 +3,8 @@
 #include <string.h>
 
 #include <config_store_limits.h>
-#include "hardware/flash.h"
+#include "drivers/flash_operation_coordinator.h"
 #include "ota/ota_state.h"
-#include "pico/flash.h"
-#include "pico/platform.h"
-
-typedef struct
-{
-    uint32_t flash_offset;
-    size_t byte_count;
-} config_store_erase_context_t;
-
-typedef struct
-{
-    uint32_t flash_offset;
-    const uint8_t *data;
-    size_t byte_count;
-} config_store_program_context_t;
 
 static uint8_t g_config_store_page[OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES];
 
@@ -61,49 +46,34 @@ static const uint8_t *config_store_slot_payload(size_t slot_index)
     return (const uint8_t *)(config_store_slot_origin(slot_index) + sizeof(config_store_slot_header_t));
 }
 
-static void __not_in_flash_func(config_store_flash_erase_range)(void *param)
-{
-    const config_store_erase_context_t *context = (const config_store_erase_context_t *)param;
-
-    flash_range_erase(context->flash_offset, context->byte_count);
-}
-
-static void __not_in_flash_func(config_store_flash_program_range)(void *param)
-{
-    const config_store_program_context_t *context = (const config_store_program_context_t *)param;
-
-    flash_range_program(context->flash_offset, context->data, context->byte_count);
-}
-
 static bool config_store_execute_erase(uint32_t flash_offset, size_t byte_count)
 {
-    config_store_erase_context_t context = {
-        .flash_offset = flash_offset,
-        .byte_count = byte_count,
-    };
-
-    if (byte_count == 0u || (byte_count % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES) != 0u)
+    if (byte_count == 0u ||
+        (flash_offset % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES) != 0u ||
+        (byte_count % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES) != 0u)
     {
         return false;
     }
 
-    return flash_safe_execute(config_store_flash_erase_range, &context, 1000u) == PICO_OK;
+    for (size_t offset = 0u; offset < byte_count; offset += OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES)
+    {
+        if (flash_operation_erase_sector(flash_offset + (uint32_t)offset) != FLASH_OPERATION_OK)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool config_store_execute_program(uint32_t flash_offset, const uint8_t *data, size_t byte_count)
 {
-    config_store_program_context_t context = {
-        .flash_offset = flash_offset,
-        .data = data,
-        .byte_count = byte_count,
-    };
-
-    if (data == NULL || byte_count == 0u || (byte_count % OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES) != 0u)
+    if (data == NULL || byte_count != OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES ||
+        (flash_offset % OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES) != 0u)
     {
         return false;
     }
 
-    return flash_safe_execute(config_store_flash_program_range, &context, 1000u) == PICO_OK;
+    return flash_operation_program_page(flash_offset, data) == FLASH_OPERATION_OK;
 }
 
 static bool config_store_read_slot_info(size_t slot_index, config_store_record_info_t *out_info)

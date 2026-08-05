@@ -64,9 +64,12 @@ def node_id(name):
 
 async def client_for(args, username, password):
     client = opcua_common.Client(url=args.server_url, timeout=args.timeout)
-    await opcua_common.configure_client_security(client, args)
+    # The shared security helper keys certificate setup from ``args.username``.
+    # Keep role credentials isolated instead of mutating the common Namespace.
+    role_args = argparse.Namespace(**vars(args), username=username)
+    await opcua_common.configure_client_security(client, role_args)
     client.set_user(username)
-    client.set_password(password)
+    client.set_password(password or "")
     await client.connect()
     return client
 
