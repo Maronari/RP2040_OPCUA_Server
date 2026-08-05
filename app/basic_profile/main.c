@@ -14,7 +14,9 @@
 #include "drivers/flash_operation_coordinator.h"
 #include "drivers/platform_clock.h"
 #include "drivers/watchdog_driver.h"
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #include "opcua_model/opcua_model.h"
+#endif
 #include "ota/ota_flash.h"
 #include "psram_allocator.h"
 #include "services/alarm_service.h"
@@ -26,12 +28,16 @@
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
 #include "services/network_manager.h"
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #include "services/security_identity_import_service.h"
 #include "services/security_service.h"
 #include "services/security_trust_import_service.h"
+#endif
 #include "services/sensor_manager.h"
 #include "services/time_service.h"
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #include "device_identity_provisioning.h"
+#endif
 
 #define STACK_DEPTH_BYTES(byte_count) ((configSTACK_DEPTH_TYPE)(((byte_count) + sizeof(StackType_t) - 1u) / sizeof(StackType_t)))
 
@@ -41,7 +47,9 @@
 #define ALARM_TASK_STACK_SIZE STACK_DEPTH_BYTES(2u * 1024u)
 #define WATCHDOG_TASK_STACK_SIZE STACK_DEPTH_BYTES(1u * 1024u)
 #define INIT_TASK_STACK_SIZE STACK_DEPTH_BYTES(6u * 1024u)
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #define OPCUA_TASK_STACK_SIZE STACK_DEPTH_BYTES(64u * 1024u)
+#endif
 #define APP_DEFAULT_WATCHDOG_TIMEOUT_MS 80000u
 
 #define fflush(_stream) stdio_flush()
@@ -52,7 +60,9 @@
 #define TIME_TASK_PRIORITY 3
 #define ALARM_TASK_PRIORITY 3
 #define WATCHDOG_TASK_PRIORITY 3
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #define OPCUA_TASK_PRIORITY 1
+#endif
 
 #ifndef DEVICE_PROFILE_FW_REVISION
 #define DEVICE_PROFILE_FW_REVISION "dev"
@@ -325,6 +335,7 @@ static void app_stop_watchdog_kicks(const char *reason)
     }
 }
 
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 static bool provision_device_identity_if_configured(void)
 {
 #if DEVICE_IDENTITY_PROVISIONING_ENABLED
@@ -399,6 +410,7 @@ static bool provision_trust_list_if_configured(void)
 
     return true;
 }
+#endif
 
 static void watchdog_task(void *argument)
 {
@@ -420,7 +432,9 @@ static void app_init_task(void *argument)
 {
     TaskHandle_t task_handle = NULL;
     TaskHandle_t watchdog_handle = NULL;
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
     opcua_model_config_t model_config;
+#endif
     const device_profile_config_t *config = NULL;
     (void)argument;
 
@@ -437,8 +451,10 @@ static void app_init_task(void *argument)
     diag_service_init();
     config_import_service_init();
     firmware_update_service_init();
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
     security_identity_import_service_init();
     security_trust_import_service_init();
+#endif
     channel_manager_init();
     diag_service_register_task("InitTask", xTaskGetCurrentTaskHandle());
     print_heap_usage("After services init");
@@ -458,6 +474,7 @@ static void app_init_task(void *argument)
         printf("[APP]\t\tHistory service init failed\n");
     }
 
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
     if (!security_service_init())
     {
         printf("[APP]\t\tSecurity service init failed\n");
@@ -470,6 +487,7 @@ static void app_init_task(void *argument)
     {
         printf("[APP]\t\tProvisioned trust list could not be stored\n");
     }
+#endif
 
     if (!time_service_init())
     {
@@ -494,6 +512,7 @@ static void app_init_task(void *argument)
            (config != NULL && config->watchdog_timeout_ms == 0u) ? " (fallback default)" : "");
     fflush(stdout);
 
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
     model_config.application_name = config->device_name;
     model_config.hostname = config->opcua_hostname;
     model_config.port = config->opcua_port;
@@ -509,6 +528,7 @@ static void app_init_task(void *argument)
         printf("[APP]\t\tOPC UA model init failed\n");
         fflush(stdout);
     }
+#endif
 
     create_task(network_manager_task, "NetworkTask", NETWORK_TASK_STACK_SIZE, NETWORK_TASK_PRIORITY, &task_handle);
 
@@ -519,7 +539,9 @@ static void app_init_task(void *argument)
 
     create_task(time_service_task, "TimeTask", TIME_TASK_STACK_SIZE, TIME_TASK_PRIORITY, &task_handle);
     create_task(alarm_service_task, "AlarmTask", ALARM_TASK_STACK_SIZE, ALARM_TASK_PRIORITY, &task_handle);
+#ifndef W5X00_DIAGNOSTIC_NO_OPCUA
     create_task(opcua_model_task, "OpcUaTask", OPCUA_TASK_STACK_SIZE, OPCUA_TASK_PRIORITY, &task_handle);
+#endif
 
     if (watchdog_driver_is_enabled())
     {
@@ -561,6 +583,9 @@ int main(void)
            DEVICE_PROFILE_HW_REVISION,
            DEVICE_PROFILE_BUILD_TIME,
            DEVICE_PROFILE_GIT_HASH);
+#ifdef W5X00_DIAGNOSTIC_NO_OPCUA
+    printf("[APP] Network diagnostic build: OPC UA disabled\n");
+#endif
     fflush(stdout);
     app_log_ota_state();
 

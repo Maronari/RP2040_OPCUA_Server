@@ -78,8 +78,7 @@ extern void set_system_time(uint32_t sec);
 #define MEMP_NUM_SYS_TIMEOUT        (LWIP_NUM_SYS_TIMEOUT_INTERNAL + 2)
 #define LWIP_ARP                    2
 
-//#define ALL_DEBUG 
-#ifdef ALL_DEBUG
+#ifdef W5X00_LWIP_ALL_DEBUG
 #define LWIP_DEBUG                  1
 #define NETIF_DEBUG                 LWIP_DBG_ON
 #define TCP_DEBUG                   LWIP_DBG_ON
@@ -91,6 +90,7 @@ extern void set_system_time(uint32_t sec);
 #define UDP_DEBUG                   LWIP_DBG_ON
 #define SNTP_DEBUG                  LWIP_DBG_ON
 #endif
+/* Keep upstream lwIP debug disabled: it consumes permanent internal SRAM. */
 
 #define LWIP_COMPAT_SOCKETS         0
 #define SO_REUSE                    1
@@ -101,11 +101,7 @@ extern void set_system_time(uint32_t sec);
 #define TCPIP_MBOX_SIZE             16
 #define TCPIP_THREAD_NAME           "TCPIP_Task"
 #define TCPIP_THREAD_PRIO           2
-#ifdef ALL_DEBUG
-#define TCPIP_THREAD_STACKSIZE      4000
-#else
 #define TCPIP_THREAD_STACKSIZE      5*1024
-#endif
 
 #define DEFAULT_RAW_RECVMBOX_SIZE   8
 #define MEMP_NUM_NETCONN            10

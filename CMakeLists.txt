@@ -41,6 +41,13 @@ endif()
 
 option(BUILD_LEGACY_EXAMPLES "Build legacy example targets" OFF)
 option(OTA_BUILD_BOOTLOADER "Build the OTA bootloader target" OFF)
+option(W5X00_DIAGNOSTIC_NO_OPCUA "Build network diagnostics firmware without open62541/opcua model" OFF)
+
+if(W5X00_DIAGNOSTIC_NO_OPCUA AND OTA_BUILD_BOOTLOADER)
+    message(FATAL_ERROR
+            "W5X00_DIAGNOSTIC_NO_OPCUA cannot be combined with OTA_BUILD_BOOTLOADER; "
+            "the network-only diagnostic image is not a release/factory artifact")
+endif()
 
 include(${CMAKE_SOURCE_DIR}/patches/apply_submodule_patches.cmake)
 rp2_apply_submodule_patch(
@@ -124,7 +131,9 @@ add_subdirectory(${PORT_DIR})
 add_subdirectory(drivers)
 add_subdirectory(ota)
 add_subdirectory(services)
-add_subdirectory(opcua_model)
+if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
+    add_subdirectory(opcua_model)
+endif()
 add_subdirectory(app)
 
 if(OTA_BUILD_BOOTLOADER AND EXISTS ${CMAKE_SOURCE_DIR}/bootloader/CMakeLists.txt)

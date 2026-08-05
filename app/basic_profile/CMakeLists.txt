@@ -1,4 +1,5 @@
 set(TARGET_NAME device_profile_basic)
+set(TARGET_NAME_DIAGNOSTIC device_profile_basic_w5x00_diag)
 set(DEVICE_PROFILE_FW_REVISION ${RP2_FIRMWARE_VERSION})
 string(TIMESTAMP DEVICE_PROFILE_BUILD_TIME "%Y-%m-%dT%H:%M:%SZ" UTC)
 set(DEVICE_PROFILE_FW_VERSION_NUMBER ${RP2_FIRMWARE_VERSION_NUMBER})
@@ -17,7 +18,13 @@ endif()
 set(DEVICE_PROFILE_CONFIG_EXPORT_PATH "${CMAKE_BINARY_DIR}/config_export.json")
 set(DEVICE_PROFILE_CONFIG_EXPORT_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/generate_config_export.cmake")
 
-add_custom_target(${TARGET_NAME}_config_export
+if(W5X00_DIAGNOSTIC_NO_OPCUA)
+    set(DEVICE_PROFILE_TARGET_NAME ${TARGET_NAME_DIAGNOSTIC})
+else()
+    set(DEVICE_PROFILE_TARGET_NAME ${TARGET_NAME})
+endif()
+
+add_custom_target(${DEVICE_PROFILE_TARGET_NAME}_config_export
         COMMAND ${CMAKE_COMMAND}
         -DOUTPUT_PATH=${DEVICE_PROFILE_CONFIG_EXPORT_PATH}
         -DFW_REVISION=${DEVICE_PROFILE_FW_REVISION}
@@ -125,11 +132,16 @@ function(add_device_profile_target target_name use_ota_linker)
             OTA_FLASH_BACKEND_APPLICATION
             FIRMWARE_DRIVERS
             FIRMWARE_SERVICES
-            OPCUA_DEVICE_MODEL
             PSRAM_ALLOCATOR
             )
 
-    add_dependencies(${target_name} ${TARGET_NAME}_config_export)
+    if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
+        target_link_libraries(${target_name} PRIVATE
+                OPCUA_DEVICE_MODEL
+                )
+    endif()
+
+    add_dependencies(${target_name} ${DEVICE_PROFILE_TARGET_NAME}_config_export)
 
     pico_enable_stdio_usb(${target_name} 1)
     pico_enable_stdio_uart(${target_name} 0)
@@ -149,10 +161,15 @@ function(add_device_profile_target target_name use_ota_linker)
             DEVICE_PROFILE_BUILD_TIME=\"${DEVICE_PROFILE_BUILD_TIME}\"
             DEVICE_PROFILE_GIT_HASH=\"${DEVICE_PROFILE_GIT_HASH}\"
             )
+
+    target_compile_definitions(${target_name} PRIVATE
+            $<$<BOOL:${W5X00_DIAGNOSTIC_NO_OPCUA}>:W5X00_DIAGNOSTIC_NO_OPCUA>
+            $<$<BOOL:${W5X00_DIAGNOSTIC_NO_OPCUA}>:W5X00_LWIP_ALL_DEBUG>
+            )
 endfunction()
 
-add_device_profile_target(${TARGET_NAME} FALSE)
+add_device_profile_target(${DEVICE_PROFILE_TARGET_NAME} FALSE)
 
 if(OTA_BUILD_BOOTLOADER)
-    add_device_profile_target(${TARGET_NAME}_bank_a TRUE)
+    add_device_profile_target(${DEVICE_PROFILE_TARGET_NAME}_bank_a TRUE)
 endif()

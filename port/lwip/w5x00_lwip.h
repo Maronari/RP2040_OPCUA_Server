@@ -13,6 +13,7 @@
  * ----------------------------------------------------------------------------------------------------
  */
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "lwip/netif.h"
 
@@ -22,7 +23,12 @@
  * ----------------------------------------------------------------------------------------------------
  */
 /* LWIP */
-#define ETHERNET_MTU 1500
+#define ETHERNET_MTU 1500u
+/* W5500 MACRAW exposes the Ethernet header but not the FCS. */
+#define W5X00_LWIP_MAX_FRAME_LEN (ETHERNET_MTU + 14u)
+#define W5X00_LWIP_SEND_BUFFER (-1)
+#define W5X00_LWIP_SEND_FAILURE (-2)
+#define W5X00_LWIP_SEND_INTERFACE (-3)
 
 /**
  * ----------------------------------------------------------------------------------------------------
@@ -45,7 +51,12 @@
  *  \param len the length of data in packet
  *  \return he sent data size
  */
-int32_t send_lwip(uint8_t sn, uint8_t *buf, uint16_t len);
+/*
+ * The netif state is a driver-owned w5x00_ethernet_driver_t.  The functions
+ * below deliberately keep that type opaque to the lwIP port: the driver owns
+ * the socket-0 mutex, buffers and counters.
+ */
+int32_t send_lwip(struct netif *netif, const uint8_t *buf, uint16_t len);
 
 /*! \brief read an ethernet packet
  *  \ingroup w5x00_lwip
@@ -57,7 +68,15 @@ int32_t send_lwip(uint8_t sn, uint8_t *buf, uint16_t len);
  *  \param len the length of the data in the packet
  *  \return the real received data size
  */
-int32_t recv_lwip(uint8_t sn, uint8_t *buf, uint16_t len);
+int32_t recv_lwip(struct netif *netif, uint8_t *buf, uint16_t capacity);
+
+/*
+ * A TX transaction includes pbuf-chain copying and the W5500 SEND command so
+ * two lwIP producers cannot overwrite the driver-owned frame buffer.  No
+ * lwIP callback may run between begin and end.
+ */
+err_t w5x00_lwip_tx_begin(struct netif *netif, uint8_t **frame, uint16_t *capacity);
+void w5x00_lwip_tx_end(struct netif *netif, bool success);
 
 /*! \brief callback function
  *  \ingroup w5x00_lwip
@@ -106,16 +125,5 @@ err_t netif_initialize(struct netif *netif);
  *  \param mac_addr a pointer to a 6-byte MAC address
  */
 void w5x00_lwip_set_mac_address(const uint8_t mac_addr[6]);
-
-/*! \brief ethernet frame cyclic redundancy check
- *  \ingroup w5x00_lwip
- *
- *  Perform cyclic redundancy check on ethernet frame
- *
- *  \param data a pointer to the ethernet frame
- *  \param length the total length of ethernet frame
- *  \return an ethernet frame cyclic redundancy check result value
- */
-static uint32_t ethernet_frame_crc(const uint8_t *data, int length);
 
 #endif /* _W5x00_LWIP_H_ */

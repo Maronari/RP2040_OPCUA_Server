@@ -80,6 +80,8 @@ static void network_manager_update_status(void)
     network_manager_status_t status = {0};
     struct netif *netif = &g_driver.netif;
     const struct dhcp *dhcp = netif_dhcp_data(netif);
+    bool dhcp_state_changed;
+    bool dhcp_ipv4_assigned;
 
     status.initialized = g_initialized;
     status.dhcp_enabled = config->network_mode == NETWORK_MODE_DHCP;
@@ -148,9 +150,29 @@ static void network_manager_update_status(void)
         status.quality = SERVICE_QUALITY_BAD;
     }
 
+    /* g_status is the single previous network observation; no extra history is kept. */
+    dhcp_state_changed = status.dhcp_enabled &&
+                         (!g_status.dhcp_enabled ||
+                          strcmp(status.dhcp_state, g_status.dhcp_state) != 0);
+    dhcp_ipv4_assigned = status.dhcp_enabled && status.has_ipv4 &&
+                         (!g_status.has_ipv4 ||
+                          strcmp(status.ipv4_address, g_status.ipv4_address) != 0);
+
     taskENTER_CRITICAL();
     g_status = status;
     taskEXIT_CRITICAL();
+
+    if (dhcp_state_changed)
+    {
+        printf("[NET]\t\tDHCP state: %s\n", status.dhcp_state);
+    }
+    if (dhcp_ipv4_assigned)
+    {
+        printf("[NET]\t\tDHCP IPv4 assigned: %s netmask=%s gateway=%s\n",
+               status.ipv4_address,
+               status.netmask,
+               status.gateway);
+    }
 }
 
 bool network_manager_init(void)
