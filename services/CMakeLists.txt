@@ -12,6 +12,7 @@ add_library(FIRMWARE_SERVICES STATIC
         src/device_health_service.c
         src/firmware_update_service.c
         src/history_service.c
+        src/maintenance_journal_codec.c
         src/maintenance_service.c
         src/network_manager.c
         src/security_identity_import_service.c
