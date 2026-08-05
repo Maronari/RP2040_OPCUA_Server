@@ -193,6 +193,11 @@ constraints use `BadInvalidArgument` (or a per-argument result when the stack
 reports one). A no-input Method may omit `InputArguments` or expose an empty
 `Argument[]`.
 
+For v0.3.2 compatibility, Viewer and Operator sessions observe
+`UserExecutable=false` on maintenance workflow Methods. Calls from those roles
+therefore return `BadNotExecutable`; Service and Admin authorization remains
+enforced by the adapter and access-control configuration.
+
 ## Power-loss assumptions
 
 `v0.3.3` does not assume page-program atomicity. Its guarantee is narrower and

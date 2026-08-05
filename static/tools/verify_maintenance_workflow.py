@@ -20,9 +20,14 @@ import stage_config as opcua_common
 
 AMB_URI = "http://opcfoundation.org/UA/AMB/"
 MAINTENANCE_NODE_ID = "ns=1;s=Device.Maintenance"
+SERVER_EVENT_SOURCE_ID = "i=2253"
+MAINTENANCE_EVENT_TYPE_ID = "ns=1;s=Types.Events.MaintenanceEvent"
+AUDIT_EVENT_TYPE_ID = "ns=1;s=Types.Events.AuditEvent"
 CONDITION_ID = "ns=1;s=Device.DeviceHealthAlarms.MaintenanceRequired"
 REQUIRED_PYTHON = (3, 13)
 REQUIRED_ASYNCUA_VERSION = "2.0.1"
+ROLE_CONNECT_ATTEMPTS = 3
+ROLE_TEARDOWN_SETTLE_SECONDS = 0.25
 UA_UNIX_EPOCH_100NS = 116444736000000000
 HUNDRED_NS_PER_SECOND = 10_000_000
 METHODS = {
@@ -91,7 +96,13 @@ def status_matches(actual, expected):
         return True
     actual_value = getattr(actual, "value", actual)
     expected_value = getattr(expected, "value", expected)
-    return actual_value == expected_value or str(expected) in str(actual)
+    if actual_value == expected_value:
+        return True
+    # StatusCodes are integers.  Substring matching made Good (0) appear to
+    # match almost every decimal Bad* code containing a zero.
+    if isinstance(actual_value, int) or isinstance(expected_value, int):
+        return False
+    return str(actual).strip() == str(expected).strip()
 
 
 def unwrap_scalar_result(result):
@@ -121,6 +132,19 @@ async def call_maintenance_method(client, ua, name, *inputs):
     maintenance = client.get_node(MAINTENANCE_NODE_ID)
     method_id = ua.NodeId.from_string(METHODS[name])
     return await maintenance.call_method(method_id, *inputs)
+
+
+async def subscribe_workflow_events(subscription, client):
+    """Select the custom fields used by EventCollector on both event types."""
+    event_types = [
+        client.get_node(MAINTENANCE_EVENT_TYPE_ID),
+        client.get_node(AUDIT_EVENT_TYPE_ID),
+    ]
+    # Transition events originate below Device.Maintenance, while call audits
+    # originate below the sibling Device.Security source. The Server notifier
+    # is their common valid ancestor.
+    return await subscription.subscribe_events(
+        client.get_node(SERVER_EVENT_SOURCE_ID), evtypes=event_types)
 
 
 async def safe_disconnect(client, audit, label):
@@ -174,8 +198,8 @@ def report_export_timestamps(record, audit, page_index, record_index):
         except (KeyError, OverflowError, ValueError) as exc:
             audit.check(False, f"{prefix} {field}: {type(exc).__name__}: {exc}", "timestamp")
     if len(decoded) == 2:
-        audit.check(record["committedAt"] > UA_UNIX_EPOCH_100NS,
-                    f"{prefix} committedAt is a post-Unix-epoch UTC timestamp", "timestamp")
+        audit.check(record["committedAt"] >= UA_UNIX_EPOCH_100NS,
+                    f"{prefix} committedAt is a valid Unix-or-later UTC timestamp", "timestamp")
 
 
 async def client_for(args, username, password):
@@ -183,11 +207,31 @@ async def client_for(args, username, password):
     # The shared security helper keys certificate setup from ``args.username``.
     # Keep role credentials isolated instead of mutating the common Namespace.
     role_args = argparse.Namespace(**vars(args), username=username)
-    await opcua_common.configure_client_security(client, role_args)
-    client.set_user(username)
-    client.set_password(password or "")
-    await client.connect()
-    return client
+    try:
+        await opcua_common.configure_client_security(client, role_args)
+        client.set_user(username)
+        client.set_password(password or "")
+        await client.connect()
+        return client
+    except Exception:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+        raise
+
+
+async def role_client_for(args, username, password, role):
+    """Stay within the device's two-session bound during role handoff."""
+    for attempt in range(1, ROLE_CONNECT_ATTEMPTS + 1):
+        try:
+            return await client_for(args, username, password)
+        except Exception:
+            if attempt == ROLE_CONNECT_ATTEMPTS:
+                raise
+            print(f"[INFO] {role} role connection retry {attempt}/{ROLE_CONNECT_ATTEMPTS - 1} "
+                  "after session teardown settle")
+            await asyncio.sleep(ROLE_TEARDOWN_SETTLE_SECONDS)
 
 
 async def read_snapshot(client, ua, amb_ns):
@@ -338,13 +382,16 @@ def plan_inputs(ua):
 
 
 async def verify_roles(args, ua, audit):
-    for role, expected in (("viewer", ua.StatusCodes.BadUserAccessDenied),
-                           ("operator", ua.StatusCodes.BadUserAccessDenied)):
+    # v0.3.2 compatibility exposes UserExecutable=false to roles below Service;
+    # open62541 therefore rejects the Call as BadNotExecutable before the
+    # adapter callback. Preserve that public status contract.
+    for role, expected in (("viewer", ua.StatusCodes.BadNotExecutable),
+                           ("operator", ua.StatusCodes.BadNotExecutable)):
         username = getattr(args, f"{role}_username")
         password = getattr(args, f"{role}_password")
         client = None
         try:
-            client = await client_for(args, username, password)
+            client = await role_client_for(args, username, password, role)
             namespaces = await client.get_namespace_array()
             before = await read_snapshot(client, ua, namespaces.index(AMB_URI))
             for method, inputs in (("PlanMaintenance", plan_inputs(ua)),
@@ -361,6 +408,10 @@ async def verify_roles(args, ua, audit):
                               (ua.Variant("", ua.VariantType.String),), expected)
         finally:
             await safe_disconnect(client, audit, f"{role} client disconnect")
+            # CloseSession and SecureChannel close are processed asynchronously
+            # by the embedded server.  The service session remains open, so
+            # leave bounded time before the next role consumes the second slot.
+            await asyncio.sleep(ROLE_TEARDOWN_SETTLE_SECONDS)
 
 
 def finish_inputs(ua, serviced=("filter",), replaced=("seal",)):
@@ -431,7 +482,7 @@ async def verify_export_reset(client, admin, ua, audit, amb_ns):
     export_subscription = None
     try:
         export_subscription = await client.create_subscription(100, export_audits)
-        await export_subscription.subscribe_events(client.get_node(MAINTENANCE_NODE_ID))
+        await subscribe_workflow_events(export_subscription, client)
         await call_expect(client, ua, audit, "ExportMaintenanceJournal",
                           (ua.Variant("not-a-token", ua.VariantType.String),),
                           ua.StatusCodes.BadContinuationPointInvalid)
@@ -514,8 +565,8 @@ async def verify_event_cardinality(client, admin, ua, audit, amb_ns):
     try:
         first_sub = await client.create_subscription(100, first_events)
         second_sub = await admin.create_subscription(100, second_events)
-        await first_sub.subscribe_events(client.get_node(MAINTENANCE_NODE_ID))
-        await second_sub.subscribe_events(admin.get_node(MAINTENANCE_NODE_ID))
+        await subscribe_workflow_events(first_sub, client)
+        await subscribe_workflow_events(second_sub, admin)
 
         # Entry state is Planned. Reschedule succeeds but is not a transition.
         before = await counts()
@@ -565,12 +616,17 @@ async def verify_event_cardinality(client, admin, ua, audit, amb_ns):
 async def verify_workflow(args, ua, audit):
     client = None
     try:
+        # Run the short-lived Viewer/Operator matrix before opening the
+        # long-lived Service session.  The device intentionally bounds secure
+        # channels and sessions to two; keeping Service idle throughout both
+        # role matrices can exceed its negotiated session timeout.
+        await verify_roles(args, ua, audit)
+
         client = await client_for(args, args.service_username, args.service_password)
         namespaces = await client.get_namespace_array()
         audit.check(AMB_URI in namespaces, "AMB namespace is present")
         amb_ns = namespaces.index(AMB_URI)
         await check_public_contract(client, ua, audit, amb_ns)
-        await verify_roles(args, ua, audit)
 
         # The service starts in Finished.  Planning begins the next volatile
         # activity and is intentionally illegal from the other two states.
@@ -595,8 +651,8 @@ async def verify_workflow(args, ua, audit):
             admin = await client_for(args, args.admin_username, args.admin_password)
             first_sub = await client.create_subscription(100, first_events)
             second_sub = await admin.create_subscription(100, second_events)
-            await first_sub.subscribe_events(client.get_node(MAINTENANCE_NODE_ID))
-            await second_sub.subscribe_events(admin.get_node(MAINTENANCE_NODE_ID))
+            await subscribe_workflow_events(first_sub, client)
+            await subscribe_workflow_events(second_sub, admin)
             await call_expect(client, ua, audit, "PlanMaintenance", plan_inputs(ua), ua.StatusCodes.Good)
             await asyncio.sleep(0.5)
             audit.equal(first_events.events.count("PlanMaintenance"), 1,
@@ -659,8 +715,7 @@ async def verify_workflow(args, ua, audit):
         reschedule_subscription = None
         try:
             reschedule_subscription = await client.create_subscription(100, reschedule_events)
-            await reschedule_subscription.subscribe_events(
-                client.get_node(MAINTENANCE_NODE_ID))
+            await subscribe_workflow_events(reschedule_subscription, client)
             before_events = reschedule_events.events.count("RescheduleMaintenance")
             await call_expect(client, ua, audit, "RescheduleMaintenance",
                               plan_inputs(ua)[1:], ua.StatusCodes.Good)

@@ -185,8 +185,12 @@ typedef struct
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     bool security_condition_active;
     uint32_t security_condition_reason;
+    bool security_condition_enabled;
+    TickType_t security_condition_next_enable_poll;
     bool device_health_condition_active[5];
     uint32_t device_health_condition_reason[5];
+    bool device_health_condition_enabled[5];
+    TickType_t device_health_condition_next_enable_poll[5];
 #endif
 } model_event_runtime_state_t;
 
@@ -296,7 +300,9 @@ typedef enum
     MODEL_MAINTENANCE_VALUE_SEVERITY,
     MODEL_MAINTENANCE_VALUE_QUALITY,
     MODEL_MAINTENANCE_VALUE_TIME,
-    MODEL_MAINTENANCE_VALUE_RECEIVE_TIME
+    MODEL_MAINTENANCE_VALUE_RECEIVE_TIME,
+    MODEL_MAINTENANCE_VALUE_ACTIVE_STATE,
+    MODEL_MAINTENANCE_VALUE_RETAIN
 } model_maintenance_value_kind_t;
 
 typedef struct
@@ -319,7 +325,9 @@ static const model_maintenance_value_context_t g_model_maintenance_value_context
     {MODEL_MAINTENANCE_VALUE_SEVERITY},
     {MODEL_MAINTENANCE_VALUE_QUALITY},
     {MODEL_MAINTENANCE_VALUE_TIME},
-    {MODEL_MAINTENANCE_VALUE_RECEIVE_TIME}};
+    {MODEL_MAINTENANCE_VALUE_RECEIVE_TIME},
+    {MODEL_MAINTENANCE_VALUE_ACTIVE_STATE},
+    {MODEL_MAINTENANCE_VALUE_RETAIN}};
 
 static UA_DataTypeMember g_model_amb_name_node_id_members[2];
 static UA_DataType g_model_amb_name_node_id_type;
@@ -616,6 +624,7 @@ enum
 #define MODEL_CERTIFICATE_EXPIRY_WARN_DAYS 30u
 #define MODEL_CERTIFICATE_EXPIRY_HIGH_WARN_DAYS 7u
 #define MODEL_AUDIT_QUEUE_CAPACITY 8u
+#define MODEL_CONDITION_ENABLE_POLL_MS 1000u
 #define MODEL_MAINTENANCE_REJECT_SESSION_BURST 4u
 #define MODEL_MAINTENANCE_REJECT_GLOBAL_BURST 16u
 #define MODEL_MAINTENANCE_REJECT_SUPPRESSION_MAX UINT16_MAX
@@ -3630,6 +3639,53 @@ static UA_StatusCode model_condition_set_two_state_id(UA_Server *server,
                                                        UA_QUALIFIEDNAME(0, (char *)"Id"));
 }
 
+/* Condition Enable/Disable is a standard OPC UA client operation. The runtime
+ * synchronizer must not publish repeatedly to a disabled condition, but must
+ * resume service-owned reconciliation after it is enabled again. */
+static UA_StatusCode model_condition_read_enabled(UA_Server *server,
+                                                  const UA_NodeId condition_id,
+                                                  bool *out_enabled)
+{
+    UA_QualifiedName path[2] = {
+        UA_QUALIFIEDNAME(0, (char *)"EnabledState"),
+        UA_QUALIFIEDNAME(0, (char *)"Id")};
+    UA_BrowsePathResult result;
+    UA_Variant value;
+    UA_StatusCode status;
+
+    if (server == NULL || out_enabled == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    result = UA_Server_browseSimplifiedBrowsePath(server, condition_id, 2u, path);
+    if (result.statusCode != UA_STATUSCODE_GOOD || result.targetsSize != 1u)
+    {
+        status = result.statusCode != UA_STATUSCODE_GOOD ? result.statusCode
+                                                         : UA_STATUSCODE_BADNOTFOUND;
+        UA_BrowsePathResult_clear(&result);
+        return status;
+    }
+
+    UA_Variant_init(&value);
+    status = UA_Server_readValue(server, result.targets[0].targetId.nodeId, &value);
+    UA_BrowsePathResult_clear(&result);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        UA_Variant_clear(&value);
+        return status;
+    }
+    if (!UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BOOLEAN]))
+    {
+        UA_Variant_clear(&value);
+        return UA_STATUSCODE_BADTYPEMISMATCH;
+    }
+
+    *out_enabled = (*(const UA_Boolean *)value.data) == UA_TRUE;
+    UA_Variant_clear(&value);
+    return UA_STATUSCODE_GOOD;
+}
+
 static UA_StatusCode model_add_amb_maintenance_property(
     UA_Server *server, const UA_NodeId condition_id, const char *node_id,
     const char *browse_name, UA_NodeId data_type, const void *value,
@@ -3813,6 +3869,7 @@ static UA_StatusCode model_read_maintenance_value(
     UA_Double downtime;
     UA_Int32 method;
     UA_Boolean configuration_changed;
+    UA_Boolean active;
     UA_UInt16 severity;
     UA_StatusCode quality = UA_STATUSCODE_GOOD;
     uint8_t index;
@@ -3925,6 +3982,12 @@ static UA_StatusCode model_read_maintenance_value(
         status = UA_Variant_setScalarCopy(&value->value, &planned_date,
                                           &UA_TYPES[UA_TYPES_DATETIME]);
         break;
+    case MODEL_MAINTENANCE_VALUE_ACTIVE_STATE:
+    case MODEL_MAINTENANCE_VALUE_RETAIN:
+        active = model_maintenance_condition_is_active(&snapshot) ? UA_TRUE : UA_FALSE;
+        status = UA_Variant_setScalarCopy(&value->value, &active,
+                                          &UA_TYPES[UA_TYPES_BOOLEAN]);
+        break;
     default:
         return model_maintenance_set_read_error(value, UA_STATUSCODE_BADNOTFOUND);
     }
@@ -3989,6 +4052,10 @@ static UA_StatusCode model_install_maintenance_condition_value_sources(
         UA_QUALIFIEDNAME(g_model_amb_namespace_index, (char *)"MaintenanceState"),
         UA_QUALIFIEDNAME(0, (char *)"CurrentState"),
         UA_QUALIFIEDNAME(0, (char *)"Id")};
+    UA_QualifiedName active_state_id_path[] = {
+        UA_QUALIFIEDNAME(0, (char *)"ActiveState"),
+        UA_QUALIFIEDNAME(0, (char *)"Id")};
+    UA_QualifiedName retain_path[] = {UA_QUALIFIEDNAME(0, (char *)"Retain")};
     UA_QualifiedName message_path[] = {UA_QUALIFIEDNAME(0, (char *)"Message")};
     UA_QualifiedName severity_path[] = {UA_QUALIFIEDNAME(0, (char *)"Severity")};
     UA_QualifiedName quality_path[] = {UA_QUALIFIEDNAME(0, (char *)"Quality")};
@@ -4002,6 +4069,13 @@ static UA_StatusCode model_install_maintenance_condition_value_sources(
         status = model_install_maintenance_value_source_at_path(
             server, condition_id, 3u, state_id_path,
             MODEL_MAINTENANCE_VALUE_CURRENT_STATE_ID);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 2u, active_state_id_path,
+            MODEL_MAINTENANCE_VALUE_ACTIVE_STATE);
+    if (status == UA_STATUSCODE_GOOD)
+        status = model_install_maintenance_value_source_at_path(
+            server, condition_id, 1u, retain_path, MODEL_MAINTENANCE_VALUE_RETAIN);
     if (status == UA_STATUSCODE_GOOD)
         status = model_install_maintenance_value_source(
             server, UA_NODEID_STRING(1, (char *)"Device.DeviceHealthAlarms.MaintenanceRequired.PlannedDate"),
@@ -4454,7 +4528,6 @@ static UA_StatusCode model_sync_maintenance_condition(
     const UA_NodeId condition_id =
         UA_NODEID_STRING(1, (char *)MODEL_CONDITION_DEVICE_HEALTH_MAINTENANCE_REQUIRED);
     const UA_Boolean active = model_maintenance_condition_is_active(snapshot) ? UA_TRUE : UA_FALSE;
-    const UA_Boolean retain = active;
     UA_StatusCode status;
 
     if (server == NULL || snapshot == NULL)
@@ -4465,14 +4538,8 @@ static UA_StatusCode model_sync_maintenance_condition(
     {
         return UA_STATUSCODE_GOOD;
     }
-    status = model_condition_set_field_scalar(server, condition_id, "Retain",
-                                              &retain, &UA_TYPES[UA_TYPES_BOOLEAN]);
-    if (status == UA_STATUSCODE_GOOD)
-    {
-        status = model_condition_set_two_state_id(server, condition_id,
-                                                  "ActiveState", active == UA_TRUE);
-    }
-    if (status == UA_STATUSCODE_GOOD && active == UA_FALSE)
+    status = UA_STATUSCODE_GOOD;
+    if (active == UA_FALSE)
     {
         /* A cleared condition cannot remain unacknowledged solely because the
          * process rebooted; this is state reconciliation, not an Ack action. */
@@ -4742,6 +4809,8 @@ static void model_sync_condition(UA_Server *server,
                                  const UA_NodeId source_id,
                                  bool *was_active,
                                  uint32_t *was_reason,
+                                 bool *was_enabled,
+                                 TickType_t *next_enable_poll,
                                  uint32_t reason,
                                  UA_UInt16 severity,
                                  UA_StatusCode quality,
@@ -4749,10 +4818,59 @@ static void model_sync_condition(UA_Server *server,
                                  const char *normal_message)
 {
     UA_StatusCode status = UA_STATUSCODE_GOOD;
+    bool force_reconcile = false;
+    const TickType_t now = xTaskGetTickCount();
+    TickType_t enable_poll_interval = pdMS_TO_TICKS(MODEL_CONDITION_ENABLE_POLL_MS);
+
+    if (server == NULL || was_active == NULL || was_reason == NULL || was_enabled == NULL ||
+        next_enable_poll == NULL)
+    {
+        return;
+    }
+
+    if (enable_poll_interval == 0u)
+    {
+        enable_poll_interval = 1u;
+    }
+
+    /* A disabled condition does not necessarily reject a service-state update:
+     * an unchanged normal state has no trigger to fail. Poll the standard
+     * EnabledState at a fixed rate so re-enable always causes exactly one
+     * service-derived reconciliation. */
+    if ((TickType_t)(now - *next_enable_poll) <
+        ((TickType_t)1u << ((sizeof(TickType_t) * 8u) - 1u)))
+    {
+        bool enabled = false;
+
+        status = model_condition_read_enabled(server, condition_id, &enabled);
+        *next_enable_poll = now + enable_poll_interval;
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tCondition enable-state read failed: 0x%x (%s)\n",
+                   status,
+                   UA_StatusCode_name(status));
+            fflush(stdout);
+            return;
+        }
+        if (!enabled)
+        {
+            *was_enabled = false;
+            *was_active = reason != 0u;
+            *was_reason = reason;
+            return;
+        }
+
+        force_reconcile = !*was_enabled;
+        *was_enabled = true;
+    }
+    else if (!*was_enabled)
+    {
+        return;
+    }
 
     if (reason != 0u)
     {
-        if (!*was_active)
+        if (force_reconcile || !*was_active)
         {
             status = model_condition_activate(server,
                                               condition_id,
@@ -4778,7 +4896,7 @@ static void model_sync_condition(UA_Server *server,
             *was_reason = reason;
         }
     }
-    else if (*was_active)
+    else if (force_reconcile || *was_active)
     {
         status = model_condition_deactivate(server,
                                             condition_id,
@@ -4789,6 +4907,17 @@ static void model_sync_condition(UA_Server *server,
             *was_active = false;
             *was_reason = 0u;
         }
+    }
+
+    if (status == UA_STATUSCODE_BADCONDITIONALREADYDISABLED)
+    {
+        /* Condition fields have already been reconciled. Do not retry an
+         * event while a client keeps the condition disabled. */
+        *was_enabled = false;
+        *was_active = reason != 0u;
+        *was_reason = reason;
+        *next_enable_poll = now + enable_poll_interval;
+        return;
     }
 
     if (status != UA_STATUSCODE_GOOD)
@@ -4861,6 +4990,8 @@ static void model_process_device_health_conditions(UA_Server *server,
                              model_device_node_id(),
                              &state->device_health_condition_active[raw_state],
                              &state->device_health_condition_reason[raw_state],
+                             &state->device_health_condition_enabled[raw_state],
+                             &state->device_health_condition_next_enable_poll[raw_state],
                              category_reasons,
                              severity,
                              quality,
@@ -4895,6 +5026,8 @@ static void model_process_alarm_conditions(UA_Server *server, model_event_runtim
                          model_security_node_id(),
                          &state->security_condition_active,
                          &state->security_condition_reason,
+                         &state->security_condition_enabled,
+                         &state->security_condition_next_enable_poll,
                          (uint32_t)security_reason,
                          severity,
                          quality,
@@ -5669,6 +5802,15 @@ static void model_event_runtime_state_init(model_event_runtime_state_t *state)
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     state->security_condition_active = false;
     state->security_condition_reason = 0u;
+    state->security_condition_enabled = true;
+    state->security_condition_next_enable_poll = 0u;
+    for (size_t index = 0u; index < 5u; ++index)
+    {
+        state->device_health_condition_active[index] = false;
+        state->device_health_condition_reason[index] = 0u;
+        state->device_health_condition_enabled[index] = true;
+        state->device_health_condition_next_enable_poll[index] = 0u;
+    }
 #endif
     state->initialized = true;
 }

@@ -102,6 +102,30 @@ static void config_service_force_terminated(char *text, size_t size)
     text[size - 1u] = '\0';
 }
 
+/*
+ * Firmware provenance belongs to the running image, not to the persisted
+ * device configuration.  A configuration slot may have been written by an
+ * older firmware image, so retain its configurable fields but always expose
+ * the identity embedded in the current compiled profile.
+ */
+static void config_service_apply_runtime_identity(device_profile_config_t *config)
+{
+    if (config == NULL || !g_default_config_valid)
+    {
+        return;
+    }
+
+    memcpy(config->fw_revision,
+           g_default_config.fw_revision,
+           sizeof(config->fw_revision));
+    memcpy(config->build_time,
+           g_default_config.build_time,
+           sizeof(config->build_time));
+    memcpy(config->git_hash,
+           g_default_config.git_hash,
+           sizeof(config->git_hash));
+}
+
 bool config_service_location_path_is_valid(const char *value)
 {
     size_t depth = 0u;
@@ -441,6 +465,8 @@ static void config_service_normalize(device_profile_config_t *config)
         strncpy(config->location, config->hierarchical_location_path, sizeof(config->location));
         config->location[sizeof(config->location) - 1u] = '\0';
     }
+
+    config_service_apply_runtime_identity(config);
 }
 
 void config_service_init(const device_profile_config_t *defaults)
