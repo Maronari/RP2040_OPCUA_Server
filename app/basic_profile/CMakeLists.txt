@@ -149,7 +149,7 @@ function(add_device_profile_target target_name use_ota_linker)
 
     target_compile_definitions(${target_name} PRIVATE
             PICO_CORE1_STACK_SIZE=0
-            PICO_HEAP_SIZE=0x400
+            PICO_HEAP_SIZE=0x200
             PICO_STDIO_USB_CONNECTION_WITHOUT_DTR=1
             PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=1000
             PICO_STDIO_USB_POST_CONNECT_WAIT_DELAY_MS=500
