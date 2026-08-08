@@ -40,13 +40,16 @@ static const uint8_t *ota_flash_bank_b_pointer(uint32_t offset)
 
 static ota_flash_status_t ota_flash_flush_writer_page(ota_flash_writer_t *writer, bool final_page)
 {
-    const uint32_t page_offset = ota_flash_bank_b_offset_for_writer(writer);
-    size_t page_size = writer->buffered_bytes;
+    uint32_t page_offset;
+    size_t page_size;
 
     if (writer == NULL || !writer->active)
     {
         return OTA_FLASH_STATUS_WRITER_STATE_ERROR;
     }
+
+    page_offset = ota_flash_bank_b_offset_for_writer(writer);
+    page_size = writer->buffered_bytes;
 
     if (page_size == 0u)
     {

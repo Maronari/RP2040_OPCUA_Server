@@ -24,7 +24,7 @@ pico_enable_stdio_uart(${BOOTLOADER_TARGET} 1)
 pico_add_extra_outputs(${BOOTLOADER_TARGET})
 
 pico_set_program_name(${BOOTLOADER_TARGET} "ota_bootloader")
-pico_set_program_version(${BOOTLOADER_TARGET} "0.1.0")
+pico_set_program_version(${BOOTLOADER_TARGET} "${RP2_FIRMWARE_VERSION}")
 
 target_compile_definitions(${BOOTLOADER_TARGET} PRIVATE
         PICO_CORE1_STACK_SIZE=0

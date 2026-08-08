@@ -2997,6 +2997,11 @@ static UA_StatusCode model_pubsub_add_writer_group(UA_Server *server,
     UA_WriterGroupConfig writer_group_config;
     UA_BrokerWriterGroupTransportDataType broker_transport;
     UA_ExtensionObject transport_settings;
+    UA_ExtensionObject message_settings;
+    UA_UadpWriterGroupMessageDataType uadp_message;
+#ifdef UA_ENABLE_JSON_ENCODING
+    UA_JsonWriterGroupMessageDataType json_message;
+#endif
     UA_StatusCode status;
 
     memset(&writer_group_config, 0, sizeof(writer_group_config));
@@ -3007,9 +3012,6 @@ static UA_StatusCode model_pubsub_add_writer_group(UA_Server *server,
     if (g_model_pubsub.use_json)
     {
 #ifdef UA_ENABLE_JSON_ENCODING
-        UA_JsonWriterGroupMessageDataType json_message;
-        UA_ExtensionObject message_settings;
-
         memset(&json_message, 0, sizeof(json_message));
         json_message.networkMessageContentMask =
             (UA_JsonNetworkMessageContentMask)(UA_JSONNETWORKMESSAGECONTENTMASK_NETWORKMESSAGEHEADER |
@@ -3026,9 +3028,6 @@ static UA_StatusCode model_pubsub_add_writer_group(UA_Server *server,
     }
     else
     {
-        UA_UadpWriterGroupMessageDataType uadp_message;
-        UA_ExtensionObject message_settings;
-
         memset(&uadp_message, 0, sizeof(uadp_message));
         uadp_message.networkMessageContentMask =
             (UA_UadpNetworkMessageContentMask)(UA_UADPNETWORKMESSAGECONTENTMASK_PUBLISHERID |
@@ -3072,6 +3071,10 @@ static UA_StatusCode model_pubsub_add_data_set_writer(UA_Server *server,
     UA_DataSetWriterConfig writer_config;
     UA_BrokerDataSetWriterTransportDataType broker_transport;
     UA_ExtensionObject transport_settings;
+#ifdef UA_ENABLE_JSON_ENCODING
+    UA_JsonDataSetWriterMessageDataType json_message;
+    UA_ExtensionObject message_settings;
+#endif
 
     memset(&writer_config, 0, sizeof(writer_config));
     writer_config.name = UA_STRING((char *)(name != NULL ? name : ""));
@@ -3082,9 +3085,6 @@ static UA_StatusCode model_pubsub_add_data_set_writer(UA_Server *server,
     if (g_model_pubsub.use_json)
     {
 #ifdef UA_ENABLE_JSON_ENCODING
-        UA_JsonDataSetWriterMessageDataType json_message;
-        UA_ExtensionObject message_settings;
-
         memset(&json_message, 0, sizeof(json_message));
         json_message.dataSetMessageContentMask =
             (UA_JsonDataSetMessageContentMask)(UA_JSONDATASETMESSAGECONTENTMASK_DATASETWRITERID |
