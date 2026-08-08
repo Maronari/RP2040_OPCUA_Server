@@ -18,6 +18,7 @@ SUITES = (
     "test_channel_manager.py",
     "test_config_service_identity.py",
     "test_config_validate.py",
+    "test_opcua_network_parse.py",
     "test_flash_prerequisites.py",
     "test_maintenance_condition_active_state_contract.py",
     "test_maintenance_journal_backend.py",
