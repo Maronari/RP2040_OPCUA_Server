@@ -6,4 +6,5 @@ static/certs
 open62541_v1.5.3/
 .claude
 __pycache__/
+static\tools\__pycache__
 *.py[cod]
