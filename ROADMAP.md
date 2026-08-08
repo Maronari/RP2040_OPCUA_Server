@@ -2,11 +2,11 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.3.2`, commit `f9336396f1102002eeb28bc7241c05de268d72aa`.
+> **Current baseline:** `v0.3.3`, commit `19bf3d24e80e217f960b251654c323eacfcf1c0f`.
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 
-This file defines the implementation order from the `v0.3.2` baseline to
+This file defines the implementation order from the `v0.3.3` baseline to
 `v1.0.0`. Codex must follow the versions sequentially and must not pull work
 from a later version into the current one unless this file is deliberately
 updated first.
@@ -957,13 +957,13 @@ Codex must not implement the following before a roadmap revision assigns an exac
 ## 8. Immediate next action
 
 The next implementation target is
-**`v0.3.3 — Maintenance Journal and Condition Semantics`**.
+**`v0.3.4 — 0.3 Stabilization and Release Integrity`**.
 
 Before coding, Codex must:
 
-1. use tag `v0.3.2` as the immutable implementation baseline;
+1. use tag `v0.3.3` as the immutable implementation baseline;
 2. follow the file-level execution plan in `docs/releases/v0.3.3.md`;
 3. preserve the v0.3.2 maintenance workflow and public OPC UA contracts;
 4. define the storage-independent journal format and recovery invariants;
 5. confirm the reserved QSPI Flash region and hardware write boundary;
-6. only then start implementation limited to `v0.3.3`.
+6. only then start implementation limited to `v0.3.4`.
