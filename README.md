@@ -1,56 +1,112 @@
-# RP2040 OPC UA Server
+ï»¿# RP2350 OPC UA Device Platform
 
-A layered OPC UA firmware skeleton for Raspberry Pi Pico / RP2040 with WIZnet Ethernet.
+This repository contains the `0.3.x` firmware baseline for an RP2350-based
+industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
+`waveshare_core2350b_16mb_psram8mb`; the default application target is
+`device_profile_basic`.
 
-## Architecture
+The current stabilization target is `v0.3.4`. This line is intended to freeze
+the existing platform capabilities behind reproducible builds, blocking
+verification, and release artifacts before larger architectural refactoring.
 
-The project is split into four runtime layers:
+## What The Firmware Already Implements
 
-- `drivers`: hardware-facing code only. ADC / temperature, W5x00 Ethernet, LED, RTC, watchdog, flash storage.
-- `services`: business/runtime services. Sensor acquisition, network state, time sync state, diagnostics, config, alarms.
-- `opcua_model`: reflection of service state into the OPC UA address space.
-- `app`: device profile assembly point. Chooses enabled sensors, network mode, thresholds, methods, and task composition.
+- Layered firmware split into `drivers`, `services`, `opcua_model`, `ota`, and
+  `app`.
+- RP2350 board support with external PSRAM and W5500 Ethernet.
+- FreeRTOS + lwIP based OPC UA server runtime using open62541.
+- Persistent staged/running configuration with export/import/reset flows.
+- Role-aware authentication, trust-list management, identity rotation, and
+  security-state persistence.
+- DI/AMB-oriented asset and maintenance model with a persisted maintenance
+  journal from `v0.3.3`.
+- OTA flash layout, OTA state storage, and CRC-checked staged update plumbing.
+- Build-time generated configuration export and OTA/layout manifests.
 
-## Project Structure
+## Current Boundaries
+
+- This is not a production security baseline yet. OTA payload integrity is
+  still CRC based; signed OTA and rollback-health confirmation are scheduled for
+  later roadmap releases.
+- The repository still contains a large `opcua_model` implementation and other
+  `0.3.x` era technical debt that `v0.3.4` is meant to stabilize, not redesign.
+- The release baseline is RP2350 + PSRAM + W5500. The older RP2040-oriented
+  README positioning is obsolete.
+
+## Repository Layout
 
 ```text
 .
-+-- CMakeLists.txt
-+-- app/
-¦   L-- basic_profile/
-+-- drivers/
-+-- services/
-+-- opcua_model/
-+-- examples/          # legacy examples, off by default
-+-- libraries/
-L-- port/
++-- app/                    # Device-profile targets and generated exports
++-- bootloader/             # OTA bootloader target
++-- cmake/                  # Authoritative build/version inputs
++-- drivers/                # Hardware-facing drivers
++-- ota/                    # OTA layout, state, tooling, and artifacts
++-- opcua_model/            # OPC UA address-space and callback adapter layer
++-- services/               # Runtime/business services
++-- static/tests/           # Host-test sources
++-- static/tools/           # Verification, staging, and release scripts
++-- .github/workflows/      # Blocking CI jobs
++L-- libraries/             # Pinned third-party sources and SDKs
 ```
 
-## Build
+## Reference Build
 
-The build is no longer pinned to a single board / chip / build type. Defaults are still provided, but they can now be overridden from CMake cache variables.
+The authoritative local reference build for this release is the Debug RP2350 +
+W5500 workflow from `AGENTS.md`:
 
-```sh
-git clone --recurse-submodules https://github.com/yourusername/RP2040_OPCUA_Server.git
-cd RP2040_OPCUA_Server
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPICO_BOARD=pico -DWIZNET_CHIP=W5500
-cmake --build build --target device_profile_basic
+```powershell
+C:\msys64\mingw64\bin\cmake.EXE -DCMAKE_BUILD_TYPE:STRING=Debug -DPICO_BOARD:STRING=waveshare_core2350b_16mb_psram8mb -DOTA_ROM_PRIMARY_APP:STRING=ON -DOTA_BUILD_BOOTLOADER:STRING=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE -DCMAKE_C_COMPILER:FILEPATH=D:\Programms\ST\STM32CubeCLT_1.18.0\GNU-tools-for-STM32\bin\arm-none-eabi-gcc.exe -DCMAKE_CXX_COMPILER:FILEPATH=D:\Programms\ST\STM32CubeCLT_1.18.0\GNU-tools-for-STM32\bin\arm-none-eabi-g++.exe --no-warn-unused-cli -S E:/Projects/RP2040_OPCUA_Server -B e:/Projects/RP2040_OPCUA_Server/build -G Ninja
+C:\msys64\mingw64\bin\cmake.EXE --build e:/Projects/RP2040_OPCUA_Server/build --config Debug --target all --
 ```
 
-Useful options:
+For Linux CI, the matching workflow configures the same board and build type
+with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and builds the default `all` target.
 
-- `-DCMAKE_BUILD_TYPE=Debug|Release|RelWithDebInfo|MinSizeRel`
-- `-DPICO_BOARD=<board>`
-- `-DWIZNET_CHIP=W5100S|W5500`
-- `-DBUILD_LEGACY_EXAMPLES=ON`
+## Release Artifacts
 
-## Runtime Notes
+The `v0.3.4` release workflow treats these as required artifacts for the
+reference Debug build:
 
-- The OPC UA server no longer waits for DHCP lease acquisition before startup.
-- SNTP time synchronization no longer blocks OPC UA startup behind a fixed epoch threshold.
-- `time_service` now tracks synchronization quality separately from server startup.
-- `basic_profile` exposes service-backed nodes for sensors, network, time, diagnostics, and alarms.
+- `device_profile_basic.elf`
+- `device_profile_basic.uf2`
+- `device_profile_basic.bin`
+- `build/config_export.json`
+- `build/generated/ota_layout/ota_layout.json`
+- `build/reports/size.txt`
+- `build/reports/sections.txt`
+- `build/reports/version_integrity.json`
+- `build/reports/opcua_public_contract.json`
+- `build/reports/cppcheck.xml`
+- `build/reports/cppcheck.txt`
 
-## Legacy Example
+The version verifier checks that the authoritative CMake version, CMake cache,
+firmware compile definition, generated config export, generated OTA/layout
+manifest, and release-artifact evidence agree. Tag builds must use
+`vX.Y.Z == X.Y.Z`.
 
-The old `examples/opc_dhcp` target is still available behind `BUILD_LEGACY_EXAMPLES`, but the default build path is now the layered firmware profile in `app/basic_profile`.
+## Verification
+
+The blocking `v0.3.4` CI split is:
+
+- `host`: the deterministic host/static suite runner plus its explicit injected
+  failure proof and the blocking `v0.3.3` public OPC UA inventory comparison.
+- `firmware`: reference Debug configure/build, size reporting, version
+  verification, and positive/negative artifact checks.
+- `analysis`: first-party cppcheck over `drivers`, `services`, `opcua_model`,
+  `ota`, `bootloader`, and `app`, excluding generated/vendor noise.
+
+Renode is not a required release gate for this board. Until an asserted RP2350
+emulation target exists, emulator work remains an explicit manual experiment.
+
+## Versioning
+
+`cmake/firmware_version.cmake` is the only editable firmware version source for
+the `0.3.x` release line. Runtime firmware revision, CMake project version,
+generated config export, OTA/layout metadata, and release verification all
+derive from that file.
+
+## Release History
+
+See [CHANGELOG.md](CHANGELOG.md) for the `v0.1` through `v0.3.4` release
+history and peeled tag commit SHAs.

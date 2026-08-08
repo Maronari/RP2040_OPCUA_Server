@@ -18,6 +18,7 @@ def main() -> int:
     test_dir = root / "static" / "tests" / "maintenance_service"
     source = root / "services" / "src" / "maintenance_service.c"
     test_sources = [test_dir / "maintenance_service_atomic_test.c",
+                    test_dir / "maintenance_service_contract_test.c",
                     test_dir / "maintenance_service_journal_test.c"]
 
     with tempfile.TemporaryDirectory(prefix="maintenance-atomic-") as directory:

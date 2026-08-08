@@ -2,147 +2,206 @@ name: Build Check
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+    tags: ["v*"]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_renode:
+        description: "Run the non-gating manual Renode experiment"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
-  build:
+  host:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v7
-      with:
-        submodules: recursive
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential
+      - name: Install host-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc python3
 
-    - name: Configure CMake
-      run: |
-        mkdir build
-        cd build
-        cmake .. -DCMAKE_BUILD_TYPE=MinSizeRel
+      - name: Run host and static verification suites
+        run: python3 static/tools/run_host_tests.py
 
-    - name: Build
-      run: |
-        cd build
-        cmake --build . -j$(nproc)
+      - name: Verify public OPC UA contract against v0.3.3
+        run: |
+          mkdir -p build/reports
+          python3 static/tools/verify_opcua_public_contract.py \
+            --baseline v0.3.3 \
+            --output build/reports/opcua_public_contract.json
 
-    - name: Check binary size
-      run: |
-        cd build
-        echo "### Binary Size Report" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        find . -name "*.elf" -exec arm-none-eabi-size {} \; >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+      - name: Prove host-test failures propagate
+        run: |
+          set +e
+          python3 static/tools/run_host_tests.py --inject-failure
+          status=$?
+          set -e
+          if [ "${status}" -ne 1 ]; then
+            echo "Expected injected host-test failure exit 1, got ${status}"
+            exit 1
+          fi
 
-    - name: Verify build outputs
-      run: |
-        cd build
-        UF2_FILES=$(find . -type f -name "*.uf2" -print)
-        if [ -z "$UF2_FILES" ]; then
-          echo "Error: No .uf2 files generated"
-          exit 1
-        fi
-        echo "$UF2_FILES"
-        echo "Build artifacts generated successfully"
+      - name: Upload host contract evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: host-contract-evidence
+          path: build/reports/opcua_public_contract.json
+          if-no-files-found: error
 
-    - name: Verify OPC UA event field contract
-      run: python3 static/tools/test_opcua_event_field_key_contract.py
-
-    - name: Static analysis (cppcheck)
-      run: |
-        sudo apt-get install -y cppcheck
-        cppcheck --enable=warning,style,performance,portability \
-          --suppress=missingIncludeSystem \
-          --error-exitcode=0 \
-          --inline-suppr \
-          -I port/open62541 \
-          -I libraries/pico-sdk/src \
-          port/open62541/*.c 2>&1 | tee cppcheck.log || true
-      continue-on-error: true
-
-    - name: Install Renode
-      env:
-        RENODE_VERSION: 1.15.3
-        RENODE_SHA256: 1d313e2bca5d066b4b084c581c933b26a665be45e71b18145c1570490a0e439d
-      run: |
-        RENODE_ARCHIVE="renode-${RENODE_VERSION}.linux-portable.tar.gz"
-        curl --fail --location --retry 3 \
-          --output "$RENODE_ARCHIVE" \
-          "https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/${RENODE_ARCHIVE}"
-        echo "${RENODE_SHA256}  ${RENODE_ARCHIVE}" | sha256sum --check
-        mkdir -p "$RUNNER_TEMP/renode"
-        tar --extract --gzip --file "$RENODE_ARCHIVE" \
-          --directory "$RUNNER_TEMP/renode" --strip-components=1
-        echo "$RUNNER_TEMP/renode" >> "$GITHUB_PATH"
-
-    - name: Test firmware in emulator
-      run: |
-        cd build
-        ELF_FILE=$(find . -name "*.elf" | head -n 1)
-        if [ -z "$ELF_FILE" ]; then
-          echo "No ELF file found"
-          exit 1
-        fi
-
-        cat > test.resc << 'EOF'
-        using sysbus
-        mach create
-        machine LoadPlatformDescription @platforms/cpus/rp2040.repl
-        sysbus LoadELF @$ELF_FILE
-
-        logLevel 3
-
-        # Run for 10 seconds
-        emulation RunFor "00:00:10"
-
-        # Check if crashed
-        cpu IsHalted
-        EOF
-
-        timeout 30 renode --disable-xwt --console test.resc || echo "Emulation completed"
-      continue-on-error: true
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v7
-      with:
-        name: firmware
-        path: |
-          build/**/*.uf2
-          build/**/*.elf
-          build/**/*.bin
-        if-no-files-found: warn
-
-  security-scan:
+  firmware:
     runs-on: ubuntu-latest
-    needs: build
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v7
-      with:
-        submodules: recursive
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
-    - name: Run Semgrep security scan
-      uses: returntocorp/semgrep-action@v1
-      with:
-        config: >-
-          p/security-audit
-          p/secrets
-          p/owasp-top-ten
-      continue-on-error: true
+      - name: Install firmware build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi python3
 
-    - name: Check for hardcoded secrets
-      run: |
-        echo "Checking for potential secrets..."
-        if grep -r "password\|secret\|api_key\|token" --include="*.c" --include="*.h" .; then
-          echo "Warning: Found potential hardcoded secrets"
-        else
-          echo "No obvious hardcoded secrets found"
-        fi
-      continue-on-error: true
+      - name: Configure reference Debug build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DPICO_BOARD=waveshare_core2350b_16mb_psram8mb \
+            -DWIZNET_CHIP=W5500 \
+            -DOTA_ROM_PRIMARY_APP=ON \
+            -DOTA_BUILD_BOOTLOADER=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build reference firmware target
+        run: |
+          cmake --build build --target all
+
+      - name: Generate size reports
+        run: |
+          mkdir -p build/reports
+          arm-none-eabi-size build/app/basic_profile/device_profile_basic.elf | tee build/reports/size.txt
+          arm-none-eabi-size -A build/app/basic_profile/device_profile_basic.elf | tee build/reports/sections.txt
+
+      - name: Verify version integrity
+        env:
+          EXPECTED_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+        run: |
+          python3 static/tools/verify_version_integrity.py \
+            --build-dir build \
+            --expected-tag "${EXPECTED_TAG}" \
+            --output build/reports/version_integrity.json
+
+      - name: Prove artifact checker fails on empty build directory
+        run: |
+          empty_dir="$(mktemp -d)"
+          if python3 static/tools/check_build_artifacts.py --build-dir "${empty_dir}"; then
+            echo "Expected artifact checker to fail for an empty directory"
+            exit 1
+          fi
+
+      - name: Prove artifact checker rejects empty files
+        run: |
+          invalid_dir="$(mktemp -d)"
+          python3 - "${invalid_dir}" <<'PY'
+          import pathlib
+          import sys
+          from static.tools.check_build_artifacts import REQUIRED_RELATIVE_PATHS
+
+          root = pathlib.Path(sys.argv[1])
+          for relative in REQUIRED_RELATIVE_PATHS:
+              path = root / relative
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.touch()
+          PY
+          if python3 static/tools/check_build_artifacts.py --build-dir "${invalid_dir}"; then
+            echo "Expected artifact checker to reject empty artifact files"
+            exit 1
+          fi
+
+      - name: Verify required build artifacts
+        run: |
+          python3 static/tools/check_build_artifacts.py \
+            --build-dir build \
+            --output build/reports/artifact_check.json
+
+      - name: Upload firmware and release evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware-debug
+          path: |
+            build/app/basic_profile/device_profile_basic.elf
+            build/app/basic_profile/device_profile_basic.uf2
+            build/app/basic_profile/device_profile_basic.bin
+            build/config_export.json
+            build/generated/ota_layout/ota_layout.json
+            build/reports/size.txt
+            build/reports/sections.txt
+            build/reports/version_integrity.json
+            build/reports/artifact_check.json
+            build/CMakeCache.txt
+            build/compile_commands.json
+          if-no-files-found: error
+
+  analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi cppcheck python3
+
+      - name: Configure analysis build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DPICO_BOARD=waveshare_core2350b_16mb_psram8mb \
+            -DWIZNET_CHIP=W5500 \
+            -DOTA_ROM_PRIMARY_APP=ON \
+            -DOTA_BUILD_BOOTLOADER=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Run blocking first-party cppcheck
+        run: |
+          python3 static/tools/run_first_party_cppcheck.py \
+            --build-dir build \
+            --xml-output build/reports/cppcheck.xml \
+            --text-output build/reports/cppcheck.txt
+
+      - name: Upload analysis logs
+        uses: actions/upload-artifact@v7
+        with:
+          name: analysis
+          path: |
+            build/reports/cppcheck.xml
+            build/reports/cppcheck.txt
+          if-no-files-found: error
+
+  renode_experiment:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_renode }}
+    runs-on: ubuntu-latest
+    needs:
+      - host
+      - firmware
+      - analysis
+
+    steps:
+      - name: Declare manual-only experiment status
+        run: |
+          echo "Renode remains a manual experiment because this workflow does not have an asserted RP2350 target model for waveshare_core2350b_16mb_psram8mb."
+          echo "No RP2040 platform substitution is used in release gating."

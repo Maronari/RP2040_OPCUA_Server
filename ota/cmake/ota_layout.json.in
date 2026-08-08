@@ -1,6 +1,10 @@
 {
   "board": "@PICO_BOARD@",
   "platform": "@PICO_PLATFORM@",
+  "firmware": {
+    "version": "@RP2_FIRMWARE_VERSION@",
+    "version_number": @RP2_FIRMWARE_VERSION_NUMBER@
+  },
   "flash": {
     "xip_base": "@OTA_FLASH_XIP_BASE_HEX@",
     "size_bytes": @OTA_FLASH_TOTAL_BYTES@,

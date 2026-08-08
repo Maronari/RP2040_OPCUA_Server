@@ -13,7 +13,7 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.3.3 - Maintenance Journal and Condition Semantics**.
+  **v0.3.4 - 0.3 Stabilization and Release Integrity**.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -130,8 +130,8 @@ verification; `build-engineer` owns build/artifact and Flash-layout checks; and
 
 ## v0.3.3 constraints
 
-- Treat tag `v0.3.2` and commit
-  `f9336396f1102002eeb28bc7241c05de268d72aa` as the immutable implementation
+- Treat tag `v0.3.3` and commit
+  `19bf3d24e80e217f960b251654c323eacfcf1c0f` as the immutable implementation
   and compatibility baseline.
 - Add only the bounded maintenance journal scheduled by the roadmap. Historical
   Event Access, arbitrary event history, and new AMB states remain out of scope.
