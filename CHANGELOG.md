@@ -1,10 +1,17 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.4.0`. Historical tag
+This file tracks the firmware release line through `v0.4.1`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
 
-## v0.4.0 (Unreleased)
+## v0.4.1 (Unreleased)
+
+- Scope: harden the bounded generic channel runtime, driver lifecycle,
+  ownership, timestamps and resource validation without adding the v0.4.2 OPC
+  UA channel model.
+- Release plan: `docs/releases/v0.4.1.md`.
+
+## v0.4.0
 
 - Scope: decomposed the OPC UA adapter into focused, independently compiled
   modules backed by one bounded internal model context.
@@ -12,7 +19,7 @@ their target commit SHA rather than the tag-object SHA.
   access behavior, configuration schema, and service contracts.
 - Verification: the source-derived public contract is pinned to v0.3.4 and the
   module source manifest is checked for untracked public UA registrations.
-- Commit SHA: unreleased.
+- Peeled tag commit: `8a454945aaccc3d381a2e889e90b53569415b705`.
 
 ## v0.3.4
 

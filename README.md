@@ -5,9 +5,9 @@ industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
 `waveshare_core2350b_16mb_psram8mb`; the default application target is
 `device_profile_basic`.
 
-The current implementation target is `v0.4.0`. It modularizes the OPC UA
-adapter while preserving the externally visible `v0.3.4` address-space and
-behavior contract.
+The current implementation target is `v0.4.1`. It hardens the generic channel
+runtime on top of the modular `v0.4.0` OPC UA adapter while preserving the
+externally visible address-space and behavior contract.
 
 ## What The Firmware Already Implements
 
