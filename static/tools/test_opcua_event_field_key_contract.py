@@ -8,13 +8,20 @@ import re
 import sys
 
 
+MODEL_SOURCE_SET = (
+    "opcua_model/src/model_events.c",
+    "opcua_model/src/model_maintenance.c",
+    "opcua_model/src/model_configuration.c",
+)
+
+
 def require(pattern: str, source: str, description: str) -> None:
     if re.search(pattern, source, re.DOTALL) is None:
         raise AssertionError(description)
 
 
 def function_body(name: str, source: str) -> str:
-    match = re.search(rf"static UA_StatusCode {name}\(.*?^}}\n",
+    match = re.search(rf"(?:static )?UA_StatusCode {name}\(.*?^}}\n",
                       source, re.DOTALL | re.MULTILINE)
     if match is None:
         raise AssertionError(f"missing {name}")
@@ -23,7 +30,8 @@ def function_body(name: str, source: str) -> str:
 
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[2]
-    model = (root / "opcua_model" / "src" / "opcua_model.c").read_text(encoding="utf-8")
+    model = "\n".join((root / path).read_text(encoding="utf-8")
+                        for path in MODEL_SOURCE_SET)
     open62541 = (root / "port" / "open62541" / "open62541.c").read_text(encoding="utf-8")
 
     require(r"res \|= UA_String_append\(&tmp, UA_STRING\(\"/\"\)\);",

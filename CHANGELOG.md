@@ -1,16 +1,25 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.3.4`. Historical tag
+This file tracks the firmware release line through `v0.4.0`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
 
-## v0.3.4 (Unreleased)
+## v0.4.0 (Unreleased)
 
-- Status: unreleased stabilization and release-integrity line.
+- Scope: decomposed the OPC UA adapter into focused, independently compiled
+  modules backed by one bounded internal model context.
+- Compatibility: preserves the v0.3.4 NodeIds, BrowseNames, methods, events,
+  access behavior, configuration schema, and service contracts.
+- Verification: the source-derived public contract is pinned to v0.3.4 and the
+  module source manifest is checked for untracked public UA registrations.
+- Commit SHA: unreleased.
+
+## v0.3.4
+
+- Peeled tag commit: `3ff4689e403fc806122cbafb509cc14cc4487bfb`.
 - Scope: authoritative `0.3.4` version source, blocking CI gates, first-party
   static analysis, release artifact verification, and updated project
   positioning/documentation.
-- Commit SHA: unreleased.
 
 ## v0.3.3
 

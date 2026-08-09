@@ -8,6 +8,13 @@ import re
 import sys
 
 
+MODEL_SOURCE_SET = (
+    "opcua_model/src/model_access.c",
+    "opcua_model/src/model_events.c",
+    "opcua_model/src/model_maintenance.c",
+)
+
+
 def require(pattern: str, source: str, description: str) -> None:
     if re.search(pattern, source, re.DOTALL) is None:
         raise AssertionError(description)
@@ -15,7 +22,8 @@ def require(pattern: str, source: str, description: str) -> None:
 
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[2]
-    source = (root / "opcua_model" / "src" / "opcua_model.c").read_text(encoding="utf-8")
+    source = "\n".join((root / path).read_text(encoding="utf-8")
+                         for path in MODEL_SOURCE_SET)
 
     require(r"MODEL_MAINTENANCE_VALUE_ACTIVE_STATE", source,
             "missing MaintenanceRequired ActiveState value kind")
@@ -44,7 +52,7 @@ def main() -> int:
             source,
             "Retain does not install the service-owned value source")
 
-    sync = re.search(r"static UA_StatusCode model_sync_maintenance_condition\(.*?^}\n",
+    sync = re.search(r"(?:static )?UA_StatusCode model_sync_maintenance_condition\(.*?^}\n",
                      source, re.DOTALL | re.MULTILINE)
     if sync is None:
         raise AssertionError("missing maintenance condition synchronizer")

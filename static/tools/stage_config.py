@@ -17,10 +17,13 @@ ua = None
 security_policies = None
 setup_self_signed_certificate = None
 ExtendedKeyUsageOID = None
+x509 = None
+ExtensionOID = None
 
 
 def load_asyncua():
-    global Client, ua, security_policies, setup_self_signed_certificate, ExtendedKeyUsageOID
+    global Client, ua, security_policies, setup_self_signed_certificate
+    global ExtendedKeyUsageOID, x509, ExtensionOID
 
     if Client is not None:
         return
@@ -29,7 +32,11 @@ def load_asyncua():
         from asyncua import Client as imported_client, ua as imported_ua
         from asyncua.crypto import security_policies as imported_security_policies
         from asyncua.crypto.cert_gen import setup_self_signed_certificate as imported_setup_certificate
-        from cryptography.x509.oid import ExtendedKeyUsageOID as imported_extended_key_usage_oid
+        from cryptography import x509 as imported_x509
+        from cryptography.x509.oid import (
+            ExtendedKeyUsageOID as imported_extended_key_usage_oid,
+            ExtensionOID as imported_extension_oid,
+        )
     except ImportError:
         print('ERROR: asyncua library not installed')
         print(r'Install with: C:\Python312\python.exe -m pip install --user asyncua')
@@ -40,10 +47,13 @@ def load_asyncua():
     security_policies = imported_security_policies
     setup_self_signed_certificate = imported_setup_certificate
     ExtendedKeyUsageOID = imported_extended_key_usage_oid
+    x509 = imported_x509
+    ExtensionOID = imported_extension_oid
 
 DEFAULT_CHUNK_SIZE = 4096
 DEFAULT_EXPORT_PATH = Path('build/config_export.json')
 DEFAULT_AUTO_CLIENT_CERT_DIR = 'rp2040_opcua_client'
+CLIENT_APPLICATION_URI = 'urn:rp2040-opcua:verification-client'
 LEGACY_AUTO_CLIENT_CERT_DIRS = (
     'rp2040_opcua_ota',
     'rp2040_opcua_config',
@@ -136,6 +146,21 @@ async def ensure_client_certificate(cert_path, key_path, app_uri):
     )
 
 
+def client_certificate_has_application_uri(cert_path, app_uri):
+    try:
+        encoded = cert_path.read_bytes()
+        try:
+            certificate = x509.load_der_x509_certificate(encoded)
+        except ValueError:
+            certificate = x509.load_pem_x509_certificate(encoded)
+        san = certificate.extensions.get_extension_for_oid(
+            ExtensionOID.SUBJECT_ALTERNATIVE_NAME
+        ).value
+        return app_uri in san.get_values_for_type(x509.UniformResourceIdentifier)
+    except (OSError, ValueError, x509.ExtensionNotFound):
+        return False
+
+
 def resolve_auto_client_certificate_paths():
     temp_root = Path(tempfile.gettempdir())
 
@@ -154,6 +179,7 @@ async def configure_client_security(client, args):
     if not args.username:
         return
 
+    client.application_uri = CLIENT_APPLICATION_URI
     client_cert = Path(args.client_cert) if args.client_cert else None
     client_key = Path(args.client_key) if args.client_key else None
     server_cert = Path(args.server_cert) if args.server_cert else resolve_default_server_cert()
@@ -163,11 +189,16 @@ async def configure_client_security(client, args):
 
     if client_cert is None and not args.no_auto_client_cert:
         client_cert, client_key = resolve_auto_client_certificate_paths()
-        if not client_cert.is_file() or not client_key.is_file():
+        client_app_uri = CLIENT_APPLICATION_URI
+        if (
+            not client_cert.is_file()
+            or not client_key.is_file()
+            or not client_certificate_has_application_uri(client_cert, client_app_uri)
+        ):
             await ensure_client_certificate(
                 client_cert,
                 client_key,
-                getattr(client, 'application_uri', 'urn:freeopcua:client'),
+                client_app_uri,
             )
         print(f'Using auto client certificate: {client_cert}')
 

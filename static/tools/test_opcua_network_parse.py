@@ -12,11 +12,16 @@ import tempfile
 
 MARKER = "/* MODEL_PARSE_IMPLEMENTATIONS */"
 FUNCTION_SIGNATURES = (
-    "static bool model_parse_ipv4_string(const char *text, uint8_t out_ipv4[4])",
-    "static bool model_parse_mac_string(const char *text, uint8_t out_mac[6])",
+    "bool model_parse_ipv4_string(const char *text, uint8_t out_ipv4[4])",
+    "bool model_parse_mac_string(const char *text, uint8_t out_mac[6])",
 )
 # Updating either implementation requires consciously reviewing this extracted-source test.
-EXPECTED_SHA256 = "57da5773e4afbd07b94f76862877ee573bf861e8c981340c6208a655c5a0560e"
+# Moving a function to the explicit internal API removes only the C `static`
+# storage-class token; this checksum still guards its executable body.
+EXPECTED_SHA256 = "539c3a304dbf8c470631c9b00d447787c468cb0fd9083d6285c9d5dc8783bb52"
+MODEL_SOURCE_SET = (
+    "opcua_model/src/model_access.c",
+)
 
 
 def extract_function(source: str, signature: str) -> str:
@@ -73,9 +78,9 @@ def main() -> int:
     parser.add_argument("--cc", default="gcc", help="Host C compiler")
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
-    source_path = root / "opcua_model" / "src" / "opcua_model.c"
     template_path = root / "static" / "tests" / "opcua_network_parse" / "opcua_network_parse_test.c"
-    source = source_path.read_text(encoding="utf-8")
+    source = "\n".join((root / path).read_text(encoding="utf-8")
+                         for path in MODEL_SOURCE_SET)
     template = template_path.read_text(encoding="utf-8")
     if template.count(MARKER) != 1:
         raise RuntimeError(f"expected exactly one extraction marker in {template_path}")

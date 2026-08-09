@@ -33,11 +33,11 @@ jobs:
       - name: Run host and static verification suites
         run: python3 static/tools/run_host_tests.py
 
-      - name: Verify public OPC UA contract against v0.3.3
+      - name: Verify public OPC UA contract against v0.3.4
         run: |
           mkdir -p build/reports
           python3 static/tools/verify_opcua_public_contract.py \
-            --baseline v0.3.3 \
+            --baseline v0.3.4 \
             --output build/reports/opcua_public_contract.json
 
       - name: Prove host-test failures propagate
