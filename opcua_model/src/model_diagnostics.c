@@ -317,7 +317,7 @@ UA_StatusCode model_build_amb_capabilities_and_requirements(UA_Server *server,
          "SignAndEncrypt"},
     };
     const UA_Boolean supported = true;
-    const UA_UInt32 max_telemetry_channels = CONFIG_SERVICE_MAX_CHANNELS;
+    const UA_UInt32 max_telemetry_channels = PLATFORM_CHANNEL_LIMIT;
     UA_NodeId capabilities_id = UA_NODEID_STRING(1, (char *)"Device.Capabilities");
     UA_NodeId requirements_id = UA_NODEID_STRING(1, (char *)"Device.Requirements");
     UA_StatusCode status;
@@ -388,4 +388,3 @@ UA_StatusCode model_build_amb_capabilities_and_requirements(UA_Server *server,
     fflush(stdout);
     return UA_STATUSCODE_GOOD;
 }
-

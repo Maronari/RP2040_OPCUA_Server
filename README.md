@@ -22,15 +22,22 @@ externally visible address-space and behavior contract.
   journal from `v0.3.3`.
 - OTA flash layout, OTA state storage, and CRC-checked staged update plumbing.
 - Build-time generated configuration export and OTA/layout manifests.
+- A bounded, manager-owned multi-channel runtime with coherent typed snapshots,
+  Unix-microsecond source timestamps, explicit driver lifecycle/capabilities,
+  and deterministic hardware-resource conflict rejection.
 
 ## Current Boundaries
 
 - This is not a production security baseline yet. OTA payload integrity is
   still CRC based; signed OTA and rollback-health confirmation are scheduled for
   later roadmap releases.
-- The OPC UA adapter is split into focused modules backed by one bounded
-  internal context; channel-runtime and service refactors remain assigned to
-  later roadmap releases.
+- The OPC UA adapter remains the v0.4.0 public compatibility surface. The new
+  generic OPC UA channel information model and NodeIds remain scheduled for
+  v0.4.2.
+- The built-in `adc_voltage` channel driver is limited to protected low-voltage
+  RP2350 ADC use and is not the industrial `AI0..AI3` implementation from
+  `HARDWARE_MVP.md`; industrial analog inputs require the dedicated external
+  ADC/frontend driver scheduled by the later hardware-driver work.
 - The release baseline is RP2350 + PSRAM + W5500. The older RP2040-oriented
   README positioning is obsolete.
 
@@ -66,7 +73,7 @@ with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and builds the default `all` target.
 
 ## Release Artifacts
 
-The `v0.4.0` release workflow treats these as required artifacts for the
+The `v0.4.1` release workflow treats these as required artifacts for the
 reference Debug build:
 
 - `device_profile_basic.elf`
@@ -88,10 +95,10 @@ manifest, and release-artifact evidence agree. Tag builds must use
 
 ## Verification
 
-The blocking `v0.4.0` CI split is:
+The blocking `v0.4.1` CI split is:
 
 - `host`: the deterministic host/static suite runner plus its explicit injected
-  failure proof and the blocking `v0.3.4` public OPC UA inventory comparison.
+  failure proof and the blocking `v0.4.0` public OPC UA inventory comparison.
 - `firmware`: reference Debug configure/build, size reporting, version
   verification, and positive/negative artifact checks.
 - `analysis`: first-party cppcheck over `drivers`, `services`, `opcua_model`,

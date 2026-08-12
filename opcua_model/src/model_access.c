@@ -909,34 +909,34 @@ const char *model_alarm_state_to_string(telemetry_alarm_state_t alarm_state)
     }
 }
 
-bool model_copy_channel_by_id(const char *channel_id, telemetry_channel_t *out_channel)
+bool model_copy_channel_by_id(const char *channel_id, telemetry_channel_snapshot_t *out_snapshot)
 {
-    if (channel_id == NULL || out_channel == NULL)
+    if (channel_id == NULL || out_snapshot == NULL)
     {
         return false;
     }
 
-    return channel_manager_copy_channel(channel_id, out_channel);
+    return channel_manager_copy_snapshot_by_id(channel_id, out_snapshot);
 }
 
 bool model_copy_channel_from_context(const model_node_context_t *context,
-                                            telemetry_channel_t *out_channel)
+                                     telemetry_channel_snapshot_t *out_snapshot)
 {
     return context != NULL &&
            context->channel_id != NULL &&
-           model_copy_channel_by_id(context->channel_id, out_channel);
+           model_copy_channel_by_id(context->channel_id, out_snapshot);
 }
 
 bool model_copy_channel_settings(const char *channel_id, telemetry_channel_settings_t *out_settings)
 {
-    telemetry_channel_t channel = {0};
+    telemetry_channel_snapshot_t snapshot = {0};
 
-    if (channel_id == NULL || out_settings == NULL || !model_copy_channel_by_id(channel_id, &channel))
+    if (channel_id == NULL || out_settings == NULL || !model_copy_channel_by_id(channel_id, &snapshot))
     {
         return false;
     }
 
-    *out_settings = channel.settings;
+    *out_settings = snapshot.channel.settings;
     return true;
 }
 
@@ -1003,4 +1003,3 @@ bool model_channel_requires_server_rebuild(const config_channel_definition_t *lh
            model_string_changed(lhs->id, rhs->id) ||
            model_string_changed(lhs->name, rhs->name);
 }
-

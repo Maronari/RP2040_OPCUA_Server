@@ -6,9 +6,17 @@ their target commit SHA rather than the tag-object SHA.
 
 ## v0.4.1 (Unreleased)
 
-- Scope: harden the bounded generic channel runtime, driver lifecycle,
-  ownership, timestamps and resource validation without adding the v0.4.2 OPC
-  UA channel model.
+- Runtime: one 1-16 compile-time platform limit, manager-owned metadata and
+  slots, coherent snapshot/iteration APIs, generation-checked driver
+  operations, and a Unix-microsecond source timestamp contract.
+- Drivers: explicit capabilities and lifecycle results, native ADC/GPIO
+  hardware ownership under `drivers/`, pre-activation resource claims,
+  reverse-order activation rollback, and build-time driver exclusion.
+- Compatibility: deterministic migration of the four-channel v0.4.0 persisted
+  payload, a stateless deprecated temperature projection, and an empty public
+  OPC UA contract delta.
+- Verification: mixed 1/4/16-channel, capacity, type/driver, timestamp,
+  concurrency, lifecycle, rollback, migration and public-contract gates.
 - Release plan: `docs/releases/v0.4.1.md`.
 
 ## v0.4.0

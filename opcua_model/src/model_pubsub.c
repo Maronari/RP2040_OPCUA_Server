@@ -387,7 +387,7 @@ UA_StatusCode model_pubsub_add_telemetry_writer_for_channel(UA_Server *server,
         return status;
     }
 
-    if (channel_index < CHANNEL_MANAGER_MAX_CHANNELS)
+    if (channel_index < PLATFORM_CHANNEL_LIMIT)
     {
         g_model_pubsub.telemetry_writer_group_ids[channel_index] = writer_group_id;
         g_model_pubsub.telemetry_writer_group_count++;
@@ -529,11 +529,12 @@ UA_StatusCode model_configure_pubsub_publishers(UA_Server *server, UA_ServerConf
         return status;
     }
 
-    for (size_t channel_index = 0u; channel_index < channel_manager_count(); ++channel_index)
+    for (size_t channel_index = 0u; channel_index < PLATFORM_CHANNEL_LIMIT; ++channel_index)
     {
-        telemetry_channel_t *channel = channel_manager_get_by_index(channel_index);
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
 
-        if (channel == NULL)
+        if (!channel_manager_copy_snapshot_by_index(channel_index, &snapshot))
         {
             continue;
         }

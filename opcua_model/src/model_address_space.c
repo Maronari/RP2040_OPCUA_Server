@@ -1447,14 +1447,18 @@ model_node_context_t *model_prepare_channel_context(size_t channel_index,
 {
     model_node_context_t *context = NULL;
 
-    if (channel_index >= CHANNEL_MANAGER_MAX_CHANNELS || field_index >= MODEL_CHANNEL_FIELD_CONTEXT_COUNT)
+    if (channel_index >= PLATFORM_CHANNEL_LIMIT || field_index >= MODEL_CHANNEL_FIELD_CONTEXT_COUNT ||
+        channel_id == NULL || channel_id[0] == '\0')
     {
         return NULL;
     }
 
     context = &g_channel_node_contexts[channel_index][field_index];
     context->kind = kind;
-    context->channel_id = channel_id;
+    model_copy_string_safe(context->channel_id_storage,
+                           sizeof(context->channel_id_storage),
+                           channel_id);
+    context->channel_id = context->channel_id_storage;
     context->task_name = NULL;
     return context;
 }
@@ -2220,11 +2224,12 @@ UA_StatusCode model_build_address_space(UA_Server *server)
         return status;
     }
 
-    for (size_t channel_index = 0u; channel_index < channel_manager_count(); ++channel_index)
+    for (size_t channel_index = 0u; channel_index < PLATFORM_CHANNEL_LIMIT; ++channel_index)
     {
-        telemetry_channel_t *channel = channel_manager_get_by_index(channel_index);
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
 
-        if (channel == NULL)
+        if (!channel_manager_copy_snapshot_by_index(channel_index, &snapshot))
         {
             continue;
         }
@@ -3246,4 +3251,3 @@ UA_StatusCode model_build_address_space(UA_Server *server)
 
     return UA_STATUSCODE_GOOD;
 }
-

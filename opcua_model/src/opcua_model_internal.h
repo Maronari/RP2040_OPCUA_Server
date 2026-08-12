@@ -147,6 +147,9 @@ typedef struct
 {
     model_node_kind_t kind;
     const char *channel_id;
+    /* Node contexts outlive registry snapshots. Keep their channel key in
+     * model-owned bounded storage instead of retaining a snapshot pointer. */
+    char channel_id_storage[TELEMETRY_CHANNEL_ID_MAX_LEN];
     const char *task_name;
 } model_node_context_t;
 
@@ -234,7 +237,7 @@ typedef struct
     char topic_root[CONFIG_SERVICE_TEXT_MAX_LEN];
     char client_id[64];
     UA_NodeId connection_id;
-    UA_NodeId telemetry_writer_group_ids[CHANNEL_MANAGER_MAX_CHANNELS];
+    UA_NodeId telemetry_writer_group_ids[PLATFORM_CHANNEL_LIMIT];
     size_t telemetry_writer_group_count;
     UA_NodeId event_writer_group_id;
 } model_pubsub_runtime_t;
@@ -689,7 +692,7 @@ typedef struct opcua_model_context {
 #endif
     UA_Logger ua_logger; model_node_context_t fixed_node_contexts[FIXED_CTX_COUNT];
     model_node_context_t task_node_contexts[3];
-    model_node_context_t channel_node_contexts[CHANNEL_MANAGER_MAX_CHANNELS][MODEL_CHANNEL_FIELD_CONTEXT_COUNT];
+    model_node_context_t channel_node_contexts[PLATFORM_CHANNEL_LIMIT][MODEL_CHANNEL_FIELD_CONTEXT_COUNT];
 } opcua_model_context_t;
 opcua_model_context_t *model_context_get(void);
 void model_context_set_server_handles(UA_Server *server, UA_ServerConfig *config);
@@ -800,8 +803,9 @@ UA_Boolean model_get_user_executable_on_object_wrapper(UA_Server *server, UA_Acc
 UA_Byte model_get_user_access_level_wrapper(UA_Server *server, UA_AccessControl *ac, const UA_NodeId *session_id, void *session_context, const UA_NodeId *node_id, void *node_context);
 UA_Boolean model_allow_browse_node_wrapper(UA_Server *server, UA_AccessControl *ac, const UA_NodeId *session_id, void *session_context, const UA_NodeId *node_id, void *node_context);
 UA_StatusCode model_quality_to_status(service_quality_t quality);
-bool model_copy_channel_by_id(const char *channel_id, telemetry_channel_t *out_channel);
-bool model_copy_channel_from_context(const model_node_context_t *context, telemetry_channel_t *out_channel);
+bool model_copy_channel_by_id(const char *channel_id, telemetry_channel_snapshot_t *out_snapshot);
+bool model_copy_channel_from_context(const model_node_context_t *context,
+                                     telemetry_channel_snapshot_t *out_snapshot);
 bool model_copy_channel_settings(const char *channel_id, telemetry_channel_settings_t *out_settings);
 UA_NodeId model_channel_value_type_to_data_type(telemetry_channel_value_type_t value_type);
 bool model_build_channel_node_id(const telemetry_channel_t *channel, const char *field_name, char *buffer, size_t buffer_size);
@@ -921,6 +925,11 @@ void model_process_trust_expiry_runtime(UA_Server *server, model_event_runtime_s
 void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t *state);
 void model_apply_now_source_timestamp(UA_Boolean include_source_timestamp, UA_DataValue *value);
 void model_apply_epoch_source_timestamp(UA_Boolean include_source_timestamp, uint32_t epoch_seconds, UA_DataValue *value);
+bool model_source_timestamp_to_datetime(uint64_t source_timestamp_unix_us,
+                                        UA_DateTime *out_datetime);
+void model_apply_channel_source_timestamp(UA_Boolean include_source_timestamp,
+                                          uint64_t source_timestamp_unix_us,
+                                          UA_DataValue *value);
 UA_StatusCode model_set_uint32_value(UA_DataValue *value, UA_UInt32 data, UA_StatusCode status);
 UA_StatusCode model_set_int32_value(UA_DataValue *value, UA_Int32 data, UA_StatusCode status);
 UA_StatusCode model_set_float_value(UA_DataValue *value, UA_Float data, UA_StatusCode status);

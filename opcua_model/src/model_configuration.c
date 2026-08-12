@@ -961,7 +961,7 @@ UA_StatusCode model_get_channel_config(UA_Server *server,
     }
 
     slot_index = *(const UA_UInt32 *)input[0].data;
-    if (slot_index >= CONFIG_SERVICE_MAX_CHANNELS ||
+    if (slot_index >= PLATFORM_CHANNEL_LIMIT ||
         !config_service_stage_copy_channel((size_t)slot_index, &channel))
     {
         model_set_string_method_output(output_size, output, "{}");
@@ -1044,4 +1044,3 @@ UA_StatusCode model_get_config_state(UA_Server *server,
     model_set_string_method_output(output_size, output, payload);
     return UA_STATUSCODE_GOOD;
 }
-

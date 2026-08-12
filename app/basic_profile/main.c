@@ -445,7 +445,12 @@ static void app_init_task(void *argument)
         app_fault_loop(true, 250u);
     }
 
-    config_service_init(&g_basic_profile);
+    if (!config_service_init(&g_basic_profile))
+    {
+        printf("[APP]\t\tConfiguration state allocation failed\n");
+        fflush(stdout);
+        app_fault_loop(true, 250u);
+    }
     config = config_service_get();
 
     diag_service_init();
@@ -455,7 +460,12 @@ static void app_init_task(void *argument)
     security_identity_import_service_init();
     security_trust_import_service_init();
 #endif
-    channel_manager_init();
+    if (!channel_manager_init())
+    {
+        printf("[APP]\t\tChannel registry PSRAM allocation failed\n");
+        fflush(stdout);
+        app_fault_loop(true, 250u);
+    }
     diag_service_register_task("InitTask", xTaskGetCurrentTaskHandle());
     print_heap_usage("After services init");
 
@@ -471,7 +481,9 @@ static void app_init_task(void *argument)
 
     if (!history_service_init())
     {
-        printf("[APP]\t\tHistory service init failed\n");
+        printf("[APP]\t\tHistory service PSRAM allocation failed\n");
+        fflush(stdout);
+        app_fault_loop(true, 250u);
     }
 
 #ifndef W5X00_DIAGNOSTIC_NO_OPCUA

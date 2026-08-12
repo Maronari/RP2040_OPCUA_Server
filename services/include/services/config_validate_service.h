@@ -28,6 +28,8 @@ typedef enum
     CONFIG_VALIDATE_RESULT_INVALID_JSON = 14,
     CONFIG_VALIDATE_RESULT_MISSING_FIELD = 15,
     CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH = 16,
+    CONFIG_VALIDATE_RESULT_RESOURCE_CONFLICT = 17,
+    CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE = 18,
 } config_validate_service_result_t;
 
 typedef struct
@@ -42,6 +44,10 @@ typedef struct
 
 config_validate_service_result_t config_validate_service_validate_imported(config_validate_service_report_t *out_report,
                                                                           device_profile_config_t *out_candidate);
+config_validate_service_result_t config_validate_service_validate_candidate(
+    const device_profile_config_t *candidate,
+    char *message,
+    size_t message_size);
 bool config_validate_service_write_report_json(char *buffer,
                                                size_t buffer_size,
                                                const config_validate_service_report_t *report);

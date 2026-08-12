@@ -18,7 +18,9 @@ bool temp_sensor_driver_read_celsius(float *out_temperature_c)
         return false;
     }
 
-    adc_select_input(4);
+    /* The temperature mux is input 4 on RP2040/RP2350A and input 8 on
+     * RP2350B. Keep package selection owned by the Pico SDK. */
+    adc_select_input(ADC_TEMPERATURE_CHANNEL_NUM);
     uint16_t raw = adc_read();
     const float conversion_factor = 3.3f / 4095.0f;
     const float voltage = raw * conversion_factor;

@@ -12,8 +12,7 @@ import subprocess
 import sys
 
 
-EXPECTED_V034_COMMIT = "3ff4689e403fc806122cbafb509cc14cc4487bfb"
-BASELINE_MODEL_SOURCE = "opcua_model/src/opcua_model.c"
+EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
 MODEL_SOURCE_SET = (
@@ -34,25 +33,17 @@ MODEL_SOURCE_SET = (
     "opcua_model/src/model_address_space.c",
     "opcua_model/src/model_core_lifecycle.c",
 )
-BYTE_STABLE_CONTRACT_PATHS = (
+BYTE_STABLE_PUBLIC_CONTRACT_PATHS = (
     "opcua_model/include/opcua_model/opcua_model.h",
-    "app/basic_profile/main.c",
-    "app/basic_profile/generate_config_export.cmake",
-    "services/include/services/config_service.h",
-    "services/include/services/config_wire.h",
     "services/include/services/config_export_service.h",
     "services/include/services/config_import_service.h",
     "services/include/services/config_reset_service.h",
     "services/include/services/config_store_service.h",
-    "services/include/services/config_validate_service.h",
     "services/include/services/security_service.h",
     "services/include/services/maintenance_service.h",
-    "services/src/config_service.c",
-    "services/src/config_export_service.c",
     "services/src/config_import_service.c",
     "services/src/config_reset_service.c",
     "services/src/config_store_service.c",
-    "services/src/config_validate_service.c",
     "services/src/security_service.c",
     "services/src/maintenance_service.c",
     "port/open62541/nodesetinjector.c",
@@ -61,11 +52,23 @@ BYTE_STABLE_CONTRACT_PATHS = (
     "static/tools/export_nodeset.bat",
     "static/tools/verify_maintenance_workflow.py",
 )
-# These tools retain their CLI and server-facing contract but are intentionally
-# hardened in v0.4.0 after physical verification exposed stale certificate,
-# persisted-state, and unbounded live-export assumptions. Record their exact
-# drift as release evidence instead of silently treating them as byte-stable.
-EXPLAINED_RUNTIME_TOOL_DRIFT_PATHS = (
+# v0.4.1 deliberately changes bounded channel/configuration runtime internals.
+# Record those and the existing runtime-facing tools as evidence while the
+# source-derived OPC UA inventory and public headers remain fail-closed.
+REVIEWED_INTERNAL_DRIFT_PATHS = (
+    "services/include/services/channel_config.h",
+    "services/include/services/channel_manager.h",
+    "services/include/services/config_service.h",
+    "services/include/services/config_validate_service.h",
+    "services/include/services/driver_catalog.h",
+    "services/include/services/sensor_manager.h",
+    "services/include/services/telemetry_channel.h",
+    "services/include/services/telemetry_driver.h",
+    "services/src/channel_manager.c",
+    "services/src/config_export_service.c",
+    "services/src/config_service.c",
+    "services/src/config_validate_service.c",
+    "services/src/driver_catalog.c",
     "static/tools/export_nodeset.py",
     "static/tools/verify_amb_model.py",
 )
@@ -89,11 +92,16 @@ PUBLIC_ATTRIBUTE_FIELDS = (
 PUBLIC_REGISTRATION_PREFIX = re.compile(
     r"\bUA_Server_(?:add|set|write|create|delete)[A-Za-z0-9_]*\s*\("
 )
+NONCONTRACT_DIAGNOSTIC_FUNCTIONS = (
+    "model_ua_logger_log",
+    "model_monitored_item_register_callback",
+    "model_server_notification_callback",
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", default="v0.3.4", help="Immutable Git baseline")
+    parser.add_argument("--baseline", default="v0.4.0", help="Immutable Git baseline")
     parser.add_argument(
         "--source-dir",
         type=pathlib.Path,
@@ -150,6 +158,16 @@ def aggregate_current_source(source_dir: pathlib.Path) -> bytes:
     return b"".join(chunks)
 
 
+def aggregate_baseline_source(source_dir: pathlib.Path, baseline: str) -> bytes:
+    """Read the immutable model in the same reviewed registration order."""
+    chunks: list[bytes] = []
+    for path in MODEL_SOURCE_SET:
+        data = normalized_source(baseline_bytes(source_dir, baseline, path))
+        data = data.replace(b'#include "opcua_model_internal.h"\n', b'')
+        chunks.append(data)
+    return b"".join(chunks)
+
+
 def assert_closed_registration_coverage(source_dir: pathlib.Path) -> None:
     """Reject UA registration code outside the reviewed module manifest."""
     allowed = set(MODEL_SOURCE_SET)
@@ -168,6 +186,37 @@ def assert_closed_registration_coverage(source_dir: pathlib.Path) -> None:
 def strip_comments(text: str) -> str:
     pattern = re.compile(r'("(?:\\.|[^"\\])*")|//[^\n]*|/\*.*?\*/', re.S)
     return pattern.sub(lambda match: match.group(1) or " ", text)
+
+
+def strip_noncontract_diagnostic_bodies(text: str) -> str:
+    """Remove internal logging callbacks from the public-node inventory.
+
+    These callbacks cannot register nodes or alter the wire contract. Keeping
+    their printf strings in the lexical inventory made safe logging changes
+    look like public NodeId/BrowseName drift.
+    """
+    for name in NONCONTRACT_DIAGNOSTIC_FUNCTIONS:
+        search_from = 0
+        pattern = re.compile(r"\b" + re.escape(name) + r"\s*\([^;{}]*\)\s*\{")
+        while match := pattern.search(text, search_from):
+            opening = text.find("{", match.start())
+            depth = 0
+            closing = None
+            for index in range(opening, len(text)):
+                if text[index] == "{":
+                    depth += 1
+                elif text[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        closing = index + 1
+                        break
+            if closing is None:
+                raise SystemExit(
+                    f"opcua-contract: FAIL: unterminated diagnostic function {name}"
+                )
+            text = text[:opening + 1] + " " + text[closing - 1:]
+            search_from = opening + 2
+    return text
 
 
 def balanced_calls(text: str) -> list[str]:
@@ -202,6 +251,7 @@ def balanced_calls(text: str) -> list[str]:
 
 def public_inventory(source: bytes) -> dict[str, object]:
     text = strip_comments(source.decode("utf-8"))
+    text = strip_noncontract_diagnostic_bodies(text)
     # Module order is intentionally no longer the legacy source-file order.
     # Literal multiplicity remains a fail-closed compatibility surface, while
     # lexical placement is not a UA contract.
@@ -224,33 +274,31 @@ def main() -> int:
     args = parse_args()
     source_dir = args.source_dir.resolve()
     baseline_commit = git(source_dir, "rev-parse", f"{args.baseline}^{{commit}}").decode().strip()
-    if args.baseline == "v0.3.4" and baseline_commit != EXPECTED_V034_COMMIT:
+    if args.baseline == "v0.4.0" and baseline_commit != EXPECTED_V040_COMMIT:
         raise SystemExit(
-            f"opcua-contract: FAIL: v0.3.4 resolves to {baseline_commit}, "
-            f"expected {EXPECTED_V034_COMMIT}"
+            f"opcua-contract: FAIL: v0.4.0 resolves to {baseline_commit}, "
+            f"expected {EXPECTED_V040_COMMIT}"
         )
 
     stable_files: list[dict[str, str]] = []
-    for relative in BYTE_STABLE_CONTRACT_PATHS:
+    for relative in BYTE_STABLE_PUBLIC_CONTRACT_PATHS:
         baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
         current_data = normalized_source((source_dir / relative).read_bytes())
         if current_data != baseline_data:
             raise SystemExit(f"opcua-contract: FAIL: contract file drift: {relative}")
         stable_files.append({"path": relative, "sha256": sha256(current_data)})
 
-    explained_tool_drift: list[dict[str, str]] = []
-    for relative in EXPLAINED_RUNTIME_TOOL_DRIFT_PATHS:
+    reviewed_internal_drift: list[dict[str, str]] = []
+    for relative in REVIEWED_INTERNAL_DRIFT_PATHS:
         baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
         current_data = normalized_source((source_dir / relative).read_bytes())
-        explained_tool_drift.append({
+        reviewed_internal_drift.append({
             "path": relative,
             "baseline_sha256": sha256(baseline_data),
             "current_sha256": sha256(current_data),
         })
 
-    baseline_inventory = public_inventory(
-        normalized_source(baseline_bytes(source_dir, args.baseline, BASELINE_MODEL_SOURCE))
-    )
+    baseline_inventory = public_inventory(aggregate_baseline_source(source_dir, args.baseline))
     assert_closed_registration_coverage(source_dir)
     current_inventory = public_inventory(aggregate_current_source(source_dir))
     if current_inventory != baseline_inventory:
@@ -259,7 +307,7 @@ def main() -> int:
     evidence = {
         "baseline": args.baseline,
         "baseline_commit": baseline_commit,
-        "baseline_model_source": BASELINE_MODEL_SOURCE,
+        "baseline_model_source_set": MODEL_SOURCE_SET,
         "model_source_set": MODEL_SOURCE_SET,
         "public_inventory_sha256": current_inventory["sha256"],
         "string_literal_count": len(current_inventory["string_literals"]),
@@ -267,8 +315,8 @@ def main() -> int:
         "public_attribute_assignment_count": len(
             current_inventory["public_attribute_assignments"]
         ),
-        "byte_stable_contract_files": stable_files,
-        "explained_runtime_tool_drift": explained_tool_drift,
+        "byte_stable_public_contract_files": stable_files,
+        "reviewed_internal_drift": reviewed_internal_drift,
     }
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -1,3 +1,18 @@
+option(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER "Build the native internal-temperature channel driver" ON)
+option(FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER "Build the native ADC-voltage channel driver" ON)
+option(FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER "Build the native GPIO-input channel driver" ON)
+
+set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
+if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/internal_temperature_channel_driver.c)
+endif()
+if(FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/adc_voltage_channel_driver.c)
+endif()
+if(FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/gpio_input_channel_driver.c)
+endif()
+
 add_library(FIRMWARE_DRIVERS STATIC
         src/flash_storage_driver.c
         src/maintenance_journal_backend.c
@@ -8,6 +23,7 @@ add_library(FIRMWARE_DRIVERS STATIC
         src/temp_sensor_driver.c
         src/w5x00_ethernet_driver.c
         src/watchdog_driver.c
+        ${FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES}
         )
 
 add_library(FLASH_OPERATION_COORDINATOR STATIC
@@ -36,6 +52,9 @@ ota_layout_apply_to_target(FIRMWARE_DRIVERS)
 target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         PICO_FLASH_ASSERT_ON_UNSAFE=0
         PICO_FLASH_ASSUME_CORE1_SAFE=1
+        FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER}>
+        FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER}>
+        FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC

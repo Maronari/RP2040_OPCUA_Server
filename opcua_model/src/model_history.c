@@ -128,21 +128,24 @@ UA_StatusCode model_set_channel_runtime_value(UA_DataValue *value,
 }
 
 #ifdef UA_ENABLE_HISTORIZING
-const char *model_find_history_channel_id(const UA_NodeId *node_id)
+bool model_find_history_channel_id(const UA_NodeId *node_id,
+                                   char *out_channel_id,
+                                   size_t out_channel_id_size)
 {
     char channel_value_node_id[128];
 
-    if (node_id == NULL)
+    if (node_id == NULL || out_channel_id == NULL || out_channel_id_size == 0u)
     {
-        return NULL;
+        return false;
     }
 
-    for (size_t channel_index = 0u; channel_index < channel_manager_count(); ++channel_index)
+    for (size_t channel_index = 0u; channel_index < PLATFORM_CHANNEL_LIMIT; ++channel_index)
     {
-        telemetry_channel_t *channel = channel_manager_get_by_index(channel_index);
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
         UA_NodeId channel_value_node;
 
-        if (channel == NULL ||
+        if (!channel_manager_copy_snapshot_by_index(channel_index, &snapshot) ||
             (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) == 0u ||
             !model_build_channel_node_id(channel, "Value", channel_value_node_id, sizeof(channel_value_node_id)))
         {
@@ -152,11 +155,12 @@ const char *model_find_history_channel_id(const UA_NodeId *node_id)
         channel_value_node = UA_NODEID_STRING(1, channel_value_node_id);
         if (UA_NodeId_equal(node_id, &channel_value_node))
         {
-            return channel->metadata.id;
+            model_copy_string_safe(out_channel_id, out_channel_id_size, channel->metadata.id);
+            return out_channel_id[0] != '\0';
         }
     }
 
-    return NULL;
+    return false;
 }
 
 uint32_t model_datetime_to_epoch_seconds(UA_DateTime value)
@@ -173,13 +177,15 @@ void model_fill_history_data_value(const history_service_channel_sample_t *sampl
                                           UA_TimestampsToReturn timestamps_to_return,
                                           UA_DataValue *value)
 {
-    const UA_DateTime timestamp = UA_DateTime_fromUnixTime((UA_Int64)sample->source_timestamp_epoch_s);
+    UA_DateTime timestamp = 0;
 
     UA_DataValue_init(value);
     UA_Variant_setScalarCopy(&value->value, &sample->value, &UA_TYPES[UA_TYPES_FLOAT]);
     value->hasValue = true;
     value->hasStatus = true;
     value->status = model_quality_to_status(sample->quality);
+
+    (void)model_source_timestamp_to_datetime(sample->source_timestamp_unix_us, &timestamp);
 
     if (timestamps_to_return == UA_TIMESTAMPSTORETURN_SOURCE ||
         timestamps_to_return == UA_TIMESTAMPSTORETURN_BOTH)
@@ -259,9 +265,11 @@ void model_history_read_raw(UA_Server *server,
             continue;
         }
 
-        const char *history_channel_id = model_find_history_channel_id(&nodes_to_read[index].nodeId);
+        char history_channel_id[TELEMETRY_CHANNEL_ID_MAX_LEN] = {0};
 
-        if (history_channel_id == NULL)
+        if (!model_find_history_channel_id(&nodes_to_read[index].nodeId,
+                                           history_channel_id,
+                                           sizeof(history_channel_id)))
         {
             response->results[index].statusCode = UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED;
             continue;
@@ -405,23 +413,27 @@ UA_StatusCode model_read_value(UA_Server *server,
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_VALUE:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
 
-        if (!model_copy_channel_from_context(context, &channel))
+        if (!model_copy_channel_from_context(context, &snapshot))
         {
             value->hasStatus = true;
             value->status = UA_STATUSCODE_BADNODEIDUNKNOWN;
             return UA_STATUSCODE_GOOD;
         }
 
-        model_apply_epoch_source_timestamp(include_source_timestamp, channel.runtime.source_timestamp_epoch_s, value);
-        return model_set_channel_runtime_value(value, &channel, model_quality_to_status(channel.runtime.quality));
+        model_apply_channel_source_timestamp(include_source_timestamp,
+                                             channel->runtime.source_timestamp_unix_us,
+                                             value);
+        return model_set_channel_runtime_value(value, channel, model_quality_to_status(channel->runtime.quality));
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_STATUS:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
 
-        if (!model_copy_channel_from_context(context, &channel))
+        if (!model_copy_channel_from_context(context, &snapshot))
         {
             value->hasStatus = true;
             value->status = UA_STATUSCODE_BADNODEIDUNKNOWN;
@@ -430,60 +442,63 @@ UA_StatusCode model_read_value(UA_Server *server,
 
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_string_value(value,
-                                      model_quality_to_string(channel.runtime.quality),
-                                      model_quality_to_status(channel.runtime.quality));
+                                      model_quality_to_string(channel->runtime.quality),
+                                      model_quality_to_status(channel->runtime.quality));
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_SOURCE_TIMESTAMP:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
         UA_DateTime timestamp = 0;
 
-        if (!model_copy_channel_from_context(context, &channel))
+        if (!model_copy_channel_from_context(context, &snapshot))
         {
             value->hasStatus = true;
             value->status = UA_STATUSCODE_BADNODEIDUNKNOWN;
             return UA_STATUSCODE_GOOD;
         }
 
-        model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (channel.runtime.source_timestamp_epoch_s > 0u)
-        {
-            timestamp = UA_DateTime_fromUnixTime((UA_Int64)channel.runtime.source_timestamp_epoch_s);
-        }
-        return model_set_datetime_value(value, timestamp, model_quality_to_status(channel.runtime.quality));
+        (void)model_source_timestamp_to_datetime(channel->runtime.source_timestamp_unix_us, &timestamp);
+        model_apply_channel_source_timestamp(include_source_timestamp,
+                                             channel->runtime.source_timestamp_unix_us,
+                                             value);
+        return model_set_datetime_value(value, timestamp, model_quality_to_status(channel->runtime.quality));
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_UNITS:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
 
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_from_context(context, &channel) &&
-            channel.metadata.unit != NULL &&
-            channel.metadata.unit[0] != '\0')
+        if (model_copy_channel_from_context(context, &snapshot) &&
+            channel->metadata.unit != NULL &&
+            channel->metadata.unit[0] != '\0')
         {
-            return model_set_string_value(value, channel.metadata.unit, UA_STATUSCODE_GOOD);
+            return model_set_string_value(value, channel->metadata.unit, UA_STATUSCODE_GOOD);
         }
         return model_set_string_value(value, "", UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
 
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_from_context(context, &channel) && channel.settings.sample_period_ms > 0u)
+        if (model_copy_channel_from_context(context, &snapshot) && channel->settings.sample_period_ms > 0u)
         {
-            return model_set_uint32_value(value, channel.settings.sample_period_ms, UA_STATUSCODE_GOOD);
+            return model_set_uint32_value(value, channel->settings.sample_period_ms, UA_STATUSCODE_GOOD);
         }
         return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
 
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_from_context(context, &channel))
+        if (model_copy_channel_from_context(context, &snapshot))
         {
-            return model_set_uint32_value(value, channel.settings.history_interval_ms, UA_STATUSCODE_GOOD);
+            return model_set_uint32_value(value, channel->settings.history_interval_ms, UA_STATUSCODE_GOOD);
         }
         return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
     }
@@ -846,61 +861,61 @@ UA_StatusCode model_read_value(UA_Server *server,
     }
     case MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &snapshot))
         {
-            return model_set_uint32_value(value, channel.settings.sample_period_ms, UA_STATUSCODE_GOOD);
+            return model_set_uint32_value(value, snapshot.channel.settings.sample_period_ms, UA_STATUSCODE_GOOD);
         }
         return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &snapshot))
         {
-            return model_set_uint32_value(value, channel.settings.publish_period_ms, UA_STATUSCODE_GOOD);
+            return model_set_uint32_value(value, snapshot.channel.settings.publish_period_ms, UA_STATUSCODE_GOOD);
         }
         return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_CONFIG_TEMP_OFFSET:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &snapshot))
         {
-            return model_set_float_value(value, (UA_Float)channel.settings.offset, UA_STATUSCODE_GOOD);
+            return model_set_float_value(value, (UA_Float)snapshot.channel.settings.offset, UA_STATUSCODE_GOOD);
         }
         return model_set_float_value(value, 0.0f, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_CONFIG_TEMP_SCALE:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &snapshot))
         {
-            return model_set_float_value(value, (UA_Float)channel.settings.scale, UA_STATUSCODE_GOOD);
+            return model_set_float_value(value, (UA_Float)snapshot.channel.settings.scale, UA_STATUSCODE_GOOD);
         }
         return model_set_float_value(value, 1.0f, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_CONFIG_HIGH_ALARM:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &snapshot))
         {
-            return model_set_float_value(value, (UA_Float)channel.settings.warning_threshold, UA_STATUSCODE_GOOD);
+            return model_set_float_value(value, (UA_Float)snapshot.channel.settings.warning_threshold, UA_STATUSCODE_GOOD);
         }
         return model_set_float_value(value, 0.0f, UA_STATUSCODE_GOOD);
     }
     case MODEL_NODE_CONFIG_HIGH_HIGH_ALARM:
     {
-        telemetry_channel_t channel = {0};
+        telemetry_channel_snapshot_t snapshot = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
-        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
+        if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &snapshot))
         {
-            return model_set_float_value(value, (UA_Float)channel.settings.critical_threshold, UA_STATUSCODE_GOOD);
+            return model_set_float_value(value, (UA_Float)snapshot.channel.settings.critical_threshold, UA_STATUSCODE_GOOD);
         }
         return model_set_float_value(value, 0.0f, UA_STATUSCODE_GOOD);
     }
@@ -931,4 +946,3 @@ UA_StatusCode model_read_value(UA_Server *server,
         return UA_STATUSCODE_GOOD;
     }
 }
-

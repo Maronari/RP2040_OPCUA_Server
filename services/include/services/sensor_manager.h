@@ -11,7 +11,10 @@ typedef struct
     bool enabled;
     float temperature_c;
     service_quality_t quality;
+    /* Deprecated compatibility projection of source_timestamp_unix_us.
+     * Zero means unknown in this legacy field; use microseconds for new code. */
     uint32_t source_timestamp_epoch_s;
+    uint64_t source_timestamp_unix_us;
     uint32_t sample_count;
     uint32_t error_count;
     uint32_t last_update_ms;

@@ -8,6 +8,14 @@
 #include "services/service_types.h"
 
 #define TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN 64u
+/* Source time is UTC Unix time in microseconds.  Zero is a valid Unix epoch
+ * sample; UINT64_MAX represents an unavailable/invalid source clock. */
+#define TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID UINT64_MAX
+
+#define TELEMETRY_CHANNEL_ID_MAX_LEN 32u
+#define TELEMETRY_CHANNEL_NAME_MAX_LEN 32u
+#define TELEMETRY_CHANNEL_DESCRIPTION_MAX_LEN 64u
+#define TELEMETRY_CHANNEL_UNIT_MAX_LEN 16u
 
 typedef enum
 {
@@ -74,7 +82,7 @@ typedef struct
 {
     telemetry_channel_value_t value;
     service_quality_t quality;
-    uint32_t source_timestamp_epoch_s;
+    uint64_t source_timestamp_unix_us;
     uint32_t last_update_ms;
     uint32_t sample_count;
     uint32_t error_count;
@@ -105,5 +113,21 @@ typedef struct telemetry_channel
     void *driver_context;
     telemetry_channel_runtime_t runtime;
 } telemetry_channel_t;
+
+/* A caller-owned immutable copy.  Metadata pointers in channel always point
+ * to the arrays embedded in this object, never to registry storage.  This is
+ * self-referential: use telemetry_channel_snapshot_clone() rather than C
+ * assignment when duplicating a snapshot. */
+typedef struct
+{
+    telemetry_channel_t channel;
+    char id[TELEMETRY_CHANNEL_ID_MAX_LEN];
+    char name[TELEMETRY_CHANNEL_NAME_MAX_LEN];
+    char description[TELEMETRY_CHANNEL_DESCRIPTION_MAX_LEN];
+    char unit[TELEMETRY_CHANNEL_UNIT_MAX_LEN];
+} telemetry_channel_snapshot_t;
+
+void telemetry_channel_snapshot_clone(telemetry_channel_snapshot_t *destination,
+                                      const telemetry_channel_snapshot_t *source);
 
 #endif

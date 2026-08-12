@@ -768,7 +768,7 @@ UA_StatusCode model_clear_channel_config(UA_Server *server,
     }
 
     slot_index = *(const UA_UInt32 *)input[0].data;
-    if (slot_index >= CONFIG_SERVICE_MAX_CHANNELS)
+    if (slot_index >= PLATFORM_CHANNEL_LIMIT)
     {
         model_set_boolean_method_output(output_size, output, false);
         return UA_STATUSCODE_BADOUTOFRANGE;
@@ -838,7 +838,7 @@ UA_StatusCode model_set_channel_config(UA_Server *server,
     source_index = *(const UA_UInt32 *)input[4].data;
     source_flags = *(const UA_UInt32 *)input[5].data;
 
-    if (slot_index >= CONFIG_SERVICE_MAX_CHANNELS ||
+    if (slot_index >= PLATFORM_CHANNEL_LIMIT ||
         driver_id > UINT8_MAX ||
         source_index > UINT8_MAX ||
         source_flags > UINT8_MAX)
@@ -921,7 +921,7 @@ UA_StatusCode model_self_test(UA_Server *server,
     network_manager_status_t network_status = {0};
     time_service_status_t time_status = {0};
     sensor_manager_snapshot_t sensor_snapshot = {0};
-    telemetry_channel_t channel = {0};
+    telemetry_channel_snapshot_t channel = {0};
     const device_profile_config_t *config = NULL;
     (void)server;
     (void)session_id;
@@ -958,7 +958,7 @@ UA_StatusCode model_self_test(UA_Server *server,
     if (model_copy_channel_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel))
     {
         sensor_manager_get_snapshot(&sensor_snapshot);
-        if (!channel.settings.enabled || !sensor_snapshot.enabled)
+        if (!channel.channel.settings.enabled || !sensor_snapshot.enabled)
         {
             result = false;
         }
@@ -1317,4 +1317,3 @@ UA_StatusCode model_change_password(UA_Server *server,
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
-

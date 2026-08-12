@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "services/driver_catalog.h"
+#include "services/platform_limits.h"
 #include "services/service_types.h"
 #include "services/telemetry_channel.h"
 
@@ -18,7 +19,6 @@
 #define CONFIG_SERVICE_LOCATION_MAX_DEPTH 8u
 #define CONFIG_SERVICE_LOCATION_SEGMENT_MAX_LEN 48u
 #define CONFIG_SERVICE_ASSET_CLASS_MAX_LEN 32
-#define CONFIG_SERVICE_MAX_CHANNELS 4u
 #define CONFIG_SERVICE_CHANNEL_ID_MAX_LEN 32
 #define CONFIG_SERVICE_CHANNEL_NAME_MAX_LEN 32
 #define CONFIG_SERVICE_CHANNEL_DESCRIPTION_MAX_LEN 64
@@ -100,7 +100,7 @@ typedef struct
     uint8_t static_netmask[4];
     uint8_t static_gateway[4];
     uint8_t static_dns[4];
-    config_channel_definition_t channels[CONFIG_SERVICE_MAX_CHANNELS];
+    config_channel_definition_t channels[PLATFORM_CHANNEL_LIMIT];
     char product_instance_uri[CONFIG_SERVICE_URI_MAX_LEN];
     char asset_id[CONFIG_SERVICE_ASSET_ID_MAX_LEN];
     int64_t manufacture_date_utc;
@@ -118,7 +118,7 @@ typedef struct
  * values never override the currently running firmware identity.
  */
 
-void config_service_init(const device_profile_config_t *defaults);
+bool config_service_init(const device_profile_config_t *defaults);
 const device_profile_config_t *config_service_get(void);
 const device_profile_config_t *config_service_get_staged(void);
 bool config_service_reset_to_defaults(void);

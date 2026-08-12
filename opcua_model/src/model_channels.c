@@ -37,7 +37,7 @@ bool model_config_requires_server_reboot(const device_profile_config_t *lhs,
         return true;
     }
 
-    for (size_t index = 0u; index < CONFIG_SERVICE_MAX_CHANNELS; ++index)
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         if (model_channel_requires_server_rebuild(&lhs->channels[index], &rhs->channels[index]))
         {
@@ -521,7 +521,7 @@ void model_pubsub_reset_runtime(void)
 {
     UA_NodeId_clear(&g_model_pubsub.connection_id);
     UA_NodeId_clear(&g_model_pubsub.event_writer_group_id);
-    for (size_t index = 0u; index < CHANNEL_MANAGER_MAX_CHANNELS; ++index)
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         UA_NodeId_clear(&g_model_pubsub.telemetry_writer_group_ids[index]);
     }

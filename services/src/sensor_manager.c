@@ -5,421 +5,427 @@
 #include <FreeRTOS.h>
 #include <task.h>
 
+#include "drivers/native_channel_driver.h"
 #include "services/channel_config.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
 #include "services/device_channels.h"
 #include "services/driver_catalog.h"
 #include "services/history_service.h"
-#include "services/telemetry_driver.h"
 
-#define SENSOR_MANAGER_MAX_CHANNELS CONFIG_SERVICE_MAX_CHANNELS
+#include "psram_allocator.h"
+
 #define SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS 1000u
 
 typedef struct
 {
+    native_channel_source_t source;
     const driver_catalog_entry_t *driver_entry;
-    uint8_t source_index;
-    uint8_t source_flags;
 } sensor_manager_channel_context_t;
 
-static sensor_manager_snapshot_t g_snapshot;
-static bool g_initialized = false;
-static uint32_t g_applied_config_revision = 0u;
-static telemetry_channel_t g_channel_storage[SENSOR_MANAGER_MAX_CHANNELS];
-static channel_config_t g_runtime_channel_configs[SENSOR_MANAGER_MAX_CHANNELS];
-static sensor_manager_channel_context_t g_channel_contexts[SENSOR_MANAGER_MAX_CHANNELS];
-
-static bool sensor_manager_channel_init(telemetry_channel_t *channel);
-static bool sensor_manager_channel_poll(telemetry_channel_t *channel, uint32_t now_ms);
-static bool sensor_manager_channel_configure(telemetry_channel_t *channel, const void *config);
-static bool sensor_manager_channel_self_test(telemetry_channel_t *channel);
-static void sensor_manager_snapshot_from_channel(const telemetry_channel_t *channel,
-                                                 sensor_manager_snapshot_t *snapshot);
-static telemetry_channel_t *sensor_manager_get_primary_channel(void);
-static bool sensor_manager_activate_running_config(void);
-
-static const telemetry_driver_vtbl_t g_builtin_channel_driver = {
-    .init = sensor_manager_channel_init,
-    .poll = sensor_manager_channel_poll,
-    .configure = sensor_manager_channel_configure,
-    .self_test = sensor_manager_channel_self_test};
-
-static void sensor_manager_set_snapshot(const sensor_manager_snapshot_t *snapshot)
+typedef struct
 {
-    taskENTER_CRITICAL();
-    g_snapshot = *snapshot;
-    taskEXIT_CRITICAL();
+    channel_config_t configs[2u][PLATFORM_CHANNEL_LIMIT];
+    sensor_manager_channel_context_t contexts[2u][PLATFORM_CHANNEL_LIMIT];
+} sensor_manager_runtime_storage_t;
+
+static bool g_initialized;
+static uint32_t g_applied_config_revision;
+static size_t g_active_count;
+/* The active registry borrows only the active bank's driver contexts.  A
+ * candidate is built in the other bank, so a failed activation cannot alter
+ * active source bindings or metadata. */
+static sensor_manager_runtime_storage_t *g_runtime_storage;
+#define g_runtime_channel_configs (g_runtime_storage->configs)
+#define g_channel_contexts (g_runtime_storage->contexts)
+static uint8_t g_active_bank;
+
+static bool sensor_manager_text_is_bounded(const char *text, size_t capacity, bool required)
+{
+    return text != NULL && memchr(text, '\0', capacity) != NULL && (!required || text[0] != '\0');
 }
 
-static sensor_manager_channel_context_t *sensor_manager_channel_context(const telemetry_channel_t *channel)
+static bool sensor_manager_prepare_candidate(const device_profile_config_t *config,
+                                             uint8_t candidate_bank,
+                                             size_t *out_count)
 {
-    return channel != NULL ? (sensor_manager_channel_context_t *)channel->driver_context : NULL;
-}
+    driver_catalog_resource_claim_t claims[PLATFORM_CHANNEL_LIMIT * DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
+    size_t prepared = 0u;
+    size_t claim_count = 0u;
 
-static bool sensor_manager_should_sample(const telemetry_channel_t *channel, uint32_t now_ms)
-{
-    uint32_t period_ms = SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS;
-
-    if (channel == NULL)
+    if (config == NULL || out_count == NULL)
     {
         return false;
     }
-
-    period_ms = channel->settings.sample_period_ms > 0u ? channel->settings.sample_period_ms : SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS;
-    if (channel->runtime.last_update_ms == 0u)
+    memset(g_runtime_channel_configs[candidate_bank], 0, sizeof(g_runtime_channel_configs[candidate_bank]));
+    memset(g_channel_contexts[candidate_bank], 0, sizeof(g_channel_contexts[candidate_bank]));
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
-        return true;
-    }
+        const config_channel_definition_t *stored = &config->channels[index];
+        const driver_catalog_entry_t *entry;
+        channel_config_t *runtime;
+        driver_catalog_resource_claim_t channel_claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
+        size_t channel_claim_count = 0u;
 
-    return (uint32_t)(now_ms - channel->runtime.last_update_ms) >= period_ms;
-}
-
-static float sensor_manager_runtime_value_as_float(const telemetry_channel_t *channel)
-{
-    if (channel == NULL)
-    {
-        return 0.0f;
-    }
-
-    switch (channel->metadata.value_type)
-    {
-    case TELEMETRY_CHANNEL_VALUE_DOUBLE:
-        return (float)channel->runtime.value.f64;
-    case TELEMETRY_CHANNEL_VALUE_INT32:
-        return (float)channel->runtime.value.i32;
-    case TELEMETRY_CHANNEL_VALUE_UINT32:
-        return (float)channel->runtime.value.u32;
-    case TELEMETRY_CHANNEL_VALUE_BOOLEAN:
-        return channel->runtime.value.boolean ? 1.0f : 0.0f;
-    case TELEMETRY_CHANNEL_VALUE_FLOAT:
-    default:
-        return channel->runtime.value.f32;
-    }
-}
-
-static bool sensor_manager_channel_init(telemetry_channel_t *channel)
-{
-    sensor_manager_channel_context_t *context = sensor_manager_channel_context(channel);
-
-    if (channel == NULL || context == NULL || context->driver_entry == NULL)
-    {
-        return false;
-    }
-
-    if (!channel->settings.enabled)
-    {
-        channel->runtime.quality = SERVICE_QUALITY_BAD;
-        return true;
-    }
-
-    if (context->driver_entry->init == NULL)
-    {
-        return true;
-    }
-
-    return context->driver_entry->init(channel, context->source_index, context->source_flags);
-}
-
-static bool sensor_manager_channel_poll(telemetry_channel_t *channel, uint32_t now_ms)
-{
-    telemetry_channel_t updated_channel;
-    sensor_manager_channel_context_t *context = sensor_manager_channel_context(channel);
-
-    if (channel == NULL || context == NULL || context->driver_entry == NULL)
-    {
-        return false;
-    }
-
-    updated_channel = *channel;
-
-    if (!updated_channel.settings.enabled)
-    {
-        updated_channel.runtime.quality = SERVICE_QUALITY_BAD;
-        taskENTER_CRITICAL();
-        *channel = updated_channel;
-        taskEXIT_CRITICAL();
-        return true;
-    }
-
-    if (!sensor_manager_should_sample(&updated_channel, now_ms))
-    {
-        return true;
-    }
-
-    if (context->driver_entry->poll == NULL)
-    {
-        updated_channel.runtime.error_count++;
-        updated_channel.runtime.quality = SERVICE_QUALITY_BAD;
-    }
-    else
-    {
-        (void)context->driver_entry->poll(&updated_channel,
-                                          context->source_index,
-                                          context->source_flags,
-                                          now_ms);
-    }
-
-    taskENTER_CRITICAL();
-    *channel = updated_channel;
-    taskEXIT_CRITICAL();
-    return updated_channel.runtime.quality == SERVICE_QUALITY_GOOD;
-}
-
-static bool sensor_manager_channel_configure(telemetry_channel_t *channel, const void *config)
-{
-    (void)channel;
-    (void)config;
-    return true;
-}
-
-static bool sensor_manager_channel_self_test(telemetry_channel_t *channel)
-{
-    telemetry_channel_t copy = {0};
-
-    if (channel == NULL)
-    {
-        return false;
-    }
-
-    copy = *channel;
-    copy.runtime.last_update_ms = 0u;
-    return sensor_manager_channel_poll(&copy, (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
-}
-
-static telemetry_channel_t *sensor_manager_get_primary_channel(void)
-{
-    telemetry_channel_t *channel = channel_manager_find_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1);
-
-    if (channel != NULL)
-    {
-        return channel;
-    }
-
-    return channel_manager_count() > 0u ? channel_manager_get_by_index(0u) : NULL;
-}
-
-static void sensor_manager_snapshot_from_channel(const telemetry_channel_t *channel,
-                                                 sensor_manager_snapshot_t *snapshot)
-{
-    if (snapshot == NULL)
-    {
-        return;
-    }
-
-    memset(snapshot, 0, sizeof(*snapshot));
-    if (channel == NULL)
-    {
-        snapshot->quality = SERVICE_QUALITY_BAD;
-        return;
-    }
-
-    snapshot->enabled = channel->settings.enabled;
-    snapshot->quality = channel->runtime.quality;
-    snapshot->source_timestamp_epoch_s = channel->runtime.source_timestamp_epoch_s;
-    snapshot->sample_count = channel->runtime.sample_count;
-    snapshot->error_count = channel->runtime.error_count;
-    snapshot->last_update_ms = channel->runtime.last_update_ms;
-    snapshot->temperature_c = sensor_manager_runtime_value_as_float(channel);
-}
-
-static size_t sensor_manager_build_channels_from_config(const device_profile_config_t *config)
-{
-    size_t prepared_count = 0u;
-
-    if (config == NULL)
-    {
-        return 0u;
-    }
-
-    memset(g_runtime_channel_configs, 0, sizeof(g_runtime_channel_configs));
-    memset(g_channel_contexts, 0, sizeof(g_channel_contexts));
-    memset(g_channel_storage, 0, sizeof(g_channel_storage));
-
-    for (size_t index = 0u; index < CONFIG_SERVICE_MAX_CHANNELS && prepared_count < SENSOR_MANAGER_MAX_CHANNELS; ++index)
-    {
-        const config_channel_definition_t *stored_channel = &config->channels[index];
-        const driver_catalog_entry_t *driver_entry = driver_catalog_get_by_id(stored_channel->driver_id);
-        channel_config_t *runtime_channel = &g_runtime_channel_configs[prepared_count];
-        sensor_manager_channel_context_t *context = &g_channel_contexts[prepared_count];
-
-        if (stored_channel->in_use == 0u || driver_entry == NULL)
+        if (stored->in_use == 0u)
         {
             continue;
         }
-
-        context->driver_entry = driver_entry;
-        context->source_index = stored_channel->source_index;
-        context->source_flags = stored_channel->source_flags;
-
-        runtime_channel->metadata.id = stored_channel->id;
-        runtime_channel->metadata.name = stored_channel->name;
-        runtime_channel->metadata.description = stored_channel->description;
-        runtime_channel->metadata.kind = (telemetry_channel_kind_t)stored_channel->kind;
-        runtime_channel->metadata.value_type = (telemetry_channel_value_type_t)stored_channel->value_type;
-        runtime_channel->metadata.unit = stored_channel->unit;
-        runtime_channel->metadata.range.has_minimum = stored_channel->has_minimum != 0u;
-        runtime_channel->metadata.range.has_maximum = stored_channel->has_maximum != 0u;
-        runtime_channel->metadata.range.minimum = stored_channel->minimum;
-        runtime_channel->metadata.range.maximum = stored_channel->maximum;
-        runtime_channel->metadata.flags = stored_channel->flags;
-        runtime_channel->settings = stored_channel->settings;
-        runtime_channel->driver = &g_builtin_channel_driver;
-        runtime_channel->driver_context = context;
-        ++prepared_count;
+        if (prepared >= PLATFORM_CHANNEL_LIMIT ||
+            !sensor_manager_text_is_bounded(stored->id, CONFIG_SERVICE_CHANNEL_ID_MAX_LEN, true) ||
+            !sensor_manager_text_is_bounded(stored->name, CONFIG_SERVICE_CHANNEL_NAME_MAX_LEN, true) ||
+            !sensor_manager_text_is_bounded(stored->description, CONFIG_SERVICE_CHANNEL_DESCRIPTION_MAX_LEN, false) ||
+            !sensor_manager_text_is_bounded(stored->unit, CONFIG_SERVICE_CHANNEL_UNIT_MAX_LEN, false) ||
+            (entry = driver_catalog_get_by_id(stored->driver_id)) == NULL ||
+            entry->validate_source == NULL || !entry->validate_source(stored->source_index, stored->source_flags) ||
+            !driver_catalog_supports_value_type(entry, (telemetry_channel_value_type_t)stored->value_type))
+        {
+            return false;
+        }
+        for (size_t other = 0u; other < prepared; ++other)
+        {
+            if (strcmp(stored->id, g_runtime_channel_configs[candidate_bank][other].metadata.id) == 0)
+            {
+                return false;
+            }
+        }
+        if (!driver_catalog_get_resource_claims(stored->driver_id, stored->source_index,
+                                                stored->source_flags, channel_claims,
+                                                DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL,
+                                                &channel_claim_count) ||
+            channel_claim_count > DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL ||
+            claim_count > (sizeof(claims) / sizeof(claims[0])) - channel_claim_count)
+        {
+            return false;
+        }
+        memcpy(&claims[claim_count], channel_claims, channel_claim_count * sizeof(channel_claims[0]));
+        claim_count += channel_claim_count;
+        g_channel_contexts[candidate_bank][prepared].source.source_index = stored->source_index;
+        g_channel_contexts[candidate_bank][prepared].source.source_flags = stored->source_flags;
+        g_channel_contexts[candidate_bank][prepared].driver_entry = entry;
+        runtime = &g_runtime_channel_configs[candidate_bank][prepared];
+        runtime->metadata.id = stored->id;
+        runtime->metadata.name = stored->name;
+        runtime->metadata.description = stored->description;
+        runtime->metadata.kind = (telemetry_channel_kind_t)stored->kind;
+        runtime->metadata.value_type = (telemetry_channel_value_type_t)stored->value_type;
+        runtime->metadata.unit = stored->unit;
+        runtime->metadata.range.has_minimum = stored->has_minimum != 0u;
+        runtime->metadata.range.has_maximum = stored->has_maximum != 0u;
+        runtime->metadata.range.minimum = stored->minimum;
+        runtime->metadata.range.maximum = stored->maximum;
+        runtime->metadata.flags = stored->flags;
+        runtime->settings = stored->settings;
+        runtime->driver = entry->driver;
+        runtime->driver_context = &g_channel_contexts[candidate_bank][prepared].source;
+        ++prepared;
     }
-
-    return prepared_count;
+    *out_count = prepared;
+    return prepared != 0u && driver_catalog_claims_are_compatible(claims, claim_count);
 }
 
-static uint32_t sensor_manager_resolve_poll_period_ms(void)
+static void sensor_manager_stop_candidates(uint8_t bank, size_t count)
 {
-    uint32_t min_period_ms = 0u;
-
-    for (size_t index = 0u; index < channel_manager_count(); ++index)
+    while (count > 0u)
     {
-        const telemetry_channel_t *channel = channel_manager_get_by_index(index);
-        const uint32_t candidate =
-            (channel != NULL && channel->settings.enabled && channel->settings.sample_period_ms > 0u)
-                ? channel->settings.sample_period_ms
-                : SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS;
+        telemetry_channel_t channel = {0};
+        channel_config_t *candidate = &g_runtime_channel_configs[bank][--count];
 
-        if (min_period_ms == 0u || candidate < min_period_ms)
+        channel.metadata = candidate->metadata;
+        channel.settings = candidate->settings;
+        channel.driver = candidate->driver;
+        channel.driver_context = candidate->driver_context;
+        if (channel.driver != NULL && channel.driver->stop != NULL)
         {
-            min_period_ms = candidate;
+            (void)channel.driver->stop(&channel);
         }
     }
+}
 
-    return min_period_ms > 0u ? min_period_ms : SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS;
+static bool sensor_manager_start_candidates(uint8_t bank, size_t count)
+{
+    for (size_t index = 0u; index < count; ++index)
+    {
+        telemetry_channel_t channel = {0};
+        channel_config_t *candidate = &g_runtime_channel_configs[bank][index];
+
+        channel.metadata = candidate->metadata;
+        channel.settings = candidate->settings;
+        channel.driver = candidate->driver;
+        channel.driver_context = candidate->driver_context;
+        if (!channel.settings.enabled)
+        {
+            continue;
+        }
+        if (channel.driver == NULL || channel.driver->start == NULL ||
+            channel.driver->start(&channel) != TELEMETRY_DRIVER_RESULT_OK)
+        {
+            sensor_manager_stop_candidates(bank, index);
+            return false;
+        }
+        if (channel.driver->configure != NULL &&
+            channel.driver->configure(&channel, NULL) != TELEMETRY_DRIVER_RESULT_OK)
+        {
+            sensor_manager_stop_candidates(bank, index + 1u);
+            return false;
+        }
+        if (channel.driver->self_test != NULL &&
+            channel.driver->self_test(&channel) != TELEMETRY_DRIVER_RESULT_OK)
+        {
+            sensor_manager_stop_candidates(bank, index + 1u);
+            return false;
+        }
+    }
+    return true;
+}
+
+static void sensor_manager_stop_active(void)
+{
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
+    {
+        channel_manager_driver_operation_t operation;
+
+        if (!channel_manager_acquire_driver_operation(index, &operation))
+        {
+            continue;
+        }
+        if (operation.snapshot.channel.driver != NULL && operation.snapshot.channel.driver->stop != NULL)
+        {
+            (void)operation.snapshot.channel.driver->stop(&operation.snapshot.channel);
+        }
+        channel_manager_release_driver_operation(&operation);
+    }
+}
+
+static bool sensor_manager_restart_active(void)
+{
+    bool all_restored = true;
+
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
+    {
+        channel_manager_driver_operation_t operation;
+
+        if (!channel_manager_acquire_driver_operation(index, &operation))
+        {
+            continue;
+        }
+        if (operation.snapshot.channel.settings.enabled && operation.snapshot.channel.driver != NULL)
+        {
+            bool channel_restored = true;
+            if (operation.snapshot.channel.driver->start != NULL &&
+                operation.snapshot.channel.driver->start(&operation.snapshot.channel) != TELEMETRY_DRIVER_RESULT_OK)
+            {
+                channel_restored = false;
+            }
+            if (channel_restored && operation.snapshot.channel.driver->configure != NULL &&
+                operation.snapshot.channel.driver->configure(&operation.snapshot.channel, NULL) !=
+                    TELEMETRY_DRIVER_RESULT_OK)
+            {
+                channel_restored = false;
+            }
+            if (channel_restored && operation.snapshot.channel.driver->self_test != NULL &&
+                operation.snapshot.channel.driver->self_test(&operation.snapshot.channel) !=
+                    TELEMETRY_DRIVER_RESULT_OK)
+            {
+                channel_restored = false;
+            }
+            all_restored = all_restored && channel_restored;
+        }
+        channel_manager_release_driver_operation(&operation);
+    }
+    return all_restored;
+}
+
+/* Candidate startup can reconfigure a peripheral before its later lifecycle
+ * step fails.  Reapply the entire known-good configuration in that case; the
+ * active registry alone is not sufficient to restore hardware settings. */
+static bool sensor_manager_restore_active_hardware(void)
+{
+    sensor_manager_stop_active();
+    return sensor_manager_restart_active();
 }
 
 static bool sensor_manager_activate_running_config(void)
 {
-    bool have_pollable_channel = false;
-    telemetry_channel_t *primary_channel = NULL;
     const device_profile_config_t *config = config_service_get();
-    const size_t prepared_count = sensor_manager_build_channels_from_config(config);
+    const uint8_t candidate_bank = (uint8_t)(g_active_bank ^ 1u);
+    size_t prepared = 0u;
 
-    if (prepared_count == 0u)
+    /* This entire pass is pure service validation: no peripheral is touched. */
+    if (!sensor_manager_prepare_candidate(config, candidate_bank, &prepared))
     {
-        sensor_manager_snapshot_t empty_snapshot = {0};
-
-        empty_snapshot.enabled = true;
-        empty_snapshot.quality = SERVICE_QUALITY_BAD;
-        sensor_manager_set_snapshot(&empty_snapshot);
-        g_initialized = false;
+        return false;
+    }
+    /* Candidate startup is reversed on any failure before the live registry is
+     * changed.  The running registry therefore remains readable/usable. */
+    if (!sensor_manager_start_candidates(candidate_bank, prepared))
+    {
+        if (!sensor_manager_restore_active_hardware())
+        {
+            g_initialized = false;
+        }
         return false;
     }
 
-    vTaskSuspendAll();
-    channel_manager_reset();
-    (void)channel_manager_register_from_config(g_runtime_channel_configs,
-                                               prepared_count,
-                                               g_channel_storage,
-                                               SENSOR_MANAGER_MAX_CHANNELS);
-
-    g_initialized = channel_manager_count() > 0u;
-    for (size_t index = 0u; index < channel_manager_count(); ++index)
+    sensor_manager_stop_active();
+    if (!channel_manager_reset())
     {
-        telemetry_channel_t *channel = channel_manager_get_by_index(index);
+        sensor_manager_stop_candidates(candidate_bank, prepared);
+        if (!sensor_manager_restart_active())
+        {
+            g_initialized = false;
+        }
+        return false;
+    }
+    if (channel_manager_register_from_config(g_runtime_channel_configs[candidate_bank], prepared) != prepared)
+    {
+        sensor_manager_stop_candidates(candidate_bank, prepared);
+        /* Registration failure is deterministic (capacity/metadata).  Recover
+         * the old catalog and hardware rather than leaving an empty runtime. */
+        const bool registry_restored = channel_manager_reset() &&
+            channel_manager_register_from_config(g_runtime_channel_configs[g_active_bank], g_active_count) ==
+                g_active_count;
+        if (!registry_restored || !sensor_manager_restart_active())
+        {
+            g_initialized = false;
+        }
+        return false;
+    }
+    g_active_bank = candidate_bank;
+    g_active_count = prepared;
+    g_initialized = true;
+    g_applied_config_revision = config_service_get_running_revision();
+    return true;
+}
 
-        if (channel == NULL)
+static uint32_t sensor_manager_resolve_poll_period_ms(void)
+{
+    uint32_t period = SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS;
+
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
+    {
+        telemetry_channel_snapshot_t snapshot;
+
+        if (!channel_manager_copy_snapshot_by_index(index, &snapshot) || !snapshot.channel.settings.enabled)
         {
             continue;
         }
-
-        if (channel->driver != NULL && channel->driver->init != NULL && !channel->driver->init(channel))
+        if (snapshot.channel.settings.sample_period_ms != 0u &&
+            snapshot.channel.settings.sample_period_ms < period)
         {
-            channel->runtime.quality = SERVICE_QUALITY_BAD;
-            channel->runtime.error_count++;
-        }
-        else
-        {
-            channel->runtime.quality = SERVICE_QUALITY_UNCERTAIN;
-            if (channel->settings.enabled)
-            {
-                have_pollable_channel = true;
-            }
+            period = snapshot.channel.settings.sample_period_ms;
         }
     }
+    return period;
+}
 
-    g_initialized = g_initialized && have_pollable_channel;
-    g_applied_config_revision = config_service_get_running_revision();
-
-    primary_channel = sensor_manager_get_primary_channel();
+static void sensor_manager_record_float_history(void)
+{
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
-        sensor_manager_snapshot_t snapshot = {0};
-        sensor_manager_snapshot_from_channel(primary_channel, &snapshot);
-        sensor_manager_set_snapshot(&snapshot);
+        telemetry_channel_snapshot_t snapshot;
+        const telemetry_channel_t *channel;
+
+        if (!channel_manager_copy_snapshot_by_index(index, &snapshot))
+        {
+            continue;
+        }
+        channel = &snapshot.channel;
+        if ((channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) == 0u ||
+            channel->metadata.value_type != TELEMETRY_CHANNEL_VALUE_FLOAT ||
+            channel->runtime.quality != SERVICE_QUALITY_GOOD ||
+            channel->runtime.source_timestamp_unix_us == TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID)
+        {
+            continue;
+        }
+        (void)history_service_record_channel_sample(channel->metadata.id, channel->runtime.value.f32,
+                                                    channel->runtime.quality,
+                                                    channel->runtime.source_timestamp_unix_us,
+                                                    channel->settings.history_interval_ms);
     }
-    xTaskResumeAll();
-    return g_initialized;
 }
 
 bool sensor_manager_init(void)
 {
-    memset(&g_snapshot, 0, sizeof(g_snapshot));
-    g_snapshot.enabled = true;
-    g_snapshot.quality = SERVICE_QUALITY_UNCERTAIN;
+    g_initialized = false;
     g_applied_config_revision = 0u;
+    g_active_count = 0u;
+    g_active_bank = 0u;
+    if (!channel_manager_is_ready() || !psram_allocator_is_ready())
+    {
+        return false;
+    }
+    if (g_runtime_storage == NULL)
+    {
+        g_runtime_storage = psram_calloc(1u, sizeof(*g_runtime_storage));
+        if (g_runtime_storage == NULL)
+        {
+            return false;
+        }
+    }
     return sensor_manager_activate_running_config();
 }
 
 void sensor_manager_task(void *argument)
 {
-    (void)argument;
-
     TickType_t last_wake_time = xTaskGetTickCount();
 
-    while (1)
+    (void)argument;
+    while (true)
     {
-        sensor_manager_snapshot_t snapshot = {0};
-        telemetry_channel_t primary_copy = {0};
-        telemetry_channel_t *primary_channel = NULL;
-        uint32_t poll_period_ms = SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS;
-        const uint32_t running_revision = config_service_get_running_revision();
-
-        if (running_revision != g_applied_config_revision)
+        if (config_service_get_running_revision() != g_applied_config_revision)
         {
             (void)sensor_manager_activate_running_config();
         }
-
-        if (!g_initialized)
+        if (g_initialized)
         {
-            snapshot.quality = SERVICE_QUALITY_BAD;
-            sensor_manager_set_snapshot(&snapshot);
-            vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS));
-            continue;
+            (void)channel_manager_poll_all((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
+            sensor_manager_record_float_history();
         }
-
-        (void)channel_manager_poll_all((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
-
-        primary_channel = sensor_manager_get_primary_channel();
-        if (primary_channel != NULL &&
-            primary_channel->metadata.id != NULL &&
-            channel_manager_copy_channel(primary_channel->metadata.id, &primary_copy))
-        {
-            sensor_manager_snapshot_from_channel(&primary_copy, &snapshot);
-        }
-        else
-        {
-            sensor_manager_snapshot_from_channel(NULL, &snapshot);
-        }
-
-        sensor_manager_set_snapshot(&snapshot);
-        poll_period_ms = sensor_manager_resolve_poll_period_ms();
-        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(poll_period_ms > 0u ? poll_period_ms : 1u));
+        vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(sensor_manager_resolve_poll_period_ms()));
     }
 }
 
 void sensor_manager_get_snapshot(sensor_manager_snapshot_t *out_snapshot)
 {
+    telemetry_channel_snapshot_t channel_snapshot;
+    const telemetry_channel_t *channel;
+
     if (out_snapshot == NULL)
     {
         return;
     }
-
-    taskENTER_CRITICAL();
-    *out_snapshot = g_snapshot;
-    taskEXIT_CRITICAL();
+    memset(out_snapshot, 0, sizeof(*out_snapshot));
+    out_snapshot->quality = SERVICE_QUALITY_BAD;
+    out_snapshot->source_timestamp_unix_us = TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID;
+    if (!g_initialized)
+    {
+        return;
+    }
+    /* v0.4.0 temperature compatibility only: this is a projection from the
+     * channel registry, not a second runtime sample or a selected primary. */
+    if (!channel_manager_copy_snapshot_by_id(DEVICE_CHANNEL_ID_TEMPERATURE_1, &channel_snapshot))
+    {
+        return;
+    }
+    channel = &channel_snapshot.channel;
+    out_snapshot->enabled = channel->settings.enabled;
+    out_snapshot->quality = channel->runtime.quality;
+    out_snapshot->source_timestamp_unix_us = channel->runtime.source_timestamp_unix_us;
+    if (channel->runtime.source_timestamp_unix_us != TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID)
+    {
+        out_snapshot->source_timestamp_epoch_s =
+            (uint32_t)(channel->runtime.source_timestamp_unix_us / 1000000u);
+    }
+    out_snapshot->sample_count = channel->runtime.sample_count;
+    out_snapshot->error_count = channel->runtime.error_count;
+    out_snapshot->last_update_ms = channel->runtime.last_update_ms;
+    if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_FLOAT)
+    {
+        out_snapshot->temperature_c = channel->runtime.value.f32;
+    }
+    else if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_DOUBLE)
+    {
+        out_snapshot->temperature_c = (float)channel->runtime.value.f64;
+    }
 }

@@ -15,11 +15,24 @@ const char *model_log_level_name(UA_LogLevel level)
 }
 
 void model_ua_logger_log(void *context,
-                                UA_LogLevel level,
-                                UA_LogCategory category,
-                                const char *msg,
-                                va_list args)
+                         UA_LogLevel level,
+                         UA_LogCategory category,
+                         const char *msg,
+                         va_list args)
 {
+    /*
+     * This logger runs in the single OPC UA task.  USB CDC can apply its
+     * configured write timeout when the host is absent, so formatting and
+     * printing teardown-level traffic here can keep the server out of
+     * UA_Server_run_iterate for seconds.  Retain only bounded fault
+     * observability in production; detailed transport tracing belongs in the
+     * explicit diagnostic firmware build.
+     */
+    if (level > UA_LOGLEVEL_WARNING)
+    {
+        return;
+    }
+
     char message_buffer[768];
     UA_String formatted = {
         .length = sizeof(message_buffer) - 1u,
@@ -50,7 +63,6 @@ void model_ua_logger_log(void *context,
                model_log_level_name(level),
                (unsigned long)status);
     }
-    stdio_flush();
 }
 
 void log_opcua_heap(const char *stage)
@@ -88,25 +100,24 @@ void model_log_node_id_compact(const UA_NodeId *node_id)
 }
 
 void model_monitored_item_register_callback(UA_Server *server,
-                                                   const UA_NodeId *session_id,
-                                                   void *session_context,
-                                                   const UA_NodeId *node_id,
-                                                   void *node_context,
-                                                   UA_UInt32 attribute_id,
-                                                   UA_Boolean removed)
+                                            const UA_NodeId *session_id,
+                                            void *session_context,
+                                            const UA_NodeId *node_id,
+                                            void *node_context,
+                                            UA_UInt32 attribute_id,
+                                            UA_Boolean removed)
 {
     (void)server;
     (void)session_id;
     (void)session_context;
+    (void)node_id;
     (void)node_context;
+    (void)attribute_id;
+    (void)removed;
 
-    printf("[OPC UA]\tMonitoredItem %s attr=%lu node=",
-           removed ? "removed" : "created",
-           (unsigned long)attribute_id);
-    model_log_node_id_compact(node_id);
-    putchar('\n');
-    fflush(stdout);
-    ua_port_alloc_log_stats(removed ? "MonitoredItem removed" : "MonitoredItem created");
+    /* The callback is retained for the public open62541 integration point.
+     * Monitored-item create/delete is expected normal traffic and must not
+     * perform synchronous console I/O or allocation diagnostics. */
 }
 
 const char *model_notification_type_name(UA_ApplicationNotificationType type)
@@ -163,75 +174,15 @@ const char *model_notification_type_name(UA_ApplicationNotificationType type)
 }
 
 void model_server_notification_callback(UA_Server *server,
-                                               UA_ApplicationNotificationType type,
-                                               const UA_KeyValueMap payload)
+                                        UA_ApplicationNotificationType type,
+                                        const UA_KeyValueMap payload)
 {
-    const UA_UInt32 *request_id = NULL;
-    const UA_UInt32 *subscription_id = NULL;
-    const UA_UInt32 *monitored_item_id = NULL;
-    const UA_NodeId *service_type = NULL;
     (void)server;
+    (void)type;
+    (void)payload;
 
-    printf("[OPC UA]\tNotification: %s (%u)\n",
-           model_notification_type_name(type),
-           (unsigned)type);
-    printf("[OPC UA]\tNotification payload entries=%u\n", (unsigned)payload.mapSize);
-
-    request_id = (const UA_UInt32 *)UA_KeyValueMap_getScalar(&payload,
-                                                             UA_QUALIFIEDNAME(0, "request-id"),
-                                                             &UA_TYPES[UA_TYPES_UINT32]);
-    if (request_id != NULL)
-    {
-        printf("[OPC UA]\tNotification request-id=%lu\n", (unsigned long)*request_id);
-    }
-
-    service_type = (const UA_NodeId *)UA_KeyValueMap_getScalar(&payload,
-                                                               UA_QUALIFIEDNAME(0, "service-type"),
-                                                               &UA_TYPES[UA_TYPES_NODEID]);
-    if (service_type != NULL)
-    {
-        printf("[OPC UA]\tNotification service-type=");
-        model_log_node_id_compact(service_type);
-        putchar('\n');
-    }
-
-    subscription_id = (const UA_UInt32 *)UA_KeyValueMap_getScalar(&payload,
-                                                                  UA_QUALIFIEDNAME(0, "subscription-id"),
-                                                                  &UA_TYPES[UA_TYPES_UINT32]);
-    if (subscription_id != NULL)
-    {
-        printf("[OPC UA]\tNotification subscription-id=%lu\n",
-               (unsigned long)*subscription_id);
-    }
-
-    monitored_item_id = (const UA_UInt32 *)UA_KeyValueMap_getScalar(&payload,
-                                                                    UA_QUALIFIEDNAME(0, "monitoreditem-id"),
-                                                                    &UA_TYPES[UA_TYPES_UINT32]);
-    if (monitored_item_id != NULL)
-    {
-        printf("[OPC UA]\tNotification monitoreditem-id=%lu\n",
-               (unsigned long)*monitored_item_id);
-    }
-
-    fflush(stdout);
-
-    switch (type)
-    {
-    case UA_APPLICATIONNOTIFICATIONTYPE_SERVICE_BEGIN:
-        ua_port_alloc_log_stats("Service begin");
-        break;
-    case UA_APPLICATIONNOTIFICATIONTYPE_SERVICE_END:
-        ua_port_alloc_log_stats("Service end");
-        break;
-    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_CREATED:
-        ua_port_alloc_log_stats("Subscription created");
-        break;
-    case UA_APPLICATIONNOTIFICATIONTYPE_MONITOREDITEM_CREATED:
-        ua_port_alloc_log_stats("MonitoredItem notification created");
-        break;
-    default:
-        break;
-    }
+    /* Application notifications include every service and subscription state
+     * transition. They are intentionally silent in the production task. */
 }
 
 void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result);

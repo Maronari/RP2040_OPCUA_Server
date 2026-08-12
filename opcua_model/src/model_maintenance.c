@@ -1935,6 +1935,37 @@ void model_apply_epoch_source_timestamp(UA_Boolean include_source_timestamp, uin
     }
 }
 
+bool model_source_timestamp_to_datetime(uint64_t source_timestamp_unix_us,
+                                        UA_DateTime *out_datetime)
+{
+    const uint64_t max_source_timestamp_unix_us =
+        (uint64_t)((UA_INT64_MAX - UA_DATETIME_UNIX_EPOCH) / 10LL);
+
+    if (out_datetime == NULL ||
+        source_timestamp_unix_us == TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID ||
+        source_timestamp_unix_us > max_source_timestamp_unix_us)
+    {
+        return false;
+    }
+
+    *out_datetime = UA_DATETIME_UNIX_EPOCH + (UA_DateTime)(source_timestamp_unix_us * 10u);
+    return true;
+}
+
+void model_apply_channel_source_timestamp(UA_Boolean include_source_timestamp,
+                                          uint64_t source_timestamp_unix_us,
+                                          UA_DataValue *value)
+{
+    UA_DateTime timestamp = 0;
+
+    if (include_source_timestamp && value != NULL &&
+        model_source_timestamp_to_datetime(source_timestamp_unix_us, &timestamp))
+    {
+        value->hasSourceTimestamp = true;
+        value->sourceTimestamp = timestamp;
+    }
+}
+
 UA_StatusCode model_set_uint32_value(UA_DataValue *value, UA_UInt32 data, UA_StatusCode status)
 {
     UA_Variant_setScalarCopy(&value->value, &data, &UA_TYPES[UA_TYPES_UINT32]);

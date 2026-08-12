@@ -8,7 +8,7 @@
 
 typedef struct
 {
-    telemetry_channel_metadata_t metadata;
+    telemetry_channel_metadata_t metadata; /* copied by channel_manager */
     telemetry_channel_settings_t settings;
     const telemetry_driver_vtbl_t *driver;
     void *driver_context;

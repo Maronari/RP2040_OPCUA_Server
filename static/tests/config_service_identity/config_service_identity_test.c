@@ -1,6 +1,7 @@
 #include "services/config_service.h"
 #include "services/config_store_service.h"
 #include "services/config_wire.h"
+#include "services/config_validate_service.h"
 #include "services/driver_catalog.h"
 #include "drivers/flash_storage_driver.h"
 #include "pico/unique_id.h"
@@ -11,6 +12,17 @@
 static device_profile_config_t g_persisted_config;
 static bool g_have_persisted_config;
 static unsigned g_save_calls;
+
+config_validate_service_result_t config_validate_service_validate_candidate(
+    const device_profile_config_t *candidate,
+    char *message,
+    size_t message_size)
+{
+    (void)message;
+    (void)message_size;
+    return candidate != NULL ? CONFIG_VALIDATE_RESULT_OK :
+                               CONFIG_VALIDATE_RESULT_INTERNAL_ERROR;
+}
 
 bool config_store_load_active(void *buffer,
                               size_t buffer_size,
