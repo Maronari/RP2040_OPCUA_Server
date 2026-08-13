@@ -4,7 +4,10 @@ This file tracks the firmware release line through `v0.4.1`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
 
-## v0.4.1 (Unreleased)
+## v0.4.1
+
+Initial release commit before the review-hardening follow-up:
+`669ab94c349777d0b635d66e5377fcb64fd4fa92`.
 
 - Runtime: one 1-16 compile-time platform limit, manager-owned metadata and
   slots, coherent snapshot/iteration APIs, generation-checked driver
@@ -17,6 +20,10 @@ their target commit SHA rather than the tag-object SHA.
   OPC UA contract delta.
 - Verification: mixed 1/4/16-channel, capacity, type/driver, timestamp,
   concurrency, lifecycle, rollback, migration and public-contract gates.
+- Hardening follow-up: configuration apply now commits only after synchronous
+  runtime activation, non-float historizing is rejected, history scans use a
+  task mutex, HistoryRead scratch lives in bounded PSRAM, and driver handover
+  quiesces the old runtime before starting the candidate.
 - Release plan: `docs/releases/v0.4.1.md`.
 
 ## v0.4.0

@@ -220,7 +220,8 @@ void model_history_read_raw(UA_Server *server,
                                    UA_HistoryReadResponse *response,
                                    UA_HistoryData *const *const history_data)
 {
-    history_service_channel_sample_t sample_buffer[HISTORY_SERVICE_CHANNEL_CAPACITY];
+    /* open62541 dispatches this database callback on the single server task. */
+    history_service_channel_sample_t *const sample_buffer = g_model_history_read_sample_buffer;
     const uint32_t start_epoch_s = history_read_details != NULL
                                        ? model_datetime_to_epoch_seconds(history_read_details->startTime)
                                        : 0u;
@@ -241,11 +242,21 @@ void model_history_read_raw(UA_Server *server,
     (void)request_header;
     (void)release_continuation_points;
 
+    if (sample_buffer == NULL)
+    {
+        for (size_t index = 0u; index < nodes_to_read_size; ++index)
+        {
+            response->results[index].statusCode = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+        }
+        return;
+    }
+
     for (size_t index = 0u; index < nodes_to_read_size; ++index)
     {
         UA_HistoryData *result_history_data = history_data[index];
         size_t sample_count = 0u;
         bool truncated = false;
+        bool history_busy = false;
 
         if (result_history_data == NULL)
         {
@@ -282,7 +293,14 @@ void model_history_read_raw(UA_Server *server,
                                                             max_values_per_node,
                                                             sample_buffer,
                                                             HISTORY_SERVICE_CHANNEL_CAPACITY,
-                                                            &truncated);
+                                                            &truncated,
+                                                            &history_busy);
+
+        if (history_busy)
+        {
+            response->results[index].statusCode = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+            continue;
+        }
 
         if (sample_count > 0u)
         {

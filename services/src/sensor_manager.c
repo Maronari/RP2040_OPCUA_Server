@@ -160,7 +160,9 @@ static bool sensor_manager_start_candidates(uint8_t bank, size_t count)
         if (channel.driver == NULL || channel.driver->start == NULL ||
             channel.driver->start(&channel) != TELEMETRY_DRIVER_RESULT_OK)
         {
-            sensor_manager_stop_candidates(bank, index);
+            /* A failed start may already have claimed or reconfigured shared
+             * hardware; include that channel in reverse cleanup. */
+            sensor_manager_stop_candidates(bank, index + 1u);
             return false;
         }
         if (channel.driver->configure != NULL &&
@@ -239,15 +241,9 @@ static bool sensor_manager_restart_active(void)
 /* Candidate startup can reconfigure a peripheral before its later lifecycle
  * step fails.  Reapply the entire known-good configuration in that case; the
  * active registry alone is not sufficient to restore hardware settings. */
-static bool sensor_manager_restore_active_hardware(void)
+bool sensor_manager_activate_config(const device_profile_config_t *config,
+                                    uint32_t candidate_revision)
 {
-    sensor_manager_stop_active();
-    return sensor_manager_restart_active();
-}
-
-static bool sensor_manager_activate_running_config(void)
-{
-    const device_profile_config_t *config = config_service_get();
     const uint8_t candidate_bank = (uint8_t)(g_active_bank ^ 1u);
     size_t prepared = 0u;
 
@@ -256,18 +252,20 @@ static bool sensor_manager_activate_running_config(void)
     {
         return false;
     }
-    /* Candidate startup is reversed on any failure before the live registry is
-     * changed.  The running registry therefore remains readable/usable. */
+    /* Shared/exclusive claims may use the same peripheral as the old runtime.
+     * Quiesce it before candidate lifecycle work, then restore it on every
+     * failure path.  The registry itself remains published until replacement
+     * is ready, so readers retain a coherent known-good snapshot. */
+    sensor_manager_stop_active();
     if (!sensor_manager_start_candidates(candidate_bank, prepared))
     {
-        if (!sensor_manager_restore_active_hardware())
+        if (!sensor_manager_restart_active())
         {
             g_initialized = false;
         }
         return false;
     }
 
-    sensor_manager_stop_active();
     if (!channel_manager_reset())
     {
         sensor_manager_stop_candidates(candidate_bank, prepared);
@@ -294,8 +292,14 @@ static bool sensor_manager_activate_running_config(void)
     g_active_bank = candidate_bank;
     g_active_count = prepared;
     g_initialized = true;
-    g_applied_config_revision = config_service_get_running_revision();
+    g_applied_config_revision = candidate_revision;
     return true;
+}
+
+static bool sensor_manager_activate_running_config(void)
+{
+    return sensor_manager_activate_config(config_service_get(),
+                                          config_service_get_running_revision());
 }
 
 static uint32_t sensor_manager_resolve_poll_period_ms(void)
@@ -363,6 +367,7 @@ bool sensor_manager_init(void)
             return false;
         }
     }
+    config_service_set_runtime_apply_callback(sensor_manager_activate_config);
     return sensor_manager_activate_running_config();
 }
 

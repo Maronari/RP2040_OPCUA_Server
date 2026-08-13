@@ -45,17 +45,18 @@ bool config_reset_service_execute(config_reset_scope_t scope)
         return false;
     }
 
-    if (!config_store_reset())
-    {
-        return false;
-    }
-
     if (!config_service_reset_to_defaults())
     {
         return false;
     }
 
     if (!config_service_apply())
+    {
+        return false;
+    }
+
+    /* Keep the last bootable slot until defaults are running. */
+    if (!config_store_reset())
     {
         return false;
     }

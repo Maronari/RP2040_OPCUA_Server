@@ -32,7 +32,8 @@ static const driver_catalog_entry_t g_known_driver = {
     .driver_id = CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP,
     .name = "host-test",
     .validate_source = validate_source,
-    .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT),
+    .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
+                             TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
 };
 
 bool driver_catalog_supports_value_type(const driver_catalog_entry_t *entry,
@@ -607,6 +608,15 @@ static void test_validation_results_and_no_output_mutation(void)
     candidate = valid_candidate();
     candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_UINT64;
     expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE);
+    candidate = valid_candidate();
+    candidate.channels[0].flags |= TELEMETRY_CHANNEL_FLAG_HISTORIZED;
+    candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_DOUBLE;
+    expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE);
+    candidate = valid_candidate();
+    candidate.channels[0].flags |= TELEMETRY_CHANNEL_FLAG_HISTORIZED;
+    candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    assert(config_validate_service_validate_candidate(&candidate, NULL, 0u) ==
+           CONFIG_VALIDATE_RESULT_OK);
     candidate = valid_candidate();
     candidate.channels[1] = candidate.channels[0];
     strcpy(candidate.channels[1].id, "temperature.2");

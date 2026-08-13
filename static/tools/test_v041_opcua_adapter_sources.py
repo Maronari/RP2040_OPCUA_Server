@@ -48,6 +48,19 @@ def main() -> int:
     history = (MODEL_DIR / "model_history.c").read_text(encoding="utf-8")
     require("model_source_timestamp_to_datetime(sample->source_timestamp_unix_us, &timestamp)" in history,
             "HistoryRead does not preserve microsecond source timestamps through the shared adapter")
+    require("history_service_channel_sample_t sample_buffer[HISTORY_SERVICE_CHANNEL_CAPACITY]" not in history,
+            "HistoryRead still allocates its full sample buffer on the server-task stack")
+    require("history_service_channel_sample_t *const sample_buffer = g_model_history_read_sample_buffer" in history,
+            "HistoryRead does not use the model-owned PSRAM sample scratch buffer")
+
+    lifecycle = (MODEL_DIR / "model_core_lifecycle.c").read_text(encoding="utf-8")
+    require("g_model_history_read_sample_buffer = (history_service_channel_sample_t *)psram_malloc(" in lifecycle,
+            "model initialization does not allocate the bounded HistoryRead scratch buffer in PSRAM")
+    require("HISTORY_SERVICE_CHANNEL_CAPACITY * sizeof(*g_model_history_read_sample_buffer)" in lifecycle,
+            "HistoryRead scratch allocation is not bounded by HISTORY_SERVICE_CHANNEL_CAPACITY")
+    require("psram_free(g_model_history_read_sample_buffer);" in lifecycle and
+            "g_model_history_read_sample_buffer = NULL;" in lifecycle,
+            "model shutdown does not release the HistoryRead PSRAM scratch buffer")
 
     result = subprocess.run(
         [sys.executable, "static/tools/verify_opcua_public_contract.py", "--baseline", "v0.4.0"],

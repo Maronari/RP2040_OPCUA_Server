@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <FreeRTOS.h>
+#include <semphr.h>
 #include <task.h>
 
 #include "psram_allocator.h"
@@ -19,6 +20,23 @@ static history_service_channel_ring_t *g_channel_history;
 static history_service_channel_ring_t g_host_channel_history;
 #endif
 static bool g_initialized = false;
+/* History scans can examine all 512 retained samples.  Serialize those scans
+ * with a service-local static mutex; never mask interrupts for that work. */
+static StaticSemaphore_t g_history_mutex_storage;
+static SemaphoreHandle_t g_history_mutex;
+
+#define HISTORY_SERVICE_LOCK_TIMEOUT_MS 10u
+
+static bool history_service_lock(void)
+{
+    return g_history_mutex != NULL &&
+           xSemaphoreTake(g_history_mutex, pdMS_TO_TICKS(HISTORY_SERVICE_LOCK_TIMEOUT_MS)) == pdTRUE;
+}
+
+static void history_service_unlock(void)
+{
+    (void)xSemaphoreGive(g_history_mutex);
+}
 
 static size_t history_service_oldest_index(void)
 {
@@ -104,6 +122,14 @@ static uint32_t history_service_find_last_recorded_ms(const char *channel_id)
 
 bool history_service_init(void)
 {
+    if (g_history_mutex == NULL)
+    {
+        g_history_mutex = xSemaphoreCreateMutexStatic(&g_history_mutex_storage);
+        if (g_history_mutex == NULL)
+        {
+            return false;
+        }
+    }
     if (g_channel_history == NULL)
     {
 #if defined(PICO_ON_DEVICE)
@@ -131,9 +157,12 @@ void history_service_reset(void)
     {
         return;
     }
-    taskENTER_CRITICAL();
+    if (!history_service_lock())
+    {
+        return;
+    }
     memset(g_channel_history, 0, sizeof(*g_channel_history));
-    taskEXIT_CRITICAL();
+    history_service_unlock();
 }
 
 bool history_service_record_channel_sample(const char *channel_id,
@@ -152,7 +181,10 @@ bool history_service_record_channel_sample(const char *channel_id,
         return false;
     }
 
-    taskENTER_CRITICAL();
+    if (!history_service_lock())
+    {
+        return false;
+    }
     {
         const uint32_t last_recorded_ms = history_service_find_last_recorded_ms(channel_id);
 
@@ -177,7 +209,7 @@ bool history_service_record_channel_sample(const char *channel_id,
             recorded = true;
         }
     }
-    taskEXIT_CRITICAL();
+    history_service_unlock();
 
     return recorded;
 }
@@ -189,7 +221,8 @@ size_t history_service_read_channel_samples(const char *channel_id,
                                            size_t max_samples,
                                            history_service_channel_sample_t *out_samples,
                                            size_t out_capacity,
-                                           bool *out_truncated)
+                                           bool *out_truncated,
+                                           bool *out_busy)
 {
     size_t collected = 0u;
     size_t scan_limit = 0u;
@@ -201,6 +234,10 @@ size_t history_service_read_channel_samples(const char *channel_id,
     {
         *out_truncated = false;
     }
+    if (out_busy != NULL)
+    {
+        *out_busy = false;
+    }
 
     if (!g_initialized || channel_id == NULL || out_samples == NULL || out_capacity == 0u)
     {
@@ -211,7 +248,14 @@ size_t history_service_read_channel_samples(const char *channel_id,
                           ? out_capacity
                           : requested_limit;
 
-    taskENTER_CRITICAL();
+    if (!history_service_lock())
+    {
+        if (out_busy != NULL)
+        {
+            *out_busy = true;
+        }
+        return 0u;
+    }
     scan_limit = g_channel_history->count;
     oldest_index = history_service_oldest_index();
 
@@ -244,7 +288,7 @@ size_t history_service_read_channel_samples(const char *channel_id,
 
         out_samples[collected++] = sample;
     }
-    taskEXIT_CRITICAL();
+    history_service_unlock();
 
     if (out_truncated != NULL)
     {

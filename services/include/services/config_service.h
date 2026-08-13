@@ -111,6 +111,13 @@ typedef struct
     char operational_location_path[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN];
 } device_profile_config_t;
 
+/* Registered by the runtime owner after it has initialized.  The callback is
+ * synchronous and runs without the configuration critical section held: it
+ * must either activate the supplied immutable candidate completely or leave
+ * the previous runtime active. */
+typedef bool (*config_service_runtime_apply_fn)(const device_profile_config_t *candidate,
+                                                uint32_t candidate_revision);
+
 /*
  * fw_revision, build_time, and git_hash are runtime identity owned by the
  * compiled profile passed to config_service_init(). They remain present in
@@ -119,6 +126,7 @@ typedef struct
  */
 
 bool config_service_init(const device_profile_config_t *defaults);
+void config_service_set_runtime_apply_callback(config_service_runtime_apply_fn callback);
 const device_profile_config_t *config_service_get(void);
 const device_profile_config_t *config_service_get_staged(void);
 bool config_service_reset_to_defaults(void);

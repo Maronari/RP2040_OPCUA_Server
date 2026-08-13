@@ -46,6 +46,28 @@ static config_service_state_t g_config_state_fallback;
 static bool g_default_config_valid = false;
 static uint32_t g_running_revision = 0u;
 static uint32_t g_staged_revision = 0u;
+static config_service_runtime_apply_fn g_runtime_apply_callback;
+static bool g_transaction_active;
+
+static bool config_service_begin_transaction(void)
+{
+    bool acquired = false;
+    taskENTER_CRITICAL();
+    if (!g_transaction_active)
+    {
+        g_transaction_active = true;
+        acquired = true;
+    }
+    taskEXIT_CRITICAL();
+    return acquired;
+}
+
+static void config_service_end_transaction(void)
+{
+    taskENTER_CRITICAL();
+    g_transaction_active = false;
+    taskEXIT_CRITICAL();
+}
 
 static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
 {
@@ -447,6 +469,8 @@ bool config_service_init(const device_profile_config_t *defaults)
     g_default_config_valid = false;
     g_running_revision = 1u;
     g_staged_revision = 1u;
+    g_runtime_apply_callback = NULL;
+    g_transaction_active = false;
 
     if (defaults != NULL)
     {
@@ -525,6 +549,13 @@ bool config_service_init(const device_profile_config_t *defaults)
     return true;
 }
 
+void config_service_set_runtime_apply_callback(config_service_runtime_apply_fn callback)
+{
+    taskENTER_CRITICAL();
+    g_runtime_apply_callback = callback;
+    taskEXIT_CRITICAL();
+}
+
 const device_profile_config_t *config_service_get(void)
 {
     return &g_running_config;
@@ -552,9 +583,18 @@ bool config_service_reset_to_defaults(void)
 bool config_service_apply(void)
 {
     device_profile_config_t normalized_config;
+    config_service_runtime_apply_fn runtime_apply;
+    uint32_t candidate_revision;
+
+    if (!config_service_begin_transaction())
+    {
+        return false;
+    }
 
     taskENTER_CRITICAL();
     normalized_config = g_staged_config;
+    runtime_apply = g_runtime_apply_callback;
+    candidate_revision = g_running_revision + 1u;
     taskEXIT_CRITICAL();
 
     config_service_normalize(&normalized_config);
@@ -562,13 +602,21 @@ bool config_service_apply(void)
     if (config_validate_service_validate_candidate(&normalized_config, NULL, 0u) !=
         CONFIG_VALIDATE_RESULT_OK)
     {
+        config_service_end_transaction();
+        return false;
+    }
+
+    if (runtime_apply != NULL && !runtime_apply(&normalized_config, candidate_revision))
+    {
+        config_service_end_transaction();
         return false;
     }
 
     taskENTER_CRITICAL();
     g_running_config = normalized_config;
-    g_running_revision++;
+    g_running_revision = candidate_revision;
     taskEXIT_CRITICAL();
+    config_service_end_transaction();
     return true;
 }
 
@@ -805,8 +853,16 @@ bool config_service_stage_clear_channel(size_t index)
 bool config_service_replace_and_save(const device_profile_config_t *config, bool apply_running)
 {
     device_profile_config_t normalized_config;
+    device_profile_config_t previous_running;
+    config_service_runtime_apply_fn runtime_apply;
+    uint32_t candidate_revision = 0u;
 
     if (config == NULL)
+    {
+        return false;
+    }
+
+    if (!config_service_begin_transaction())
     {
         return false;
     }
@@ -817,6 +873,25 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
     if (config_validate_service_validate_candidate(&normalized_config, NULL, 0u) !=
         CONFIG_VALIDATE_RESULT_OK)
     {
+        config_service_end_transaction();
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    previous_running = g_running_config;
+    runtime_apply = g_runtime_apply_callback;
+    candidate_revision = g_running_revision + 1u;
+    taskEXIT_CRITICAL();
+
+    if (apply_running && runtime_apply != NULL &&
+        !runtime_apply(&normalized_config, candidate_revision))
+    {
+        /* Keep a valid but non-running candidate staged for correction/retry. */
+        taskENTER_CRITICAL();
+        g_staged_config = normalized_config;
+        g_staged_revision++;
+        taskEXIT_CRITICAL();
+        config_service_end_transaction();
         return false;
     }
 
@@ -826,18 +901,27 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
                                    CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
                                    NULL))
     {
+        if (apply_running && runtime_apply != NULL)
+        {
+            (void)runtime_apply(&previous_running, g_running_revision);
+        }
+        config_service_end_transaction();
         return false;
     }
 
     taskENTER_CRITICAL();
     g_staged_config = normalized_config;
     g_staged_revision++;
+    taskEXIT_CRITICAL();
+
     if (apply_running)
     {
+        taskENTER_CRITICAL();
         g_running_config = normalized_config;
-        g_running_revision++;
+        g_running_revision = candidate_revision;
+        taskEXIT_CRITICAL();
     }
-    taskEXIT_CRITICAL();
+    config_service_end_transaction();
     return true;
 }
 

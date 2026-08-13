@@ -30,6 +30,10 @@ void vTaskDelayUntil(TickType_t *last_wake_time, TickType_t period)
 
 const device_profile_config_t *config_service_get(void) { return &g_profile; }
 uint32_t config_service_get_running_revision(void) { return g_revision; }
+void config_service_set_runtime_apply_callback(config_service_runtime_apply_fn callback)
+{
+    (void)callback;
+}
 bool history_service_record_channel_sample(const char *id, float value, service_quality_t quality,
                                            uint64_t timestamp, uint32_t interval)
 {

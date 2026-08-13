@@ -33,6 +33,7 @@ size_t history_service_read_channel_samples(const char *channel_id,
                                            size_t max_samples,
                                            history_service_channel_sample_t *out_samples,
                                            size_t out_capacity,
-                                           bool *out_truncated);
+                                           bool *out_truncated,
+                                           bool *out_busy);
 
 #endif

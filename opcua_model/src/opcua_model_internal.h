@@ -671,6 +671,7 @@ typedef struct opcua_model_context {
     uint8_t maintenance_reject_tokens;
     model_maintenance_export_continuation_t maintenance_export_continuations[MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY];
     uint32_t maintenance_export_next_token; char *maintenance_export_payload;
+    history_service_channel_sample_t *history_read_sample_buffer;
     model_pending_actions_t pending_actions; device_profile_config_t address_space_config_snapshot;
     bool address_space_config_snapshot_valid; model_activate_session_fn default_activate_session;
     model_close_session_fn default_close_session; model_get_user_executable_fn default_get_user_executable;
@@ -722,6 +723,7 @@ void model_core_task(void *argument);
 #define g_model_maintenance_export_continuations (model_context_get()->maintenance_export_continuations)
 #define g_model_maintenance_export_next_token (model_context_get()->maintenance_export_next_token)
 #define g_model_maintenance_export_payload (model_context_get()->maintenance_export_payload)
+#define g_model_history_read_sample_buffer (model_context_get()->history_read_sample_buffer)
 #define g_pending_actions (model_context_get()->pending_actions)
 #define g_model_address_space_config_snapshot (model_context_get()->address_space_config_snapshot)
 #define g_model_address_space_config_snapshot_valid (model_context_get()->address_space_config_snapshot_valid)

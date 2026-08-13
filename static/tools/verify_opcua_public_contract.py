@@ -42,7 +42,6 @@ BYTE_STABLE_PUBLIC_CONTRACT_PATHS = (
     "services/include/services/security_service.h",
     "services/include/services/maintenance_service.h",
     "services/src/config_import_service.c",
-    "services/src/config_reset_service.c",
     "services/src/config_store_service.c",
     "services/src/security_service.c",
     "services/src/maintenance_service.c",
@@ -66,6 +65,7 @@ REVIEWED_INTERNAL_DRIFT_PATHS = (
     "services/include/services/telemetry_driver.h",
     "services/src/channel_manager.c",
     "services/src/config_export_service.c",
+    "services/src/config_reset_service.c",
     "services/src/config_service.c",
     "services/src/config_validate_service.c",
     "services/src/driver_catalog.c",
@@ -133,6 +133,8 @@ def sha256(data: bytes) -> str:
 
 def normalized_source(data: bytes) -> bytes:
     data = data.replace(b"\r\n", b"\n")
+    # A final text-file newline is repository formatting, not wire behavior.
+    data = data.rstrip(b"\n") + b"\n"
     # Internal linkage is deliberately changed by the translation-unit split;
     # it is not an OPC UA contract. Normalize it before the legacy lexical
     # inventory is built (whose comment/string lexer otherwise spans a char

@@ -7,6 +7,10 @@ static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
 
 bool model_core_init(const opcua_model_config_t *config)
 {
+#ifdef UA_ENABLE_HISTORIZING
+    bool maintenance_export_payload_allocated = false;
+#endif
+
     if (config == NULL)
     {
         return false;
@@ -30,7 +34,29 @@ bool model_core_init(const opcua_model_config_t *config)
             fflush(stdout);
             return false;
         }
+
+#ifdef UA_ENABLE_HISTORIZING
+        maintenance_export_payload_allocated = true;
+#endif
     }
+
+#ifdef UA_ENABLE_HISTORIZING
+    if (g_model_history_read_sample_buffer == NULL)
+    {
+        g_model_history_read_sample_buffer = (history_service_channel_sample_t *)psram_malloc(
+            HISTORY_SERVICE_CHANNEL_CAPACITY * sizeof(*g_model_history_read_sample_buffer));
+        if (g_model_history_read_sample_buffer == NULL)
+        {
+            if (maintenance_export_payload_allocated)
+            {
+                psram_free(g_model_maintenance_export_payload);
+                g_model_maintenance_export_payload = NULL;
+            }
+
+            return false;
+        }
+    }
+#endif
 
     g_model_config = *config;
     g_pending_actions.reboot_pending = false;
@@ -969,6 +995,14 @@ void model_core_task(void *argument)
         psram_free(g_model_maintenance_export_payload);
         g_model_maintenance_export_payload = NULL;
     }
+
+#ifdef UA_ENABLE_HISTORIZING
+    if (g_model_history_read_sample_buffer != NULL)
+    {
+        psram_free(g_model_history_read_sample_buffer);
+        g_model_history_read_sample_buffer = NULL;
+    }
+#endif
 
     vTaskDelete(NULL);
 }
