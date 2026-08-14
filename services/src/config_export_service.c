@@ -258,7 +258,7 @@ static bool config_export_service_write_profile_json(const device_profile_config
                                      config->enable_alarm_ack_method ? "true" : "false");
 
     config_json_writer_append_raw(&writer, "\"channels\":[");
-    for (size_t index = 0u; index < CONFIG_SERVICE_MAX_CHANNELS; ++index)
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         const config_channel_definition_t *channel = &config->channels[index];
 

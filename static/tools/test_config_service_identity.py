@@ -32,6 +32,7 @@ def main() -> int:
             f"-I{root / 'services' / 'src'}",
             f"-I{root / 'drivers' / 'include'}",
             str(root / "services" / "src" / "config_service.c"),
+            str(root / "services" / "src" / "config_compat.c"),
             str(test_dir / "config_service_identity_test.c"),
             "-o",
             str(executable),

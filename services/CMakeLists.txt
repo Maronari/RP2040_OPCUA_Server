@@ -2,6 +2,7 @@ set(FIRMWARE_SERVICES_SOURCES
         src/alarm_service.c
         src/channel_manager.c
         src/config_export_service.c
+        src/config_compat.c
         src/config_import_service.c
         src/config_reset_service.c
         src/config_service.c
@@ -54,6 +55,7 @@ target_compile_definitions(FIRMWARE_SERVICES PUBLIC
 
 target_link_libraries(FIRMWARE_SERVICES PUBLIC
         FIRMWARE_DRIVERS
+        PSRAM_ALLOCATOR
         OTA_SHARED
         FREERTOS_FILES
         pico_sha256

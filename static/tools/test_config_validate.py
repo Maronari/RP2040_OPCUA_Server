@@ -22,6 +22,7 @@ def main() -> int:
             f"-I{test_dir}", f"-I{root / 'services' / 'include'}",
             f"-I{root / 'services' / 'src'}", f"-I{root / 'ota' / 'include'}",
             str(root / "services" / "src" / "config_import_service.c"),
+            str(root / "services" / "src" / "config_compat.c"),
             str(root / "services" / "src" / "config_validate_service.c"),
             str(root / "ota" / "src" / "ota_state.c"),
             str(test_dir / "config_validate_test.c"), "-lm", "-o", str(executable),

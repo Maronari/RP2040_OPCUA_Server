@@ -6,14 +6,16 @@
 #include <stdint.h>
 
 #include "services/service_types.h"
+#include "services/telemetry_channel.h"
 
 #define HISTORY_SERVICE_CHANNEL_CAPACITY 512u
+#define HISTORY_SERVICE_CHANNEL_ID_MAX_LEN TELEMETRY_CHANNEL_ID_MAX_LEN
 typedef struct
 {
-    const char *channel_id;
+    char channel_id[HISTORY_SERVICE_CHANNEL_ID_MAX_LEN];
     float value;
     service_quality_t quality;
-    uint32_t source_timestamp_epoch_s;
+    uint64_t source_timestamp_unix_us;
     uint32_t recorded_at_ms;
 } history_service_channel_sample_t;
 
@@ -22,7 +24,7 @@ void history_service_reset(void);
 bool history_service_record_channel_sample(const char *channel_id,
                                           float value,
                                           service_quality_t quality,
-                                          uint32_t source_timestamp_epoch_s,
+                                          uint64_t source_timestamp_unix_us,
                                           uint32_t record_interval_ms);
 size_t history_service_read_channel_samples(const char *channel_id,
                                            uint32_t start_epoch_s,
@@ -31,6 +33,7 @@ size_t history_service_read_channel_samples(const char *channel_id,
                                            size_t max_samples,
                                            history_service_channel_sample_t *out_samples,
                                            size_t out_capacity,
-                                           bool *out_truncated);
+                                           bool *out_truncated,
+                                           bool *out_busy);
 
 #endif

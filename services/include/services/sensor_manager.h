@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "services/config_service.h"
 #include "services/service_types.h"
 
 typedef struct
@@ -11,13 +12,21 @@ typedef struct
     bool enabled;
     float temperature_c;
     service_quality_t quality;
+    /* Deprecated compatibility projection of source_timestamp_unix_us.
+     * Zero means unknown in this legacy field; use microseconds for new code. */
     uint32_t source_timestamp_epoch_s;
+    uint64_t source_timestamp_unix_us;
     uint32_t sample_count;
     uint32_t error_count;
     uint32_t last_update_ms;
 } sensor_manager_snapshot_t;
 
 bool sensor_manager_init(void);
+/* Runtime-owner half of the configuration transaction.  It performs all
+ * driver lifecycle work synchronously and preserves the prior registry and
+ * hardware on failure. */
+bool sensor_manager_activate_config(const device_profile_config_t *candidate,
+                                    uint32_t candidate_revision);
 void sensor_manager_task(void *argument);
 void sensor_manager_get_snapshot(sensor_manager_snapshot_t *out_snapshot);
 

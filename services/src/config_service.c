@@ -8,88 +8,70 @@
 
 #include <config_store_limits.h>
 #include "drivers/flash_storage_driver.h"
+#include "services/config_compat.h"
 #include "services/config_store_service.h"
+#include "services/config_validate_service.h"
 #include "pico/unique_id.h"
+
+#if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
+#include "psram_allocator.h"
+#endif
 
 _Static_assert(sizeof(device_profile_config_t) <= CONFIG_STORE_MAX_PAYLOAD_SIZE_BYTES,
                "device_profile_config_t must fit in one config storage slot");
 
-static device_profile_config_t g_running_config;
-static device_profile_config_t g_staged_config;
-static device_profile_config_t g_default_config;
-static uint8_t g_persisted_payload[sizeof(device_profile_config_t)];
-static device_profile_config_t g_persisted_config;
+typedef union
+{
+    uint8_t payload[sizeof(device_profile_config_t)];
+    device_profile_config_t config;
+} config_service_persisted_scratch_t;
+
+typedef struct
+{
+    device_profile_config_t running_config;
+    device_profile_config_t staged_config;
+    device_profile_config_t default_config;
+    config_service_persisted_scratch_t persisted;
+} config_service_state_t;
+
+static config_service_state_t *g_config_state;
+#if !defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
+static config_service_state_t g_config_state_fallback;
+#endif
+
+#define g_running_config (g_config_state->running_config)
+#define g_staged_config (g_config_state->staged_config)
+#define g_default_config (g_config_state->default_config)
+#define g_persisted_payload (g_config_state->persisted.payload)
 static bool g_default_config_valid = false;
 static uint32_t g_running_revision = 0u;
 static uint32_t g_staged_revision = 0u;
+static config_service_runtime_apply_fn g_runtime_apply_callback;
+static bool g_transaction_active;
 
-#define CONFIG_SERVICE_LEGACY_ASSET_ID_MAX_LEN 32u
-
-static size_t config_service_align_up(size_t value, size_t alignment)
+static bool config_service_begin_transaction(void)
 {
-    return alignment == 0u ? value : ((value + alignment - 1u) / alignment) * alignment;
+    bool acquired = false;
+    taskENTER_CRITICAL();
+    if (!g_transaction_active)
+    {
+        g_transaction_active = true;
+        acquired = true;
+    }
+    taskEXIT_CRITICAL();
+    return acquired;
 }
 
-static bool config_service_decode_persisted(const uint8_t *payload,
-                                            size_t payload_size,
-                                            device_profile_config_t *out_config)
+static void config_service_end_transaction(void)
 {
-    const size_t asset_offset = offsetof(device_profile_config_t, asset_id);
-    const size_t current_tail_offset = offsetof(device_profile_config_t, manufacture_date_utc);
-    const size_t previous_payload_size =
-        offsetof(device_profile_config_t, hierarchical_location_path);
-    const size_t legacy_tail_offset =
-        config_service_align_up(asset_offset + CONFIG_SERVICE_LEGACY_ASSET_ID_MAX_LEN,
-                                _Alignof(int64_t));
-    const size_t previous_tail_size = previous_payload_size - current_tail_offset;
-    const size_t legacy_payload_size = legacy_tail_offset + previous_tail_size;
-
-    if (payload == NULL || out_config == NULL)
-    {
-        return false;
-    }
-
-    memset(out_config, 0, sizeof(*out_config));
-    if (payload_size == sizeof(*out_config))
-    {
-        memcpy(out_config, payload, sizeof(*out_config));
-        return true;
-    }
-
-    if (payload_size == previous_payload_size)
-    {
-        memcpy(out_config, payload, previous_payload_size);
-        return true;
-    }
-
-    if (payload_size != legacy_payload_size)
-    {
-        return false;
-    }
-
-    memcpy(out_config, payload, asset_offset);
-    memcpy(out_config->asset_id,
-           payload + asset_offset,
-           CONFIG_SERVICE_LEGACY_ASSET_ID_MAX_LEN);
-    memcpy((uint8_t *)out_config + current_tail_offset,
-           payload + legacy_tail_offset,
-           previous_tail_size);
-    return true;
+    taskENTER_CRITICAL();
+    g_transaction_active = false;
+    taskEXIT_CRITICAL();
 }
 
 static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
 {
     return value >= -720 && value <= 840;
-}
-
-static bool config_service_is_valid_channel_kind(uint8_t value)
-{
-    return value <= (uint8_t)TELEMETRY_CHANNEL_KIND_COMPUTED;
-}
-
-static bool config_service_is_valid_channel_value_type(uint8_t value)
-{
-    return value <= (uint8_t)TELEMETRY_CHANNEL_VALUE_STRING;
 }
 
 static void config_service_force_terminated(char *text, size_t size)
@@ -233,13 +215,11 @@ static void config_service_normalize_channel(config_channel_definition_t *channe
 
     if (driver == NULL)
     {
-        memset(channel, 0, sizeof(*channel));
         return;
     }
 
     if (driver->validate_source != NULL && !driver->validate_source(channel->source_index, channel->source_flags))
     {
-        memset(channel, 0, sizeof(*channel));
         return;
     }
 
@@ -251,15 +231,8 @@ static void config_service_normalize_channel(config_channel_definition_t *channe
     }
     else
     {
-        if (!config_service_is_valid_channel_kind(channel->kind))
-        {
-            channel->kind = (uint8_t)driver->default_kind;
-        }
-
-        if (!config_service_is_valid_channel_value_type(channel->value_type))
-        {
-            channel->value_type = (uint8_t)driver->default_value_type;
-        }
+        /* Preserve explicit invalid/unsupported values for validation.  They
+         * must never be silently coerced to a driver's default type. */
     }
 
     if (channel->id[0] == '\0')
@@ -435,7 +408,7 @@ static void config_service_normalize(device_profile_config_t *config)
         config->mqtt_topic_root[sizeof(config->mqtt_topic_root) - 1] = '\0';
     }
 
-    for (size_t index = 0u; index < CONFIG_SERVICE_MAX_CHANNELS; ++index)
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         config_service_normalize_channel(&config->channels[index], index);
     }
@@ -469,14 +442,35 @@ static void config_service_normalize(device_profile_config_t *config)
     config_service_apply_runtime_identity(config);
 }
 
-void config_service_init(const device_profile_config_t *defaults)
+bool config_service_init(const device_profile_config_t *defaults)
 {
+    bool persisted_requires_migration = false;
+
+#if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
+    if (g_config_state == NULL)
+    {
+        if (!psram_allocator_is_ready())
+        {
+            return false;
+        }
+        g_config_state = (config_service_state_t *)psram_calloc(1u, sizeof(*g_config_state));
+        if (g_config_state == NULL)
+        {
+            return false;
+        }
+    }
+#else
+    g_config_state = &g_config_state_fallback;
+#endif
+    memset(g_config_state, 0, sizeof(*g_config_state));
     memset(&g_running_config, 0, sizeof(g_running_config));
     memset(&g_staged_config, 0, sizeof(g_staged_config));
     memset(&g_default_config, 0, sizeof(g_default_config));
     g_default_config_valid = false;
     g_running_revision = 1u;
     g_staged_revision = 1u;
+    g_runtime_apply_callback = NULL;
+    g_transaction_active = false;
 
     if (defaults != NULL)
     {
@@ -489,29 +483,33 @@ void config_service_init(const device_profile_config_t *defaults)
     size_t persisted_payload_size = 0u;
     config_store_record_info_t persisted_info = {0};
     memset(g_persisted_payload, 0, sizeof(g_persisted_payload));
-    memset(&g_persisted_config, 0, sizeof(g_persisted_config));
     if (config_store_load_active(g_persisted_payload,
                                  sizeof(g_persisted_payload),
                                  &persisted_payload_size,
                                  &persisted_info) &&
         persisted_info.payload_format == CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY &&
-        config_service_decode_persisted(g_persisted_payload,
-                                        persisted_payload_size,
-                                        &g_persisted_config))
+        config_compat_decode_binary(g_persisted_payload,
+                                    persisted_payload_size,
+                                    &g_running_config,
+                                    &persisted_requires_migration) &&
+        config_validate_service_validate_candidate(&g_running_config, NULL, 0u) ==
+            CONFIG_VALIDATE_RESULT_OK)
     {
-        g_running_config = g_persisted_config;
-        g_staged_config = g_persisted_config;
+        g_staged_config = g_running_config;
         g_running_revision = persisted_info.generation > 0u ? persisted_info.generation : 1u;
         g_staged_revision = g_running_revision;
     }
     else if (flash_storage_driver_load_partial(g_persisted_payload,
                                                sizeof(g_persisted_payload),
                                                &persisted_payload_size) &&
-             config_service_decode_persisted(g_persisted_payload,
-                                             persisted_payload_size,
-                                             &g_persisted_config) &&
-             config_store_save_payload(g_persisted_payload,
-                                       persisted_payload_size,
+             config_compat_decode_binary(g_persisted_payload,
+                                         persisted_payload_size,
+                                         &g_running_config,
+                                         &persisted_requires_migration) &&
+             config_validate_service_validate_candidate(&g_running_config, NULL, 0u) ==
+                 CONFIG_VALIDATE_RESULT_OK &&
+             config_store_save_payload(&g_running_config,
+                                       sizeof(g_running_config),
                                        CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
                                        CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
                                        NULL) &&
@@ -519,12 +517,13 @@ void config_service_init(const device_profile_config_t *defaults)
                                       sizeof(g_persisted_payload),
                                       &persisted_payload_size,
                                       &persisted_info) &&
-             config_service_decode_persisted(g_persisted_payload,
-                                             persisted_payload_size,
-                                             &g_persisted_config))
+             config_compat_decode_binary(g_persisted_payload,
+                                         persisted_payload_size,
+                                         &g_running_config,
+                                         NULL))
     {
-        g_running_config = g_persisted_config;
-        g_staged_config = g_persisted_config;
+        g_staged_config = g_running_config;
+        persisted_requires_migration = false;
     }
 
     config_service_normalize(&g_running_config);
@@ -533,6 +532,28 @@ void config_service_init(const device_profile_config_t *defaults)
     {
         config_service_normalize(&g_default_config);
     }
+
+    /*
+     * Migration writes only to the alternate slot through the existing
+     * CRC/commit path.  A failed write leaves the v0.4.0 source slot active
+     * and the decoded known-good configuration remains usable for this boot.
+     */
+    if (persisted_requires_migration)
+    {
+        (void)config_store_save_payload(&g_running_config,
+                                        sizeof(g_running_config),
+                                        CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                        CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                        NULL);
+    }
+    return true;
+}
+
+void config_service_set_runtime_apply_callback(config_service_runtime_apply_fn callback)
+{
+    taskENTER_CRITICAL();
+    g_runtime_apply_callback = callback;
+    taskEXIT_CRITICAL();
 }
 
 const device_profile_config_t *config_service_get(void)
@@ -562,17 +583,40 @@ bool config_service_reset_to_defaults(void)
 bool config_service_apply(void)
 {
     device_profile_config_t normalized_config;
+    config_service_runtime_apply_fn runtime_apply;
+    uint32_t candidate_revision;
+
+    if (!config_service_begin_transaction())
+    {
+        return false;
+    }
 
     taskENTER_CRITICAL();
     normalized_config = g_staged_config;
+    runtime_apply = g_runtime_apply_callback;
+    candidate_revision = g_running_revision + 1u;
     taskEXIT_CRITICAL();
 
     config_service_normalize(&normalized_config);
 
+    if (config_validate_service_validate_candidate(&normalized_config, NULL, 0u) !=
+        CONFIG_VALIDATE_RESULT_OK)
+    {
+        config_service_end_transaction();
+        return false;
+    }
+
+    if (runtime_apply != NULL && !runtime_apply(&normalized_config, candidate_revision))
+    {
+        config_service_end_transaction();
+        return false;
+    }
+
     taskENTER_CRITICAL();
     g_running_config = normalized_config;
-    g_running_revision++;
+    g_running_revision = candidate_revision;
     taskEXIT_CRITICAL();
+    config_service_end_transaction();
     return true;
 }
 
@@ -766,7 +810,7 @@ bool config_service_stage_set_network(const device_network_config_t *network)
 
 bool config_service_stage_copy_channel(size_t index, config_channel_definition_t *out_channel)
 {
-    if (out_channel == NULL || index >= CONFIG_SERVICE_MAX_CHANNELS)
+    if (out_channel == NULL || index >= PLATFORM_CHANNEL_LIMIT)
     {
         return false;
     }
@@ -781,7 +825,7 @@ bool config_service_stage_set_channel(size_t index, const config_channel_definit
 {
     device_profile_config_t updated_config;
 
-    if (channel == NULL || index >= CONFIG_SERVICE_MAX_CHANNELS)
+    if (channel == NULL || index >= PLATFORM_CHANNEL_LIMIT)
     {
         return false;
     }
@@ -809,8 +853,16 @@ bool config_service_stage_clear_channel(size_t index)
 bool config_service_replace_and_save(const device_profile_config_t *config, bool apply_running)
 {
     device_profile_config_t normalized_config;
+    device_profile_config_t previous_running;
+    config_service_runtime_apply_fn runtime_apply;
+    uint32_t candidate_revision = 0u;
 
     if (config == NULL)
+    {
+        return false;
+    }
+
+    if (!config_service_begin_transaction())
     {
         return false;
     }
@@ -818,24 +870,58 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
     normalized_config = *config;
     config_service_normalize(&normalized_config);
 
+    if (config_validate_service_validate_candidate(&normalized_config, NULL, 0u) !=
+        CONFIG_VALIDATE_RESULT_OK)
+    {
+        config_service_end_transaction();
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    previous_running = g_running_config;
+    runtime_apply = g_runtime_apply_callback;
+    candidate_revision = g_running_revision + 1u;
+    taskEXIT_CRITICAL();
+
+    if (apply_running && runtime_apply != NULL &&
+        !runtime_apply(&normalized_config, candidate_revision))
+    {
+        /* Keep a valid but non-running candidate staged for correction/retry. */
+        taskENTER_CRITICAL();
+        g_staged_config = normalized_config;
+        g_staged_revision++;
+        taskEXIT_CRITICAL();
+        config_service_end_transaction();
+        return false;
+    }
+
     if (!config_store_save_payload(&normalized_config,
                                    sizeof(normalized_config),
                                    CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
                                    CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
                                    NULL))
     {
+        if (apply_running && runtime_apply != NULL)
+        {
+            (void)runtime_apply(&previous_running, g_running_revision);
+        }
+        config_service_end_transaction();
         return false;
     }
 
     taskENTER_CRITICAL();
     g_staged_config = normalized_config;
     g_staged_revision++;
+    taskEXIT_CRITICAL();
+
     if (apply_running)
     {
+        taskENTER_CRITICAL();
         g_running_config = normalized_config;
-        g_running_revision++;
+        g_running_revision = candidate_revision;
+        taskEXIT_CRITICAL();
     }
-    taskEXIT_CRITICAL();
+    config_service_end_transaction();
     return true;
 }
 

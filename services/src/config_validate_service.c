@@ -12,6 +12,7 @@
 #include <services/config_import_service.h>
 #include <services/config_wire.h>
 #include <services/driver_catalog.h>
+#include <services/config_compat.h>
 #include <services/telemetry_channel.h>
 
 #define CONFIG_VALIDATE_MIN_WATCHDOG_TIMEOUT_MS 1000u
@@ -956,15 +957,47 @@ static config_validate_service_result_t config_validate_service_parse_json_paylo
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
     result = config_json_reader_expect_char(&reader, '[', "channels array");
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
-    for (size_t index = 0u; index < CONFIG_SERVICE_MAX_CHANNELS; ++index)
+    size_t channel_count = 0u;
+    for (;;)
     {
-        if (index > 0u)
+        config_channel_definition_t overflow_channel = {0};
+        config_channel_definition_t *channel = NULL;
+
+        config_json_reader_skip_whitespace(&reader);
+        if (reader.cursor < reader.end && *reader.cursor == ']')
+        {
+            break;
+        }
+        if (channel_count >= PLATFORM_CHANNEL_LIMIT &&
+            channel_count >= CONFIG_COMPAT_V040_CHANNEL_LIMIT)
+        {
+            return config_json_reader_fail(&reader,
+                                           CONFIG_VALIDATE_RESULT_INVALID_JSON,
+                                           "channels array exceeds the supported channel capacity");
+        }
+        if (channel_count > 0u)
         {
             result = config_json_reader_expect_char(&reader, ',', "channels array");
             if (result != CONFIG_VALIDATE_RESULT_OK) return result;
         }
-        result = config_json_parse_channel_object(&reader, index, &candidate.channels[index]);
+        channel = channel_count < PLATFORM_CHANNEL_LIMIT ?
+                      &candidate.channels[channel_count] : &overflow_channel;
+        result = config_json_parse_channel_object(&reader, channel_count, channel);
         if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        if (channel_count >= PLATFORM_CHANNEL_LIMIT && overflow_channel.in_use != 0u)
+        {
+            return config_json_reader_fail(&reader,
+                                           CONFIG_VALIDATE_RESULT_INVALID_CHANNEL,
+                                           "legacy channel configuration exceeds the platform channel capacity");
+        }
+        ++channel_count;
+    }
+    if (channel_count != PLATFORM_CHANNEL_LIMIT &&
+        channel_count != CONFIG_COMPAT_V040_CHANNEL_LIMIT)
+    {
+        return config_json_reader_fail(&reader,
+                                       CONFIG_VALIDATE_RESULT_INVALID_JSON,
+                                       "channels array must contain the current or v0.4.0 slot count");
     }
     result = config_json_reader_expect_char(&reader, ']', "channels array");
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
@@ -989,10 +1022,12 @@ static config_validate_service_result_t config_validate_service_parse_json_paylo
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
-static config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate,
-                                                                                   char *message,
-                                                                                   size_t message_size)
+config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate,
+                                                                             char *message,
+                                                                             size_t message_size)
 {
+    driver_catalog_resource_claim_t claims[PLATFORM_CHANNEL_LIMIT * DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
+    size_t claim_count = 0u;
     if (candidate == NULL)
     {
         config_validate_service_set_message(message, message_size, "configuration candidate is unavailable");
@@ -1048,10 +1083,12 @@ static config_validate_service_result_t config_validate_service_validate_candida
         return CONFIG_VALIDATE_RESULT_INVALID_NETWORK;
     }
 
-    for (size_t index = 0u; index < CONFIG_SERVICE_MAX_CHANNELS; ++index)
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         const config_channel_definition_t *channel = &candidate->channels[index];
         const driver_catalog_entry_t *driver = NULL;
+        driver_catalog_resource_claim_t channel_claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
+        size_t channel_claim_count = 0u;
 
         if (channel->in_use == 0u)
         {
@@ -1070,8 +1107,47 @@ static config_validate_service_result_t config_validate_service_validate_candida
                                                 (unsigned)index);
             return CONFIG_VALIDATE_RESULT_INVALID_CHANNEL;
         }
+        if (!driver_catalog_supports_value_type(
+                driver, (telemetry_channel_value_type_t)channel->value_type))
+        {
+            config_validate_service_set_message(message,
+                                                message_size,
+                                                "channel %u value type is unsupported by driver %u",
+                                                (unsigned)index,
+                                                (unsigned)channel->driver_id);
+            return CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE;
+        }
+        /* v0.4.1 history storage and HistoryRead remain float-only.  Reject
+         * incompatible configuration before activation rather than exposing a
+         * historized channel whose samples would be silently discarded. */
+        if ((channel->flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u &&
+            channel->value_type != (uint8_t)TELEMETRY_CHANNEL_VALUE_FLOAT)
+        {
+            config_validate_service_set_message(message,
+                                                message_size,
+                                                "channel %u historizing requires float value type",
+                                                (unsigned)index);
+            return CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE;
+        }
+        if (!driver_catalog_get_resource_claims(channel->driver_id,
+                                                channel->source_index,
+                                                channel->source_flags,
+                                                channel_claims,
+                                                DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL,
+                                                &channel_claim_count) ||
+            channel_claim_count > DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL ||
+            claim_count > (sizeof(claims) / sizeof(claims[0])) - channel_claim_count)
+        {
+            config_validate_service_set_message(message,
+                                                message_size,
+                                                "channel %u resource claim is invalid",
+                                                (unsigned)index);
+            return CONFIG_VALIDATE_RESULT_INVALID_CHANNEL;
+        }
+        memcpy(&claims[claim_count], channel_claims, channel_claim_count * sizeof(channel_claims[0]));
+        claim_count += channel_claim_count;
 
-        for (size_t other = index + 1u; other < CONFIG_SERVICE_MAX_CHANNELS; ++other)
+        for (size_t other = index + 1u; other < PLATFORM_CHANNEL_LIMIT; ++other)
         {
             if (candidate->channels[other].in_use != 0u &&
                 config_validate_service_channel_ids_equal(channel, &candidate->channels[other]))
@@ -1086,6 +1162,13 @@ static config_validate_service_result_t config_validate_service_validate_candida
         }
     }
 
+    if (!driver_catalog_claims_are_compatible(claims, claim_count))
+    {
+        config_validate_service_set_message(message,
+                                            message_size,
+                                            "channel hardware resource claims conflict");
+        return CONFIG_VALIDATE_RESULT_RESOURCE_CONFLICT;
+    }
     config_validate_service_set_message(message, message_size, "configuration payload is valid");
     return CONFIG_VALIDATE_RESULT_OK;
 }
@@ -1106,15 +1189,17 @@ static config_validate_service_result_t config_validate_service_validate_binary_
                                             "only opaque binary config schema is supported for binary payloads");
         return CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA;
     }
-    if (payload_size != sizeof(device_profile_config_t))
+    if (!config_compat_decode_binary(payload,
+                                     payload_size,
+                                     &candidate,
+                                     NULL))
     {
         config_validate_service_set_message(message,
                                             message_size,
-                                            "payload size does not match the device profile config layout");
+                                            "payload size does not match a supported device profile config layout");
         return CONFIG_VALIDATE_RESULT_INVALID_SIZE;
     }
 
-    memcpy(&candidate, payload, sizeof(candidate));
     if (out_candidate != NULL)
     {
         *out_candidate = candidate;
@@ -1143,6 +1228,8 @@ const char *config_validate_service_result_to_string(config_validate_service_res
     case CONFIG_VALIDATE_RESULT_INVALID_JSON: return "INVALID_JSON";
     case CONFIG_VALIDATE_RESULT_MISSING_FIELD: return "MISSING_FIELD";
     case CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH: return "INVALID_LOCATION_PATH";
+    case CONFIG_VALIDATE_RESULT_RESOURCE_CONFLICT: return "RESOURCE_CONFLICT";
+    case CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE: return "UNSUPPORTED_VALUE_TYPE";
     default: return "UNKNOWN";
     }
 }

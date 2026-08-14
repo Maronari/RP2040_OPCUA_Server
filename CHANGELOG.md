@@ -1,16 +1,47 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.3.4`. Historical tag
+This file tracks the firmware release line through `v0.4.1`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
 
-## v0.3.4 (Unreleased)
+## v0.4.1
 
-- Status: unreleased stabilization and release-integrity line.
+Initial release commit before the review-hardening follow-up:
+`669ab94c349777d0b635d66e5377fcb64fd4fa92`.
+
+- Runtime: one 1-16 compile-time platform limit, manager-owned metadata and
+  slots, coherent snapshot/iteration APIs, generation-checked driver
+  operations, and a Unix-microsecond source timestamp contract.
+- Drivers: explicit capabilities and lifecycle results, native ADC/GPIO
+  hardware ownership under `drivers/`, pre-activation resource claims,
+  reverse-order activation rollback, and build-time driver exclusion.
+- Compatibility: deterministic migration of the four-channel v0.4.0 persisted
+  payload, a stateless deprecated temperature projection, and an empty public
+  OPC UA contract delta.
+- Verification: mixed 1/4/16-channel, capacity, type/driver, timestamp,
+  concurrency, lifecycle, rollback, migration and public-contract gates.
+- Hardening follow-up: configuration apply now commits only after synchronous
+  runtime activation, non-float historizing is rejected, history scans use a
+  task mutex, HistoryRead scratch lives in bounded PSRAM, and driver handover
+  quiesces the old runtime before starting the candidate.
+- Release plan: `docs/releases/v0.4.1.md`.
+
+## v0.4.0
+
+- Scope: decomposed the OPC UA adapter into focused, independently compiled
+  modules backed by one bounded internal model context.
+- Compatibility: preserves the v0.3.4 NodeIds, BrowseNames, methods, events,
+  access behavior, configuration schema, and service contracts.
+- Verification: the source-derived public contract is pinned to v0.3.4 and the
+  module source manifest is checked for untracked public UA registrations.
+- Peeled tag commit: `8a454945aaccc3d381a2e889e90b53569415b705`.
+
+## v0.3.4
+
+- Peeled tag commit: `3ff4689e403fc806122cbafb509cc14cc4487bfb`.
 - Scope: authoritative `0.3.4` version source, blocking CI gates, first-party
   static analysis, release artifact verification, and updated project
   positioning/documentation.
-- Commit SHA: unreleased.
 
 ## v0.3.3
 

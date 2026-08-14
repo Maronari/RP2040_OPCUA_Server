@@ -1,4 +1,5 @@
 #include "services/config_import_service.h"
+#include "services/config_compat.h"
 #include "services/config_validate_service.h"
 #include "services/config_wire.h"
 #include "services/driver_catalog.h"
@@ -23,14 +24,68 @@ void vPortFree(void *pointer)
 
 static bool validate_source(uint8_t source_index, uint8_t source_flags)
 {
-    return source_index == 0u && source_flags == 0u;
+    return source_index == 0u &&
+           (source_flags == 0u || source_flags == CONFIG_CHANNEL_SOURCE_FLAG_INVERT);
 }
 
 static const driver_catalog_entry_t g_known_driver = {
     .driver_id = CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP,
     .name = "host-test",
     .validate_source = validate_source,
+    .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
+                             TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
 };
+
+bool driver_catalog_supports_value_type(const driver_catalog_entry_t *entry,
+                                        telemetry_channel_value_type_t value_type)
+{
+    return entry != NULL &&
+           (entry->supported_value_types & TELEMETRY_CHANNEL_VALUE_TYPE_BIT(value_type)) != 0u;
+}
+
+bool driver_catalog_get_resource_claims(uint8_t driver_id,
+                                        uint8_t source_index,
+                                        uint8_t source_flags,
+                                        driver_catalog_resource_claim_t *out_claims,
+                                        size_t claims_capacity,
+                                        size_t *out_claim_count)
+{
+    if (driver_catalog_get_by_id(driver_id) == NULL ||
+        !validate_source(source_index, source_flags) || out_claims == NULL ||
+        out_claim_count == NULL || claims_capacity < 1u)
+    {
+        return false;
+    }
+    *out_claim_count = 1u;
+    out_claims[0] = (driver_catalog_resource_claim_t){
+        .type = DRIVER_CATALOG_RESOURCE_ADC_INPUT,
+        .index = source_index,
+        .shared = source_flags == CONFIG_CHANNEL_SOURCE_FLAG_INVERT,
+    };
+    return true;
+}
+
+bool driver_catalog_claims_are_compatible(const driver_catalog_resource_claim_t *claims,
+                                          size_t claim_count)
+{
+    if (claims == NULL && claim_count != 0u)
+    {
+        return false;
+    }
+    for (size_t index = 0u; index < claim_count; ++index)
+    {
+        for (size_t other = index + 1u; other < claim_count; ++other)
+        {
+            if (claims[index].type == claims[other].type &&
+                claims[index].index == claims[other].index &&
+                (!claims[index].shared || !claims[other].shared))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 const driver_catalog_entry_t *driver_catalog_get_by_id(uint8_t driver_id)
 {
@@ -73,11 +128,23 @@ static device_profile_config_t valid_candidate(void)
 
 static void stage(const device_profile_config_t *candidate, uint32_t crc)
 {
+    const uint8_t *payload = (const uint8_t *)candidate;
+    size_t offset = 0u;
+
     assert(config_import_service_begin((uint32_t)sizeof(*candidate), crc,
                                        CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY) ==
            CONFIG_IMPORT_RESULT_OK);
-    assert(config_import_service_write_chunk((const uint8_t *)candidate,
-                                             sizeof(*candidate)) == CONFIG_IMPORT_RESULT_OK);
+    while (offset < sizeof(*candidate))
+    {
+        size_t chunk_size = sizeof(*candidate) - offset;
+        if (chunk_size > CONFIG_IMPORT_SERVICE_MAX_CHUNK_BYTES)
+        {
+            chunk_size = CONFIG_IMPORT_SERVICE_MAX_CHUNK_BYTES;
+        }
+        assert(config_import_service_write_chunk(payload + offset, chunk_size) ==
+               CONFIG_IMPORT_RESULT_OK);
+        offset += chunk_size;
+    }
 }
 
 static void expect_rejected(const device_profile_config_t *candidate,
@@ -172,14 +239,14 @@ static bool write_json_channel(char *buffer,
 
 static bool build_json_payload(char *buffer, size_t buffer_size, const json_tokens_t *tokens)
 {
-    char channels[CONFIG_SERVICE_MAX_CHANNELS][768] = {{0}};
+    char channels[PLATFORM_CHANNEL_LIMIT][768] = {{0}};
     int written;
 
     if (buffer == NULL || tokens == NULL)
     {
         return false;
     }
-    for (size_t index = 0u; index < CONFIG_SERVICE_MAX_CHANNELS; ++index)
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         if (!write_json_channel(channels[index], sizeof(channels[index]), index, index == 0u, tokens))
         {
@@ -202,7 +269,8 @@ static bool build_json_payload(char *buffer, size_t buffer_size, const json_toke
         "\"timezoneOffsetMinutes\":%s},\"mqtt\":{\"enabled\":false,\"useJson\":true,"
         "\"brokerUrl\":\"\",\"topicRoot\":\"\"},\"diagnostics\":{"
         "\"enableHeapDiagnostics\":true,\"enableTaskDiagnostics\":true,\"watchdogTimeoutMs\":%s},"
-        "\"opcua\":{\"port\":%s,\"enableAlarmAckMethod\":true},\"channels\":[%s,%s,%s,%s]}",
+        "\"opcua\":{\"port\":%s,\"enableAlarmAckMethod\":true},\"channels\":["
+        "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s]}",
         tokens->schema_version,
         tokens->manufacture_date_utc,
         tokens->calibration_date_utc,
@@ -217,9 +285,58 @@ static bool build_json_payload(char *buffer, size_t buffer_size, const json_toke
         channels[0],
         channels[1],
         channels[2],
-        channels[3]);
+        channels[3],
+        channels[4],
+        channels[5],
+        channels[6],
+        channels[7],
+        channels[8],
+        channels[9],
+        channels[10],
+        channels[11],
+        channels[12],
+        channels[13],
+        channels[14],
+        channels[15]);
 
     return written > 0 && (size_t)written < buffer_size;
+}
+
+/*
+ * v0.4.0 exported the same document schema with exactly four channel slots.
+ * Freeze that external shape here by cutting the current exporter-shaped
+ * fixture at the requested slot boundary; v0.4.1 continues to emit 16 slots.
+ */
+static bool build_json_payload_with_channel_count(char *buffer,
+                                                  size_t buffer_size,
+                                                  const json_tokens_t *tokens,
+                                                  size_t channel_count)
+{
+    char marker[32] = {0};
+    char *tail;
+
+    if (!build_json_payload(buffer, buffer_size, tokens))
+    {
+        return false;
+    }
+    if (channel_count == PLATFORM_CHANNEL_LIMIT)
+    {
+        return true;
+    }
+    if (channel_count == 0u || channel_count >= PLATFORM_CHANNEL_LIMIT)
+    {
+        return false;
+    }
+    assert(snprintf(marker, sizeof(marker), ",{\"slot\":%lu,", (unsigned long)channel_count) > 0);
+    tail = strstr(buffer, marker);
+    if (tail == NULL || (size_t)(tail - buffer) + 3u > buffer_size)
+    {
+        return false;
+    }
+    tail[0] = ']';
+    tail[1] = '}';
+    tail[2] = '\0';
+    return true;
 }
 
 static void stage_json(const char *json)
@@ -248,7 +365,7 @@ static void expect_json_result(const json_tokens_t *tokens,
                                config_validate_service_result_t expected,
                                device_profile_config_t *out_candidate)
 {
-    char json[4096] = {0};
+    char json[16384] = {0};
     config_validate_service_report_t report = {0};
     device_profile_config_t local_candidate;
     device_profile_config_t before;
@@ -357,6 +474,34 @@ static void test_json_numeric_and_network_parsing(void)
     expect_json_result(&tokens, CONFIG_VALIDATE_RESULT_INVALID_JSON, NULL);
 }
 
+static void test_v040_json_channel_array_migration(void)
+{
+    char json[16384] = {0};
+    json_tokens_t tokens = valid_json_tokens();
+    config_validate_service_report_t report = {0};
+    device_profile_config_t parsed;
+
+    assert(build_json_payload_with_channel_count(json, sizeof(json), &tokens,
+                                                 CONFIG_COMPAT_V040_CHANNEL_LIMIT));
+    memset(&parsed, 0xa5, sizeof(parsed));
+    stage_json(json);
+    assert(config_validate_service_validate_imported(&report, &parsed) == CONFIG_VALIDATE_RESULT_OK);
+    assert(report.valid);
+    assert(parsed.channels[0].in_use != 0u);
+    for (size_t index = CONFIG_COMPAT_V040_CHANNEL_LIMIT; index < PLATFORM_CHANNEL_LIMIT; ++index)
+    {
+        config_channel_definition_t empty = {0};
+        assert(memcmp(&parsed.channels[index], &empty, sizeof(empty)) == 0);
+    }
+    assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
+
+    assert(build_json_payload_with_channel_count(json, sizeof(json), &tokens,
+                                                 CONFIG_COMPAT_V040_CHANNEL_LIMIT + 1u));
+    stage_json(json);
+    assert(config_validate_service_validate_imported(&report, &parsed) == CONFIG_VALIDATE_RESULT_INVALID_JSON);
+    assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
+}
+
 static void test_json_i64_overflow_is_currently_saturated(void)
 {
     json_tokens_t tokens = valid_json_tokens();
@@ -461,6 +606,29 @@ static void test_validation_results_and_no_output_mutation(void)
     candidate.channels[1] = candidate.channels[0];
     expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_DUPLICATE_CHANNEL_ID);
     candidate = valid_candidate();
+    candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_UINT64;
+    expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE);
+    candidate = valid_candidate();
+    candidate.channels[0].flags |= TELEMETRY_CHANNEL_FLAG_HISTORIZED;
+    candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_DOUBLE;
+    expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE);
+    candidate = valid_candidate();
+    candidate.channels[0].flags |= TELEMETRY_CHANNEL_FLAG_HISTORIZED;
+    candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    assert(config_validate_service_validate_candidate(&candidate, NULL, 0u) ==
+           CONFIG_VALIDATE_RESULT_OK);
+    candidate = valid_candidate();
+    candidate.channels[1] = candidate.channels[0];
+    strcpy(candidate.channels[1].id, "temperature.2");
+    expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_RESOURCE_CONFLICT);
+    candidate = valid_candidate();
+    candidate.channels[0].source_flags = CONFIG_CHANNEL_SOURCE_FLAG_INVERT;
+    candidate.channels[1] = candidate.channels[0];
+    strcpy(candidate.channels[1].id, "temperature.2");
+    stage(&candidate, ota_crc32_compute(&candidate, sizeof(candidate)));
+    assert(config_validate_service_validate_imported(&report, &output) == CONFIG_VALIDATE_RESULT_OK);
+    assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
+    candidate = valid_candidate();
     strcpy(candidate.hierarchical_location_path, "invalid/location/path");
     expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH);
 }
@@ -470,6 +638,7 @@ int main(void)
     test_import_bounds_and_staging();
     test_validation_results_and_no_output_mutation();
     test_json_numeric_and_network_parsing();
+    test_v040_json_channel_array_migration();
     test_json_i64_overflow_is_currently_saturated();
     test_json_sscanf_trailing_junk_is_currently_accepted();
     return 0;

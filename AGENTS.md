@@ -13,7 +13,7 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.3.4 - 0.3 Stabilization and Release Integrity**.
+  **v0.4.1 — Channel Runtime Hardening**.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -128,38 +128,36 @@ verification; `build-engineer` owns build/artifact and Flash-layout checks; and
 - Use a single version source for runtime firmware revision, OTA metadata,
   configuration export, artifacts, tags, and documentation.
 
-## v0.3.3 constraints
+## v0.4.1 constraints
 
-- Treat tag `v0.3.3` and commit
-  `19bf3d24e80e217f960b251654c323eacfcf1c0f` as the immutable implementation
+- Treat tag `v0.4.0` and commit
+  `8a454945aaccc3d381a2e889e90b53569415b705` as the immutable implementation
   and compatibility baseline.
-- Add only the bounded maintenance journal scheduled by the roadmap. Historical
-  Event Access, arbitrary event history, and new AMB states remain out of scope.
-- Keep the record codec storage-independent and host-testable. Define byte
-  order, schema version, lengths, CRC coverage, erased/commit values, sequence
-  ordering, and compatibility rules explicitly; never persist native structs.
-- Put QSPI erase/program/XIP behavior behind a driver/backend boundary.
-  Reserve a non-overlapping, sector-aligned region in the authoritative Flash
-  layout and use RAM-resident, multicore-safe Flash operations.
-- A record becomes visible only after payload validation and an atomic commit
-  marker. Torn, corrupt, unknown-version, and incomplete records are ignored
-  deterministically without accepting partially written state.
-- Recovery scans bounded storage, handles sequence wrap-around, restores the
-  latest valid committed snapshot before OPC UA exposure, and reports
-  corruption or degraded recovery without silently resetting history.
-- Journal append and `maintenance_service` commit form one documented
-  transaction boundary. A successful method must not expose state that cannot
-  be recovered according to the declared power-loss guarantee.
-- Export is paged and bounded, uses stable logical records rather than raw
-  Flash bytes, and has explicit continuation/capacity behavior. Reset is
-  admin-only, power-loss safe, and emits an audit event only on success.
-- Preserve all v0.3.2 NodeIds, BrowseNames, method signatures, role permissions,
-  status mappings, transitions, and live transition-event cardinality.
-- Define `ActiveState`, `Retain`, `Severity`, `Message`, and
-  `ConfigurationChanged` semantics from recovered service state. Emit bounded
-  audit events for method calls, state changes, and successful reset.
-- Track bounded utilization, erase count, corrupt-record count, and recovery
-  status. Document wear assumptions and deterministic full/wrap behavior.
+- Follow `docs/releases/v0.4.1.md`; do not start the generic OPC UA channel
+  information model scheduled for v0.4.2.
+- Use one compile-time channel limit, defaulting to 16 for the reference
+  profile. Account for every resulting static allocation and persisted-config
+  size change.
+- Channel registry APIs must not expose raw mutable pointers or retain borrowed
+  metadata strings. Define manager-owned storage, bounded snapshots and
+  deterministic capacity/stale-handle behavior.
+- Keep synchronization bounded. Do not call drivers, scan external storage, or
+  perform other long work while holding a global critical section.
+- Support each advertised channel value type end to end or reject the
+  driver/type/configuration combination before activation. Never coerce an
+  unsupported type to `float`.
+- Use a service-owned 64-bit source timestamp with a documented epoch and
+  resolution. OPC UA conversion remains an adapter concern.
+- Move ADC/GPIO access and lifecycle state into `drivers/`. Services may select
+  compiled drivers and validate claims but must not touch hardware registers.
+- Validate exclusive/shared ADC, GPIO and peripheral resource claims before
+  changing running configuration; failure leaves the known-good runtime active.
+- Remove the primary-temperature path from active runtime behavior. Any
+  compatibility adapter must be isolated, documented as deprecated and backed
+  by the same channel state rather than a duplicate value.
+- Preserve all v0.4.0 public NodeIds, BrowseNames, method signatures, events,
+  permissions and configuration fields. Persisted v0.4.0 configurations must
+  migrate deterministically when the channel capacity changes.
 
 ## Build and verification
 
@@ -178,18 +176,18 @@ For every feature:
 
 - Add positive, negative, authorization, illegal-state, and resource-limit tests.
   Add reboot/power-loss tests when persistence is involved.
-- For v0.3.3, add storage-independent codec/recovery tests and extend
-  `static/tools/verify_maintenance_workflow.py` for bounded export/reset,
-  recovered condition state, audit events, every role, and two simultaneous
-  subscribers.
+- For v0.4.1, add host tests for 1/4/16-channel configurations, capacity and
+  resource-claim failures, every accepted value type, rejected type/driver
+  combinations, coherent concurrent snapshots, driver lifecycle failures and
+  persisted v0.4.0 configuration migration.
 - Verification scripts must exit nonzero on failure. CI release gates must
   actually fail; do not use `continue-on-error`, unconditional `|| true`, or
   smoke tests that assert no behavior.
 - Complete one Debug build for the reference target with no new first-party
   warnings.
 - Confirm affected behavior with an automated open62541/asyncua client and
-  UaExpert. Verify synchronized AMB state text and state NodeId after every
-  transition.
+  UaExpert when public OPC UA behavior is touched. Re-run the v0.4.0 public
+  contract gate even when the intended change is service/driver-only.
 - Record artifact sizes and memory/stack impact. Update public NodeId/schema
   documentation, README, release notes, and tools when affected.
 - Report commands actually run and any validation that could not be run. Do not

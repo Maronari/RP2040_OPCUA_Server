@@ -218,17 +218,58 @@ async def verify_model(args):
         await audit.check_node(condition_id, "MaintenanceRequired", ua.NodeClass.Object)
         await audit.check_type_definition(condition_id, f"ns={di_ns};i=15739",
                                           "MaintenanceRequired condition type")
-        await audit.check_child_value(condition_id,
-                                      [f"{amb_ns}:MaintenanceState", "0:CurrentState"],
-                                      ua.LocalizedText("Finished", "en-US"),
-                                      "MaintenanceRequired.CurrentState")
-        state_id_node = await audit.check_child_value(
-            condition_id,
-            [f"{amb_ns}:MaintenanceState", "0:CurrentState", "0:Id"],
-            ua.NodeId(5008, amb_ns), "MaintenanceRequired.CurrentState.Id")
-        del state_id_node
+        maintenance_state = None
+        expected_state_ids = {
+            "Planned": ua.NodeId(5006, amb_ns),
+            "Executing": ua.NodeId(5007, amb_ns),
+            "Finished": ua.NodeId(5008, amb_ns),
+        }
+        try:
+            state_node = await client.get_node(condition_id).get_child(
+                [f"{amb_ns}:MaintenanceState", "0:CurrentState"])
+            state_value = await state_node.read_value()
+            maintenance_state = getattr(state_value, "Text", None)
+            locale = getattr(state_value, "Locale", None)
+            if maintenance_state not in expected_state_ids or locale != "en-US":
+                audit.fail(
+                    "MaintenanceRequired.CurrentState",
+                    f"expected en-US Planned, Executing, or Finished; got {state_value!r}",
+                )
+            else:
+                audit.ok(f"MaintenanceRequired.CurrentState = {state_value!r}")
+
+            state_id = await (await state_node.get_child("0:Id")).read_value()
+            expected_state_id = expected_state_ids.get(maintenance_state)
+            if expected_state_id is None or state_id != expected_state_id:
+                audit.fail(
+                    "MaintenanceRequired.CurrentState.Id",
+                    f"expected {expected_state_id!r}, got {state_id!r}",
+                )
+            else:
+                audit.ok(f"MaintenanceRequired.CurrentState.Id = {state_id!r}")
+        except Exception as exc:
+            audit.fail("MaintenanceRequired.CurrentState", f"{type(exc).__name__}: {exc}")
+
+        downtime_id = "ns=1;s=Device.DeviceHealthAlarms.MaintenanceRequired.EstimatedDowntime"
+        try:
+            downtime = await client.get_node(downtime_id).read_value()
+            downtime_valid = (
+                isinstance(downtime, (int, float))
+                and not isinstance(downtime, bool)
+                and 0.0 <= float(downtime) <= 30.0 * 24.0 * 60.0 * 60.0 * 1000.0
+                and (maintenance_state != "Finished" or float(downtime) == 0.0)
+            )
+            if downtime_valid:
+                audit.ok(f"MaintenanceRequired.EstimatedDowntime = {downtime!r}")
+            else:
+                audit.fail(
+                    "MaintenanceRequired.EstimatedDowntime",
+                    f"invalid value {downtime!r} for state {maintenance_state!r}",
+                )
+        except Exception as exc:
+            audit.fail("MaintenanceRequired.EstimatedDowntime", f"{type(exc).__name__}: {exc}")
+
         for suffix, expected in (("PlannedDate", None),
-                                 ("EstimatedDowntime", 0.0),
                                  ("MaintenanceMethod", 0),
                                  ("ConfigurationChanged", False)):
             node_id = f"ns=1;s=Device.DeviceHealthAlarms.MaintenanceRequired.{suffix}"

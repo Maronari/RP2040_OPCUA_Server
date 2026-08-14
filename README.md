@@ -1,13 +1,13 @@
 ﻿# RP2350 OPC UA Device Platform
 
-This repository contains the `0.3.x` firmware baseline for an RP2350-based
+This repository contains firmware for an RP2350-based
 industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
 `waveshare_core2350b_16mb_psram8mb`; the default application target is
 `device_profile_basic`.
 
-The current stabilization target is `v0.3.4`. This line is intended to freeze
-the existing platform capabilities behind reproducible builds, blocking
-verification, and release artifacts before larger architectural refactoring.
+The current implementation target is `v0.4.1`. It hardens the generic channel
+runtime on top of the modular `v0.4.0` OPC UA adapter while preserving the
+externally visible address-space and behavior contract.
 
 ## What The Firmware Already Implements
 
@@ -22,14 +22,22 @@ verification, and release artifacts before larger architectural refactoring.
   journal from `v0.3.3`.
 - OTA flash layout, OTA state storage, and CRC-checked staged update plumbing.
 - Build-time generated configuration export and OTA/layout manifests.
+- A bounded, manager-owned multi-channel runtime with coherent typed snapshots,
+  Unix-microsecond source timestamps, explicit driver lifecycle/capabilities,
+  and deterministic hardware-resource conflict rejection.
 
 ## Current Boundaries
 
 - This is not a production security baseline yet. OTA payload integrity is
   still CRC based; signed OTA and rollback-health confirmation are scheduled for
   later roadmap releases.
-- The repository still contains a large `opcua_model` implementation and other
-  `0.3.x` era technical debt that `v0.3.4` is meant to stabilize, not redesign.
+- The OPC UA adapter remains the v0.4.0 public compatibility surface. The new
+  generic OPC UA channel information model and NodeIds remain scheduled for
+  v0.4.2.
+- The built-in `adc_voltage` channel driver is limited to protected low-voltage
+  RP2350 ADC use and is not the industrial `AI0..AI3` implementation from
+  `HARDWARE_MVP.md`; industrial analog inputs require the dedicated external
+  ADC/frontend driver scheduled by the later hardware-driver work.
 - The release baseline is RP2350 + PSRAM + W5500. The older RP2040-oriented
   README positioning is obsolete.
 
@@ -42,7 +50,7 @@ verification, and release artifacts before larger architectural refactoring.
 +-- cmake/                  # Authoritative build/version inputs
 +-- drivers/                # Hardware-facing drivers
 +-- ota/                    # OTA layout, state, tooling, and artifacts
-+-- opcua_model/            # OPC UA address-space and callback adapter layer
++-- opcua_model/            # Modular OPC UA address-space and callback adapters
 +-- services/               # Runtime/business services
 +-- static/tests/           # Host-test sources
 +-- static/tools/           # Verification, staging, and release scripts
@@ -65,7 +73,7 @@ with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and builds the default `all` target.
 
 ## Release Artifacts
 
-The `v0.3.4` release workflow treats these as required artifacts for the
+The `v0.4.1` release workflow treats these as required artifacts for the
 reference Debug build:
 
 - `device_profile_basic.elf`
@@ -87,10 +95,10 @@ manifest, and release-artifact evidence agree. Tag builds must use
 
 ## Verification
 
-The blocking `v0.3.4` CI split is:
+The blocking `v0.4.1` CI split is:
 
 - `host`: the deterministic host/static suite runner plus its explicit injected
-  failure proof and the blocking `v0.3.3` public OPC UA inventory comparison.
+  failure proof and the blocking `v0.4.0` public OPC UA inventory comparison.
 - `firmware`: reference Debug configure/build, size reporting, version
   verification, and positive/negative artifact checks.
 - `analysis`: first-party cppcheck over `drivers`, `services`, `opcua_model`,
@@ -101,12 +109,12 @@ emulation target exists, emulator work remains an explicit manual experiment.
 
 ## Versioning
 
-`cmake/firmware_version.cmake` is the only editable firmware version source for
-the `0.3.x` release line. Runtime firmware revision, CMake project version,
+`cmake/firmware_version.cmake` is the only editable firmware version source.
+Runtime firmware revision, CMake project version,
 generated config export, OTA/layout metadata, and release verification all
 derive from that file.
 
 ## Release History
 
-See [CHANGELOG.md](CHANGELOG.md) for the `v0.1` through `v0.3.4` release
-history and peeled tag commit SHAs.
+See [CHANGELOG.md](CHANGELOG.md) for the release history and peeled tag commit
+SHAs.

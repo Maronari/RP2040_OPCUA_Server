@@ -18,9 +18,15 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+BROWSE_REFERENCES_PER_PAGE = 32
+MAX_BROWSE_PAGES_PER_NODE = 256
+READ_VALUES_PER_REQUEST = 64
+CLIENT_APPLICATION_URI = "urn:rp2040-opcua:verification-client"
+
 try:
     from asyncua import Client
     from asyncua import ua
+    from asyncua.common.node import Node
     from asyncua.common.xmlexporter import XmlExporter
     from asyncua.crypto import security_policies
     from asyncua.crypto.cert_gen import setup_self_signed_certificate
@@ -29,6 +35,101 @@ except ImportError:
     print("ERROR: asyncua library not installed")
     print("Install with: C:\\Python312\\python.exe -m pip install --user asyncua")
     sys.exit(1)
+
+
+COMMON_EXPORT_ATTRIBUTES = (
+    ua.AttributeIds.BrowseName,
+    ua.AttributeIds.DisplayName,
+    ua.AttributeIds.Description,
+)
+
+CLASS_EXPORT_ATTRIBUTES = {
+    ua.NodeClass.Object: (ua.AttributeIds.EventNotifier,),
+    ua.NodeClass.Variable: (
+        ua.AttributeIds.DataType,
+        ua.AttributeIds.ValueRank,
+        ua.AttributeIds.ArrayDimensions,
+        ua.AttributeIds.AccessLevel,
+        ua.AttributeIds.UserAccessLevel,
+        ua.AttributeIds.MinimumSamplingInterval,
+        ua.AttributeIds.Historizing,
+    ),
+    ua.NodeClass.Method: (
+        ua.AttributeIds.Executable,
+        ua.AttributeIds.UserExecutable,
+    ),
+    ua.NodeClass.ObjectType: (ua.AttributeIds.IsAbstract,),
+    ua.NodeClass.VariableType: (
+        ua.AttributeIds.DataType,
+        ua.AttributeIds.ValueRank,
+        ua.AttributeIds.ArrayDimensions,
+        ua.AttributeIds.IsAbstract,
+    ),
+    ua.NodeClass.ReferenceType: (ua.AttributeIds.InverseName,),
+    ua.NodeClass.DataType: (ua.AttributeIds.DataTypeDefinition,),
+}
+
+
+def bad_attribute_data_value():
+    status = ua.StatusCode(ua.StatusCodes.BadAttributeIdInvalid)
+    try:
+        return ua.DataValue(StatusCode=status)
+    except TypeError:
+        return ua.DataValue(StatusCode_=status)
+
+
+class CachedExportNode(Node):
+    def __init__(self, source, attributes, references):
+        super().__init__(source.session, source.nodeid)
+        self._export_attributes = attributes
+        self._export_references = references
+
+    async def read_attribute(self, attr, indexrange=None, raise_on_bad_status=True):
+        del indexrange
+        result = self._export_attributes.get(attr)
+        if result is None:
+            result = bad_attribute_data_value()
+        if raise_on_bad_status:
+            result.StatusCode.check()
+        return result
+
+    async def get_references(
+        self,
+        refs=ua.ObjectIds.References,
+        direction=ua.BrowseDirection.Both,
+        nodeclassmask=ua.NodeClass.Unspecified,
+        includesubtypes=True,
+        result_mask=ua.BrowseResultMask.All,
+    ):
+        del nodeclassmask, includesubtypes, result_mask
+        if refs == ua.ObjectIds.References and direction == ua.BrowseDirection.Both:
+            return self._export_references
+        if refs == ua.ObjectIds.HierarchicalReferences and direction == ua.BrowseDirection.Inverse:
+            hierarchical_types = {
+                ua.ObjectIds.Organizes,
+                ua.ObjectIds.HasEventSource,
+                ua.ObjectIds.HasSubtype,
+                ua.ObjectIds.HasProperty,
+                ua.ObjectIds.HasComponent,
+                ua.ObjectIds.HasNotifier,
+                ua.ObjectIds.HasOrderedComponent,
+            }
+            return [
+                reference for reference in self._export_references
+                if not reference.IsForward
+                and reference.ReferenceTypeId.NamespaceIndex == 0
+                and reference.ReferenceTypeId.Identifier in hierarchical_types
+            ]
+        raise RuntimeError(f"Unsupported cached reference query for {node_label(self)}")
+
+
+class CachedXmlExporter(XmlExporter):
+    async def add_etree_variable_type(self, node):
+        element = await self._add_node_common("UAVariableType", node)
+        await self.add_variable_common(node, element, self._export_values)
+        abstract = await node.read_attribute(ua.AttributeIds.IsAbstract)
+        if abstract.Value.Value:
+            element.attrib["IsAbstract"] = "true"
 
 
 def parse_args():
@@ -115,6 +216,137 @@ def node_label(node):
     return node.nodeid.to_string()
 
 
+async def get_bounded_references(
+    client,
+    node,
+    reference_type,
+    direction,
+):
+    description = ua.BrowseDescription()
+    description.NodeId = node.nodeid
+    description.BrowseDirection = direction
+    description.ReferenceTypeId = ua.NodeId(reference_type)
+    description.IncludeSubtypes = True
+    description.NodeClassMask = ua.NodeClass.Unspecified
+    description.ResultMask = ua.BrowseResultMask.All
+
+    parameters = ua.BrowseParameters()
+    parameters.View.Timestamp = ua.get_win_epoch()
+    parameters.RequestedMaxReferencesPerNode = BROWSE_REFERENCES_PER_PAGE
+    parameters.NodesToBrowse.append(description)
+
+    results = await client.uaclient.browse(parameters)
+    references = []
+    pages = 0
+    while results:
+        result = results[0]
+        result.StatusCode.check()
+        references.extend(result.References)
+        continuation_point = result.ContinuationPoint
+        if not continuation_point:
+            return references
+
+        pages += 1
+        if pages >= MAX_BROWSE_PAGES_PER_NODE:
+            release = ua.BrowseNextParameters()
+            release.ReleaseContinuationPoints = True
+            release.ContinuationPoints = [continuation_point]
+            await client.uaclient.browse_next(release)
+            raise RuntimeError(
+                f"Browse page limit exceeded for {node_label(node)} "
+                f"({MAX_BROWSE_PAGES_PER_NODE} pages)"
+            )
+
+        browse_next = ua.BrowseNextParameters()
+        browse_next.ReleaseContinuationPoints = False
+        browse_next.ContinuationPoints = [continuation_point]
+        results = await client.uaclient.browse_next(browse_next)
+
+    return references
+
+
+async def get_bounded_hierarchical_children(client, node):
+    references = await get_bounded_references(
+        client,
+        node,
+        ua.ObjectIds.HierarchicalReferences,
+        ua.BrowseDirection.Forward,
+    )
+    return [client.get_node(reference.NodeId) for reference in references]
+
+
+async def read_export_attributes(client, reads, attribute_cache):
+    for offset in range(0, len(reads), READ_VALUES_PER_REQUEST):
+        batch = reads[offset:offset + READ_VALUES_PER_REQUEST]
+        parameters = ua.ReadParameters()
+        for _, node, attribute in batch:
+            item = ua.ReadValueId()
+            item.NodeId = node.nodeid
+            item.AttributeId = attribute
+            parameters.NodesToRead.append(item)
+        try:
+            results = await client.uaclient.read(parameters)
+        except Exception as exc:
+            first_node_index, first_node, first_attribute = batch[0]
+            last_node_index, last_node, last_attribute = batch[-1]
+            del first_node_index, last_node_index
+            raise RuntimeError(
+                f"Read batch {offset // READ_VALUES_PER_REQUEST + 1} failed: "
+                f"{node_label(first_node)}/{first_attribute.name} through "
+                f"{node_label(last_node)}/{last_attribute.name}: {exc}"
+            ) from exc
+        if len(results) != len(batch):
+            raise RuntimeError(
+                f"Read returned {len(results)} results for {len(batch)} requested attributes"
+            )
+        for (node_index, _, attribute), result in zip(batch, results):
+            attribute_cache[node_index][attribute] = result
+
+
+async def cache_export_nodes(client, nodes, export_values):
+    attribute_cache = [dict() for _ in nodes]
+    node_class_reads = [
+        (node_index, node, ua.AttributeIds.NodeClass)
+        for node_index, node in enumerate(nodes)
+    ]
+    print(
+        f"Reading {len(node_class_reads)} node classes in bounded batches of "
+        f"{READ_VALUES_PER_REQUEST}..."
+    )
+    await read_export_attributes(client, node_class_reads, attribute_cache)
+
+    reads = []
+    for node_index, node in enumerate(nodes):
+        node_class_value = attribute_cache[node_index][ua.AttributeIds.NodeClass]
+        node_class_value.StatusCode.check()
+        node_class = node_class_value.Value.Value
+        attributes = COMMON_EXPORT_ATTRIBUTES + CLASS_EXPORT_ATTRIBUTES.get(node_class, ())
+        if export_values and node_class in (ua.NodeClass.Variable, ua.NodeClass.VariableType):
+            attributes += (ua.AttributeIds.Value,)
+        reads.extend((node_index, node, attribute) for attribute in attributes)
+
+    print(
+        f"Reading {len(reads)} class-specific attributes in bounded batches of "
+        f"{READ_VALUES_PER_REQUEST}..."
+    )
+    await read_export_attributes(client, reads, attribute_cache)
+
+    print("Reading node references with bounded continuation pages...")
+    cached_nodes = []
+    for node_index, node in enumerate(nodes):
+        references = await get_bounded_references(
+            client,
+            node,
+            ua.ObjectIds.References,
+            ua.BrowseDirection.Both,
+        )
+        cached_nodes.append(CachedExportNode(node, attribute_cache[node_index], references))
+        if (node_index + 1) % 50 == 0 or node_index + 1 == len(nodes):
+            print(f"  Cached {node_index + 1}/{len(nodes)} nodes")
+
+    return cached_nodes
+
+
 def resolve_default_server_cert():
     candidate = Path(__file__).resolve().parent.parent / "certs" / "server.crt.der"
     return candidate if candidate.is_file() else None
@@ -138,6 +370,7 @@ async def configure_client_security(client, args):
     if not args.username:
         return None
 
+    client.application_uri = CLIENT_APPLICATION_URI
     client_cert = Path(args.client_cert) if args.client_cert else None
     client_key = Path(args.client_key) if args.client_key else None
     server_cert = Path(args.server_cert) if args.server_cert else resolve_default_server_cert()
@@ -149,7 +382,7 @@ async def configure_client_security(client, args):
         base_dir = Path(tempfile.gettempdir()) / "rp2040_opcua_export"
         client_cert = base_dir / "client_cert.der"
         client_key = base_dir / "client_key.pem"
-        client_app_uri = getattr(client, "application_uri", "urn:freeopcua:client")
+        client_app_uri = CLIENT_APPLICATION_URI
         await ensure_client_certificate(client_cert, client_key, client_app_uri)
         print(f"Using temporary client certificate: {client_cert}")
 
@@ -204,10 +437,9 @@ async def collect_namespace_nodes(client, namespace_index, max_depth):
             continue
 
         try:
-            children = await node.get_children(refs=ua.ObjectIds.HierarchicalReferences)
+            children = await get_bounded_hierarchical_children(client, node)
         except Exception as exc:
-            print(f"  Warning: could not browse children of {key}: {exc}")
-            continue
+            raise RuntimeError(f"Could not browse children of {key}: {exc}") from exc
 
         for child in reversed(children):
             child_key = node_label(child)
@@ -225,8 +457,9 @@ async def export_namespace_nodes(client, namespace_index, output_path, max_depth
         print("Warning: no nodes were found in the requested namespace")
         return None
 
-    exporter = XmlExporter(client, export_values=export_values)
-    await exporter.build_etree(nodes)
+    cached_nodes = await cache_export_nodes(client, nodes, export_values)
+    exporter = CachedXmlExporter(client, export_values=export_values)
+    await exporter.build_etree(cached_nodes)
     await exporter.write_xml(output_path, pretty=True)
 
     print(f"Exported namespace {namespace_index} ({namespace_uri})")
@@ -243,7 +476,11 @@ async def main_async():
     output_path = make_output_path(args.namespace_index, args.output)
 
     print(f"Connecting to {args.server_url}...")
-    client = Client(url=args.server_url, timeout=args.timeout)
+    client = Client(
+        url=args.server_url,
+        timeout=args.timeout,
+        watchdog_intervall=args.timeout,
+    )
 
     await configure_client_security(client, args)
 

@@ -16,8 +16,17 @@ import sys
 
 SUITES = (
     "test_channel_manager.py",
+    "test_channel_runtime.py",
+    "test_history_service.py",
+    "test_sensor_manager_rollback.py",
+    "test_config_transaction.py",
+    "test_config_compat.py",
     "test_config_service_identity.py",
     "test_config_validate.py",
+    "test_v041_opcua_adapter_sources.py",
+    "test_opcua_logging_source.py",
+    "test_temperature_adc_source.py",
+    "test_export_nodeset.py",
     "test_opcua_network_parse.py",
     "test_flash_prerequisites.py",
     "test_maintenance_condition_active_state_contract.py",

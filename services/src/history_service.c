@@ -3,7 +3,10 @@
 #include <string.h>
 
 #include <FreeRTOS.h>
+#include <semphr.h>
 #include <task.h>
+
+#include "psram_allocator.h"
 
 typedef struct
 {
@@ -12,23 +15,44 @@ typedef struct
     size_t write_index;
 } history_service_channel_ring_t;
 
-static history_service_channel_ring_t g_channel_history;
+static history_service_channel_ring_t *g_channel_history;
+#if !defined(PICO_ON_DEVICE)
+static history_service_channel_ring_t g_host_channel_history;
+#endif
 static bool g_initialized = false;
+/* History scans can examine all 512 retained samples.  Serialize those scans
+ * with a service-local static mutex; never mask interrupts for that work. */
+static StaticSemaphore_t g_history_mutex_storage;
+static SemaphoreHandle_t g_history_mutex;
+
+#define HISTORY_SERVICE_LOCK_TIMEOUT_MS 10u
+
+static bool history_service_lock(void)
+{
+    return g_history_mutex != NULL &&
+           xSemaphoreTake(g_history_mutex, pdMS_TO_TICKS(HISTORY_SERVICE_LOCK_TIMEOUT_MS)) == pdTRUE;
+}
+
+static void history_service_unlock(void)
+{
+    (void)xSemaphoreGive(g_history_mutex);
+}
 
 static size_t history_service_oldest_index(void)
 {
-    if (g_channel_history.count >= HISTORY_SERVICE_CHANNEL_CAPACITY)
+    if (g_channel_history->count >= HISTORY_SERVICE_CHANNEL_CAPACITY)
     {
-        return g_channel_history.write_index;
+        return g_channel_history->write_index;
     }
 
     return 0u;
 }
 
-static bool history_service_sample_in_range(uint32_t sample_epoch_s,
+static bool history_service_sample_in_range(uint64_t sample_timestamp_unix_us,
                                             uint32_t start_epoch_s,
                                             uint32_t end_epoch_s)
 {
+    const uint64_t sample_epoch_s = sample_timestamp_unix_us / 1000000u;
     uint32_t lower_bound = 0u;
     uint32_t upper_bound = 0u;
 
@@ -62,15 +86,30 @@ static bool history_service_channel_ids_equal(const char *lhs, const char *rhs)
     return strcmp(lhs, rhs) == 0;
 }
 
+static bool history_service_channel_id_is_bounded(const char *channel_id)
+{
+    size_t length = 0u;
+
+    if (channel_id == NULL)
+    {
+        return false;
+    }
+    while (length < HISTORY_SERVICE_CHANNEL_ID_MAX_LEN && channel_id[length] != '\0')
+    {
+        ++length;
+    }
+    return length > 0u && length < HISTORY_SERVICE_CHANNEL_ID_MAX_LEN;
+}
+
 static uint32_t history_service_find_last_recorded_ms(const char *channel_id)
 {
     const size_t oldest_index = history_service_oldest_index();
 
-    for (size_t offset = 0u; offset < g_channel_history.count; ++offset)
+    for (size_t offset = 0u; offset < g_channel_history->count; ++offset)
     {
         const size_t sample_index =
-            (oldest_index + g_channel_history.count - 1u - offset) % HISTORY_SERVICE_CHANNEL_CAPACITY;
-        const history_service_channel_sample_t *sample = &g_channel_history.samples[sample_index];
+            (oldest_index + g_channel_history->count - 1u - offset) % HISTORY_SERVICE_CHANNEL_CAPACITY;
+        const history_service_channel_sample_t *sample = &g_channel_history->samples[sample_index];
 
         if (history_service_channel_ids_equal(sample->channel_id, channel_id))
         {
@@ -83,6 +122,30 @@ static uint32_t history_service_find_last_recorded_ms(const char *channel_id)
 
 bool history_service_init(void)
 {
+    if (g_history_mutex == NULL)
+    {
+        g_history_mutex = xSemaphoreCreateMutexStatic(&g_history_mutex_storage);
+        if (g_history_mutex == NULL)
+        {
+            return false;
+        }
+    }
+    if (g_channel_history == NULL)
+    {
+#if defined(PICO_ON_DEVICE)
+        if (!psram_allocator_is_ready())
+        {
+            return false;
+        }
+        g_channel_history = psram_calloc(1u, sizeof(*g_channel_history));
+        if (g_channel_history == NULL)
+        {
+            return false;
+        }
+#else
+        g_channel_history = &g_host_channel_history;
+#endif
+    }
     history_service_reset();
     g_initialized = true;
     return true;
@@ -90,52 +153,63 @@ bool history_service_init(void)
 
 void history_service_reset(void)
 {
-    taskENTER_CRITICAL();
-    memset(&g_channel_history, 0, sizeof(g_channel_history));
-    taskEXIT_CRITICAL();
+    if (g_channel_history == NULL)
+    {
+        return;
+    }
+    if (!history_service_lock())
+    {
+        return;
+    }
+    memset(g_channel_history, 0, sizeof(*g_channel_history));
+    history_service_unlock();
 }
 
 bool history_service_record_channel_sample(const char *channel_id,
                                           float value,
                                           service_quality_t quality,
-                                          uint32_t source_timestamp_epoch_s,
+                                          uint64_t source_timestamp_unix_us,
                                           uint32_t record_interval_ms)
 {
     const uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
     bool recorded = false;
 
-    if (!g_initialized || channel_id == NULL || channel_id[0] == '\0' ||
-        record_interval_ms == 0u || quality != SERVICE_QUALITY_GOOD || source_timestamp_epoch_s == 0u)
+    if (!g_initialized || !history_service_channel_id_is_bounded(channel_id) ||
+        record_interval_ms == 0u || quality != SERVICE_QUALITY_GOOD ||
+        source_timestamp_unix_us == TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID)
     {
         return false;
     }
 
-    taskENTER_CRITICAL();
+    if (!history_service_lock())
+    {
+        return false;
+    }
     {
         const uint32_t last_recorded_ms = history_service_find_last_recorded_ms(channel_id);
 
-        if (g_channel_history.count == 0u ||
+        if (g_channel_history->count == 0u ||
             last_recorded_ms == 0u ||
             (uint32_t)(now_ms - last_recorded_ms) >= record_interval_ms)
         {
-            history_service_channel_sample_t *sample = &g_channel_history.samples[g_channel_history.write_index];
+            history_service_channel_sample_t *sample = &g_channel_history->samples[g_channel_history->write_index];
 
-            sample->channel_id = channel_id;
+            memcpy(sample->channel_id, channel_id, strlen(channel_id) + 1u);
             sample->value = value;
             sample->quality = quality;
-            sample->source_timestamp_epoch_s = source_timestamp_epoch_s;
+            sample->source_timestamp_unix_us = source_timestamp_unix_us;
             sample->recorded_at_ms = now_ms;
 
-            g_channel_history.write_index =
-                (g_channel_history.write_index + 1u) % HISTORY_SERVICE_CHANNEL_CAPACITY;
-            if (g_channel_history.count < HISTORY_SERVICE_CHANNEL_CAPACITY)
+            g_channel_history->write_index =
+                (g_channel_history->write_index + 1u) % HISTORY_SERVICE_CHANNEL_CAPACITY;
+            if (g_channel_history->count < HISTORY_SERVICE_CHANNEL_CAPACITY)
             {
-                g_channel_history.count++;
+                g_channel_history->count++;
             }
             recorded = true;
         }
     }
-    taskEXIT_CRITICAL();
+    history_service_unlock();
 
     return recorded;
 }
@@ -147,7 +221,8 @@ size_t history_service_read_channel_samples(const char *channel_id,
                                            size_t max_samples,
                                            history_service_channel_sample_t *out_samples,
                                            size_t out_capacity,
-                                           bool *out_truncated)
+                                           bool *out_truncated,
+                                           bool *out_busy)
 {
     size_t collected = 0u;
     size_t scan_limit = 0u;
@@ -159,6 +234,10 @@ size_t history_service_read_channel_samples(const char *channel_id,
     {
         *out_truncated = false;
     }
+    if (out_busy != NULL)
+    {
+        *out_busy = false;
+    }
 
     if (!g_initialized || channel_id == NULL || out_samples == NULL || out_capacity == 0u)
     {
@@ -169,8 +248,15 @@ size_t history_service_read_channel_samples(const char *channel_id,
                           ? out_capacity
                           : requested_limit;
 
-    taskENTER_CRITICAL();
-    scan_limit = g_channel_history.count;
+    if (!history_service_lock())
+    {
+        if (out_busy != NULL)
+        {
+            *out_busy = true;
+        }
+        return 0u;
+    }
+    scan_limit = g_channel_history->count;
     oldest_index = history_service_oldest_index();
 
     for (size_t offset = 0u; offset < scan_limit; ++offset)
@@ -187,9 +273,9 @@ size_t history_service_read_channel_samples(const char *channel_id,
             sample_index = (oldest_index + offset) % HISTORY_SERVICE_CHANNEL_CAPACITY;
         }
 
-        sample = g_channel_history.samples[sample_index];
+        sample = g_channel_history->samples[sample_index];
         if (!history_service_channel_ids_equal(sample.channel_id, channel_id) ||
-            !history_service_sample_in_range(sample.source_timestamp_epoch_s, start_epoch_s, end_epoch_s))
+            !history_service_sample_in_range(sample.source_timestamp_unix_us, start_epoch_s, end_epoch_s))
         {
             continue;
         }
@@ -202,7 +288,7 @@ size_t history_service_read_channel_samples(const char *channel_id,
 
         out_samples[collected++] = sample;
     }
-    taskEXIT_CRITICAL();
+    history_service_unlock();
 
     if (out_truncated != NULL)
     {

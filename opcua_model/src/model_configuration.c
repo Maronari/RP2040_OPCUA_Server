@@ -1,0 +1,1046 @@
+#include "opcua_model_internal.h"
+
+UA_StatusCode model_write_value(UA_Server *server,
+                                       const UA_NodeId *session_id,
+                                       void *session_context,
+                                       const UA_NodeId *node_id,
+                                       void *node_context,
+                                       const UA_NumericRange *range,
+                                       const UA_DataValue *value)
+{
+    model_node_context_t *context = (model_node_context_t *)node_context;
+    telemetry_channel_settings_t channel_settings = {0};
+    const char *settings_channel_id = NULL;
+    bool save_device_config = false;
+    (void)session_id;
+    (void)session_context;
+    (void)node_id;
+
+    if (context == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+
+    if (range != NULL)
+    {
+        return UA_STATUSCODE_BADINDEXRANGEINVALID;
+    }
+
+    if (value == NULL || !value->hasValue)
+    {
+        return UA_STATUSCODE_BADNODATA;
+    }
+
+    if (model_session_is_anonymous(session_context))
+    {
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    }
+
+    if (!model_session_has_role(session_context, model_required_role_for_write_kind(context->kind)))
+    {
+        return UA_STATUSCODE_BADUSERACCESSDENIED;
+    }
+
+    if (context->channel_id != NULL)
+    {
+        settings_channel_id = context->channel_id;
+    }
+    else if (context->kind == MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS ||
+             context->kind == MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS ||
+             context->kind == MODEL_NODE_CONFIG_TEMP_OFFSET ||
+             context->kind == MODEL_NODE_CONFIG_TEMP_SCALE ||
+             context->kind == MODEL_NODE_CONFIG_HIGH_ALARM ||
+             context->kind == MODEL_NODE_CONFIG_HIGH_HIGH_ALARM)
+    {
+        settings_channel_id = DEVICE_CHANNEL_ID_TEMPERATURE_1;
+    }
+
+    switch (context->kind)
+    {
+    case MODEL_NODE_IDENT_ASSET_ID:
+    {
+        char asset_id[CONFIG_SERVICE_ASSET_ID_MAX_LEN] = {0};
+
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_STRING]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!model_copy_input_string(&value->value, asset_id, sizeof(asset_id)))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        if (!config_service_set_asset_id(asset_id))
+        {
+            return UA_STATUSCODE_BADINTERNALERROR;
+        }
+        {
+            const UA_StatusCode alias_status = model_update_asset_id_alias(server, asset_id);
+            if (alias_status != UA_STATUSCODE_GOOD)
+            {
+                printf("[OPC UA]\tFailed to update AssetId alias: 0x%x (%s)\n",
+                       alias_status,
+                       UA_StatusCode_name(alias_status));
+                fflush(stdout);
+            }
+        }
+        break;
+    }
+    case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
+    case MODEL_NODE_CONFIG_SAMPLING_PERIOD_MS:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_UINT32]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.sample_period_ms = *(const UA_UInt32 *)value->value.data;
+        if (channel_settings.sample_period_ms == 0u ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_UINT32]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.history_interval_ms = *(const UA_UInt32 *)value->value.data;
+        if (!channel_manager_update_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_PUBLISH_PERIOD_MS:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_UINT32]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.publish_period_ms = *(const UA_UInt32 *)value->value.data;
+        if (channel_settings.publish_period_ms == 0u ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_TIME_TIMEZONE_OFFSET_MINUTES:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_INT16]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!config_service_set_timezone_offset_minutes(*(const UA_Int16 *)value->value.data))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        save_device_config = true;
+        break;
+    case MODEL_NODE_CONFIG_TEMP_OFFSET:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.offset = *(const UA_Float *)value->value.data;
+        if (!channel_manager_update_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_TEMP_SCALE:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.scale = *(const UA_Float *)value->value.data;
+        if (channel_settings.scale == 0.0 ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_HIGH_ALARM:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.warning_threshold = *(const UA_Float *)value->value.data;
+        if (channel_settings.warning_threshold > channel_settings.critical_threshold ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    case MODEL_NODE_CONFIG_HIGH_HIGH_ALARM:
+        if (!UA_Variant_hasScalarType(&value->value, &UA_TYPES[UA_TYPES_FLOAT]))
+        {
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (settings_channel_id == NULL || !model_copy_channel_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        channel_settings.critical_threshold = *(const UA_Float *)value->value.data;
+        if (channel_settings.critical_threshold < channel_settings.warning_threshold ||
+            !channel_manager_update_settings(settings_channel_id, &channel_settings))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        break;
+    default:
+        return UA_STATUSCODE_BADNOTWRITABLE;
+    }
+
+    if (save_device_config)
+    {
+        (void)config_service_save();
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result)
+{
+    if (output_size > 0)
+    {
+        UA_Variant_setScalarCopy(&output[0], &result, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    }
+}
+
+void model_schedule_reboot(uint32_t delay_ms)
+{
+    const TickType_t delay_ticks = pdMS_TO_TICKS(delay_ms > 0u ? delay_ms : 1u);
+
+    g_pending_actions.reboot_pending = true;
+    g_pending_actions.reboot_due_tick = xTaskGetTickCount() + delay_ticks;
+}
+
+void model_schedule_identify_blink(uint8_t blink_count, uint32_t period_ms)
+{
+    TickType_t delay_ticks;
+
+    if (blink_count == 0u)
+    {
+        g_pending_actions.identify_blink_active = false;
+        g_pending_actions.identify_toggles_remaining = 0u;
+        g_pending_actions.identify_led_on = false;
+        led_driver_set(false);
+        return;
+    }
+
+    delay_ticks = pdMS_TO_TICKS(period_ms > 0u ? period_ms : 1u);
+    if (delay_ticks == 0)
+    {
+        delay_ticks = 1;
+    }
+
+    g_pending_actions.identify_blink_active = true;
+    g_pending_actions.identify_next_tick = xTaskGetTickCount();
+    g_pending_actions.identify_toggles_remaining = (uint8_t)(blink_count * 2u);
+    g_pending_actions.identify_led_on = false;
+}
+
+UA_StatusCode model_acknowledge_alarms(UA_Server *server,
+                                              const UA_NodeId *session_id,
+                                              void *session_context,
+                                              const UA_NodeId *method_id,
+                                              void *method_context,
+                                              const UA_NodeId *object_id,
+                                              void *object_context,
+                                              size_t input_size,
+                                              const UA_Variant *input,
+                                              size_t output_size,
+                                              UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = true;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    alarm_service_acknowledge_all();
+    model_set_boolean_method_output(output_size, output, result);
+
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_request_reboot(UA_Server *server,
+                                          const UA_NodeId *session_id,
+                                          void *session_context,
+                                          const UA_NodeId *method_id,
+                                          void *method_context,
+                                          const UA_NodeId *object_id,
+                                          void *object_context,
+                                          size_t input_size,
+                                          const UA_Variant *input,
+                                          size_t output_size,
+                                          UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = true;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    /* Leave a bounded delivery window for the queued success AuditEvent and
+     * its Publish response before the transport is intentionally torn down. */
+    model_schedule_reboot(1500u);
+    printf("[OPC UA]\tReboot requested\n");
+    fflush(stdout);
+    model_audit_session_event(session_context, "reboot", "Reboot", true, "reboot scheduled");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     "Reboot requested",
+                                     450u,
+                                     "Reboot",
+                                     0u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+    model_set_boolean_method_output(output_size, output, result);
+
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_factory_reset(UA_Server *server,
+                                         const UA_NodeId *session_id,
+                                         void *session_context,
+                                         const UA_NodeId *method_id,
+                                         void *method_context,
+                                         const UA_NodeId *object_id,
+                                         void *object_context,
+                                         size_t input_size,
+                                         const UA_Variant *input,
+                                         size_t output_size,
+                                         UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    const UA_String *scope_string = NULL;
+    char scope_text[48] = {0};
+    config_reset_scope_t scope = CONFIG_RESET_SCOPE_ALL_KEEP_IDENTITY;
+    const char *details = "factory reset failed";
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size > 1u || (input_size == 1u && (input == NULL || !model_get_input_ua_string(&input[0], &scope_string))))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    if (scope_string != NULL)
+    {
+        if (scope_string->length >= sizeof(scope_text))
+        {
+            model_set_boolean_method_output(output_size, output, false);
+            return UA_STATUSCODE_BADINVALIDARGUMENT;
+        }
+
+        memcpy(scope_text, scope_string->data, scope_string->length);
+        scope_text[scope_string->length] = '\0';
+    }
+
+    if (!config_reset_service_parse_scope(scope_text, &scope))
+    {
+        details = "unsupported factory reset scope";
+    }
+    else if (!config_reset_service_execute(scope))
+    {
+        details = "factory reset execution failed";
+    }
+    else
+    {
+        result = true;
+        details = "factory reset scheduled";
+        model_schedule_reboot(250u);
+    }
+
+    printf("[OPC UA]\tFactoryReset %s scope=%s\n",
+           result == UA_TRUE ? "requested" : "failed",
+           config_reset_service_scope_to_string(scope));
+    fflush(stdout);
+
+    model_audit_session_event(session_context,
+                              "factory-reset",
+                              "device",
+                              result == UA_TRUE,
+                              details);
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_maintenance_event(server,
+                                     result == UA_TRUE ? "Factory reset requested" : "Factory reset failed",
+                                     result == UA_TRUE ? 600u : 800u,
+                                     "FactoryReset",
+                                     result == UA_TRUE ? 0u : 1u,
+                                     model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_sync_time_now(UA_Server *server,
+                                         const UA_NodeId *session_id,
+                                         void *session_context,
+                                         const UA_NodeId *method_id,
+                                         void *method_context,
+                                         const UA_NodeId *object_id,
+                                         void *object_context,
+                                         size_t input_size,
+                                         const UA_Variant *input,
+                                         size_t output_size,
+                                         UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    result = time_service_request_sync_now();
+    printf("[OPC UA]\tTime sync request %s\n", result ? "accepted" : "rejected");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_blink_identify(UA_Server *server,
+                                          const UA_NodeId *session_id,
+                                          void *session_context,
+                                          const UA_NodeId *method_id,
+                                          void *method_context,
+                                          const UA_NodeId *object_id,
+                                          void *object_context,
+                                          size_t input_size,
+                                          const UA_Variant *input,
+                                          size_t output_size,
+                                          UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (led_driver_is_initialized())
+    {
+        model_schedule_identify_blink(5u, 200u);
+        result = true;
+        printf("[OPC UA]\tIdentify blink requested\n");
+        fflush(stdout);
+    }
+
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_apply_config(UA_Server *server,
+                                        const UA_NodeId *session_id,
+                                        void *session_context,
+                                        const UA_NodeId *method_id,
+                                        void *method_context,
+                                        const UA_NodeId *object_id,
+                                        void *object_context,
+                                        size_t input_size,
+                                        const UA_Variant *input,
+                                        size_t output_size,
+                                        UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    result = config_service_apply();
+    if (result)
+    {
+        status = model_refresh_amb_locations(server, config_service_get());
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tLocation model refresh failed: 0x%x (%s)\n",
+                   status,
+                   UA_StatusCode_name(status));
+            result = false;
+        }
+    }
+    printf("[OPC UA]\tApplyConfig %s\n", result ? "succeeded" : "failed");
+    fflush(stdout);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_save_config(UA_Server *server,
+                                       const UA_NodeId *session_id,
+                                       void *session_context,
+                                       const UA_NodeId *method_id,
+                                       void *method_context,
+                                       const UA_NodeId *object_id,
+                                       void *object_context,
+                                       size_t input_size,
+                                       const UA_Variant *input,
+                                       size_t output_size,
+                                       UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    result = config_service_save();
+    printf("[OPC UA]\tSaveConfig %s\n", result ? "succeeded" : "failed");
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "config-save",
+                              "device-configuration",
+                              result,
+                              result ? "configuration saved" : "configuration save failed");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_config_changed_event(server,
+                                        result ? "Configuration saved" : "Configuration save failed",
+                                        result ? 300u : 700u,
+                                        "Configuration",
+                                        "*",
+                                        model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_set_mqtt_pubsub_enabled(UA_Server *server,
+                                                   const UA_NodeId *session_id,
+                                                   void *session_context,
+                                                   const UA_NodeId *method_id,
+                                                   void *method_context,
+                                                   const UA_NodeId *object_id,
+                                                   void *object_context,
+                                                   size_t input_size,
+                                                   const UA_Variant *input,
+                                                   size_t output_size,
+                                                   UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    UA_Boolean enabled = false;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 1u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_BOOLEAN]) ||
+        input[0].data == NULL)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    enabled = *(const UA_Boolean *)input[0].data;
+    result = config_service_stage_set_mqtt_pubsub_enabled(enabled == UA_TRUE);
+
+    printf("[OPC UA]\tSetMqttPubSubEnabled %s (%s in staged config after SaveConfig + Reboot)\n",
+           result ? "accepted" : "failed",
+           enabled == UA_TRUE ? "enable" : "disable");
+    fflush(stdout);
+
+    model_audit_session_event(session_context,
+                              "mqtt-pubsub-enable",
+                              "device-messaging",
+                              result,
+                              enabled == UA_TRUE ? "mqtt pubsub enabled in runtime config" : "mqtt pubsub disabled in runtime config");
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_config_changed_event(server,
+                                        enabled == UA_TRUE ? "MQTT PubSub enabled in runtime configuration" : "MQTT PubSub disabled in runtime configuration",
+                                        result ? 250u : 700u,
+                                        "Messaging",
+                                        "EnableMqttPubSub",
+                                        model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_set_device_identity(UA_Server *server,
+                                               const UA_NodeId *session_id,
+                                               void *session_context,
+                                               const UA_NodeId *method_id,
+                                               void *method_context,
+                                               const UA_NodeId *object_id,
+                                               void *object_context,
+                                               size_t input_size,
+                                               const UA_Variant *input,
+                                               size_t output_size,
+                                               UA_Variant *output)
+{
+    static const size_t expected_input_size = 10u;
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    device_identity_config_t identity = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != expected_input_size || input == NULL ||
+        !model_copy_input_string(&input[0], identity.device_name, sizeof(identity.device_name)) ||
+        !model_copy_input_string(&input[1], identity.product_instance_uri, sizeof(identity.product_instance_uri)) ||
+        !model_copy_input_string(&input[2], identity.serial_number, sizeof(identity.serial_number)) ||
+        !model_copy_input_string(&input[3], identity.asset_id, sizeof(identity.asset_id)) ||
+        !model_copy_input_string(&input[4], identity.hw_revision, sizeof(identity.hw_revision)) ||
+        !model_copy_input_string(&input[5], identity.fw_revision, sizeof(identity.fw_revision)) ||
+        !UA_Variant_hasScalarType(&input[6], &UA_TYPES[UA_TYPES_DATETIME]) || input[6].data == NULL ||
+        !UA_Variant_hasScalarType(&input[7], &UA_TYPES[UA_TYPES_DATETIME]) || input[7].data == NULL ||
+        !model_copy_input_string(&input[8], identity.location, sizeof(identity.location)) ||
+        !model_copy_input_string(&input[9], identity.asset_class, sizeof(identity.asset_class)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    identity.manufacture_date_utc = (int64_t)*(const UA_DateTime *)input[6].data;
+    identity.calibration_date_utc = (int64_t)*(const UA_DateTime *)input[7].data;
+    result = config_service_stage_set_identity(&identity);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_set_location_paths(UA_Server *server,
+                                              const UA_NodeId *session_id,
+                                              void *session_context,
+                                              const UA_NodeId *method_id,
+                                              void *method_context,
+                                              const UA_NodeId *object_id,
+                                              void *object_context,
+                                              size_t input_size,
+                                              const UA_Variant *input,
+                                              size_t output_size,
+                                              UA_Variant *output)
+{
+    char hierarchical_path[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN] = {0};
+    char operational_path[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN] = {0};
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 2u || input == NULL ||
+        !model_copy_input_string(&input[0],
+                                 hierarchical_path,
+                                 sizeof(hierarchical_path)) ||
+        !model_copy_input_string(&input[1],
+                                 operational_path,
+                                 sizeof(operational_path)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    result = config_service_stage_set_location_paths(hierarchical_path,
+                                                     operational_path);
+    printf("[OPC UA]\tSetLocationPaths %s hierarchical='%s' operational='%s'\n",
+           result ? "accepted" : "rejected",
+           hierarchical_path,
+           operational_path);
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "location-config",
+                              "device-location",
+                              result,
+                              result ? "location paths staged" : "invalid location paths");
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_set_network_config(UA_Server *server,
+                                              const UA_NodeId *session_id,
+                                              void *session_context,
+                                              const UA_NodeId *method_id,
+                                              void *method_context,
+                                              const UA_NodeId *object_id,
+                                              void *object_context,
+                                              size_t input_size,
+                                              const UA_Variant *input,
+                                              size_t output_size,
+                                              UA_Variant *output)
+{
+    static const size_t expected_input_size = 9u;
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    device_network_config_t network = {0};
+    UA_Boolean use_dhcp = false;
+    UA_UInt32 opcua_port = 0u;
+    char mac_address[18] = {0};
+    char ipv4[16] = {0};
+    char netmask[16] = {0};
+    char gateway[16] = {0};
+    char dns[16] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != expected_input_size || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_BOOLEAN]) || input[0].data == NULL ||
+        !model_copy_input_string(&input[1], mac_address, sizeof(mac_address)) ||
+        !model_copy_input_string(&input[2], network.opcua_hostname, sizeof(network.opcua_hostname)) ||
+        !UA_Variant_hasScalarType(&input[3], &UA_TYPES[UA_TYPES_UINT32]) || input[3].data == NULL ||
+        !model_copy_input_string(&input[4], network.ntp_server, sizeof(network.ntp_server)) ||
+        !model_copy_input_string(&input[5], ipv4, sizeof(ipv4)) ||
+        !model_copy_input_string(&input[6], netmask, sizeof(netmask)) ||
+        !model_copy_input_string(&input[7], gateway, sizeof(gateway)) ||
+        !model_copy_input_string(&input[8], dns, sizeof(dns)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    use_dhcp = *(const UA_Boolean *)input[0].data;
+    opcua_port = *(const UA_UInt32 *)input[3].data;
+    network.use_dhcp = use_dhcp == UA_TRUE;
+
+    if (opcua_port > UINT16_MAX ||
+        !model_parse_mac_string(mac_address, network.mac) ||
+        !model_parse_ipv4_string(ipv4, network.static_ip) ||
+        !model_parse_ipv4_string(netmask, network.static_netmask) ||
+        !model_parse_ipv4_string(gateway, network.static_gateway) ||
+        !model_parse_ipv4_string(dns, network.static_dns))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
+
+    network.opcua_port = (uint16_t)opcua_port;
+    result = config_service_stage_set_network(&network);
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
+void model_format_channel_config_json(size_t slot_index,
+                                             const config_channel_definition_t *channel,
+                                             char *buffer,
+                                             size_t buffer_size)
+{
+    const driver_catalog_entry_t *driver = NULL;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    if (channel == NULL || channel->in_use == 0u)
+    {
+        (void)snprintf(buffer,
+                       buffer_size,
+                       "{\"slot\":%u,\"inUse\":false}",
+                       (unsigned)slot_index);
+        return;
+    }
+
+    driver = driver_catalog_get_by_id(channel->driver_id);
+    (void)snprintf(buffer,
+                   buffer_size,
+                   "{\"slot\":%u,\"inUse\":true,\"enabled\":%s,\"driverId\":%u,\"driver\":\"%s\",\"sourceIndex\":%u,\"sourceFlags\":%u,\"id\":\"%s\",\"name\":\"%s\",\"unit\":\"%s\",\"samplePeriodMs\":%u,\"publishPeriodMs\":%u,\"historyIntervalMs\":%u,\"scale\":%.6f,\"offset\":%.6f,\"warningThreshold\":%.6f,\"criticalThreshold\":%.6f}",
+                   (unsigned)slot_index,
+                   channel->settings.enabled ? "true" : "false",
+                   (unsigned)channel->driver_id,
+                   driver != NULL && driver->name != NULL ? driver->name : "unknown",
+                   (unsigned)channel->source_index,
+                   (unsigned)channel->source_flags,
+                   channel->id,
+                   channel->name,
+                   channel->unit,
+                   (unsigned)channel->settings.sample_period_ms,
+                   (unsigned)channel->settings.publish_period_ms,
+                   (unsigned)channel->settings.history_interval_ms,
+                   channel->settings.scale,
+                   channel->settings.offset,
+                   channel->settings.warning_threshold,
+                   channel->settings.critical_threshold);
+}
+
+void model_format_driver_catalog_json(char *buffer, size_t buffer_size)
+{
+    size_t offset = 0u;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    offset += (size_t)snprintf(buffer + offset, buffer_size - offset, "[");
+    for (size_t index = 0u; index < driver_catalog_count() && offset < buffer_size; ++index)
+    {
+        const driver_catalog_entry_t *driver = driver_catalog_get_by_index(index);
+        const int written = snprintf(buffer + offset,
+                                     buffer_size - offset,
+                                     "%s{\"id\":%u,\"name\":\"%s\",\"analog\":%s,\"defaultUnit\":\"%s\"}",
+                                     index > 0u ? "," : "",
+                                     driver != NULL ? (unsigned)driver->driver_id : 0u,
+                                     driver != NULL && driver->name != NULL ? driver->name : "unknown",
+                                     driver != NULL && driver->analog ? "true" : "false",
+                                     driver != NULL && driver->default_unit != NULL ? driver->default_unit : "");
+
+        if (written < 0)
+        {
+            break;
+        }
+
+        offset += (size_t)written;
+    }
+
+    if (offset < buffer_size)
+    {
+        (void)snprintf(buffer + offset, buffer_size - offset, "]");
+    }
+    else
+    {
+        buffer[buffer_size - 1u] = '\0';
+    }
+}
+
+UA_StatusCode model_get_channel_config(UA_Server *server,
+                                              const UA_NodeId *session_id,
+                                              void *session_context,
+                                              const UA_NodeId *method_id,
+                                              void *method_context,
+                                              const UA_NodeId *object_id,
+                                              void *object_context,
+                                              size_t input_size,
+                                              const UA_Variant *input,
+                                              size_t output_size,
+                                              UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_UInt32 slot_index = 0u;
+    config_channel_definition_t channel = {0};
+    char payload[512] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 1u || input == NULL ||
+        !UA_Variant_hasScalarType(&input[0], &UA_TYPES[UA_TYPES_UINT32]) || input[0].data == NULL)
+    {
+        model_set_string_method_output(output_size, output, "{}");
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    slot_index = *(const UA_UInt32 *)input[0].data;
+    if (slot_index >= PLATFORM_CHANNEL_LIMIT ||
+        !config_service_stage_copy_channel((size_t)slot_index, &channel))
+    {
+        model_set_string_method_output(output_size, output, "{}");
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
+
+    model_format_channel_config_json((size_t)slot_index, &channel, payload, sizeof(payload));
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_list_drivers(UA_Server *server,
+                                        const UA_NodeId *session_id,
+                                        void *session_context,
+                                        const UA_NodeId *method_id,
+                                        void *method_context,
+                                        const UA_NodeId *object_id,
+                                        void *object_context,
+                                        size_t input_size,
+                                        const UA_Variant *input,
+                                        size_t output_size,
+                                        UA_Variant *output)
+{
+    UA_StatusCode status;
+    char payload[768] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    model_format_driver_catalog_json(payload, sizeof(payload));
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode model_get_config_state(UA_Server *server,
+                                            const UA_NodeId *session_id,
+                                            void *session_context,
+                                            const UA_NodeId *method_id,
+                                            void *method_context,
+                                            const UA_NodeId *object_id,
+                                            void *object_context,
+                                            size_t input_size,
+                                            const UA_Variant *input,
+                                            size_t output_size,
+                                            UA_Variant *output)
+{
+    UA_StatusCode status;
+    char payload[384] = {0};
+    const bool reboot_required = model_is_reboot_required();
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (!config_export_service_write_state_json(payload, sizeof(payload), reboot_required))
+    {
+        model_set_string_method_output(output_size, output, "{}");
+        return UA_STATUSCODE_GOOD;
+    }
+
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
