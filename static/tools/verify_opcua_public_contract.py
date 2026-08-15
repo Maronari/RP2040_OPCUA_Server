@@ -16,7 +16,7 @@ import sys
 EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
 EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
 EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
-    "405888c68a891422081f3b75d79a7c8ba3dcd7e6dff14599a12417e995f546c4"
+    "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.

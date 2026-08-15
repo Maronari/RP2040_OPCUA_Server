@@ -1497,6 +1497,30 @@ static void model_clear_generic_channel_contexts(size_t channel_index)
     }
 }
 
+static void model_clear_legacy_channel_contexts(size_t channel_index)
+{
+    if (channel_index < PLATFORM_CHANNEL_LIMIT)
+    {
+        memset(g_channel_node_contexts[channel_index],
+               0,
+               sizeof(g_channel_node_contexts[channel_index]));
+    }
+}
+
+static void model_delete_legacy_channel_subtree(UA_Server *server,
+                                                const telemetry_channel_t *channel)
+{
+    char node_id[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+
+    if (server != NULL && model_build_legacy_channel_node_id(channel, NULL,
+                                                               node_id, sizeof(node_id)))
+    {
+        /* The legacy object is the deterministic root of all of its child
+         * nodes, so recursive deletion bounds cleanup to one subtree. */
+        (void)UA_Server_deleteNode(server, UA_NODEID_STRING(1, node_id), true);
+    }
+}
+
 static void model_delete_generic_nodes(UA_Server *server,
                                        const char node_ids[][MODEL_CHANNEL_NODE_ID_MAX_LEN],
                                        size_t node_count)
@@ -1728,7 +1752,7 @@ fail:
     return status;
 }
 
-static void model_rollback_generic_channel_model(UA_Server *server)
+static void model_rollback_channel_model(UA_Server *server)
 {
     static const char *const fields[] = {NULL, "Value", "Description", "ChannelKind", "DriverId",
                                          "SourceIndex", "SourceFlags", "SamplePeriodMs", "PublishPeriodMs",
@@ -1741,6 +1765,7 @@ static void model_rollback_generic_channel_model(UA_Server *server)
 
         if (channel_manager_copy_snapshot_by_index(channel_index, &snapshot))
         {
+            model_delete_legacy_channel_subtree(server, &snapshot.channel);
             for (size_t field_index = sizeof(fields) / sizeof(fields[0]); field_index > 0u; --field_index)
             {
                 if (model_build_channel_node_id(&snapshot.channel, fields[field_index - 1u],
@@ -1752,6 +1777,7 @@ static void model_rollback_generic_channel_model(UA_Server *server)
                 }
             }
         }
+        model_clear_legacy_channel_contexts(channel_index);
         model_clear_generic_channel_contexts(channel_index);
     }
 }
@@ -1772,6 +1798,7 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
     UA_NodeId channel_object_id = UA_NODEID_NULL;
     UA_StatusCode status = UA_STATUSCODE_GOOD;
     UA_NodeId value_data_type;
+    bool channel_object_created = false;
 
     if (server == NULL || channel == NULL || channel->metadata.id == NULL || channel->metadata.name == NULL)
     {
@@ -1804,6 +1831,7 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
     {
         return status;
     }
+    channel_object_created = true;
 
     status = model_add_readonly_variable_ex(server,
                                             value_node_id,
@@ -1821,7 +1849,7 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
                                             ((channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u));
     if (status != UA_STATUSCODE_GOOD)
     {
-        return status;
+        goto fail;
     }
 
     status = model_add_readonly_variable(server,
@@ -1835,7 +1863,7 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
                                                                        channel->metadata.id));
     if (status != UA_STATUSCODE_GOOD)
     {
-        return status;
+        goto fail;
     }
 
     status = model_add_readonly_variable(server,
@@ -1849,7 +1877,7 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
                                                                        channel->metadata.id));
     if (status != UA_STATUSCODE_GOOD)
     {
-        return status;
+        goto fail;
     }
 
     status = model_add_readonly_variable(server,
@@ -1863,7 +1891,7 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
                                                                        channel->metadata.id));
     if (status != UA_STATUSCODE_GOOD)
     {
-        return status;
+        goto fail;
     }
 
     status = model_add_writable_variable(server,
@@ -1877,7 +1905,7 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
                                                                        channel->metadata.id));
     if (status != UA_STATUSCODE_GOOD)
     {
-        return status;
+        goto fail;
     }
 
     status = model_add_writable_variable(server,
@@ -1891,18 +1919,30 @@ UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
                                                                        channel->metadata.id));
     if (status != UA_STATUSCODE_GOOD)
     {
+        goto fail;
+    }
+
+    status = model_add_readonly_variable(server,
+                                         alarm_state_node_id,
+                                         "AlarmState",
+                                         channel_object_id,
+                                         UA_TYPES[UA_TYPES_STRING].typeId,
+                                         model_prepare_channel_context(channel_index,
+                                                                       6u,
+                                                                       MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE,
+                                                                       channel->metadata.id));
+    if (status == UA_STATUSCODE_GOOD)
+    {
         return status;
     }
 
-    return model_add_readonly_variable(server,
-                                       alarm_state_node_id,
-                                       "AlarmState",
-                                       channel_object_id,
-                                       UA_TYPES[UA_TYPES_STRING].typeId,
-                                       model_prepare_channel_context(channel_index,
-                                                                     6u,
-                                                                     MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE,
-                                                                     channel->metadata.id));
+fail:
+    if (channel_object_created)
+    {
+        model_delete_legacy_channel_subtree(server, channel);
+    }
+    model_clear_legacy_channel_contexts(channel_index);
+    return status;
 }
 
 UA_StatusCode model_build_address_space(UA_Server *server)
@@ -2540,7 +2580,7 @@ UA_StatusCode model_build_address_space(UA_Server *server)
         status = model_add_channel_nodes(server, channels_id, channel_index, channel);
         if (status != UA_STATUSCODE_GOOD)
         {
-            model_rollback_generic_channel_model(server);
+            model_rollback_channel_model(server);
             return status;
         }
 
@@ -2550,7 +2590,7 @@ UA_StatusCode model_build_address_space(UA_Server *server)
         status = model_add_legacy_temperature_nodes(server, channels_id, channel_index, channel);
         if (status != UA_STATUSCODE_GOOD)
         {
-            model_rollback_generic_channel_model(server);
+            model_rollback_channel_model(server);
             return status;
         }
     }

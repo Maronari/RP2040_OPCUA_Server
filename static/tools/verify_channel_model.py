@@ -32,6 +32,57 @@ def channel_node_id(channel_id: str, field: str | None = None) -> str:
     return result if field is None else f"{result}.{field}"
 
 
+def parse_channel_value_type(value: str) -> tuple[str, str]:
+    """Parse the fail-closed ``CHANNEL_ID=VariantType`` CLI contract."""
+    channel_id, separator, variant_type = value.partition("=")
+    if not separator or not channel_id or not variant_type:
+        raise argparse.ArgumentTypeError("expected CHANNEL_ID=VariantType")
+    if variant_type not in VALUE_TYPES:
+        raise argparse.ArgumentTypeError(
+            f"unsupported VariantType {variant_type!r}; expected one of {sorted(VALUE_TYPES)}"
+        )
+    return channel_id, variant_type
+
+
+def channel_value_type_expectations(items: list[tuple[str, str]]) -> dict[str, str]:
+    expectations: dict[str, str] = {}
+    for channel_id, variant_type in items:
+        previous = expectations.setdefault(channel_id, variant_type)
+        if previous != variant_type:
+            raise ValueError(
+                f"conflicting expected VariantType for {channel_id}: "
+                f"{previous} versus {variant_type}"
+            )
+    return expectations
+
+
+def validate_requested_evidence(args: argparse.Namespace) -> None:
+    """Reject underspecified client checks before any network operation."""
+    expected_types = channel_value_type_expectations(args.expect_value_type)
+    if (args.require_mixed_value_types and
+            len(set(expected_types.values())) < 2):
+        raise ValueError(
+            "--require-mixed-value-types requires exact expectations for at least two types"
+        )
+    missing_writable_types = set(args.expect_writable_channel).difference(expected_types)
+    if missing_writable_types:
+        raise ValueError(
+            "writable channels require --expect-value-type: "
+            + ", ".join(sorted(missing_writable_types))
+        )
+    if args.verify_wrong_type_write and not args.expect_writable_channel:
+        raise ValueError("--verify-wrong-type-write requires --expect-writable-channel")
+    if args.verify_unauthorized_writable_write:
+        if not args.expect_writable_channel:
+            raise ValueError(
+                "--verify-unauthorized-writable-write requires --expect-writable-channel"
+            )
+        if not args.second_username:
+            raise ValueError(
+                "--verify-unauthorized-writable-write requires --second-username"
+            )
+
+
 async def browse_child(node, name: str, namespace: int):
     for child in await node.get_children():
         browse_name = await child.read_browse_name()
@@ -40,7 +91,80 @@ async def browse_child(node, name: str, namespace: int):
     raise AssertionError(f"missing {name} below {node.nodeid}")
 
 
+async def read_channel_value(channel, namespace: int):
+    return await (await browse_child(channel, "Value", namespace)).read_data_value()
+
+
+def require_rejected_write(exc: Exception, expected_statuses: tuple[str, ...], evidence: str) -> None:
+    if not any(status in str(exc) for status in expected_statuses):
+        raise AssertionError(f"{evidence}: unexpected write status {exc!r}") from exc
+
+
+def distinct_scalar_value(value, variant_type_name: str):
+    """Return a bounded, exactly typed value that differs from ``value``."""
+    if variant_type_name == "Boolean":
+        return not bool(value)
+    if variant_type_name == "String":
+        text = str(value)
+        return text[:-1] if len(text.encode("utf-8")) >= 63 else text + "x"
+    if variant_type_name in {"Float", "Double"}:
+        return 0.0 if float(value) != 0.0 else 1.0
+    integer_bounds = {
+        "Int32": (-(2**31), 2**31 - 1),
+        "UInt32": (0, 2**32 - 1),
+        "Int64": (-(2**63), 2**63 - 1),
+        "UInt64": (0, 2**64 - 1),
+    }
+    if variant_type_name in integer_bounds:
+        lower, upper = integer_bounds[variant_type_name]
+        current = int(value)
+        return current - 1 if current == upper else max(lower, current + 1)
+    raise ValueError(f"unsupported writable VariantType {variant_type_name!r}")
+
+
+async def verify_exact_typed_write(ua, channel_id: str, channel, namespace: int) -> None:
+    """Mutate one scalar with its exact built-in type, verify it, then restore it."""
+    writable = await browse_child(channel, "Writable", namespace)
+    if not await writable.read_value():
+        raise AssertionError(f"{channel_id}: required writable channel is read-only")
+    value = await browse_child(channel, "Value", namespace)
+    before = await value.read_data_value()
+    variant_type = before.Value.VariantType
+    if variant_type is None or variant_type.name not in VALUE_TYPES:
+        raise AssertionError(f"{channel_id}: cannot exact-type write {variant_type!r}")
+    original = before.Value.Value
+    changed = distinct_scalar_value(original, variant_type.name)
+    try:
+        await value.write_value(ua.Variant(changed, variant_type))
+        after = await value.read_data_value()
+        if after.Value.VariantType != variant_type or after.Value.Value != changed:
+            raise AssertionError(
+                f"{channel_id}: exact-typed changed value did not read back coherently"
+            )
+    finally:
+        await value.write_value(ua.Variant(original, variant_type))
+    restored = await value.read_data_value()
+    if restored.Value.VariantType != variant_type or restored.Value.Value != original:
+        raise AssertionError(f"{channel_id}: writable verification did not restore original value")
+
+
+async def verify_wrong_type_write(ua, channel_id: str, channel, namespace: int) -> None:
+    value = await browse_child(channel, "Value", namespace)
+    data_value = await value.read_data_value()
+    wrong_type = (ua.VariantType.String if data_value.Value.VariantType.name != "String"
+                  else ua.VariantType.Boolean)
+    wrong_value = "wrong-type" if wrong_type == ua.VariantType.String else True
+    try:
+        await value.write_value(ua.Variant(wrong_value, wrong_type))
+    except Exception as exc:
+        require_rejected_write(exc, ("BadTypeMismatch",), f"{channel_id}: wrong-type write")
+    else:
+        raise AssertionError(f"{channel_id}: wrong-type write unexpectedly succeeded")
+
+
 async def verify(args: argparse.Namespace) -> None:
+    expected_value_types = channel_value_type_expectations(args.expect_value_type)
+    validate_requested_evidence(args)
     opcua_common.load_asyncua()
     Client = opcua_common.Client
     ua = opcua_common.ua
@@ -110,13 +234,31 @@ async def verify(args: argparse.Namespace) -> None:
             raise AssertionError("no generic channel objects discovered")
         if args.expect_channel and set(args.expect_channel) != set(discovered):
             raise AssertionError(f"discovered ids {sorted(discovered)} != expected {sorted(args.expect_channel)}")
+        missing_type_expectations = set(expected_value_types).difference(discovered)
+        if missing_type_expectations:
+            raise AssertionError(
+                f"missing expected typed channel(s): {sorted(missing_type_expectations)}"
+            )
+        missing_writable = set(args.expect_writable_channel).difference(discovered)
+        if missing_writable:
+            raise AssertionError(
+                f"missing expected writable channel(s): {sorted(missing_writable)}"
+            )
 
+        discovered_value_types: dict[str, str] = {}
+        read_only_checked = 0
         for channel_id, channel in discovered.items():
             value = await browse_child(channel, "Value", namespace)
             data_value = await value.read_data_value()
             variant_type = data_value.Value.VariantType.name
             if variant_type not in VALUE_TYPES:
                 raise AssertionError(f"{channel_id}: unsupported Value type {variant_type}")
+            discovered_value_types[channel_id] = variant_type
+            expected_type = expected_value_types.get(channel_id)
+            if expected_type is not None and variant_type != expected_type:
+                raise AssertionError(
+                    f"{channel_id}: Value VariantType {variant_type} != required {expected_type}"
+                )
             if data_value.StatusCode.is_bad() and data_value.SourceTimestamp is not None:
                 # Bad values may still retain a historical sample timestamp; this
                 # assertion merely ensures no client-side timestamp is fabricated.
@@ -139,19 +281,30 @@ async def verify(args: argparse.Namespace) -> None:
             if args.verify_read_only_write:
                 writable = await browse_child(channel, "Writable", namespace)
                 if not await writable.read_value():
+                    read_only_checked += 1
                     try:
                         await value.write_value(
                             ua.Variant(data_value.Value.Value, data_value.Value.VariantType)
                         )
                     except Exception as exc:
-                        if not any(status in str(exc) for status in (
-                            "BadNotWritable", "BadUserAccessDenied"
-                        )):
-                            raise AssertionError(
-                                f"{channel_id}: read-only write returned {exc!r}"
-                            ) from exc
+                        require_rejected_write(
+                            exc,
+                            ("BadNotWritable", "BadUserAccessDenied"),
+                            f"{channel_id}: read-only write",
+                        )
                     else:
                         raise AssertionError(f"{channel_id}: read-only write unexpectedly succeeded")
+
+        if args.require_mixed_value_types and len(set(discovered_value_types.values())) < 2:
+            raise AssertionError("mixed Value type evidence requested but fewer than two types were discovered")
+        if args.verify_read_only_write and read_only_checked == 0:
+            raise AssertionError("read-only write evidence requested but no read-only channel was discovered")
+
+        for channel_id in args.expect_writable_channel:
+            await verify_exact_typed_write(ua, channel_id, discovered[channel_id], namespace)
+        for channel_id in args.expect_writable_channel:
+            if args.verify_wrong_type_write:
+                await verify_wrong_type_write(ua, channel_id, discovered[channel_id], namespace)
 
         if args.expect_legacy_temperature:
             legacy = client.get_node(ua.NodeId("Device.Channels.Temperature1.Value", 1))
@@ -213,6 +366,31 @@ async def verify(args: argparse.Namespace) -> None:
                         second_ids.add(browse_name.Name)
                 if second_ids != set(discovered):
                     raise AssertionError("simultaneous second client sees a different channel inventory")
+                if args.verify_unauthorized_writable_write:
+                    for channel_id in args.expect_writable_channel:
+                        second_channel = second.get_node(
+                            ua.NodeId(channel_node_id(channel_id), second_namespace)
+                        )
+                        second_value = await browse_child(
+                            second_channel, "Value", second_namespace
+                        )
+                        data_value = await second_value.read_data_value()
+                        try:
+                            await second_value.write_value(
+                                ua.Variant(
+                                    data_value.Value.Value, data_value.Value.VariantType
+                                )
+                            )
+                        except Exception as exc:
+                            require_rejected_write(
+                                exc,
+                                ("BadUserAccessDenied",),
+                                f"{channel_id}: unauthorized writable write",
+                            )
+                        else:
+                            raise AssertionError(
+                                f"{channel_id}: unauthorized writable write unexpectedly succeeded"
+                            )
             finally:
                 await second.disconnect()
     finally:
@@ -234,13 +412,25 @@ def main() -> int:
                         choices=["Sign", "SignAndEncrypt"])
     parser.add_argument("--no-auto-client-cert", action="store_true")
     parser.add_argument("--expect-channel", action="append", default=[])
+    parser.add_argument("--expect-value-type", action="append", default=[],
+                        metavar="CHANNEL_ID=VARIANT_TYPE", type=parse_channel_value_type,
+                        help="require the exact built-in Value VariantType for a discovered channel")
+    parser.add_argument("--require-mixed-value-types", action="store_true",
+                        help="fail unless the discovered model contains at least two Value types")
+    parser.add_argument("--expect-writable-channel", action="append", default=[],
+                        metavar="CHANNEL_ID",
+                        help="require a writable channel and exact-typed write/readback evidence")
     parser.add_argument("--expected-software-revision")
     parser.add_argument("--expected-device-name")
     parser.add_argument("--expect-legacy-temperature", metavar="CHANNEL_ID")
     parser.add_argument("--verify-history", action="store_true")
     parser.add_argument("--verify-read-only-write", action="store_true")
+    parser.add_argument("--verify-wrong-type-write", action="store_true",
+                        help="require BadTypeMismatch for each required writable channel")
     parser.add_argument("--second-username", help="run a simultaneous second-client browse")
     parser.add_argument("--second-password", default="")
+    parser.add_argument("--verify-unauthorized-writable-write", action="store_true",
+                        help="require the second client to receive BadUserAccessDenied on writable values")
     args = parser.parse_args()
     if args.username and args.password is None:
         args.password = getpass.getpass(f"Password for {args.username}: ")

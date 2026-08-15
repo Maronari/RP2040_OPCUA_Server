@@ -1045,19 +1045,38 @@ bool model_build_legacy_channel_node_id(const telemetry_channel_t *channel,
 }
 
 bool model_channel_requires_server_rebuild(const config_channel_definition_t *lhs,
-                                                  const config_channel_definition_t *rhs)
+                                           const config_channel_definition_t *rhs)
 {
-    const uint32_t lhs_flags = lhs != NULL ? (lhs->flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) : 0u;
-    const uint32_t rhs_flags = rhs != NULL ? (rhs->flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) : 0u;
+    const uint32_t model_flags = TELEMETRY_CHANNEL_FLAG_HISTORIZED |
+                                 TELEMETRY_CHANNEL_FLAG_WRITABLE;
 
     if (lhs == NULL || rhs == NULL)
     {
         return lhs != rhs;
     }
 
+    /* The channel hierarchy is intentionally materialized only at server
+     * startup.  Compare precisely the persisted fields copied into its static
+     * generic/legacy representation: topology/identity (in_use, id, name),
+     * typed Value and metadata (kind, value_type, source, description, unit,
+     * range), generic properties (sample/publish periods and model flags).
+     * Do not compare padding or runtime-only acquisition/alarm settings. */
     return lhs->in_use != rhs->in_use ||
+           lhs->kind != rhs->kind ||
            lhs->value_type != rhs->value_type ||
-           lhs_flags != rhs_flags ||
+           lhs->driver_id != rhs->driver_id ||
+           lhs->source_index != rhs->source_index ||
+           lhs->source_flags != rhs->source_flags ||
+           (lhs->has_minimum != 0u) != (rhs->has_minimum != 0u) ||
+           (lhs->has_maximum != 0u) != (rhs->has_maximum != 0u) ||
+           ((lhs->has_minimum != 0u) && (lhs->has_maximum != 0u) &&
+            (rhs->has_minimum != 0u) && (rhs->has_maximum != 0u) &&
+            (lhs->minimum != rhs->minimum || lhs->maximum != rhs->maximum)) ||
+           (lhs->flags & model_flags) != (rhs->flags & model_flags) ||
            model_string_changed(lhs->id, rhs->id) ||
-           model_string_changed(lhs->name, rhs->name);
+           model_string_changed(lhs->name, rhs->name) ||
+           model_string_changed(lhs->description, rhs->description) ||
+           model_string_changed(lhs->unit, rhs->unit) ||
+           lhs->settings.sample_period_ms != rhs->settings.sample_period_ms ||
+           lhs->settings.publish_period_ms != rhs->settings.publish_period_ms;
 }

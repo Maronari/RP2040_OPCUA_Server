@@ -25,6 +25,8 @@ SUITES = (
     "test_config_validate.py",
     "test_v042_opcua_adapter_sources.py",
     "test_channel_model_contract.py",
+    "test_verify_channel_model.py",
+    "test_verify_channel_model_e2e.py",
     "test_opcua_logging_source.py",
     "test_temperature_adc_source.py",
     "test_export_nodeset.py",

@@ -26,8 +26,12 @@ def main() -> int:
                 f"unbounded or ambiguous NodeId for {channel_id!r}")
     source = (ROOT / "opcua_model/src/model_address_space.c").read_text(encoding="utf-8")
     require("MODEL_CHANNEL_NAMESPACE_URI" in source, "generic namespace is not registered")
-    require("UA_Server_deleteNode" in source and "model_rollback_generic_channel_model" in source,
-            "generic construction has no explicit rollback")
+    require("UA_Server_deleteNode" in source and "model_rollback_channel_model" in source,
+            "channel construction has no explicit rollback")
+    require("model_delete_legacy_channel_subtree" in source and
+            "model_clear_legacy_channel_contexts" in source and
+            "goto fail;" in source,
+            "legacy subtree creation has no deterministic failure cleanup")
     require("EngineeringUnits" in source and "UA_TYPES_EUINFORMATION" in source,
             "EUInformation property is absent")
     require("EURange" in source and "UA_TYPES_RANGE" in source, "Range property is absent")
@@ -51,6 +55,20 @@ def main() -> int:
     configuration = (ROOT / "opcua_model/src/model_configuration.c").read_text(encoding="utf-8")
     require("channel_manager_write_value" in configuration, "Value callback bypasses service write API")
     require("BADSECURITYMODEINSUFFICIENT" in configuration, "generic write does not require secure session")
+    access = (ROOT / "opcua_model/src/model_access.c").read_text(encoding="utf-8")
+    for field in (
+        "lhs->kind != rhs->kind", "lhs->driver_id != rhs->driver_id",
+        "lhs->source_index != rhs->source_index", "lhs->source_flags != rhs->source_flags",
+        "(lhs->has_minimum != 0u) != (rhs->has_minimum != 0u)",
+        "(lhs->has_maximum != 0u) != (rhs->has_maximum != 0u)",
+        "lhs->minimum != rhs->minimum", "lhs->maximum != rhs->maximum",
+        "model_string_changed(lhs->description, rhs->description)",
+        "model_string_changed(lhs->unit, rhs->unit)",
+        "lhs->settings.sample_period_ms != rhs->settings.sample_period_ms",
+        "lhs->settings.publish_period_ms != rhs->settings.publish_period_ms",
+        "TELEMETRY_CHANNEL_FLAG_WRITABLE",
+    ):
+        require(field in access, f"startup-materialized channel field missing from rebuild check: {field}")
     print("channel-model-contract: PASS")
     return 0
 
