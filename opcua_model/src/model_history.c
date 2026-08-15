@@ -152,11 +152,22 @@ bool model_find_history_channel_id(const UA_NodeId *node_id,
             continue;
         }
 
-        channel_value_node = UA_NODEID_STRING(1, channel_value_node_id);
+        channel_value_node = UA_NODEID_STRING(g_model_channel_namespace_index,
+                                              channel_value_node_id);
         if (UA_NodeId_equal(node_id, &channel_value_node))
         {
             model_copy_string_safe(out_channel_id, out_channel_id_size, channel->metadata.id);
             return out_channel_id[0] != '\0';
+        }
+        if (model_build_legacy_channel_node_id(channel, "Value", channel_value_node_id,
+                                               sizeof(channel_value_node_id)))
+        {
+            channel_value_node = UA_NODEID_STRING(1, channel_value_node_id);
+            if (UA_NodeId_equal(node_id, &channel_value_node))
+            {
+                model_copy_string_safe(out_channel_id, out_channel_id_size, channel->metadata.id);
+                return out_channel_id[0] != '\0';
+            }
         }
     }
 
@@ -429,6 +440,7 @@ UA_StatusCode model_read_value(UA_Server *server,
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_int32_value(value, (UA_Int32)report.state, UA_STATUSCODE_GOOD);
     }
+    case MODEL_NODE_CHANNEL_VALUE:
     case MODEL_NODE_PROCESS_TEMPERATURE_VALUE:
     {
         telemetry_channel_snapshot_t snapshot = {0};
@@ -496,6 +508,7 @@ UA_StatusCode model_read_value(UA_Server *server,
         }
         return model_set_string_value(value, "", UA_STATUSCODE_GOOD);
     }
+    case MODEL_NODE_CHANNEL_SAMPLE_PERIOD_MS:
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
     {
         telemetry_channel_snapshot_t snapshot = {0};
@@ -505,6 +518,18 @@ UA_StatusCode model_read_value(UA_Server *server,
         if (model_copy_channel_from_context(context, &snapshot) && channel->settings.sample_period_ms > 0u)
         {
             return model_set_uint32_value(value, channel->settings.sample_period_ms, UA_STATUSCODE_GOOD);
+        }
+        return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_CHANNEL_PUBLISH_PERIOD_MS:
+    {
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
+
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        if (model_copy_channel_from_context(context, &snapshot))
+        {
+            return model_set_uint32_value(value, channel->settings.publish_period_ms, UA_STATUSCODE_GOOD);
         }
         return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
     }

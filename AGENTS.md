@@ -13,7 +13,7 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.4.1 — Channel Runtime Hardening**.
+  **v0.4.2 — Generic OPC UA Channel Information Model**.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -128,36 +128,52 @@ verification; `build-engineer` owns build/artifact and Flash-layout checks; and
 - Use a single version source for runtime firmware revision, OTA metadata,
   configuration export, artifacts, tags, and documentation.
 
-## v0.4.1 constraints
+## v0.4.2 constraints
 
-- Treat tag `v0.4.0` and commit
-  `8a454945aaccc3d381a2e889e90b53569415b705` as the immutable implementation
+- Treat tag `v0.4.1` and commit
+  `a5ebc3231faf658325ad02e997f05acf8601e8bf` as the immutable implementation
   and compatibility baseline.
-- Follow `docs/releases/v0.4.1.md`; do not start the generic OPC UA channel
-  information model scheduled for v0.4.2.
-- Use one compile-time channel limit, defaulting to 16 for the reference
-  profile. Account for every resulting static allocation and persisted-config
-  size change.
-- Channel registry APIs must not expose raw mutable pointers or retain borrowed
-  metadata strings. Define manager-owned storage, bounded snapshots and
-  deterministic capacity/stale-handle behavior.
-- Keep synchronization bounded. Do not call drivers, scan external storage, or
-  perform other long work while holding a global critical section.
-- Support each advertised channel value type end to end or reject the
-  driver/type/configuration combination before activation. Never coerce an
-  unsupported type to `float`.
-- Use a service-owned 64-bit source timestamp with a documented epoch and
-  resolution. OPC UA conversion remains an adapter concern.
-- Move ADC/GPIO access and lifecycle state into `drivers/`. Services may select
-  compiled drivers and validate claims but must not touch hardware registers.
-- Validate exclusive/shared ADC, GPIO and peripheral resource claims before
-  changing running configuration; failure leaves the known-good runtime active.
-- Remove the primary-temperature path from active runtime behavior. Any
-  compatibility adapter must be isolated, documented as deprecated and backed
-  by the same channel state rather than a duplicate value.
-- Preserve all v0.4.0 public NodeIds, BrowseNames, method signatures, events,
-  permissions and configuration fields. Persisted v0.4.0 configurations must
-  migrate deterministically when the channel capacity changes.
+- Follow `docs/releases/v0.4.2.md`; do not start the multi-channel history and
+  alarm engine scheduled for v0.4.3 or live model regeneration scheduled for
+  v0.5.0.
+- Build the public OPC UA channel hierarchy from bounded channel-registry
+  snapshots at server startup. Services remain the sole owners of channel
+  metadata, values, quality, timestamps and driver operations.
+- Freeze and document the deterministic channel NodeId grammar before model
+  implementation. NodeIds must derive from validated channel IDs, never slot
+  order, addresses, generations or boot state.
+- Expose every accepted runtime value type with its exact OPC UA built-in type.
+  Read value, quality and source timestamp from one coherent snapshot; do not
+  regenerate a valid service timestamp in the adapter.
+- Use standard `EUInformation` and `Range` values where applicable. Keep every
+  model string, callback context and temporary allocation explicitly bounded.
+- Route writes through a service-owned, generation-safe channel write API.
+  Enforce the existing role policy, exact type conversion and writable
+  capability before invoking a driver outside global critical sections.
+- Roll back partial channel-model construction deterministically and never
+  expose a partially initialized model as successful.
+- Preserve all unrelated v0.4.1 public NodeIds, BrowseNames, method signatures,
+  events, permissions and configuration fields. Keep the legacy temperature
+  NodeId as a deprecated stateless view of the same registry-owned sample.
+- Verification must discover channels by browsing and must not assume
+  `Temperature1`, a fixed channel count, registry order or a particular driver.
+
+## v0.4.2 OTA verification authorization
+
+For v0.4.2 verification only, Codex is authorized to stage and upload a
+verified firmware artifact to the user-designated reference test device through
+the existing authenticated OTA workflow in `static/tools/stage_ota.py`, finalize
+the update and reboot with the explicit `--reboot-after-finalize` option when
+the planned reboot/NodeId-stability check requires it.
+
+Before upload, record and verify the endpoint/device identity, board/profile,
+artifact version, hash/CRC and current OTA status. Use the matching generated
+manifest and payload. Do not target an unidentified or production device,
+weaken authentication or integrity checks, alter security/trust/commissioning,
+or add/change OTA functionality. Abort staging on failure where the existing
+workflow permits it, and record transfer, finalize, reboot, reconnect, health
+and recovery/rollback outcomes. This authorization expires when v0.4.2 work is
+complete.
 
 ## Build and verification
 
@@ -176,18 +192,19 @@ For every feature:
 
 - Add positive, negative, authorization, illegal-state, and resource-limit tests.
   Add reboot/power-loss tests when persistence is involved.
-- For v0.4.1, add host tests for 1/4/16-channel configurations, capacity and
-  resource-claim failures, every accepted value type, rejected type/driver
-  combinations, coherent concurrent snapshots, driver lifecycle failures and
-  persisted v0.4.0 configuration migration.
+- For v0.4.2, add tests for deterministic NodeIds, mixed typed channels,
+  metadata types, quality/timestamp propagation, writable/read-only role
+  enforcement, partial-build rollback, reboot stability and legacy-temperature
+  equivalence.
 - Verification scripts must exit nonzero on failure. CI release gates must
   actually fail; do not use `continue-on-error`, unconditional `|| true`, or
   smoke tests that assert no behavior.
 - Complete one Debug build for the reference target with no new first-party
   warnings.
 - Confirm affected behavior with an automated open62541/asyncua client and
-  UaExpert when public OPC UA behavior is touched. Re-run the v0.4.0 public
-  contract gate even when the intended change is service/driver-only.
+  UaExpert when public OPC UA behavior is touched. Compare the public contract
+  and exported NodeSet/inventory against tag v0.4.1 and document every intended
+  addition.
 - Record artifact sizes and memory/stack impact. Update public NodeId/schema
   documentation, README, release notes, and tools when affected.
 - Report commands actually run and any validation that could not be run. Do not

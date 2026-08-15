@@ -361,6 +361,7 @@ security_user_role_t model_required_role_for_write_kind(model_node_kind_t kind)
 {
     switch (kind)
     {
+    case MODEL_NODE_CHANNEL_VALUE:
     case MODEL_NODE_IDENT_ASSET_ID:
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
     case MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS:
@@ -825,6 +826,13 @@ UA_Byte model_get_user_access_level_wrapper(UA_Server *server,
     }
 
     if (node_context != NULL &&
+        (((const model_node_context_t *)node_context)->kind == MODEL_NODE_CHANNEL_VALUE &&
+         !model_session_is_secure(session_context)))
+    {
+        return model_strip_anonymous_write_access(base_access);
+    }
+
+    if (node_context != NULL &&
         !model_session_has_role(session_context,
                                 model_required_role_for_write_kind(((const model_node_context_t *)node_context)->kind)))
     {
@@ -969,20 +977,70 @@ bool model_build_channel_node_id(const telemetry_channel_t *channel,
                                         char *buffer,
                                         size_t buffer_size)
 {
-    int written = 0;
+    static const char hex[] = "0123456789ABCDEF";
+    const char *id;
+    size_t id_length;
+    size_t offset = 0u;
 
-    if (channel == NULL || channel->metadata.name == NULL || buffer == NULL || buffer_size == 0u)
+    if (channel == NULL || channel->metadata.id == NULL || buffer == NULL || buffer_size == 0u)
     {
         return false;
     }
 
-    written = snprintf(buffer,
-                       buffer_size,
-                       field_name != NULL && field_name[0] != '\0'
-                           ? "Device.Channels.%s.%s"
-                           : "Device.Channels.%s",
-                       channel->metadata.name,
-                       field_name != NULL ? field_name : "");
+    id = channel->metadata.id;
+    id_length = 0u;
+    while (id_length < TELEMETRY_CHANNEL_ID_MAX_LEN && id[id_length] != '\0')
+    {
+        ++id_length;
+    }
+    if (id_length == 0u || id_length >= TELEMETRY_CHANNEL_ID_MAX_LEN)
+    {
+        return false;
+    }
+
+    offset = (size_t)snprintf(buffer, buffer_size, "Device.Channels.c_");
+    if (offset >= buffer_size)
+    {
+        return false;
+    }
+    for (size_t index = 0u; index < id_length; ++index)
+    {
+        const unsigned char byte = (unsigned char)id[index];
+        if (offset + 2u >= buffer_size)
+        {
+            return false;
+        }
+        buffer[offset++] = hex[(byte >> 4u) & 0x0fu];
+        buffer[offset++] = hex[byte & 0x0fu];
+    }
+    if (field_name != NULL && field_name[0] != '\0')
+    {
+        const size_t field_length = strlen(field_name);
+        if (offset + 1u + field_length >= buffer_size)
+        {
+            return false;
+        }
+        buffer[offset++] = '.';
+        memcpy(&buffer[offset], field_name, field_length);
+        offset += field_length;
+    }
+    buffer[offset] = '\0';
+    return true;
+}
+
+bool model_build_legacy_channel_node_id(const telemetry_channel_t *channel,
+                                        const char *field_name,
+                                        char *buffer,
+                                        size_t buffer_size)
+{
+    const int written = (channel != NULL && channel->metadata.name != NULL &&
+                         field_name != NULL && field_name[0] != '\0')
+                            ? snprintf(buffer, buffer_size, "Device.Channels.%s.%s",
+                                       channel->metadata.name, field_name)
+                            : (channel != NULL && channel->metadata.name != NULL)
+                                  ? snprintf(buffer, buffer_size, "Device.Channels.%s",
+                                             channel->metadata.name)
+                                  : -1;
     return written > 0 && (size_t)written < buffer_size;
 }
 

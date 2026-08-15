@@ -8,7 +8,7 @@ session table, or staging buffer at runtime.
 
 | Resource | Exact limit | Control and source | Memory / failure behavior | Configurable |
 | --- | ---: | --- | --- | --- |
-| Configured and runtime channels | 16 (reference default; supported compile-time range 1вЂ“16) | `PLATFORM_CHANNEL_LIMIT`, [services/include/services/platform_limits.h](../services/include/services/platform_limits.h) | The same bound sizes persisted channel definitions, manager-owned runtime slots, OPC UA adapter contexts, PubSub writer state and diagnostics. The reference profile allocates 30,272 bytes of bounded configuration/registry/rollback-bank state from PSRAM and fails initialization if that storage is unavailable; no internal-SRAM fallback is used. Registration rejects invalid metadata, duplicate IDs, stale generations and capacity. A frozen four-channel v0.4.0 payload is decoded into the expanded profile and rewritten only through the alternating-slot commit path. | Build-time only. |
+| Configured and runtime channels | 16 (reference default; supported compile-time range 1вЂ“16) | `PLATFORM_CHANNEL_LIMIT`, [services/include/services/platform_limits.h](../services/include/services/platform_limits.h) | The same bound sizes persisted channel definitions, manager-owned runtime slots, generic OPC UA channel objects/callback contexts, PubSub writer state and diagnostics. The reference profile uses bounded PSRAM state and fails initialization if it is unavailable; no internal-SRAM fallback is used. Registration rejects invalid metadata, duplicate IDs, stale generations and capacity. Model construction uses a fixed field/context capacity and rolls back a failed startup transaction; topology changes use the existing controlled reboot path. | Build-time only. |
 | Local users | 8 | `SECURITY_SERVICE_MAX_USERS`, [services/include/services/security_service.h](../services/include/services/security_service.h) | Eight persisted user records plus eight bounded authentication/backoff records in [services/src/security_service.c](../services/src/security_service.c); adding past capacity fails instead of displacing an existing user. | No. |
 | OPC UA secure channels and sessions | 4 each | `config->maxSecureChannels` and `config->maxSessions`, [opcua_model/src/model_core_lifecycle.c](../opcua_model/src/model_core_lifecycle.c) | open62541 rejects a new connection/session at capacity; long-lived open62541 allocations follow the active PSRAM profile. | No. |
 | OPC UA subscriptions | 4 total; 4 per session | `config->maxSubscriptions`, `config->maxSubscriptionsPerSession`, [opcua_model/src/model_core_lifecycle.c](../opcua_model/src/model_core_lifecycle.c) | open62541 returns its resource-limit status; no unbounded subscription state is retained. | No. |
@@ -17,6 +17,28 @@ session table, or staging buffer at runtime.
 | Retained maintenance journal records | 15 logical records; 24 physical slots in 8 × 4096-byte sectors | `MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS`, `MAINTENANCE_JOURNAL_TOTAL_SLOTS`, and geometry constants in [drivers/include/drivers/maintenance_journal_backend.h](../drivers/include/drivers/maintenance_journal_backend.h) | Uses 32 KiB reserved QSPI Flash. The backend retains at most 15 exportable records, reserves erased sectors for bounded rotation, and blocks mutation on indeterminate, fatal, or unknown-schema recovery rather than accepting uncertain state. | No. |
 | Journal export page | 4 logical records | `MAINTENANCE_JOURNAL_EXPORT_PAGE_MAX` / `MAINTENANCE_SERVICE_EXPORT_PAGE_MAX`, [drivers/include/drivers/maintenance_journal_backend.h](../drivers/include/drivers/maintenance_journal_backend.h) and [services/include/services/maintenance_service.h](../services/include/services/maintenance_service.h) | A fixed service staging array holds one page. Cursor validation/recovery errors fail the call; raw Flash buffers are never exported. | No. |
 | OTA write chunk | 4096 bytes | `FIRMWARE_UPDATE_SERVICE_MAX_CHUNK_BYTES`, [services/include/services/firmware_update_service.h](../services/include/services/firmware_update_service.h) | The OTA service passes a bounded caller chunk to the Flash writer; an oversize, null, or empty chunk is rejected, and Flash write failure clears the active OTA session. | No. |
+
+## Measured OTA transfer time
+
+On 2026-08-13, firmware `v0.4.1` (`a5ebc3231faf`) was updated on the
+`waveshare_core2350b_16mb_psram8mb` reference device over authenticated
+OPC UA (`Basic256Sha256`, `SignAndEncrypt`) through the W5500 Ethernet
+interface. The 3,297,616-byte payload used 4096-byte chunks and required:
+
+- about 7 minutes 15 seconds of active transfer and finalize time, or about
+  7.4 KiB/s effective throughput;
+- 8 minutes 17 seconds wall-clock time from `BeginFirmwareUpdate` to a
+  successful `FinalizeFirmwareUpdate`, including about one minute lost to a
+  client timeout and reconnection; and
+- about 45 seconds from the reboot request until the updated OPC UA server was
+  available again.
+
+The current implementation sends each chunk as a separate synchronous OPC UA
+Method call and writes/verifies it through the Flash staging path. The measured
+rate is therefore dominated by per-chunk round trips and synchronous Flash
+work, not by Ethernet bandwidth. Improving this requires a separately scoped
+change, such as a larger bounded chunk size or buffered/batched Flash writes;
+the figures above are measurements, not performance acceptance targets.
 
 The configuration-import wire chunk has the same 4096-byte bound
 (`CONFIG_IMPORT_SERVICE_MAX_CHUNK_BYTES` in
@@ -27,5 +49,6 @@ active import session and reports `OUT_OF_MEMORY`.
 
 Channel values and metadata are held in fixed manager-owned slots. Snapshot
 reads copy a coherent value, quality and Unix-microsecond source timestamp;
-driver I/O is performed outside the registry critical section. Compiled but
+driver I/O and generation-safe writes are performed outside the registry
+critical section. Concurrent driver operations use no unbounded queue. Compiled but
 inactive native channel drivers do not allocate per-channel runtime contexts.

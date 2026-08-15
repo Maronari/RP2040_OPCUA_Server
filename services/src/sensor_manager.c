@@ -78,7 +78,15 @@ static bool sensor_manager_prepare_candidate(const device_profile_config_t *conf
             !sensor_manager_text_is_bounded(stored->unit, CONFIG_SERVICE_CHANNEL_UNIT_MAX_LEN, false) ||
             (entry = driver_catalog_get_by_id(stored->driver_id)) == NULL ||
             entry->validate_source == NULL || !entry->validate_source(stored->source_index, stored->source_flags) ||
-            !driver_catalog_supports_value_type(entry, (telemetry_channel_value_type_t)stored->value_type))
+            !driver_catalog_supports_value_type(entry, (telemetry_channel_value_type_t)stored->value_type) ||
+            /* v0.4.1 persisted reserved flag bits without rejecting them.
+             * Check an explicit v0.4.2 writable declaration here while
+             * retaining that opaque-bit compatibility. */
+            (((stored->flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u) &&
+             ((stored->flags & ~(TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_HISTORIZED |
+                                 TELEMETRY_CHANNEL_FLAG_ALARM_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE)) == 0u) &&
+             ((entry->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u || entry->driver == NULL ||
+              entry->driver->write == NULL)))
         {
             return false;
         }
@@ -110,6 +118,12 @@ static bool sensor_manager_prepare_candidate(const device_profile_config_t *conf
         runtime->metadata.kind = (telemetry_channel_kind_t)stored->kind;
         runtime->metadata.value_type = (telemetry_channel_value_type_t)stored->value_type;
         runtime->metadata.unit = stored->unit;
+        runtime->metadata.source = (telemetry_channel_source_descriptor_t){
+            .driver_id = stored->driver_id,
+            .source_index = stored->source_index,
+            .source_flags = stored->source_flags,
+            .reserved = 0u,
+        };
         runtime->metadata.range.has_minimum = stored->has_minimum != 0u;
         runtime->metadata.range.has_maximum = stored->has_maximum != 0u;
         runtime->metadata.range.minimum = stored->minimum;

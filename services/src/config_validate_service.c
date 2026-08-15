@@ -1117,6 +1117,22 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
                                                 (unsigned)channel->driver_id);
             return CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE;
         }
+        /* Preserve v0.4.1 opaque reserved-flag payloads.  An otherwise-valid
+         * v0.4.2 writable declaration must be backed by the catalog/vtable
+         * before it can reach activation. */
+        if ((channel->flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u &&
+            (channel->flags & ~(TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_HISTORIZED |
+                                TELEMETRY_CHANNEL_FLAG_ALARM_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE)) == 0u &&
+            ((driver->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u || driver->driver == NULL ||
+             driver->driver->write == NULL))
+        {
+            config_validate_service_set_message(message,
+                                                message_size,
+                                                "channel %u is writable but driver %u has no write operation",
+                                                (unsigned)index,
+                                                (unsigned)channel->driver_id);
+            return CONFIG_VALIDATE_RESULT_INVALID_CHANNEL;
+        }
         /* v0.4.1 history storage and HistoryRead remain float-only.  Reject
          * incompatible configuration before activation rather than exposing a
          * historized channel whose samples would be silently discarded. */

@@ -4,11 +4,13 @@
 import argparse
 import asyncio
 import getpass
+import hashlib
 import json
 import os
 import socket
 import sys
 import tempfile
+import zlib
 from pathlib import Path
 
 try:
@@ -57,6 +59,18 @@ def parse_args():
     parser.add_argument('--no-auto-client-cert', action='store_true')
     parser.add_argument('--skip-pre-status', action='store_true')
     parser.add_argument('--skip-post-status', action='store_true')
+    parser.add_argument(
+        '--resume-active',
+        action='store_true',
+        help=(
+            'Resume an active upload only when device size, CRC, version and offset '
+            'match the selected manifest'
+        ),
+    )
+    parser.add_argument('--status-only', action='store_true',
+                        help='Read authenticated OTA status without loading or staging a payload')
+    parser.add_argument('--reboot-only', action='store_true',
+                        help='Request an authenticated reboot without loading or staging a payload')
     parser.add_argument('--reboot-after-finalize', action='store_true')
     return parser.parse_args()
 
@@ -128,6 +142,19 @@ def parse_u32(value, field_name):
     return parsed
 
 
+def compute_payload_integrity(payload_path):
+    crc32 = 0
+    sha256 = hashlib.sha256()
+    with Path(payload_path).open('rb') as payload_file:
+        while True:
+            chunk = payload_file.read(64 * 1024)
+            if not chunk:
+                break
+            crc32 = zlib.crc32(chunk, crc32)
+            sha256.update(chunk)
+    return crc32 & 0xFFFFFFFF, sha256.hexdigest()
+
+
 def load_manifest(manifest_path, payload_override=None, version_override=None):
     manifest_path = Path(manifest_path).resolve()
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -146,6 +173,17 @@ def load_manifest(manifest_path, payload_override=None, version_override=None):
     if payload_size != image_size:
         raise ValueError(
             f'Payload size mismatch: manifest says {image_size} bytes, file has {payload_size} bytes'
+        )
+    payload_crc32, payload_sha256 = compute_payload_integrity(payload_path)
+    if payload_crc32 != image_crc32:
+        raise ValueError(
+            f'Payload CRC32 mismatch: manifest says 0x{image_crc32:08x}, '
+            f'file has 0x{payload_crc32:08x}'
+        )
+    manifest_sha256 = str(manifest.get('payload_sha256', '')).strip().lower()
+    if manifest_sha256 and payload_sha256 != manifest_sha256:
+        raise ValueError(
+            f'Payload SHA256 mismatch: manifest says {manifest_sha256}, file has {payload_sha256}'
         )
     return {
         'manifest_path': manifest_path,
@@ -190,10 +228,42 @@ def print_progress(sent_bytes, total_bytes):
     print(f'\rUploaded {sent_bytes}/{total_bytes} bytes ({percent:5.1f}%)', end='', flush=True)
 
 
+def resolve_resume_offset(status, payload_info, chunk_size):
+    if not status.get('sessionActive', False):
+        return None
+
+    expected = {
+        'expectedImageSize': payload_info['image_size'],
+        'expectedImageCrc32': payload_info['image_crc32'],
+        'versionNumber': payload_info['version_number'],
+    }
+    for field, expected_value in expected.items():
+        actual_value = parse_u32(status.get(field, -1), field)
+        if actual_value != expected_value:
+            raise RuntimeError(
+                f'Active OTA session {field} mismatch: '
+                f'device={actual_value} manifest={expected_value}'
+            )
+
+    offset = parse_u32(status.get('bytesWritten', -1), 'bytesWritten')
+    if offset > payload_info['image_size']:
+        raise RuntimeError('Active OTA session offset exceeds the selected payload size')
+    if offset != payload_info['image_size'] and offset % chunk_size != 0:
+        raise RuntimeError(
+            f'Active OTA session offset {offset} is not aligned to chunk size {chunk_size}'
+        )
+    remaining = parse_u32(status.get('remainingBytes', -1), 'remainingBytes')
+    if remaining != payload_info['image_size'] - offset:
+        raise RuntimeError('Active OTA session remaining byte count is inconsistent')
+    return offset
+
+
 async def stage_payload(client, args, payload_info):
     firmware = client.get_node(ua.NodeId.from_string(FIRMWARE_NODE_ID))
     system = client.get_node(ua.NodeId.from_string(SYSTEM_NODE_ID))
     upload_started = False
+    sent_bytes = 0
+    status_before = None
 
     if not args.skip_pre_status:
         status_before = await get_status(firmware)
@@ -204,19 +274,32 @@ async def stage_payload(client, args, payload_info):
                 f'Requested chunk size {args.chunk_size} exceeds device limit {max_chunk_bytes}'
             )
 
-    begin_ok = await call_bool_method(
-        firmware,
-        METHOD_BEGIN,
-        ua.Variant(payload_info['image_size'], ua.VariantType.UInt32),
-        ua.Variant(payload_info['image_crc32'], ua.VariantType.UInt32),
-        ua.Variant(payload_info['version_number'], ua.VariantType.UInt32),
-    )
-    if not begin_ok:
-        print_status('Begin rejected', await get_status(firmware))
-        raise RuntimeError('BeginFirmwareUpdate returned false')
+    if args.resume_active:
+        if status_before is None:
+            raise ValueError('--resume-active cannot be combined with --skip-pre-status')
+        resume_offset = resolve_resume_offset(status_before, payload_info, args.chunk_size)
+        if resume_offset is None:
+            raise RuntimeError('--resume-active requested but the device has no active OTA session')
+        sent_bytes = resume_offset
+        upload_started = True
+        print(f'Resuming matching active OTA session at offset {sent_bytes}')
+    else:
+        if status_before is not None and status_before.get('sessionActive', False):
+            raise RuntimeError(
+                'Device already has an active OTA session; abort it or rerun with --resume-active'
+            )
+        begin_ok = await call_bool_method(
+            firmware,
+            METHOD_BEGIN,
+            ua.Variant(payload_info['image_size'], ua.VariantType.UInt32),
+            ua.Variant(payload_info['image_crc32'], ua.VariantType.UInt32),
+            ua.Variant(payload_info['version_number'], ua.VariantType.UInt32),
+        )
+        if not begin_ok:
+            print_status('Begin rejected', await get_status(firmware))
+            raise RuntimeError('BeginFirmwareUpdate returned false')
+        upload_started = True
 
-    upload_started = True
-    sent_bytes = 0
     payload_path = payload_info['payload_path']
     image_size = payload_info['image_size']
     image_crc32 = payload_info['image_crc32']
@@ -228,6 +311,7 @@ async def stage_payload(client, args, payload_info):
 
     try:
         with payload_path.open('rb') as payload_file:
+            payload_file.seek(sent_bytes)
             while True:
                 chunk = payload_file.read(args.chunk_size)
                 if not chunk:
@@ -253,11 +337,17 @@ async def stage_payload(client, args, payload_info):
             raise RuntimeError('FinalizeFirmwareUpdate returned false')
     except Exception:
         if upload_started:
-            try:
-                abort_ok = await call_bool_method(firmware, METHOD_ABORT)
-                print(f'AbortFirmwareUpdate returned: {abort_ok}')
-            except Exception as abort_exc:
-                print(f'AbortFirmwareUpdate failed: {abort_exc}')
+            if args.resume_active:
+                print(
+                    'AbortFirmwareUpdate was not requested after resume failure; '
+                    'inspect device status before retrying --resume-active'
+                )
+            else:
+                try:
+                    abort_ok = await call_bool_method(firmware, METHOD_ABORT)
+                    print(f'AbortFirmwareUpdate returned: {abort_ok}')
+                except Exception as abort_exc:
+                    print(f'AbortFirmwareUpdate failed: {abort_exc}')
         raise
 
     if not args.skip_post_status:
@@ -279,6 +369,33 @@ async def main_async():
         raise ValueError('--chunk-size must be between 1 and 4096 bytes')
     if args.username and args.password is None:
         args.password = getpass.getpass(f'Password for {args.username}: ')
+
+    if args.status_only or args.reboot_only:
+        client = Client(url=args.server_url, timeout=args.timeout)
+        await configure_client_security(client, args)
+        if args.username:
+            client.set_user(args.username)
+            client.set_password(args.password or '')
+            print(f'Using authenticated session for user: {args.username}')
+        connected = False
+        try:
+            print(f'Connecting to {args.server_url}...')
+            await client.connect()
+            connected = True
+            print('Connected')
+            if args.status_only:
+                firmware = client.get_node(ua.NodeId.from_string(FIRMWARE_NODE_ID))
+                print_status('OTA status', await get_status(firmware))
+            else:
+                system = client.get_node(ua.NodeId.from_string(SYSTEM_NODE_ID))
+                if not await request_reboot(system):
+                    raise RuntimeError('Reboot returned false')
+                print('Reboot requested')
+        finally:
+            if connected:
+                await client.disconnect()
+                print('Disconnected')
+        return
 
     payload_info = load_manifest(args.manifest, args.payload, args.version_number)
     manifest_path = payload_info['manifest_path']

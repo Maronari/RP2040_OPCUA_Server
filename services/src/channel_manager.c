@@ -14,7 +14,8 @@ typedef struct
 {
     bool in_use;
     uint32_t generation;
-    uint8_t operation_count;
+    bool operation_active;
+    uint32_t operation_token;
     telemetry_channel_t channel;
     char id[TELEMETRY_CHANNEL_ID_MAX_LEN];
     char name[TELEMETRY_CHANNEL_NAME_MAX_LEN];
@@ -121,6 +122,38 @@ static bool find_slot_by_id_locked(const char *id, size_t *out_index)
     return false;
 }
 
+static bool channel_manager_value_is_valid(telemetry_channel_value_type_t type,
+                                           const telemetry_channel_value_t *value)
+{
+    return value != NULL && type <= TELEMETRY_CHANNEL_VALUE_STRING &&
+           (type != TELEMETRY_CHANNEL_VALUE_STRING ||
+            memchr(value->string, '\0', TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN) != NULL);
+}
+
+static channel_manager_write_result_t channel_manager_map_driver_result(telemetry_driver_result_t result)
+{
+    switch (result)
+    {
+    case TELEMETRY_DRIVER_RESULT_OK: return CHANNEL_MANAGER_WRITE_RESULT_OK;
+    case TELEMETRY_DRIVER_RESULT_UNSUPPORTED: return CHANNEL_MANAGER_WRITE_RESULT_UNSUPPORTED;
+    case TELEMETRY_DRIVER_RESULT_INVALID_STATE: return CHANNEL_MANAGER_WRITE_RESULT_INVALID_LIFECYCLE;
+    case TELEMETRY_DRIVER_RESULT_TIMEOUT: return CHANNEL_MANAGER_WRITE_RESULT_TIMEOUT;
+    case TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE: return CHANNEL_MANAGER_WRITE_RESULT_HARDWARE_FAILURE;
+    case TELEMETRY_DRIVER_RESULT_NO_MEMORY: return CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE;
+    case TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT: return CHANNEL_MANAGER_WRITE_RESULT_TYPE_MISMATCH;
+    default: return CHANNEL_MANAGER_WRITE_RESULT_HARDWARE_FAILURE;
+    }
+}
+
+static uint32_t channel_manager_current_time_ms(void)
+{
+#if defined(PICO_ON_DEVICE)
+    return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+#else
+    return 0u;
+#endif
+}
+
 bool channel_manager_init(void)
 {
     if (g_slots == NULL)
@@ -158,7 +191,7 @@ bool channel_manager_reset(void)
     taskENTER_CRITICAL();
     for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
-        if (g_slots[index].operation_count != 0u)
+        if (g_slots[index].operation_active)
         {
             may_reset = false;
             break;
@@ -293,6 +326,97 @@ bool channel_manager_update_settings(const char *id, const telemetry_channel_set
     return found;
 }
 
+channel_manager_write_result_t channel_manager_write_value(const char *id,
+                                                            telemetry_channel_value_type_t type,
+                                                            const telemetry_channel_value_t *value,
+                                                            telemetry_channel_snapshot_t *out_snapshot)
+{
+    channel_manager_driver_operation_t operation = {0};
+    telemetry_driver_result_t driver_result;
+    channel_manager_write_result_t result;
+    size_t index;
+    bool found;
+    uint64_t source_timestamp = TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID;
+
+    if (id == NULL || value == NULL || !channel_manager_value_is_valid(type, value))
+    {
+        return CHANNEL_MANAGER_WRITE_RESULT_TYPE_MISMATCH;
+    }
+    if (g_slots == NULL)
+    {
+        return CHANNEL_MANAGER_WRITE_RESULT_INVALID_LIFECYCLE;
+    }
+
+    taskENTER_CRITICAL();
+    found = find_slot_by_id_locked(id, &index);
+    if (!found)
+    {
+        taskEXIT_CRITICAL();
+        return CHANNEL_MANAGER_WRITE_RESULT_NOT_FOUND;
+    }
+    if (!g_slots[index].channel.settings.enabled ||
+        (g_slots[index].channel.metadata.flags & TELEMETRY_CHANNEL_FLAG_ENABLED) == 0u)
+    {
+        taskEXIT_CRITICAL();
+        return CHANNEL_MANAGER_WRITE_RESULT_DISABLED;
+    }
+    if ((g_slots[index].channel.metadata.flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) == 0u)
+    {
+        taskEXIT_CRITICAL();
+        return CHANNEL_MANAGER_WRITE_RESULT_READ_ONLY;
+    }
+    if (g_slots[index].channel.metadata.value_type != type)
+    {
+        taskEXIT_CRITICAL();
+        return CHANNEL_MANAGER_WRITE_RESULT_TYPE_MISMATCH;
+    }
+    if (g_slots[index].channel.driver == NULL || g_slots[index].channel.driver->write == NULL)
+    {
+        taskEXIT_CRITICAL();
+        return CHANNEL_MANAGER_WRITE_RESULT_UNSUPPORTED;
+    }
+    taskEXIT_CRITICAL();
+
+    if (!channel_manager_acquire_driver_operation(index, &operation))
+    {
+        return CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE;
+    }
+    /* The settings/type checks above may have raced a reconfiguration.  Do
+     * not invoke a driver with a lease that no longer describes this request. */
+    if (!strings_equal(operation.snapshot.channel.metadata.id, id) ||
+        !operation.snapshot.channel.settings.enabled ||
+        (operation.snapshot.channel.metadata.flags &
+         (TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE)) !=
+            (TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE) ||
+        operation.snapshot.channel.metadata.value_type != type ||
+        operation.snapshot.channel.driver == NULL || operation.snapshot.channel.driver->write == NULL)
+    {
+        channel_manager_release_driver_operation(&operation);
+        return CHANNEL_MANAGER_WRITE_RESULT_STALE;
+    }
+
+    driver_result = operation.snapshot.channel.driver->write(&operation.snapshot.channel, value);
+    result = channel_manager_map_driver_result(driver_result);
+    if (result == CHANNEL_MANAGER_WRITE_RESULT_OK)
+    {
+        (void)time_service_get_utc_time_us(&source_timestamp);
+        operation.snapshot.channel.runtime.source_timestamp_unix_us = source_timestamp;
+        operation.snapshot.channel.runtime.last_update_ms = channel_manager_current_time_ms();
+        ++operation.snapshot.channel.runtime.sample_count;
+        operation.snapshot.channel.runtime.quality = SERVICE_QUALITY_GOOD;
+        if (!channel_manager_publish_driver_operation(&operation))
+        {
+            result = CHANNEL_MANAGER_WRITE_RESULT_STALE;
+        }
+        else if (out_snapshot != NULL)
+        {
+            telemetry_channel_snapshot_clone(out_snapshot, &operation.snapshot);
+        }
+    }
+    channel_manager_release_driver_operation(&operation);
+    return result;
+}
+
 size_t channel_manager_register_from_config(const channel_config_t *configs, size_t config_count)
 {
     size_t registered = 0u;
@@ -337,14 +461,20 @@ bool channel_manager_acquire_driver_operation(size_t index,
         return false;
     }
     taskENTER_CRITICAL();
-    if (!g_slots[index].in_use || g_slots[index].operation_count == UINT8_MAX)
+    if (!g_slots[index].in_use || g_slots[index].operation_active)
     {
         taskEXIT_CRITICAL();
         return false;
     }
-    ++g_slots[index].operation_count;
+    ++g_slots[index].operation_token;
+    if (g_slots[index].operation_token == 0u)
+    {
+        ++g_slots[index].operation_token;
+    }
+    g_slots[index].operation_active = true;
     out_operation->handle.index = (uint8_t)index;
     out_operation->handle.generation = g_slots[index].generation;
+    out_operation->operation_token = g_slots[index].operation_token;
     snapshot_from_slot(&g_slots[index], &out_operation->snapshot);
     taskEXIT_CRITICAL();
     return true;
@@ -360,7 +490,8 @@ bool channel_manager_publish_driver_operation(const channel_manager_driver_opera
     }
     taskENTER_CRITICAL();
     slot = &g_slots[operation->handle.index];
-    if (!slot->in_use || slot->generation != operation->handle.generation || slot->operation_count == 0u)
+    if (!slot->in_use || slot->generation != operation->handle.generation || !slot->operation_active ||
+        slot->operation_token != operation->operation_token)
     {
         taskEXIT_CRITICAL();
         return false;
@@ -377,10 +508,10 @@ void channel_manager_release_driver_operation(const channel_manager_driver_opera
         return;
     }
     taskENTER_CRITICAL();
-    if (g_slots[operation->handle.index].in_use &&
-        g_slots[operation->handle.index].operation_count > 0u)
+    if (g_slots[operation->handle.index].operation_active &&
+        g_slots[operation->handle.index].operation_token == operation->operation_token)
     {
-        --g_slots[operation->handle.index].operation_count;
+        g_slots[operation->handle.index].operation_active = false;
     }
     taskEXIT_CRITICAL();
 }

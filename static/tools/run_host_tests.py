@@ -23,7 +23,8 @@ SUITES = (
     "test_config_compat.py",
     "test_config_service_identity.py",
     "test_config_validate.py",
-    "test_v041_opcua_adapter_sources.py",
+    "test_v042_opcua_adapter_sources.py",
+    "test_channel_model_contract.py",
     "test_opcua_logging_source.py",
     "test_temperature_adc_source.py",
     "test_export_nodeset.py",
@@ -37,6 +38,9 @@ SUITES = (
     "test_ota_state.py",
     "test_rp2_ua_datetime_clock.py",
     "test_w5x00_transport.py",
+    "test_open62541_lwip_listener.py",
+    "test_bootloader_handoff.py",
+    "test_stage_ota_resume.py",
 )
 
 

@@ -31,6 +31,9 @@
 #include <stdio.h>
 #include "hardware/watchdog.h"
 #include "ua_port_alloc.h"
+#ifdef UA_ENABLE_NODESET_INJECTOR
+#include "nodesetinjector.h"
+#endif
 
 static void
 rp2_open62541_init_checkpoint(const char *stage) {
@@ -297491,7 +297494,15 @@ TCP_listenSocketCallback(UA_ConnectionManager *cm, TCP_FD *conn, short event) {
     UA_FD newsockfd = lwip_accept(conn->rfd.fd, (struct sockaddr*)&remote, &remote_size);
     if(newsockfd == UA_INVALID_FD) {
         /* Temporary error -- retry */
-        if(UA_ERRNO == UA_INTERRUPTED)
+        if(UA_ERRNO == 0 ||
+           UA_ERRNO == UA_INTERRUPTED ||
+           UA_ERRNO == UA_WOULDBLOCK ||
+           UA_ERRNO == UA_AGAIN ||
+           UA_ERRNO == ENFILE ||
+           UA_ERRNO == ENOMEM ||
+           UA_ERRNO == ENOBUFS ||
+           UA_ERRNO == ECONNABORTED ||
+           UA_ERRNO == ECONNRESET)
             return;
 
         /* Close the listen socket */

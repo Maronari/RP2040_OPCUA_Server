@@ -2,11 +2,11 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.4.0`, commit `8a454945aaccc3d381a2e889e90b53569415b705`.
+> **Current baseline:** `v0.4.1`, commit `a5ebc3231faf658325ad02e997f05acf8601e8bf`.
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 
-This file defines the implementation order from the `v0.4.0` baseline to
+This file defines the implementation order from the `v0.4.1` baseline to
 `v1.0.0`. Codex must follow the versions sequentially and must not pull work
 from a later version into the current one unless this file is deliberately
 updated first.
@@ -957,15 +957,15 @@ Codex must not implement the following before a roadmap revision assigns an exac
 ## 8. Immediate next action
 
 The next implementation target is
-**`v0.4.1 — Channel Runtime Hardening`**.
+**`v0.4.2 — Generic OPC UA Channel Information Model`**.
 
 Before coding, Codex must:
 
-1. use tag `v0.4.0` as the immutable implementation and compatibility baseline;
-2. follow the file-level execution plan in `docs/releases/v0.4.1.md`;
-3. preserve the v0.4.0 public OPC UA contract and configuration fields;
-4. define channel ownership, synchronization, timestamp and driver-lifecycle
-   contracts before changing public service headers;
-5. define migration for persisted v0.4.0 configurations before increasing the
-   channel capacity;
-6. only then start implementation limited to `v0.4.1`.
+1. use tag `v0.4.1` as the immutable implementation and compatibility baseline;
+2. follow the file-level execution plan in `docs/releases/v0.4.2.md`;
+3. preserve unrelated v0.4.1 public contracts and configuration fields;
+4. freeze the deterministic channel NodeId grammar, metadata types, write-result
+   mapping and partial-build rollback contract before changing model code;
+5. verify the generic model with discovery-based automated clients and the
+   legacy temperature compatibility view;
+6. only then start implementation limited to `v0.4.2`.

@@ -310,9 +310,11 @@ UA_StatusCode model_pubsub_add_telemetry_writer_for_channel(UA_Server *server,
     }
 
     if (!model_build_channel_node_id(channel, "Value", value_node_id, sizeof(value_node_id)) ||
-        !model_build_channel_node_id(channel, "Status", status_node_id, sizeof(status_node_id)) ||
-        !model_build_channel_node_id(channel, "SourceTimestamp", source_timestamp_node_id, sizeof(source_timestamp_node_id)) ||
-        !model_build_channel_node_id(channel, "AlarmState", alarm_state_node_id, sizeof(alarm_state_node_id)))
+        !model_build_legacy_channel_node_id(channel, "Status", status_node_id, sizeof(status_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "SourceTimestamp", source_timestamp_node_id,
+                                            sizeof(source_timestamp_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "AlarmState", alarm_state_node_id,
+                                            sizeof(alarm_state_node_id)))
     {
         return UA_STATUSCODE_BADINTERNALERROR;
     }
@@ -332,7 +334,7 @@ UA_StatusCode model_pubsub_add_telemetry_writer_for_channel(UA_Server *server,
 
     status = model_pubsub_add_variable_field(server,
                                              pds_id,
-                                             UA_NODEID_STRING(1, value_node_id),
+                                             UA_NODEID_STRING(g_model_channel_namespace_index, value_node_id),
                                              "Value");
     if (status == UA_STATUSCODE_GOOD)
     {

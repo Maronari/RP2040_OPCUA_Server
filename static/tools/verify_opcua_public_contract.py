@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import pathlib
@@ -13,6 +14,10 @@ import sys
 
 
 EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
+EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
+EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
+    "405888c68a891422081f3b75d79a7c8ba3dcd7e6dff14599a12417e995f546c4"
+)
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
 MODEL_SOURCE_SET = (
@@ -35,6 +40,7 @@ MODEL_SOURCE_SET = (
 )
 BYTE_STABLE_PUBLIC_CONTRACT_PATHS = (
     "opcua_model/include/opcua_model/opcua_model.h",
+    "services/include/services/device_channels.h",
     "services/include/services/config_export_service.h",
     "services/include/services/config_import_service.h",
     "services/include/services/config_reset_service.h",
@@ -72,6 +78,14 @@ REVIEWED_INTERNAL_DRIFT_PATHS = (
     "static/tools/export_nodeset.py",
     "static/tools/verify_amb_model.py",
 )
+V042_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
+    "opcua_model/src/opcua_model_internal.h",
+    "opcua_model/src/model_access.c",
+    "opcua_model/src/model_address_space.c",
+    "opcua_model/src/model_configuration.c",
+    "opcua_model/src/model_history.c",
+    "opcua_model/src/model_pubsub.c",
+})
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",
     "UA_EXPANDEDNODEID_",
@@ -102,6 +116,11 @@ NONCONTRACT_DIAGNOSTIC_FUNCTIONS = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", default="v0.4.0", help="Immutable Git baseline")
+    parser.add_argument(
+        "--allow-v042-channel-additions",
+        action="store_true",
+        help="Allow only the reviewed v0.4.2 generic-channel model source delta",
+    )
     parser.add_argument(
         "--source-dir",
         type=pathlib.Path,
@@ -272,6 +291,85 @@ def public_inventory(source: bytes) -> dict[str, object]:
     return inventory
 
 
+V042_REVIEWED_DYNAMIC_CALL_REPLACEMENTS = {
+    "UA_NODEID_STRING(1, value_node_id)",
+}
+
+
+def missing_baseline_contract(
+    baseline_inventory: dict[str, object], current_inventory: dict[str, object]
+) -> dict[str, list[str]]:
+    """Return baseline lexical contract entries removed by the current tree.
+
+    v0.4.2 may add generic-channel registrations, but it may not remove any
+    v0.4.1 NodeId/BrowseName literal or public attribute assignment. Dynamic
+    legacy variable NodeId constructors moved behind the reviewed registration
+    helpers, so those four lexical call sites are checked semantically below.
+    """
+    missing: dict[str, list[str]] = {}
+    for key in (
+        "string_literals",
+        "node_and_browse_calls",
+        "public_attribute_assignments",
+    ):
+        if key == "string_literals":
+            baseline_items = Counter(set(baseline_inventory[key]))
+            current_items = Counter(set(current_inventory[key]))
+        else:
+            baseline_items = Counter(baseline_inventory[key])
+            current_items = Counter(current_inventory[key])
+        if key == "node_and_browse_calls":
+            for reviewed_call in V042_REVIEWED_DYNAMIC_CALL_REPLACEMENTS:
+                baseline_items.pop(reviewed_call, None)
+        removed = list((baseline_items - current_items).elements())
+        if removed:
+            missing[key] = removed
+    return missing
+
+
+def assert_v042_channel_compatibility(source_dir: pathlib.Path) -> None:
+    address_space = (source_dir / "opcua_model/src/model_address_space.c").read_text(
+        encoding="utf-8"
+    )
+    history = (source_dir / "opcua_model/src/model_history.c").read_text(
+        encoding="utf-8"
+    )
+    required_legacy_fields = (
+        'model_build_legacy_channel_node_id(channel, "Value"',
+        'model_build_legacy_channel_node_id(channel, "Status"',
+        'model_build_legacy_channel_node_id(channel, "SourceTimestamp"',
+        'model_build_legacy_channel_node_id(channel, "Units"',
+        'model_build_legacy_channel_node_id(channel, "UpdatePeriodMs"',
+        'model_build_legacy_channel_node_id(channel, "HistoryIntervalMs"',
+        'model_build_legacy_channel_node_id(channel, "AlarmState"',
+    )
+    for marker in required_legacy_fields:
+        if marker not in address_space:
+            raise SystemExit(
+                "opcua-contract: FAIL: removed v0.4.1 channel field: " + marker
+            )
+    if (
+        "status = model_add_legacy_temperature_nodes(server, channels_id, "
+        "channel_index, channel);"
+        not in address_space
+    ):
+        raise SystemExit(
+            "opcua-contract: FAIL: v0.4.1 channel aliases are not registered"
+        )
+    if "UA_NODEID_STRING(g_model_channel_namespace_index" not in history:
+        raise SystemExit(
+            "opcua-contract: FAIL: generic channel HistoryRead namespace mismatch"
+        )
+    pubsub = (source_dir / "opcua_model/src/model_pubsub.c").read_text(
+        encoding="utf-8"
+    )
+    for field in ("Value", "Status", "SourceTimestamp", "AlarmState"):
+        if f'"{field}");' not in pubsub:
+            raise SystemExit(
+                "opcua-contract: FAIL: removed v0.4.1 PubSub field: " + field
+            )
+
+
 def main() -> int:
     args = parse_args()
     source_dir = args.source_dir.resolve()
@@ -281,6 +379,23 @@ def main() -> int:
             f"opcua-contract: FAIL: v0.4.0 resolves to {baseline_commit}, "
             f"expected {EXPECTED_V040_COMMIT}"
         )
+    if args.allow_v042_channel_additions:
+        if args.baseline != "v0.4.1" or baseline_commit != EXPECTED_V041_COMMIT:
+            raise SystemExit(
+                "opcua-contract: FAIL: v0.4.2 additions require "
+                f"v0.4.1@{EXPECTED_V041_COMMIT}, got {args.baseline}@{baseline_commit}"
+            )
+        for relative in MODEL_SOURCE_SET:
+            if relative in V042_REVIEWED_MODEL_DRIFT_PATHS:
+                continue
+            baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
+            current_data = normalized_source((source_dir / relative).read_bytes())
+            if current_data != baseline_data:
+                raise SystemExit(
+                    "opcua-contract: FAIL: model drift outside reviewed v0.4.2 channel files: "
+                    f"{relative}"
+                )
+        assert_v042_channel_compatibility(source_dir)
 
     stable_files: list[dict[str, str]] = []
     for relative in BYTE_STABLE_PUBLIC_CONTRACT_PATHS:
@@ -303,7 +418,23 @@ def main() -> int:
     baseline_inventory = public_inventory(aggregate_baseline_source(source_dir, args.baseline))
     assert_closed_registration_coverage(source_dir)
     current_inventory = public_inventory(aggregate_current_source(source_dir))
-    if current_inventory != baseline_inventory:
+    inventory_changed = current_inventory != baseline_inventory
+    missing_baseline = missing_baseline_contract(baseline_inventory, current_inventory)
+    if args.allow_v042_channel_additions and missing_baseline:
+        summary = ", ".join(
+            f"{key}={len(items)}" for key, items in sorted(missing_baseline.items())
+        )
+        raise SystemExit(
+            "opcua-contract: FAIL: v0.4.2 removed baseline public contract entries: "
+            + summary
+        )
+    if (args.allow_v042_channel_additions and
+            current_inventory["sha256"] != EXPECTED_V042_PUBLIC_INVENTORY_SHA256):
+        raise SystemExit(
+            "opcua-contract: FAIL: public inventory is not the reviewed v0.4.2 delta: "
+            + str(current_inventory["sha256"])
+        )
+    if inventory_changed and not args.allow_v042_channel_additions:
         raise SystemExit("opcua-contract: FAIL: public model inventory differs from baseline")
 
     evidence = {
@@ -312,6 +443,17 @@ def main() -> int:
         "baseline_model_source_set": MODEL_SOURCE_SET,
         "model_source_set": MODEL_SOURCE_SET,
         "public_inventory_sha256": current_inventory["sha256"],
+        "baseline_public_inventory_sha256": baseline_inventory["sha256"],
+        "reviewed_v042_public_inventory_sha256": (
+            EXPECTED_V042_PUBLIC_INVENTORY_SHA256
+            if args.allow_v042_channel_additions else None
+        ),
+        "baseline_contract_removals": missing_baseline,
+        "reviewed_v042_channel_additions": bool(
+            args.allow_v042_channel_additions and inventory_changed
+        ),
+        "reviewed_v042_model_drift_paths": sorted(V042_REVIEWED_MODEL_DRIFT_PATHS)
+        if args.allow_v042_channel_additions else [],
         "string_literal_count": len(current_inventory["string_literals"]),
         "node_and_browse_call_count": len(current_inventory["node_and_browse_calls"]),
         "public_attribute_assignment_count": len(

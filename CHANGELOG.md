@@ -1,8 +1,25 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.4.1`. Historical tag
+This file tracks the firmware release line through `v0.4.2`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
+
+## v0.4.2
+
+- OPC UA model: reflects every startup registry channel through one generic,
+  typed builder with deterministic channel-ID-derived NodeIds, coherent quality
+  and source timestamps, standard `EUInformation`/`Range` metadata, and bounded
+  rollback after partial construction failure.
+- Runtime ownership: exposes copied driver/source identity and routes authorized
+  writes through a generation-safe channel-manager transaction rather than a
+  driver call from the OPC UA adapter.
+- Compatibility: retains every v0.4.1 channel subtree, including the deprecated
+  `Device.Channels.Temperature1` view of the same registry-owned sample.
+  Multi-channel history and alarms remain deferred to v0.4.3.
+- Verification: adds model discovery, all built-in channel types, deterministic
+  NodeId, metadata, write authorization, rollback, legacy-equivalence, and
+  bounded lwIP listener-capacity recovery gates.
+- Release plan: `docs/releases/v0.4.2.md`.
 
 ## v0.4.1
 

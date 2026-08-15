@@ -4,6 +4,9 @@
 #include <string.h>
 
 #include "hardware/flash.h"
+#include "hardware/regs/resets.h"
+#include "hardware/resets.h"
+#include "hardware/structs/nvic.h"
 #include "hardware/structs/scb.h"
 #include "hardware/structs/systick.h"
 #include "hardware/watchdog.h"
@@ -50,6 +53,32 @@ static inline void bootloader_data_sync_barrier(void)
 static inline void bootloader_instruction_sync_barrier(void)
 {
     __asm volatile("isb 0xF" : : : "memory");
+}
+
+static void bootloader_quiesce_interrupt_sources(void)
+{
+    const size_t nvic_bank_count = (NUM_IRQS + 31u) / 32u;
+
+    /* The application re-enables interrupts during its pre-main runtime
+     * initialization. Do not let a bootloader USB or timer interrupt run
+     * against the application's not-yet-installed peripheral handlers. */
+    for (size_t bank = 0u; bank < nvic_bank_count; ++bank)
+    {
+        nvic_hw->icer[bank] = UINT32_MAX;
+    }
+
+    /* USB stdio is the only continuously active interrupt source used by the
+     * bootloader. Leave USBCTRL in reset; application TinyUSB initialization
+     * resets and releases the block before installing its handler. */
+    reset_block(RESETS_RESET_USBCTRL_BITS);
+
+    for (size_t bank = 0u; bank < nvic_bank_count; ++bank)
+    {
+        nvic_hw->icpr[bank] = UINT32_MAX;
+    }
+
+    bootloader_data_sync_barrier();
+    bootloader_instruction_sync_barrier();
 }
 
 static inline void bootloader_set_main_stack_pointer(uint32_t stack_pointer)
@@ -442,7 +471,7 @@ static void __attribute__((noreturn)) bootloader_jump_to_bank_a(uint32_t stack_p
     sleep_ms(50);
 
     bootloader_disable_interrupts();
-    multicore_reset_core1();
+    bootloader_quiesce_interrupt_sources();
     systick_hw->csr = 0u;
     systick_hw->rvr = 0u;
     systick_hw->cvr = 0u;

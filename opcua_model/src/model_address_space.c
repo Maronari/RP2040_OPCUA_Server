@@ -1463,10 +1463,303 @@ model_node_context_t *model_prepare_channel_context(size_t channel_index,
     return context;
 }
 
+static model_node_context_t *model_prepare_generic_channel_context(size_t channel_index,
+                                                                    size_t field_index,
+                                                                    model_node_kind_t kind,
+                                                                    const char *channel_id)
+{
+    model_node_context_t *context;
+
+    if (channel_index >= PLATFORM_CHANNEL_LIMIT ||
+        field_index >= MODEL_GENERIC_CHANNEL_CONTEXT_COUNT ||
+        channel_id == NULL || channel_id[0] == '\0')
+    {
+        return NULL;
+    }
+
+    context = &g_generic_channel_node_contexts[channel_index][field_index];
+    memset(context, 0, sizeof(*context));
+    context->kind = kind;
+    model_copy_string_safe(context->channel_id_storage,
+                           sizeof(context->channel_id_storage),
+                           channel_id);
+    context->channel_id = context->channel_id_storage;
+    return context;
+}
+
+static void model_clear_generic_channel_contexts(size_t channel_index)
+{
+    if (channel_index < PLATFORM_CHANNEL_LIMIT)
+    {
+        memset(g_generic_channel_node_contexts[channel_index],
+               0,
+               sizeof(g_generic_channel_node_contexts[channel_index]));
+    }
+}
+
+static void model_delete_generic_nodes(UA_Server *server,
+                                       const char node_ids[][MODEL_CHANNEL_NODE_ID_MAX_LEN],
+                                       size_t node_count)
+{
+    while (server != NULL && node_count > 0u)
+    {
+        const UA_NodeId node_id = UA_NODEID_STRING(g_model_channel_namespace_index,
+                                                    (char *)node_ids[--node_count]);
+        (void)UA_Server_deleteNode(server, node_id, true);
+    }
+}
+
+static UA_StatusCode model_add_generic_static_property(UA_Server *server,
+                                                        const char *node_id,
+                                                        const char *browse_name,
+                                                        UA_NodeId parent_id,
+                                                        const void *data,
+                                                        const UA_DataType *data_type)
+{
+    UA_VariableAttributes attributes = UA_VariableAttributes_default;
+    UA_StatusCode status;
+
+    if (server == NULL || node_id == NULL || browse_name == NULL ||
+        data == NULL || data_type == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)browse_name);
+    attributes.dataType = data_type->typeId;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
+    attributes.accessLevel = UA_ACCESSLEVELMASK_READ;
+    attributes.userAccessLevel = UA_ACCESSLEVELMASK_READ;
+    status = UA_Variant_setScalarCopy(&attributes.value, data, data_type);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = UA_Server_addVariableNode(server,
+                                       UA_NODEID_STRING(g_model_channel_namespace_index,
+                                                        (char *)node_id),
+                                       parent_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASPROPERTY),
+                                       UA_QUALIFIEDNAME(g_model_channel_namespace_index,
+                                                        (char *)browse_name),
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE),
+                                       attributes,
+                                       NULL,
+                                       NULL);
+    UA_Variant_clear(&attributes.value);
+    return status;
+}
+
+static UA_StatusCode model_add_generic_value(UA_Server *server,
+                                              const char *node_id,
+                                              UA_NodeId parent_id,
+                                              UA_NodeId data_type,
+                                              model_node_context_t *context,
+                                              bool writable,
+                                              bool historizing)
+{
+    UA_VariableAttributes attributes = UA_VariableAttributes_default;
+    UA_DataSource data_source = {0};
+    UA_StatusCode status;
+    UA_NodeId created_id = UA_NODEID_NULL;
+    UA_Byte access_level = UA_ACCESSLEVELMASK_READ;
+
+    if (writable)
+    {
+        access_level |= UA_ACCESSLEVELMASK_WRITE;
+    }
+    if (historizing)
+    {
+        access_level |= UA_ACCESSLEVELMASK_HISTORYREAD;
+    }
+    data_source.read = model_read_value;
+    data_source.write = writable ? model_write_value : NULL;
+    attributes.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Value");
+    attributes.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)"Value");
+    attributes.dataType = data_type;
+    attributes.valueRank = UA_VALUERANK_SCALAR;
+    attributes.accessLevel = access_level;
+    attributes.userAccessLevel = access_level;
+    attributes.historizing = historizing;
+    model_set_default_variant_value(&attributes, data_type);
+    status = UA_Server_addVariableNode(server,
+                                       UA_NODEID_STRING(g_model_channel_namespace_index,
+                                                        (char *)node_id),
+                                       parent_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                       UA_QUALIFIEDNAME(g_model_channel_namespace_index,
+                                                        (char *)"Value"),
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE),
+                                       attributes,
+                                       context,
+                                       &created_id);
+    UA_Variant_clear(&attributes.value);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    return UA_Server_setVariableNode_dataSource(server, created_id, data_source);
+}
+
+static bool model_channel_value_type_is_numeric(telemetry_channel_value_type_t type)
+{
+    return type == TELEMETRY_CHANNEL_VALUE_FLOAT || type == TELEMETRY_CHANNEL_VALUE_DOUBLE ||
+           type == TELEMETRY_CHANNEL_VALUE_INT32 || type == TELEMETRY_CHANNEL_VALUE_UINT32 ||
+           type == TELEMETRY_CHANNEL_VALUE_INT64 || type == TELEMETRY_CHANNEL_VALUE_UINT64;
+}
+
 UA_StatusCode model_add_channel_nodes(UA_Server *server,
-                                             UA_NodeId channels_folder_id,
-                                             size_t channel_index,
-                                             const telemetry_channel_t *channel)
+                                      UA_NodeId channels_folder_id,
+                                      size_t channel_index,
+                                      const telemetry_channel_t *channel)
+{
+    char ids[13][MODEL_CHANNEL_NODE_ID_MAX_LEN] = {{0}};
+    const char *const fields[] = {NULL, "Value", "Description", "ChannelKind", "DriverId",
+                                  "SourceIndex", "SourceFlags", "SamplePeriodMs", "PublishPeriodMs",
+                                  "Historizing", "Writable", "EngineeringUnits", "EURange"};
+    UA_NodeId object_id = UA_NODEID_NULL;
+    UA_NodeId value_id = UA_NODEID_NULL;
+    UA_StatusCode status;
+    size_t created = 0u;
+    UA_UInt32 kind;
+    UA_UInt32 driver_id;
+    UA_UInt32 source_index;
+    UA_UInt32 source_flags;
+    UA_UInt32 sample_period;
+    UA_UInt32 publish_period;
+    UA_Boolean historizing;
+    UA_Boolean writable;
+    UA_String description;
+
+    if (server == NULL || channel == NULL || channel_index >= PLATFORM_CHANNEL_LIMIT ||
+        channel->metadata.id == NULL || channel->metadata.name == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    for (size_t index = 0u; index < sizeof(fields) / sizeof(fields[0]); ++index)
+    {
+        if (!model_build_channel_node_id(channel, fields[index], ids[index], sizeof(ids[index])))
+        {
+            return UA_STATUSCODE_BADOUTOFRANGE;
+        }
+    }
+    object_id = UA_NODEID_STRING(g_model_channel_namespace_index, ids[0]);
+    status = UA_Server_addObjectNode(server,
+                                     object_id,
+                                     channels_folder_id,
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                     UA_QUALIFIEDNAME(g_model_channel_namespace_index,
+                                                      (char *)channel->metadata.id),
+                                     UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
+                                     (UA_ObjectAttributes){
+                                         .displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)channel->metadata.name),
+                                         .description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)(channel->metadata.description != NULL ? channel->metadata.description : ""))},
+                                     NULL,
+                                     NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    ++created;
+    value_id = UA_NODEID_STRING(g_model_channel_namespace_index, ids[1]);
+    status = model_add_generic_value(server, ids[1], object_id,
+                                     model_channel_value_type_to_data_type(channel->metadata.value_type),
+                                     model_prepare_generic_channel_context(channel_index, 0u,
+                                                                           MODEL_NODE_CHANNEL_VALUE,
+                                                                           channel->metadata.id),
+                                     (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u,
+                                     (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u);
+    if (status != UA_STATUSCODE_GOOD) goto fail;
+    ++created;
+
+    description = UA_STRING((char *)(channel->metadata.description != NULL ? channel->metadata.description : ""));
+    kind = (UA_UInt32)channel->metadata.kind;
+    driver_id = (UA_UInt32)channel->metadata.source.driver_id;
+    source_index = (UA_UInt32)channel->metadata.source.source_index;
+    source_flags = (UA_UInt32)channel->metadata.source.source_flags;
+    sample_period = channel->settings.sample_period_ms;
+    publish_period = channel->settings.publish_period_ms;
+    historizing = (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u;
+    writable = (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u;
+#define ADD_PROPERTY(index, name, value, type) \
+    do { status = model_add_generic_static_property(server, ids[index], name, object_id, value, type); \
+         if (status != UA_STATUSCODE_GOOD) goto fail; ++created; } while (0)
+    ADD_PROPERTY(2u, "Description", &description, &UA_TYPES[UA_TYPES_STRING]);
+    ADD_PROPERTY(3u, "ChannelKind", &kind, &UA_TYPES[UA_TYPES_UINT32]);
+    ADD_PROPERTY(4u, "DriverId", &driver_id, &UA_TYPES[UA_TYPES_UINT32]);
+    ADD_PROPERTY(5u, "SourceIndex", &source_index, &UA_TYPES[UA_TYPES_UINT32]);
+    ADD_PROPERTY(6u, "SourceFlags", &source_flags, &UA_TYPES[UA_TYPES_UINT32]);
+    ADD_PROPERTY(7u, "SamplePeriodMs", &sample_period, &UA_TYPES[UA_TYPES_UINT32]);
+    ADD_PROPERTY(8u, "PublishPeriodMs", &publish_period, &UA_TYPES[UA_TYPES_UINT32]);
+    ADD_PROPERTY(9u, "Historizing", &historizing, &UA_TYPES[UA_TYPES_BOOLEAN]);
+    ADD_PROPERTY(10u, "Writable", &writable, &UA_TYPES[UA_TYPES_BOOLEAN]);
+#undef ADD_PROPERTY
+
+    if (channel->metadata.unit != NULL && channel->metadata.unit[0] != '\0')
+    {
+        UA_EUInformation eu = {0};
+        eu.namespaceUri = UA_STRING((char *)"http://www.opcfoundation.org/UA/units/un/cefact");
+        eu.unitId = strcmp(channel->metadata.unit, "degC") == 0 ? 4408652 :
+                    strcmp(channel->metadata.unit, "V") == 0 ? 5655636 : 0;
+        eu.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)channel->metadata.unit);
+        eu.description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)channel->metadata.unit);
+        status = model_add_generic_static_property(server, ids[11], "EngineeringUnits", value_id,
+                                                   &eu, &UA_TYPES[UA_TYPES_EUINFORMATION]);
+        if (status != UA_STATUSCODE_GOOD) goto fail;
+        ++created;
+    }
+    if (model_channel_value_type_is_numeric(channel->metadata.value_type) &&
+        channel->metadata.range.has_minimum && channel->metadata.range.has_maximum &&
+        isfinite(channel->metadata.range.minimum) && isfinite(channel->metadata.range.maximum) &&
+        channel->metadata.range.minimum <= channel->metadata.range.maximum)
+    {
+        const UA_Range range = {.low = channel->metadata.range.minimum, .high = channel->metadata.range.maximum};
+        status = model_add_generic_static_property(server, ids[12], "EURange", value_id,
+                                                   &range, &UA_TYPES[UA_TYPES_RANGE]);
+        if (status != UA_STATUSCODE_GOOD) goto fail;
+        ++created;
+    }
+    return UA_STATUSCODE_GOOD;
+
+fail:
+    model_delete_generic_nodes(server, ids, created);
+    model_clear_generic_channel_contexts(channel_index);
+    return status;
+}
+
+static void model_rollback_generic_channel_model(UA_Server *server)
+{
+    static const char *const fields[] = {NULL, "Value", "Description", "ChannelKind", "DriverId",
+                                         "SourceIndex", "SourceFlags", "SamplePeriodMs", "PublishPeriodMs",
+                                         "Historizing", "Writable", "EngineeringUnits", "EURange"};
+
+    for (size_t channel_index = 0u; channel_index < PLATFORM_CHANNEL_LIMIT; ++channel_index)
+    {
+        telemetry_channel_snapshot_t snapshot = {0};
+        char node_id[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+
+        if (channel_manager_copy_snapshot_by_index(channel_index, &snapshot))
+        {
+            for (size_t field_index = sizeof(fields) / sizeof(fields[0]); field_index > 0u; --field_index)
+            {
+                if (model_build_channel_node_id(&snapshot.channel, fields[field_index - 1u],
+                                                node_id, sizeof(node_id)))
+                {
+                    (void)UA_Server_deleteNode(server,
+                                               UA_NODEID_STRING(g_model_channel_namespace_index, node_id),
+                                               true);
+                }
+            }
+        }
+        model_clear_generic_channel_contexts(channel_index);
+    }
+}
+
+UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server,
+                                                 UA_NodeId channels_folder_id,
+                                                 size_t channel_index,
+                                                 const telemetry_channel_t *channel)
 {
     char channel_node_id[128];
     char value_node_id[128];
@@ -1485,14 +1778,14 @@ UA_StatusCode model_add_channel_nodes(UA_Server *server,
         return UA_STATUSCODE_BADINVALIDARGUMENT;
     }
 
-    if (!model_build_channel_node_id(channel, NULL, channel_node_id, sizeof(channel_node_id)) ||
-        !model_build_channel_node_id(channel, "Value", value_node_id, sizeof(value_node_id)) ||
-        !model_build_channel_node_id(channel, "Status", status_node_id, sizeof(status_node_id)) ||
-        !model_build_channel_node_id(channel, "SourceTimestamp", source_timestamp_node_id, sizeof(source_timestamp_node_id)) ||
-        !model_build_channel_node_id(channel, "Units", units_node_id, sizeof(units_node_id)) ||
-        !model_build_channel_node_id(channel, "UpdatePeriodMs", update_period_node_id, sizeof(update_period_node_id)) ||
-        !model_build_channel_node_id(channel, "HistoryIntervalMs", history_interval_node_id, sizeof(history_interval_node_id)) ||
-        !model_build_channel_node_id(channel, "AlarmState", alarm_state_node_id, sizeof(alarm_state_node_id)))
+    if (!model_build_legacy_channel_node_id(channel, NULL, channel_node_id, sizeof(channel_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "Value", value_node_id, sizeof(value_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "Status", status_node_id, sizeof(status_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "SourceTimestamp", source_timestamp_node_id, sizeof(source_timestamp_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "Units", units_node_id, sizeof(units_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "UpdatePeriodMs", update_period_node_id, sizeof(update_period_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "HistoryIntervalMs", history_interval_node_id, sizeof(history_interval_node_id)) ||
+        !model_build_legacy_channel_node_id(channel, "AlarmState", alarm_state_node_id, sizeof(alarm_state_node_id)))
     {
         return UA_STATUSCODE_BADINTERNALERROR;
     }
@@ -1634,6 +1927,16 @@ UA_StatusCode model_build_address_space(UA_Server *server)
     UA_NodeId maintenance_system_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MAINTENANCE_SYSTEM);
     UA_NodeId messaging_id = UA_NODEID_STRING(1, (char *)MODEL_NODE_MESSAGING);
     UA_StatusCode status = UA_STATUSCODE_GOOD;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    g_model_channel_namespace_index = UA_Server_addNamespace(server, MODEL_CHANNEL_NAMESPACE_URI);
+    if (g_model_channel_namespace_index == 0u)
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
 
     status = model_add_object(server,
                               "Device",
@@ -2237,6 +2540,17 @@ UA_StatusCode model_build_address_space(UA_Server *server)
         status = model_add_channel_nodes(server, channels_id, channel_index, channel);
         if (status != UA_STATUSCODE_GOOD)
         {
+            model_rollback_generic_channel_model(server);
+            return status;
+        }
+
+        /* Preserve each v0.4.1 channel subtree as a stateless registry view.
+         * Temperature remains the documented deprecated alias, while keeping
+         * every existing configured channel path avoids an upgrade break. */
+        status = model_add_legacy_temperature_nodes(server, channels_id, channel_index, channel);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            model_rollback_generic_channel_model(server);
             return status;
         }
     }

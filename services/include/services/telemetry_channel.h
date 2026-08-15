@@ -58,6 +58,17 @@ typedef union
     char string[TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN];
 } telemetry_channel_value_t;
 
+/* This value is copied into the channel registry with its metadata.  It is
+ * deliberately not a driver_context view: callers can report the configured
+ * source without depending on driver-private storage or registry slot order. */
+typedef struct
+{
+    uint8_t driver_id;
+    uint8_t source_index;
+    uint8_t source_flags;
+    uint8_t reserved;
+} telemetry_channel_source_descriptor_t;
+
 typedef struct
 {
     bool has_minimum;
@@ -74,6 +85,7 @@ typedef struct
     telemetry_channel_kind_t kind;
     telemetry_channel_value_type_t value_type;
     const char *unit;
+    telemetry_channel_source_descriptor_t source;
     telemetry_channel_range_t range;
     uint32_t flags;
 } telemetry_channel_metadata_t;
