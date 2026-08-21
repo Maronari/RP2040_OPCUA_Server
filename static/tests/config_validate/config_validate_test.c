@@ -1,16 +1,46 @@
 #include "services/config_import_service.h"
 #include "services/config_compat.h"
+#include "services/config_export_service.h"
+#include "services/config_store_service.h"
 #include "services/config_validate_service.h"
 #include "services/config_wire.h"
 #include "services/driver_catalog.h"
 #include "ota/ota_state.h"
 
 #include <assert.h>
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static bool g_fail_allocation;
+static device_profile_config_t g_export_profile;
+
+const device_profile_config_t *config_service_get(void)
+{
+    return &g_export_profile;
+}
+
+const device_profile_config_t *config_service_get_staged(void)
+{
+    return &g_export_profile;
+}
+
+uint32_t config_service_get_running_revision(void)
+{
+    return 1u;
+}
+
+uint32_t config_service_get_staged_revision(void)
+{
+    return 1u;
+}
+
+bool config_store_get_active_info(config_store_record_info_t *out_info)
+{
+    (void)out_info;
+    return false;
+}
 
 void *pvPortMalloc(size_t size)
 {
@@ -182,6 +212,11 @@ typedef struct
     const char *offset;
     const char *warning_threshold;
     const char *critical_threshold;
+    const char *low_threshold;
+    const char *low_low_threshold;
+    const char *alarm_hysteresis;
+    const char *alarm_debounce_ms;
+    bool include_alarm_tuning;
 } json_tokens_t;
 
 static json_tokens_t valid_json_tokens(void)
@@ -204,6 +239,11 @@ static json_tokens_t valid_json_tokens(void)
         .offset = "-0",
         .warning_threshold = "1.25",
         .critical_threshold = "2.5",
+        .low_threshold = "-1.25",
+        .low_low_threshold = "-2.5",
+        .alarm_hysteresis = "0.5",
+        .alarm_debounce_ms = "1234",
+        .include_alarm_tuning = true,
     };
 }
 
@@ -213,7 +253,27 @@ static bool write_json_channel(char *buffer,
                                bool in_use,
                                const json_tokens_t *tokens)
 {
-    int written = snprintf(
+    char alarm_tuning[256] = {0};
+    int tuning_written;
+    int written;
+
+    if (tokens->include_alarm_tuning)
+    {
+        tuning_written = snprintf(alarm_tuning,
+                                  sizeof(alarm_tuning),
+                                  ",\"lowThreshold\":%s,\"lowLowThreshold\":%s,"
+                                  "\"alarmHysteresis\":%s,\"alarmDebounceMs\":%s",
+                                  tokens->low_threshold,
+                                  tokens->low_low_threshold,
+                                  tokens->alarm_hysteresis,
+                                  tokens->alarm_debounce_ms);
+        if (tuning_written <= 0 || (size_t)tuning_written >= sizeof(alarm_tuning))
+        {
+            return false;
+        }
+    }
+
+    written = snprintf(
         buffer,
         buffer_size,
         "{\"slot\":%lu,\"inUse\":%s,\"kind\":0,\"valueType\":0,\"driverId\":%u,"
@@ -222,7 +282,7 @@ static bool write_json_channel(char *buffer,
         "\"minimum\":%s,\"maximum\":%s,\"hasMinimum\":true,\"hasMaximum\":true,"
         "\"enabled\":true,\"samplePeriodMs\":4294967295,\"publishPeriodMs\":0,"
         "\"historyIntervalMs\":1,\"scale\":%s,\"offset\":%s,\"warningThreshold\":%s,"
-        "\"criticalThreshold\":%s}",
+        "\"criticalThreshold\":%s%s}",
         (unsigned long)slot,
         in_use ? "true" : "false",
         (unsigned)CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP,
@@ -232,7 +292,8 @@ static bool write_json_channel(char *buffer,
         tokens->scale,
         tokens->offset,
         tokens->warning_threshold,
-        tokens->critical_threshold);
+        tokens->critical_threshold,
+        alarm_tuning);
 
     return written > 0 && (size_t)written < buffer_size;
 }
@@ -401,6 +462,9 @@ static void set_double_token(json_tokens_t *tokens, size_t field, const char *va
     case 3u: tokens->offset = value; break;
     case 4u: tokens->warning_threshold = value; break;
     case 5u: tokens->critical_threshold = value; break;
+    case 6u: tokens->low_threshold = value; break;
+    case 7u: tokens->low_low_threshold = value; break;
+    case 8u: tokens->alarm_hysteresis = value; break;
     default: assert(false); break;
     }
 }
@@ -425,7 +489,7 @@ static void test_json_numeric_and_network_parsing(void)
     assert(parsed.static_netmask[0] == UINT8_MAX && parsed.static_gateway[3] == 4u);
 
     /* Each strtod field accepts the finite upper boundary. */
-    for (size_t field = 0u; field < 6u; ++field)
+    for (size_t field = 0u; field < 9u; ++field)
     {
         tokens = valid_json_tokens();
         set_double_token(&tokens, field, "1.7976931348623157e308");
@@ -434,7 +498,7 @@ static void test_json_numeric_and_network_parsing(void)
         set_double_token(&tokens, field, "-1.7976931348623157e308");
         expect_json_result(&tokens, CONFIG_VALIDATE_RESULT_OK, NULL);
     }
-    for (size_t field = 0u; field < 6u; ++field)
+    for (size_t field = 0u; field < 9u; ++field)
     {
         for (size_t value = 0u; value < sizeof(invalid_double_values) / sizeof(invalid_double_values[0]); ++value)
         {
@@ -481,6 +545,9 @@ static void test_v040_json_channel_array_migration(void)
     config_validate_service_report_t report = {0};
     device_profile_config_t parsed;
 
+    /* Historical JSON export had neither the v0.4.3 tuning keys nor more
+     * than four channels.  Omission must preserve high-only semantics. */
+    tokens.include_alarm_tuning = false;
     assert(build_json_payload_with_channel_count(json, sizeof(json), &tokens,
                                                  CONFIG_COMPAT_V040_CHANNEL_LIMIT));
     memset(&parsed, 0xa5, sizeof(parsed));
@@ -488,6 +555,8 @@ static void test_v040_json_channel_array_migration(void)
     assert(config_validate_service_validate_imported(&report, &parsed) == CONFIG_VALIDATE_RESULT_OK);
     assert(report.valid);
     assert(parsed.channels[0].in_use != 0u);
+    assert(parsed.channels[0].settings.low_threshold == DBL_MAX);
+    assert(parsed.channels[0].settings.low_low_threshold == DBL_MAX);
     for (size_t index = CONFIG_COMPAT_V040_CHANNEL_LIMIT; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         config_channel_definition_t empty = {0};
@@ -499,6 +568,56 @@ static void test_v040_json_channel_array_migration(void)
                                                  CONFIG_COMPAT_V040_CHANNEL_LIMIT + 1u));
     stage_json(json);
     assert(config_validate_service_validate_imported(&report, &parsed) == CONFIG_VALIDATE_RESULT_INVALID_JSON);
+    assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
+}
+
+static void test_json_alarm_tuning_round_trip(void)
+{
+    char json[16384] = {0};
+    config_validate_service_report_t report = {0};
+    device_profile_config_t parsed = {0};
+
+    g_export_profile = valid_candidate();
+    g_export_profile.channels[0].settings.enabled = true;
+    g_export_profile.channels[0].settings.sample_period_ms = 1000u;
+    g_export_profile.channels[0].settings.publish_period_ms = 1000u;
+    g_export_profile.channels[0].settings.history_interval_ms = 1000u;
+    g_export_profile.channels[0].settings.scale = 1.0;
+    g_export_profile.channels[0].settings.warning_threshold = 60.0;
+    g_export_profile.channels[0].settings.critical_threshold = 75.0;
+
+    /* Migrated high-only compatibility sentinel must survive a finite JSON
+     * export/import round trip rather than becoming an active zero low side. */
+    g_export_profile.channels[0].settings.low_threshold = DBL_MAX;
+    g_export_profile.channels[0].settings.low_low_threshold = DBL_MAX;
+    g_export_profile.channels[0].settings.alarm_hysteresis = 0.0;
+    g_export_profile.channels[0].settings.alarm_debounce_ms = 0u;
+    assert(config_export_service_write_running_json(json, sizeof(json)));
+    assert(strstr(json, "\"lowThreshold\":") != NULL);
+    assert(strstr(json, "\"lowLowThreshold\":") != NULL);
+    assert(strstr(json, "\"alarmHysteresis\":") != NULL);
+    assert(strstr(json, "\"alarmDebounceMs\":0") != NULL);
+    stage_json(json);
+    assert(config_validate_service_validate_imported(&report, &parsed) == CONFIG_VALIDATE_RESULT_OK);
+    assert(parsed.channels[0].settings.low_threshold == DBL_MAX);
+    assert(parsed.channels[0].settings.low_low_threshold == DBL_MAX);
+    assert(parsed.channels[0].settings.alarm_hysteresis == 0.0);
+    assert(parsed.channels[0].settings.alarm_debounce_ms == 0u);
+    assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
+
+    /* A native explicit zero lower threshold is distinct from the migration
+     * sentinel and must retain its low-low, hysteresis, and debounce tuning. */
+    g_export_profile.channels[0].settings.low_threshold = 0.0;
+    g_export_profile.channels[0].settings.low_low_threshold = -2.5;
+    g_export_profile.channels[0].settings.alarm_hysteresis = 0.75;
+    g_export_profile.channels[0].settings.alarm_debounce_ms = 1234u;
+    assert(config_export_service_write_running_json(json, sizeof(json)));
+    stage_json(json);
+    assert(config_validate_service_validate_imported(&report, &parsed) == CONFIG_VALIDATE_RESULT_OK);
+    assert(parsed.channels[0].settings.low_threshold == 0.0);
+    assert(parsed.channels[0].settings.low_low_threshold == -2.5);
+    assert(parsed.channels[0].settings.alarm_hysteresis == 0.75);
+    assert(parsed.channels[0].settings.alarm_debounce_ms == 1234u);
     assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
 }
 
@@ -639,6 +758,7 @@ int main(void)
     test_validation_results_and_no_output_mutation();
     test_json_numeric_and_network_parsing();
     test_v040_json_channel_array_migration();
+    test_json_alarm_tuning_round_trip();
     test_json_i64_overflow_is_currently_saturated();
     test_json_sscanf_trailing_junk_is_currently_accepted();
     return 0;

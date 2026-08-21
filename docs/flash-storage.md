@@ -1,10 +1,24 @@
 # Flash storage ownership
 
 The generated OTA layout is authoritative. For the 16 MiB reference target,
-Bank A is `0x010000+0x7b4000`, Bank B is `0x7c4000+0x7b4000`, and the reserved
-maintenance-journal region is `0xf78000+0x8000`. Configuration begins at
-`0xf80000`; identity, trust, security-state, and OTA-state regions retain their
-v0.3.2 offsets.
+Bank A is `0x010000+0x7a4000`, Bank B is `0x7b4000+0x7a4000`, the reserved
+maintenance-journal region is `0xf58000+0x8000`, and the reserved per-channel
+history region is `0xf60000+0x20000`. Configuration begins at `0xf80000`
+(unchanged from v0.4.2); identity, trust, security-state, and OTA-state
+regions retain their v0.3.2 offsets.
+
+As of v0.4.3, both OTA banks were shrunk by 64 KiB each (from `0x7b4000` to
+`0x7a4000`) to carve out the new 128 KiB history region, placed immediately
+after the maintenance journal and before the configuration slots, following
+the same named-symbol mechanism (`OTA_HISTORY_SIZE_BYTES` /
+`OTA_LAYOUT_HISTORY_OFFSET_BYTES` / `OTA_LAYOUT_HISTORY_ORIGIN`) used for the
+maintenance journal. This reduces the maximum application image size for all
+future releases; the last shipped OTA payload (3,297,616 bytes) leaves ample
+headroom within the new ~7.66 MiB bank size. See
+`drivers/include/drivers/history_flash_backend.h` for the per-channel ring
+layout inside this region (a non-transactional cyclic buffer, unlike the
+maintenance journal) and `docs/releases/v0.4.3.md` for the frozen budget
+rationale.
 
 Application Flash mutations are serialized by the statically allocated Flash
 operation coordinator. Each lock hold performs one aligned 4 KiB erase or one

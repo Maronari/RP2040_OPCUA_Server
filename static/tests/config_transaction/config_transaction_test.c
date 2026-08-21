@@ -11,6 +11,7 @@
 #include "pico/unique_id.h"
 
 #include <assert.h>
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,9 +29,10 @@ void vTaskDelayUntil(TickType_t *last_wake_time, TickType_t period)
 { (void)last_wake_time; (void)period; }
 void pico_get_unique_board_id(pico_unique_board_id_t *id_out) { memset(id_out, 0, sizeof(*id_out)); }
 bool time_service_get_utc_time_us(uint64_t *timestamp) { *timestamp = 1u; return true; }
-bool history_service_record_channel_sample(const char *id, float value, service_quality_t quality,
+bool history_service_record_channel_sample(const char *id, telemetry_channel_value_type_t value_type,
+                                           const history_service_value_t *value, service_quality_t quality,
                                            uint64_t timestamp, uint32_t interval)
-{ (void)id; (void)value; (void)quality; (void)timestamp; (void)interval; return true; }
+{ (void)id; (void)value_type; (void)value; (void)quality; (void)timestamp; (void)interval; return true; }
 
 static uint8_t source(const telemetry_channel_t *channel)
 { return ((const native_channel_source_t *)channel->driver_context)->source_index; }
@@ -84,7 +86,12 @@ static device_profile_config_t profile(uint8_t source_index)
         .in_use = 1u, .driver_id = CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP,
         .source_index = source_index, .value_type = TELEMETRY_CHANNEL_VALUE_FLOAT,
         .flags = TELEMETRY_CHANNEL_FLAG_ENABLED, .id = "channel.temperature.1",
-        .name = "temperature", .settings = { .enabled = true, .sample_period_ms = 1u },
+        .name = "temperature", .settings = {
+            .enabled = true, .sample_period_ms = 1u,
+            /* Finite high-only migration sentinel: normalization must retain
+             * the equal pair rather than clamping it to a live low alarm. */
+            .low_threshold = DBL_MAX, .low_low_threshold = DBL_MAX,
+        },
     }}};
     return value;
 }
@@ -109,6 +116,8 @@ int main(void)
     uint32_t old_revision;
 
     assert(config_service_init(&defaults));
+    assert(config_service_get()->channels[0].settings.low_threshold == DBL_MAX);
+    assert(config_service_get()->channels[0].settings.low_low_threshold == DBL_MAX);
     assert(channel_manager_init());
     assert(sensor_manager_init());
     expect_event("S1C1T1");

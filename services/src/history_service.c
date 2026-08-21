@@ -7,25 +7,45 @@
 #include <task.h>
 
 #include "psram_allocator.h"
+#include "services/channel_manager.h"
+
+#if defined(PICO_ON_DEVICE)
+#include "drivers/history_flash_backend.h"
+#endif
 
 typedef struct
 {
-    history_service_channel_sample_t samples[HISTORY_SERVICE_CHANNEL_CAPACITY];
+    char channel_id[HISTORY_SERVICE_CHANNEL_ID_MAX_LEN]; /* empty string => unclaimed slot */
+    telemetry_channel_value_type_t value_type;
     size_t count;
     size_t write_index;
+    uint32_t generation; /* bumped whenever a write evicts the current oldest sample */
+    uint32_t last_recorded_ms;
+    history_service_channel_sample_t samples[HISTORY_SERVICE_CHANNEL_CAPACITY];
 } history_service_channel_ring_t;
 
-static history_service_channel_ring_t *g_channel_history;
+typedef struct
+{
+    history_service_channel_ring_t channels[HISTORY_SERVICE_MAX_CHANNELS];
+} history_service_store_t;
+
+static history_service_store_t *g_store;
 #if !defined(PICO_ON_DEVICE)
-static history_service_channel_ring_t g_host_channel_history;
+static history_service_store_t g_host_store;
 #endif
 static bool g_initialized = false;
-/* History scans can examine all 512 retained samples.  Serialize those scans
- * with a service-local static mutex; never mask interrupts for that work. */
+
+/* Bounds every lock hold to O(1) (write/claim/lookup) or to one bounded
+ * chunk of a single channel's ring (read). Never held across a whole
+ * channel scan, and never across more than one channel. */
 static StaticSemaphore_t g_history_mutex_storage;
 static SemaphoreHandle_t g_history_mutex;
-
 #define HISTORY_SERVICE_LOCK_TIMEOUT_MS 10u
+
+#if defined(PICO_ON_DEVICE)
+static history_flash_backend_t g_flash_backend;
+static bool g_flash_ready = false;
+#endif
 
 static bool history_service_lock(void)
 {
@@ -36,54 +56,6 @@ static bool history_service_lock(void)
 static void history_service_unlock(void)
 {
     (void)xSemaphoreGive(g_history_mutex);
-}
-
-static size_t history_service_oldest_index(void)
-{
-    if (g_channel_history->count >= HISTORY_SERVICE_CHANNEL_CAPACITY)
-    {
-        return g_channel_history->write_index;
-    }
-
-    return 0u;
-}
-
-static bool history_service_sample_in_range(uint64_t sample_timestamp_unix_us,
-                                            uint32_t start_epoch_s,
-                                            uint32_t end_epoch_s)
-{
-    const uint64_t sample_epoch_s = sample_timestamp_unix_us / 1000000u;
-    uint32_t lower_bound = 0u;
-    uint32_t upper_bound = 0u;
-
-    if (start_epoch_s == 0u && end_epoch_s == 0u)
-    {
-        return true;
-    }
-
-    if (start_epoch_s == 0u)
-    {
-        return sample_epoch_s <= end_epoch_s;
-    }
-
-    if (end_epoch_s == 0u)
-    {
-        return sample_epoch_s >= start_epoch_s;
-    }
-
-    lower_bound = start_epoch_s < end_epoch_s ? start_epoch_s : end_epoch_s;
-    upper_bound = start_epoch_s > end_epoch_s ? start_epoch_s : end_epoch_s;
-    return sample_epoch_s >= lower_bound && sample_epoch_s <= upper_bound;
-}
-
-static bool history_service_channel_ids_equal(const char *lhs, const char *rhs)
-{
-    if (lhs == NULL || rhs == NULL)
-    {
-        return false;
-    }
-
-    return strcmp(lhs, rhs) == 0;
 }
 
 static bool history_service_channel_id_is_bounded(const char *channel_id)
@@ -101,23 +73,120 @@ static bool history_service_channel_id_is_bounded(const char *channel_id)
     return length > 0u && length < HISTORY_SERVICE_CHANNEL_ID_MAX_LEN;
 }
 
-static uint32_t history_service_find_last_recorded_ms(const char *channel_id)
+static bool history_service_ids_equal(const char *lhs, const char *rhs)
 {
-    const size_t oldest_index = history_service_oldest_index();
+    return lhs != NULL && rhs != NULL && strcmp(lhs, rhs) == 0;
+}
 
-    for (size_t offset = 0u; offset < g_channel_history->count; ++offset)
+/* Caller must hold the lock. Bounded to HISTORY_SERVICE_MAX_CHANNELS. */
+static size_t history_service_find_ring_locked(const char *channel_id)
+{
+    for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
     {
-        const size_t sample_index =
-            (oldest_index + g_channel_history->count - 1u - offset) % HISTORY_SERVICE_CHANNEL_CAPACITY;
-        const history_service_channel_sample_t *sample = &g_channel_history->samples[sample_index];
-
-        if (history_service_channel_ids_equal(sample->channel_id, channel_id))
+        if (g_store->channels[index].channel_id[0] != '\0' &&
+            history_service_ids_equal(g_store->channels[index].channel_id, channel_id))
         {
-            return sample->recorded_at_ms;
+            return index;
         }
     }
+    return HISTORY_SERVICE_MAX_CHANNELS;
+}
 
-    return 0u;
+/* Caller must hold the lock. Bounded to HISTORY_SERVICE_MAX_CHANNELS. */
+static size_t history_service_claim_ring_locked(const char *channel_id,
+                                                 telemetry_channel_value_type_t value_type)
+{
+    for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
+    {
+        history_service_channel_ring_t *ring = &g_store->channels[index];
+
+        if (ring->channel_id[0] != '\0')
+        {
+            continue;
+        }
+        memcpy(ring->channel_id, channel_id, strlen(channel_id) + 1u);
+        ring->value_type = value_type;
+        ring->count = 0u;
+        ring->write_index = 0u;
+        ring->generation = 0u;
+        ring->last_recorded_ms = 0u;
+        return index;
+    }
+    return HISTORY_SERVICE_MAX_CHANNELS;
+}
+
+/* Caller must hold the lock. O(1). */
+static void history_service_push_locked(history_service_channel_ring_t *ring,
+                                        const history_service_channel_sample_t *sample)
+{
+    ring->samples[ring->write_index] = *sample;
+    ring->write_index = (ring->write_index + 1u) % HISTORY_SERVICE_CHANNEL_CAPACITY;
+    if (ring->count < HISTORY_SERVICE_CHANNEL_CAPACITY)
+    {
+        ring->count++;
+    }
+    else
+    {
+        ring->generation++;
+    }
+}
+
+static bool history_service_channel_is_historizable(const telemetry_channel_snapshot_t *snapshot)
+{
+    const telemetry_channel_t *channel = &snapshot->channel;
+
+    return (channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u &&
+           channel->metadata.value_type != TELEMETRY_CHANNEL_VALUE_STRING &&
+           history_service_channel_id_is_bounded(channel->metadata.id);
+}
+
+#if defined(PICO_ON_DEVICE)
+typedef struct
+{
+    history_service_channel_ring_t *ring;
+} history_service_restore_context_t;
+
+static void history_service_restore_sample(void *user_context, const history_flash_backend_record_t *record)
+{
+    history_service_restore_context_t *context = (history_service_restore_context_t *)user_context;
+    history_service_channel_sample_t sample = {0};
+
+    if (context == NULL || context->ring == NULL || record == NULL)
+    {
+        return;
+    }
+    if (record->value_type != context->ring->value_type)
+    {
+        /* Defensive: a hash-verified record whose encoded type does not
+         * match the currently configured channel type is not trusted. */
+        return;
+    }
+    memcpy(&sample.value, &record->value, sizeof(sample.value));
+    sample.value_type = record->value_type;
+    sample.quality = record->quality;
+    sample.source_timestamp_unix_us = record->source_timestamp_unix_us;
+    sample.recorded_at_ms = 0u; /* Not reconstructible across reboot; debounce keys off the next live write only. */
+    history_service_push_locked(context->ring, &sample);
+}
+#endif
+
+static void history_service_bind_configured_channels_locked(void)
+{
+    for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
+    {
+        telemetry_channel_snapshot_t snapshot = {0};
+
+        if (!channel_manager_copy_snapshot_by_index(index, &snapshot) ||
+            !history_service_channel_is_historizable(&snapshot))
+        {
+            continue;
+        }
+        if (history_service_find_ring_locked(snapshot.channel.metadata.id) < HISTORY_SERVICE_MAX_CHANNELS)
+        {
+            continue;
+        }
+        (void)history_service_claim_ring_locked(snapshot.channel.metadata.id, snapshot.channel.metadata.value_type);
+    }
 }
 
 bool history_service_init(void)
@@ -130,30 +199,86 @@ bool history_service_init(void)
             return false;
         }
     }
-    if (g_channel_history == NULL)
+    if (g_store == NULL)
     {
 #if defined(PICO_ON_DEVICE)
         if (!psram_allocator_is_ready())
         {
             return false;
         }
-        g_channel_history = psram_calloc(1u, sizeof(*g_channel_history));
-        if (g_channel_history == NULL)
+        g_store = psram_calloc(1u, sizeof(*g_store));
+        if (g_store == NULL)
         {
             return false;
         }
 #else
-        g_channel_history = &g_host_channel_history;
+        g_store = &g_host_store;
 #endif
     }
     history_service_reset();
     g_initialized = true;
+
+    if (!history_service_lock())
+    {
+        return true;
+    }
+    history_service_bind_configured_channels_locked();
+
+#if defined(PICO_ON_DEVICE)
+    history_flash_backend_init_flash(&g_flash_backend);
+    g_flash_ready = g_flash_backend.ready;
+    if (g_flash_ready)
+    {
+        /* One PSRAM-backed scratch buffer, reused sequentially across every
+         * channel's restore() call, instead of a permanent multi-KiB
+         * static internal-SRAM allocation for a scan that only ever runs
+         * once per channel at startup (see history_flash_backend.h). */
+        history_flash_backend_scan_entry_t *restore_scratch =
+            (history_flash_backend_scan_entry_t *)psram_malloc(HISTORY_SERVICE_CHANNEL_CAPACITY *
+                                                                sizeof(*restore_scratch));
+
+        for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
+        {
+            history_service_channel_ring_t *ring = &g_store->channels[index];
+            history_service_restore_context_t restore_context = {.ring = ring};
+
+            if (ring->channel_id[0] == '\0')
+            {
+                (void)history_flash_backend_bind_channel(&g_flash_backend, (uint8_t)index, NULL);
+                continue;
+            }
+            if (history_flash_backend_bind_channel(&g_flash_backend, (uint8_t)index, ring->channel_id) !=
+                HISTORY_FLASH_BACKEND_OK)
+            {
+                continue;
+            }
+            if (restore_scratch == NULL)
+            {
+                /* Degraded but safe: future writes still append/persist to
+                 * Flash correctly; only this boot's restore is skipped. */
+                continue;
+            }
+            /* Restore before any concurrent reader can observe this ring:
+             * we are still inside history_service_init(), which main.c
+             * calls before the OPC UA server task starts. */
+            (void)history_flash_backend_restore(&g_flash_backend, (uint8_t)index, restore_scratch,
+                                                HISTORY_SERVICE_CHANNEL_CAPACITY,
+                                                history_service_restore_sample, &restore_context);
+        }
+        if (restore_scratch != NULL)
+        {
+            psram_free(restore_scratch);
+        }
+    }
+#endif
+
+    history_service_unlock();
     return true;
 }
 
 void history_service_reset(void)
 {
-    if (g_channel_history == NULL)
+    if (g_store == NULL)
     {
         return;
     }
@@ -161,21 +286,27 @@ void history_service_reset(void)
     {
         return;
     }
-    memset(g_channel_history, 0, sizeof(*g_channel_history));
+    memset(g_store, 0, sizeof(*g_store));
     history_service_unlock();
 }
 
 bool history_service_record_channel_sample(const char *channel_id,
-                                          float value,
-                                          service_quality_t quality,
-                                          uint64_t source_timestamp_unix_us,
-                                          uint32_t record_interval_ms)
+                                            telemetry_channel_value_type_t value_type,
+                                            const history_service_value_t *value,
+                                            service_quality_t quality,
+                                            uint64_t source_timestamp_unix_us,
+                                            uint32_t record_interval_ms)
 {
     const uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
     bool recorded = false;
+    size_t ring_index = HISTORY_SERVICE_MAX_CHANNELS;
+#if defined(PICO_ON_DEVICE)
+    history_flash_backend_record_t flash_record;
+#endif
 
-    if (!g_initialized || !history_service_channel_id_is_bounded(channel_id) ||
+    if (!g_initialized || !history_service_channel_id_is_bounded(channel_id) || value == NULL ||
         record_interval_ms == 0u || quality != SERVICE_QUALITY_GOOD ||
+        value_type == TELEMETRY_CHANNEL_VALUE_STRING ||
         source_timestamp_unix_us == TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID)
     {
         return false;
@@ -185,54 +316,131 @@ bool history_service_record_channel_sample(const char *channel_id,
     {
         return false;
     }
+
+    ring_index = history_service_find_ring_locked(channel_id);
+    if (ring_index == HISTORY_SERVICE_MAX_CHANNELS)
     {
-        const uint32_t last_recorded_ms = history_service_find_last_recorded_ms(channel_id);
+        ring_index = history_service_claim_ring_locked(channel_id, value_type);
+    }
+    if (ring_index != HISTORY_SERVICE_MAX_CHANNELS)
+    {
+        history_service_channel_ring_t *ring = &g_store->channels[ring_index];
 
-        if (g_channel_history->count == 0u ||
-            last_recorded_ms == 0u ||
-            (uint32_t)(now_ms - last_recorded_ms) >= record_interval_ms)
+        if (ring->value_type == value_type &&
+            (ring->count == 0u || ring->last_recorded_ms == 0u ||
+             (uint32_t)(now_ms - ring->last_recorded_ms) >= record_interval_ms))
         {
-            history_service_channel_sample_t *sample = &g_channel_history->samples[g_channel_history->write_index];
+            history_service_channel_sample_t sample;
 
-            memcpy(sample->channel_id, channel_id, strlen(channel_id) + 1u);
-            sample->value = value;
-            sample->quality = quality;
-            sample->source_timestamp_unix_us = source_timestamp_unix_us;
-            sample->recorded_at_ms = now_ms;
-
-            g_channel_history->write_index =
-                (g_channel_history->write_index + 1u) % HISTORY_SERVICE_CHANNEL_CAPACITY;
-            if (g_channel_history->count < HISTORY_SERVICE_CHANNEL_CAPACITY)
-            {
-                g_channel_history->count++;
-            }
+            sample.value = *value;
+            sample.value_type = value_type;
+            sample.quality = quality;
+            sample.source_timestamp_unix_us = source_timestamp_unix_us;
+            sample.recorded_at_ms = now_ms;
+            history_service_push_locked(ring, &sample);
+            ring->last_recorded_ms = now_ms;
             recorded = true;
         }
     }
     history_service_unlock();
 
+#if defined(PICO_ON_DEVICE)
+    if (recorded && g_flash_ready)
+    {
+        memcpy(&flash_record.value, value, sizeof(flash_record.value));
+        flash_record.value_type = value_type;
+        flash_record.quality = quality;
+        flash_record.source_timestamp_unix_us = source_timestamp_unix_us;
+        /* Best-effort persistence performed outside the PSRAM lock so a slow
+         * Flash program/erase never blocks other channels' reads/writes.
+         * PSRAM already holds the sample regardless of this call's result. */
+        (void)history_flash_backend_append(&g_flash_backend, (uint8_t)ring_index, &flash_record);
+    }
+#endif
+
     return recorded;
 }
 
-size_t history_service_read_channel_samples(const char *channel_id,
-                                           uint32_t start_epoch_s,
-                                           uint32_t end_epoch_s,
-                                           bool descending,
-                                           size_t max_samples,
-                                           history_service_channel_sample_t *out_samples,
-                                           size_t out_capacity,
-                                           bool *out_truncated,
-                                           bool *out_busy)
+bool history_service_get_channel_generation(const char *channel_id, uint32_t *out_generation)
 {
-    size_t collected = 0u;
-    size_t scan_limit = 0u;
-    size_t oldest_index = 0u;
-    size_t requested_limit = max_samples;
-    bool truncated = false;
+    size_t ring_index;
+    bool found = false;
 
-    if (out_truncated != NULL)
+    if (!g_initialized || channel_id == NULL)
     {
-        *out_truncated = false;
+        return false;
+    }
+    if (!history_service_lock())
+    {
+        return false;
+    }
+    ring_index = history_service_find_ring_locked(channel_id);
+    if (ring_index != HISTORY_SERVICE_MAX_CHANNELS)
+    {
+        found = true;
+        if (out_generation != NULL)
+        {
+            *out_generation = g_store->channels[ring_index].generation;
+        }
+    }
+    history_service_unlock();
+    return found;
+}
+
+static bool history_service_sample_in_range(uint64_t sample_timestamp_unix_us,
+                                            uint32_t start_epoch_s,
+                                            uint32_t end_epoch_s)
+{
+    const uint64_t sample_epoch_s = sample_timestamp_unix_us / 1000000u;
+    uint32_t lower_bound = 0u;
+    uint32_t upper_bound = 0u;
+
+    if (start_epoch_s == 0u && end_epoch_s == 0u)
+    {
+        return true;
+    }
+    if (start_epoch_s == 0u)
+    {
+        return sample_epoch_s <= end_epoch_s;
+    }
+    if (end_epoch_s == 0u)
+    {
+        return sample_epoch_s >= start_epoch_s;
+    }
+    lower_bound = start_epoch_s < end_epoch_s ? start_epoch_s : end_epoch_s;
+    upper_bound = start_epoch_s > end_epoch_s ? start_epoch_s : end_epoch_s;
+    return sample_epoch_s >= lower_bound && sample_epoch_s <= upper_bound;
+}
+
+size_t history_service_read_channel_samples(const char *channel_id,
+                                            uint32_t start_epoch_s,
+                                            uint32_t end_epoch_s,
+                                            bool descending,
+                                            size_t max_samples,
+                                            size_t skip_matches,
+                                            history_service_channel_sample_t *out_samples,
+                                            size_t out_capacity,
+                                            uint32_t *out_generation,
+                                            bool *out_more,
+                                            bool *out_busy)
+{
+    size_t ring_index;
+    size_t ring_count = 0u;
+    size_t oldest_index = 0u;
+    size_t requested_limit;
+    size_t collected = 0u;
+    size_t matched = 0u;
+    size_t scanned = 0u;
+    bool more = false;
+    bool first_chunk = true;
+
+    if (out_generation != NULL)
+    {
+        *out_generation = 0u;
+    }
+    if (out_more != NULL)
+    {
+        *out_more = false;
     }
     if (out_busy != NULL)
     {
@@ -244,9 +452,11 @@ size_t history_service_read_channel_samples(const char *channel_id,
         return 0u;
     }
 
-    requested_limit = (requested_limit == 0u || requested_limit > out_capacity)
-                          ? out_capacity
-                          : requested_limit;
+    requested_limit = (max_samples == 0u || max_samples > out_capacity) ? out_capacity : max_samples;
+    if (requested_limit > HISTORY_SERVICE_MAX_RETURN_COUNT)
+    {
+        requested_limit = HISTORY_SERVICE_MAX_RETURN_COUNT;
+    }
 
     if (!history_service_lock())
     {
@@ -256,44 +466,97 @@ size_t history_service_read_channel_samples(const char *channel_id,
         }
         return 0u;
     }
-    scan_limit = g_channel_history->count;
-    oldest_index = history_service_oldest_index();
-
-    for (size_t offset = 0u; offset < scan_limit; ++offset)
+    ring_index = history_service_find_ring_locked(channel_id);
+    if (ring_index != HISTORY_SERVICE_MAX_CHANNELS)
     {
-        size_t sample_index = 0u;
-        history_service_channel_sample_t sample;
+        const history_service_channel_ring_t *ring = &g_store->channels[ring_index];
 
-        if (descending)
+        ring_count = ring->count;
+        oldest_index = (ring->count >= HISTORY_SERVICE_CHANNEL_CAPACITY) ? ring->write_index : 0u;
+        if (out_generation != NULL)
         {
-            sample_index = (oldest_index + scan_limit - 1u - offset) % HISTORY_SERVICE_CHANNEL_CAPACITY;
+            *out_generation = ring->generation;
         }
-        else
-        {
-            sample_index = (oldest_index + offset) % HISTORY_SERVICE_CHANNEL_CAPACITY;
-        }
-
-        sample = g_channel_history->samples[sample_index];
-        if (!history_service_channel_ids_equal(sample.channel_id, channel_id) ||
-            !history_service_sample_in_range(sample.source_timestamp_unix_us, start_epoch_s, end_epoch_s))
-        {
-            continue;
-        }
-
-        if (collected >= requested_limit)
-        {
-            truncated = true;
-            continue;
-        }
-
-        out_samples[collected++] = sample;
     }
     history_service_unlock();
 
-    if (out_truncated != NULL)
+    if (ring_index == HISTORY_SERVICE_MAX_CHANNELS)
     {
-        *out_truncated = truncated;
+        return 0u;
     }
 
+    while (scanned < ring_count)
+    {
+        history_service_channel_sample_t chunk[HISTORY_SERVICE_READ_CHUNK_SAMPLES];
+        const size_t chunk_size = (ring_count - scanned) < HISTORY_SERVICE_READ_CHUNK_SAMPLES
+                                      ? (ring_count - scanned)
+                                      : HISTORY_SERVICE_READ_CHUNK_SAMPLES;
+
+        if (!history_service_lock())
+        {
+            if (first_chunk && collected == 0u)
+            {
+                if (out_busy != NULL)
+                {
+                    *out_busy = true;
+                }
+                return 0u;
+            }
+            /* Data already collected is still valid; conservatively report
+             * that more may remain rather than silently truncating. */
+            more = true;
+            break;
+        }
+        first_chunk = false;
+        for (size_t offset = 0u; offset < chunk_size; ++offset)
+        {
+            const size_t position = scanned + offset;
+            size_t sample_index;
+
+            if (descending)
+            {
+                sample_index = (oldest_index + ring_count - 1u - position) % HISTORY_SERVICE_CHANNEL_CAPACITY;
+            }
+            else
+            {
+                sample_index = (oldest_index + position) % HISTORY_SERVICE_CHANNEL_CAPACITY;
+            }
+            chunk[offset] = g_store->channels[ring_index].samples[sample_index];
+        }
+        history_service_unlock();
+
+        for (size_t offset = 0u; offset < chunk_size; ++offset)
+        {
+            if (!history_service_sample_in_range(chunk[offset].source_timestamp_unix_us, start_epoch_s, end_epoch_s))
+            {
+                continue;
+            }
+            if (matched < skip_matches)
+            {
+                ++matched;
+                continue;
+            }
+            ++matched;
+            if (collected < requested_limit)
+            {
+                out_samples[collected++] = chunk[offset];
+            }
+            else
+            {
+                more = true;
+                break;
+            }
+        }
+        scanned += chunk_size;
+        if (more)
+        {
+            break;
+        }
+    }
+
+    if (out_more != NULL)
+    {
+        *out_more = more;
+    }
     return collected;
 }

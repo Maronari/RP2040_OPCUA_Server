@@ -189,7 +189,6 @@ typedef struct
     bool initialized;
     network_manager_status_t network_status;
     sensor_manager_snapshot_t sensor_snapshot;
-    alarm_service_status_t alarm_status;
     bool server_certificate_expiry_seen;
     uint32_t server_certificate_expiry_state;
     bool trust_expiry_seen;
@@ -908,6 +907,9 @@ model_security_condition_reason_t model_evaluate_security_condition(char *messag
 void model_sync_condition(UA_Server *server, const UA_NodeId condition_id, const UA_NodeId source_id, bool *was_active, uint32_t *was_reason, bool *was_enabled, TickType_t *next_enable_poll, uint32_t reason, UA_UInt16 severity, UA_StatusCode quality, const char *active_message, const char *normal_message);
 void model_process_device_health_conditions(UA_Server *server, model_event_runtime_state_t *state);
 void model_process_alarm_conditions(UA_Server *server, model_event_runtime_state_t *state);
+/* v0.4.3 per-channel alarm condition model (T6), defined in model_events.c. */
+UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server);
+void model_process_channel_alarm_conditions(UA_Server *server);
 UA_StatusCode model_set_event_bool_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_Boolean value);
 UA_StatusCode model_set_event_uint32_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_UInt32 value);
 UA_StatusCode model_set_event_float_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_Float value);

@@ -13,9 +13,10 @@ class FlashPrerequisiteTests(unittest.TestCase):
     def test_reference_layout_and_all_pairs(self):
         regions = [
             ("bootloader", 0x000000, 0x010000),
-            ("bank_a", 0x010000, 0x7B4000),
-            ("bank_b", 0x7C4000, 0x7B4000),
-            ("maintenance_journal", 0xF78000, 0x008000),
+            ("bank_a", 0x010000, 0x7A4000),
+            ("bank_b", 0x7B4000, 0x7A4000),
+            ("maintenance_journal", 0xF58000, 0x008000),
+            ("history", 0xF60000, 0x020000),
             ("config_0", 0xF80000, 0x010000),
             ("config_1", 0xF90000, 0x010000),
             ("identity_0", 0xFA0000, 0x010000),
@@ -40,9 +41,10 @@ class FlashPrerequisiteTests(unittest.TestCase):
         if generated.exists():
             actual = json.loads(generated.read_text())["regions"]
             expected = {
-                "bank_a": (0x010000, 0x7B4000),
-                "bank_b": (0x7C4000, 0x7B4000),
-                "maintenance_journal": (0xF78000, 0x8000),
+                "bank_a": (0x010000, 0x7A4000),
+                "bank_b": (0x7B4000, 0x7A4000),
+                "maintenance_journal": (0xF58000, 0x8000),
+                "history": (0xF60000, 0x20000),
             }
             for name, (offset, size) in expected.items():
                 self.assertEqual(actual[name]["offset_bytes"], offset)
@@ -50,7 +52,9 @@ class FlashPrerequisiteTests(unittest.TestCase):
 
     def test_generated_templates_publish_journal(self):
         for relative in ("ota/cmake/ota_layout.h.in", "ota/cmake/ota_layout.json.in"):
-            self.assertIn("MAINTENANCE_JOURNAL", (ROOT / relative).read_text().upper())
+            text = (ROOT / relative).read_text().upper()
+            self.assertIn("MAINTENANCE_JOURNAL", text)
+            self.assertIn("HISTORY", text)
 
     def test_legacy_driver_is_read_only(self):
         header = (ROOT / "drivers/include/drivers/flash_storage_driver.h").read_text()

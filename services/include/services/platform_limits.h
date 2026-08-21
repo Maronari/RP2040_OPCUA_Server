@@ -14,4 +14,14 @@
 #error "PLATFORM_CHANNEL_LIMIT must be in the supported range 1..16"
 #endif
 
+/*
+ * v0.4.3: one fixed retention capacity per channel, uniform across channels,
+ * shared by both the PSRAM history ring (services/history_service) and the
+ * Flash-backed history ring (drivers/history_flash_backend) so the two
+ * backends stay numerically consistent by construction.
+ */
+#ifndef PLATFORM_HISTORY_SAMPLES_PER_CHANNEL
+#define PLATFORM_HISTORY_SAMPLES_PER_CHANNEL 256u
+#endif
+
 #endif

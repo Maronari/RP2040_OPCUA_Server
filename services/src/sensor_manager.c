@@ -337,26 +337,32 @@ static uint32_t sensor_manager_resolve_poll_period_ms(void)
     return period;
 }
 
-static void sensor_manager_record_float_history(void)
+static void sensor_manager_record_channel_history(void)
 {
     for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
     {
         telemetry_channel_snapshot_t snapshot;
         const telemetry_channel_t *channel;
+        history_service_value_t value;
 
         if (!channel_manager_copy_snapshot_by_index(index, &snapshot))
         {
             continue;
         }
         channel = &snapshot.channel;
+        /* Every historizing-enabled channel of any supported type except
+         * STRING is recorded (v0.4.3): string channels are never historized
+         * regardless of the flag, matching how history_service itself
+         * rejects TELEMETRY_CHANNEL_VALUE_STRING writes. */
         if ((channel->metadata.flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) == 0u ||
-            channel->metadata.value_type != TELEMETRY_CHANNEL_VALUE_FLOAT ||
+            channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_STRING ||
             channel->runtime.quality != SERVICE_QUALITY_GOOD ||
             channel->runtime.source_timestamp_unix_us == TELEMETRY_CHANNEL_SOURCE_TIMESTAMP_INVALID)
         {
             continue;
         }
-        (void)history_service_record_channel_sample(channel->metadata.id, channel->runtime.value.f32,
+        memcpy(&value, &channel->runtime.value, sizeof(value));
+        (void)history_service_record_channel_sample(channel->metadata.id, channel->metadata.value_type, &value,
                                                     channel->runtime.quality,
                                                     channel->runtime.source_timestamp_unix_us,
                                                     channel->settings.history_interval_ms);
@@ -399,7 +405,7 @@ void sensor_manager_task(void *argument)
         if (g_initialized)
         {
             (void)channel_manager_poll_all((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
-            sensor_manager_record_float_history();
+            sensor_manager_record_channel_history();
         }
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(sensor_manager_resolve_poll_period_ms()));
     }

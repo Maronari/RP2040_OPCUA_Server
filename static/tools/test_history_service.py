@@ -17,7 +17,9 @@ def main() -> int:
             subprocess.run([
                 "gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", *defines,
                 f"-I{test_dir}", f"-I{root / 'services' / 'include'}", f"-I{root / 'port' / 'psram'}",
+                f"-I{root / 'drivers' / 'include'}",
                 str(root / "services" / "src" / "history_service.c"),
+                str(root / "services" / "src" / "channel_manager.c"),
                 str(test_dir / "history_service_test.c"), "-o", str(executable),
             ], check=True)
             subprocess.run([str(executable)], check=True)

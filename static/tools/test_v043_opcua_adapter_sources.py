@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed source and public-contract checks for the v0.4.2 channel model."""
+"""Fail-closed source and public-contract checks for the v0.4.3 history/alarm model."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ MODEL_DIR = ROOT / "opcua_model" / "src"
 
 def require(condition: bool, message: str) -> None:
     if not condition:
-        raise SystemExit(f"v0.4.2-opcua-source: FAIL: {message}")
+        raise SystemExit(f"v0.4.3-opcua-source: FAIL: {message}")
 
 
 def main() -> int:
@@ -31,15 +31,21 @@ def main() -> int:
             "OPC UA adapter invokes a driver write directly")
     require("MODEL_CHANNEL_NODE_ID_MAX_LEN" in sources and "PLATFORM_CHANNEL_LIMIT" in sources,
             "channel model is not explicitly bounded")
+    require("HISTORY_SERVICE_MAX_RETURN_COUNT" in sources,
+            "HistoryRead is not bounded by a documented max-return-count cap")
+    require("continuationPoint" in sources,
+            "HistoryRead no longer implements continuation points")
+    require("alarm_service_get_condition_by_channel_id(" in sources,
+            "adapter does not resolve alarm state through per-channel conditions")
 
     result = subprocess.run(
         [sys.executable, "static/tools/verify_opcua_public_contract.py",
-         "--baseline", "v0.4.1", "--allow-v042-channel-additions"],
+         "--baseline", "v0.4.2", "--allow-v043-channel-additions"],
         cwd=ROOT,
         check=False,
     )
-    require(result.returncode == 0, "v0.4.1 public-contract comparison failed")
-    print("v0.4.2-opcua-source: PASS")
+    require(result.returncode == 0, "v0.4.2 public-contract comparison failed")
+    print("v0.4.3-opcua-source: PASS")
     return 0
 
 

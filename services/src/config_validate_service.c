@@ -1,6 +1,7 @@
 ﻿#include <services/config_validate_service.h>
 
 #include <ctype.h>
+#include <float.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -866,6 +867,28 @@ static config_validate_service_result_t config_json_parse_channel_object(config_
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
     result = config_json_expect_named_double(reader, false, "criticalThreshold", "channels[].criticalThreshold", &channel.settings.critical_threshold);
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+    /* v0.4.0-v0.4.2 JSON export has no lower alarm tuning suffix.  Preserve
+     * high-only behavior for that public schema by mapping its omission to
+     * the same finite sentinel used by the binary compatibility decoder.
+     * Once a suffix begins, all four v0.4.3 fields are mandatory and ordered
+     * exactly as the exporter writes them. */
+    config_json_reader_skip_whitespace(reader);
+    if (reader->cursor < reader->end && *reader->cursor != '}')
+    {
+        result = config_json_expect_named_double(reader, false, "lowThreshold", "channels[].lowThreshold", &channel.settings.low_threshold);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_expect_named_double(reader, false, "lowLowThreshold", "channels[].lowLowThreshold", &channel.settings.low_low_threshold);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_expect_named_double(reader, false, "alarmHysteresis", "channels[].alarmHysteresis", &channel.settings.alarm_hysteresis);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_expect_named_u32(reader, false, "alarmDebounceMs", "channels[].alarmDebounceMs", &channel.settings.alarm_debounce_ms);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+    }
+    else
+    {
+        channel.settings.low_threshold = DBL_MAX;
+        channel.settings.low_low_threshold = DBL_MAX;
+    }
     result = config_json_reader_expect_char(reader, '}', "channel object");
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
 

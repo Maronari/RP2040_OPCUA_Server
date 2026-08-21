@@ -37,6 +37,11 @@
       "offset_bytes": @OTA_MAINTENANCE_JOURNAL_OFFSET_BYTES@,
       "size_bytes": @OTA_MAINTENANCE_JOURNAL_SIZE_BYTES@
     },
+    "history": {
+      "origin": "@OTA_HISTORY_ORIGIN_HEX@",
+      "offset_bytes": @OTA_HISTORY_OFFSET_BYTES@,
+      "size_bytes": @OTA_HISTORY_SIZE_BYTES@
+    },
     "config_slot_0": {
       "origin": "@OTA_CONFIG_SLOT_0_ORIGIN_HEX@",
       "offset_bytes": @OTA_CONFIG_SLOT_0_OFFSET_BYTES@,

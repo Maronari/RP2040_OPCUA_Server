@@ -5,9 +5,11 @@ industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
 `waveshare_core2350b_16mb_psram8mb`; the default application target is
 `device_profile_basic`.
 
-The current implementation target is `v0.4.2`. It builds a deterministic,
-generic OPC UA channel information model on the bounded channel runtime released
-in `v0.4.1` while preserving unrelated public contracts.
+The current implementation target is `v0.4.3`. It generalizes per-channel
+history (PSRAM plus a Flash-backed ring surviving reboot/power loss) and adds
+per-channel Alarms & Conditions on top of the generic OPC UA channel
+information model released in `v0.4.2`, while preserving unrelated public
+contracts.
 
 ## What The Firmware Already Implements
 
@@ -28,15 +30,23 @@ in `v0.4.1` while preserving unrelated public contracts.
 - A discovery-based generic channel address space with the deterministic NodeId,
   metadata, timestamp, quality, and write contract documented in
   [docs/channel_model.md](docs/channel_model.md).
+- Per-channel history (typed PSRAM ring plus a Flash-backed ring surviving
+  reboot/power loss) exposed through a generalized OPC UA `HistoryRead` with
+  bounded continuation points.
+- Per-channel Alarms & Conditions (high/high-high/low/low-low with
+  hysteresis and debounce for numeric channels, a discrete state for Boolean
+  channels, and a quality-fault state that never overwrites the last
+  good-quality alarm state) with independent per-condition acknowledgement.
 
 ## Current Boundaries
 
 - This is not a production security baseline yet. OTA payload integrity is
   still CRC based; signed OTA and rollback-health confirmation are scheduled for
   later roadmap releases.
-- The generic OPC UA channel information model is the current implementation
-  work. Multi-channel history and alarm generalization remains scheduled for
-  v0.4.3, and transactional live model regeneration remains scheduled for
+- Multi-channel history and alarm generalization is the current implementation
+  work. Alarm history is not persisted to Flash in this release (live OPC UA
+  events only); OPC UA Part 11 Historical Event Access is scheduled for
+  v0.8.1, and transactional live model regeneration remains scheduled for
   v0.5.0.
 - The built-in `adc_voltage` channel driver is limited to protected low-voltage
   RP2350 ADC use and is not the industrial `AI0..AI3` implementation from

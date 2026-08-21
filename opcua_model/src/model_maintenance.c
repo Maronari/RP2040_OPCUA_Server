@@ -818,6 +818,7 @@ void model_process_alarm_conditions(UA_Server *server, model_event_runtime_state
                          "Security state normal");
 
     model_process_device_health_conditions(server, state);
+    model_process_channel_alarm_conditions(server);
 }
 #endif
 
@@ -1602,7 +1603,6 @@ void model_event_runtime_state_init(model_event_runtime_state_t *state)
     memset(state, 0, sizeof(*state));
     network_manager_get_status(&state->network_status);
     sensor_manager_get_snapshot(&state->sensor_snapshot);
-    alarm_service_get_status(&state->alarm_status);
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     state->security_condition_active = false;
     state->security_condition_reason = 0u;
@@ -1792,11 +1792,22 @@ void model_process_trust_expiry_runtime(UA_Server *server,
     }
 }
 
+/* v0.4.3: guards the one-shot per-channel alarm condition instance build.
+ * Kept file-static rather than added to model_event_runtime_state_t so this
+ * change stays confined to model_maintenance.c/model_events.c and does not
+ * touch shared struct layouts also used by history's model_history.c. This
+ * must run after model_build_address_space() has created the channel
+ * objects, which model_build_alarm_conditions() (called from
+ * model_build_address_space() itself, before the channel-node loop runs)
+ * cannot guarantee -- so it is deferred to the first runtime-event poll,
+ * which model_core_lifecycle.c only reaches after address-space build
+ * (including channel nodes) has fully completed. */
+static bool g_model_channel_alarm_conditions_built;
+
 void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t *state)
 {
     network_manager_status_t current_network = {0};
     sensor_manager_snapshot_t current_sensor = {0};
-    alarm_service_status_t current_alarm = {0};
     char message[160];
 
     if (server == NULL || state == NULL)
@@ -1810,9 +1821,16 @@ void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t
         return;
     }
 
+#if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
+    if (!g_model_channel_alarm_conditions_built)
+    {
+        g_model_channel_alarm_conditions_built = true;
+        (void)model_build_channel_alarm_conditions(server);
+    }
+#endif
+
     network_manager_get_status(&current_network);
     sensor_manager_get_snapshot(&current_sensor);
-    alarm_service_get_status(&current_alarm);
 
     if (model_string_changed(state->network_status.ip_mode, current_network.ip_mode))
     {
@@ -1876,23 +1894,16 @@ void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t
                                         current_sensor.temperature_c);
     }
 
-    if (current_alarm.state != state->alarm_status.state)
-    {
-        snprintf(message,
-                 sizeof(message),
-                 "%s alarm changed: %s -> %s",
-                 current_alarm.channel_name != NULL ? current_alarm.channel_name : "Channel",
-                 model_alarm_state_to_string(state->alarm_status.state),
-                 model_alarm_state_to_string(current_alarm.state));
-        model_emit_sensor_runtime_event(server,
-                                        message,
-                                        current_alarm.state == TELEMETRY_ALARM_STATE_NORMAL ? 250u :
-                                        current_alarm.state == TELEMETRY_ALARM_STATE_WARNING ? 650u : 850u,
-                                        current_alarm.state == TELEMETRY_ALARM_STATE_WARNING ? 2001u :
-                                        current_alarm.state == TELEMETRY_ALARM_STATE_CRITICAL ? 2002u : 0u,
-                                        model_quality_to_string(current_alarm.quality),
-                                        current_sensor.temperature_c);
-    }
+    /* v0.4.3: the singleton Temperature1-only alarm transition event
+     * previously emitted here is superseded by the generalized per-channel
+     * A&C condition instances below (model_process_channel_alarm_conditions,
+     * called from model_process_alarm_conditions), which cover every
+     * alarm-eligible channel -- including the legacy Temperature1 channel --
+     * and emit their own standard condition transition events via
+     * UA_Server_triggerConditionEvent through the same live
+     * Events/Audit bridge, consistent with how the pre-existing
+     * Security/DeviceHealth conditions already work without a redundant
+     * parallel custom event. */
 
     model_process_certificate_expiry_runtime(server, state, message, sizeof(message));
     model_process_trust_expiry_runtime(server, state, message, sizeof(message));
@@ -1904,7 +1915,6 @@ void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t
 
     state->network_status = current_network;
     state->sensor_snapshot = current_sensor;
-    state->alarm_status = current_alarm;
 }
 void model_apply_now_source_timestamp(UA_Boolean include_source_timestamp, UA_DataValue *value)
 {

@@ -15,8 +15,12 @@ import sys
 
 EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
 EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
+EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
 EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
     "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
+)
+EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
+    "588a36b922fc35e73f79b8dc2ee2947ba57b8b364083f6571b255d44789bc8b5"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
@@ -86,6 +90,17 @@ V042_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/model_history.c",
     "opcua_model/src/model_pubsub.c",
 })
+# v0.4.3 adds a generalized HistoryRead (T4) and per-channel Alarms &
+# Conditions instances (T6). Record exactly the files that legitimately
+# drift from the v0.4.2 baseline; everything else in MODEL_SOURCE_SET stays
+# byte-identical.
+V043_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
+    "opcua_model/src/opcua_model_internal.h",
+    "opcua_model/src/model_core_lifecycle.c",
+    "opcua_model/src/model_events.c",
+    "opcua_model/src/model_history.c",
+    "opcua_model/src/model_maintenance.c",
+})
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",
     "UA_EXPANDEDNODEID_",
@@ -120,6 +135,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-v042-channel-additions",
         action="store_true",
         help="Allow only the reviewed v0.4.2 generic-channel model source delta",
+    )
+    parser.add_argument(
+        "--allow-v043-channel-additions",
+        action="store_true",
+        help="Allow only the reviewed v0.4.3 history/alarm model source delta",
     )
     parser.add_argument(
         "--source-dir",
@@ -294,6 +314,18 @@ def public_inventory(source: bytes) -> dict[str, object]:
 V042_REVIEWED_DYNAMIC_CALL_REPLACEMENTS = {
     "UA_NODEID_STRING(1, value_node_id)",
 }
+# v0.4.3 retires the singleton alarm_service's ad hoc "%s alarm changed: %s ->
+# %s" SensorFaultEvent message (opcua_model/src/model_maintenance.c, formatted
+# via snprintf into model_emit_sensor_runtime_event) in favor of the standard
+# Alarms & Conditions Message/Severity/Retain fields on each per-channel
+# ChannelAlarmConditionType instance (opcua_model/src/model_events.c), reusing
+# the same condition machinery Device Health / Security Fault already use.
+# This is a reviewed, intentional removal of that one message format string
+# and its literal fallback channel name, not an unreviewed contract loss.
+V043_REVIEWED_REMOVED_STRING_LITERALS = {
+    '"%s alarm changed: %s -> %s"',
+    '"Channel"',
+}
 
 
 def missing_baseline_contract(
@@ -305,6 +337,8 @@ def missing_baseline_contract(
     v0.4.1 NodeId/BrowseName literal or public attribute assignment. Dynamic
     legacy variable NodeId constructors moved behind the reviewed registration
     helpers, so those four lexical call sites are checked semantically below.
+    v0.4.3 similarly retires one reviewed diagnostic message format string
+    (and its literal fallback) in favor of standard Condition fields.
     """
     missing: dict[str, list[str]] = {}
     for key in (
@@ -321,6 +355,9 @@ def missing_baseline_contract(
         if key == "node_and_browse_calls":
             for reviewed_call in V042_REVIEWED_DYNAMIC_CALL_REPLACEMENTS:
                 baseline_items.pop(reviewed_call, None)
+        if key == "string_literals":
+            for reviewed_literal in V043_REVIEWED_REMOVED_STRING_LITERALS:
+                baseline_items.pop(reviewed_literal, None)
         removed = list((baseline_items - current_items).elements())
         if removed:
             missing[key] = removed
@@ -370,6 +407,38 @@ def assert_v042_channel_compatibility(source_dir: pathlib.Path) -> None:
             )
 
 
+def assert_v043_channel_compatibility(source_dir: pathlib.Path) -> None:
+    history = (source_dir / "opcua_model/src/model_history.c").read_text(
+        encoding="utf-8"
+    )
+    events = (source_dir / "opcua_model/src/model_events.c").read_text(
+        encoding="utf-8"
+    )
+    if "MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE" not in history:
+        raise SystemExit(
+            "opcua-contract: FAIL: removed v0.4.2 legacy Temperature1 alarm-state node"
+        )
+    if "alarm_service_get_condition_by_channel_id(" not in history:
+        raise SystemExit(
+            "opcua-contract: FAIL: legacy alarm-state read no longer resolves "
+            "per-channel v0.4.3 conditions"
+        )
+    if "UA_NODEID_STRING(g_model_channel_namespace_index" not in history:
+        raise SystemExit(
+            "opcua-contract: FAIL: generic channel HistoryRead namespace mismatch"
+        )
+    if 'model_build_channel_node_id(channel, MODEL_CHANNEL_ALARM_CONDITION_FIELD_NAME' not in events:
+        raise SystemExit(
+            "opcua-contract: FAIL: per-channel alarm condition NodeId grammar missing"
+        )
+    if "AcknowledgeAllAlarms" not in (
+        source_dir / "opcua_model/src/model_address_space.c"
+    ).read_text(encoding="utf-8"):
+        raise SystemExit(
+            "opcua-contract: FAIL: removed v0.4.2 AcknowledgeAllAlarms method"
+        )
+
+
 def main() -> int:
     args = parse_args()
     source_dir = args.source_dir.resolve()
@@ -396,6 +465,23 @@ def main() -> int:
                     f"{relative}"
                 )
         assert_v042_channel_compatibility(source_dir)
+    if args.allow_v043_channel_additions:
+        if args.baseline != "v0.4.2" or baseline_commit != EXPECTED_V042_COMMIT:
+            raise SystemExit(
+                "opcua-contract: FAIL: v0.4.3 additions require "
+                f"v0.4.2@{EXPECTED_V042_COMMIT}, got {args.baseline}@{baseline_commit}"
+            )
+        for relative in MODEL_SOURCE_SET:
+            if relative in V043_REVIEWED_MODEL_DRIFT_PATHS:
+                continue
+            baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
+            current_data = normalized_source((source_dir / relative).read_bytes())
+            if current_data != baseline_data:
+                raise SystemExit(
+                    "opcua-contract: FAIL: model drift outside reviewed v0.4.3 history/alarm files: "
+                    f"{relative}"
+                )
+        assert_v043_channel_compatibility(source_dir)
 
     stable_files: list[dict[str, str]] = []
     for relative in BYTE_STABLE_PUBLIC_CONTRACT_PATHS:
@@ -419,13 +505,14 @@ def main() -> int:
     assert_closed_registration_coverage(source_dir)
     current_inventory = public_inventory(aggregate_current_source(source_dir))
     inventory_changed = current_inventory != baseline_inventory
+    allow_additions = args.allow_v042_channel_additions or args.allow_v043_channel_additions
     missing_baseline = missing_baseline_contract(baseline_inventory, current_inventory)
-    if args.allow_v042_channel_additions and missing_baseline:
+    if allow_additions and missing_baseline:
         summary = ", ".join(
             f"{key}={len(items)}" for key, items in sorted(missing_baseline.items())
         )
         raise SystemExit(
-            "opcua-contract: FAIL: v0.4.2 removed baseline public contract entries: "
+            f"opcua-contract: FAIL: {args.baseline} removed baseline public contract entries: "
             + summary
         )
     if (args.allow_v042_channel_additions and
@@ -434,7 +521,13 @@ def main() -> int:
             "opcua-contract: FAIL: public inventory is not the reviewed v0.4.2 delta: "
             + str(current_inventory["sha256"])
         )
-    if inventory_changed and not args.allow_v042_channel_additions:
+    if (args.allow_v043_channel_additions and
+            current_inventory["sha256"] != EXPECTED_V043_PUBLIC_INVENTORY_SHA256):
+        raise SystemExit(
+            "opcua-contract: FAIL: public inventory is not the reviewed v0.4.3 delta: "
+            + str(current_inventory["sha256"])
+        )
+    if inventory_changed and not allow_additions:
         raise SystemExit("opcua-contract: FAIL: public model inventory differs from baseline")
 
     evidence = {
@@ -448,12 +541,21 @@ def main() -> int:
             EXPECTED_V042_PUBLIC_INVENTORY_SHA256
             if args.allow_v042_channel_additions else None
         ),
+        "reviewed_v043_public_inventory_sha256": (
+            EXPECTED_V043_PUBLIC_INVENTORY_SHA256
+            if args.allow_v043_channel_additions else None
+        ),
         "baseline_contract_removals": missing_baseline,
         "reviewed_v042_channel_additions": bool(
             args.allow_v042_channel_additions and inventory_changed
         ),
+        "reviewed_v043_channel_additions": bool(
+            args.allow_v043_channel_additions and inventory_changed
+        ),
         "reviewed_v042_model_drift_paths": sorted(V042_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v042_channel_additions else [],
+        "reviewed_v043_model_drift_paths": sorted(V043_REVIEWED_MODEL_DRIFT_PATHS)
+        if args.allow_v043_channel_additions else [],
         "string_literal_count": len(current_inventory["string_literals"]),
         "node_and_browse_call_count": len(current_inventory["node_and_browse_calls"]),
         "public_attribute_assignment_count": len(

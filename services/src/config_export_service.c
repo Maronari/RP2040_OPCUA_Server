@@ -288,7 +288,8 @@ static bool config_export_service_write_profile_json(const device_profile_config
         config_json_writer_append_format(&writer,
                                          ",\"flags\":%lu,\"minimum\":%.6f,\"maximum\":%.6f,\"hasMinimum\":%s,\"hasMaximum\":%s,"
                                          "\"enabled\":%s,\"samplePeriodMs\":%lu,\"publishPeriodMs\":%lu,\"historyIntervalMs\":%lu,"
-                                         "\"scale\":%.6f,\"offset\":%.6f,\"warningThreshold\":%.6f,\"criticalThreshold\":%.6f}",
+                                         "\"scale\":%.6f,\"offset\":%.6f,\"warningThreshold\":%.6f,\"criticalThreshold\":%.6f,"
+                                         "\"lowThreshold\":%.17g,\"lowLowThreshold\":%.17g,\"alarmHysteresis\":%.17g,\"alarmDebounceMs\":%lu}",
                                          (unsigned long)channel->flags,
                                          channel->minimum,
                                          channel->maximum,
@@ -301,7 +302,11 @@ static bool config_export_service_write_profile_json(const device_profile_config
                                          channel->settings.scale,
                                          channel->settings.offset,
                                          channel->settings.warning_threshold,
-                                         channel->settings.critical_threshold);
+                                         channel->settings.critical_threshold,
+                                         channel->settings.low_threshold,
+                                         channel->settings.low_low_threshold,
+                                         channel->settings.alarm_hysteresis,
+                                         (unsigned long)channel->settings.alarm_debounce_ms);
     }
     config_json_writer_append_raw(&writer, "]}");
 

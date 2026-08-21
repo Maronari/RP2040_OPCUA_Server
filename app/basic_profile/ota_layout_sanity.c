@@ -9,6 +9,8 @@ _Static_assert(OTA_LAYOUT_BANK_B_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES 
                "Bank B must be erase aligned");
 _Static_assert(OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES == 0u,
                "Maintenance journal must be erase aligned");
+_Static_assert(OTA_LAYOUT_HISTORY_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES == 0u,
+               "History region must be erase aligned");
 _Static_assert(OTA_LAYOUT_CONFIG_SLOT_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES == 0u,
                "Config slots must be erase aligned");
 _Static_assert(OTA_LAYOUT_SECURITY_IDENTITY_SLOT_SIZE_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES == 0u,
@@ -26,13 +28,17 @@ _Static_assert(OTA_LAYOUT_BANK_B_ORIGIN == (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYO
 _Static_assert(OTA_LAYOUT_MAINTENANCE_JOURNAL_ORIGIN ==
                    (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYOUT_MAINTENANCE_JOURNAL_OFFSET_BYTES),
                "Maintenance journal origin/offset mismatch");
+_Static_assert(OTA_LAYOUT_HISTORY_ORIGIN == (OTA_LAYOUT_FLASH_XIP_BASE + OTA_LAYOUT_HISTORY_OFFSET_BYTES),
+               "History origin/offset mismatch");
 _Static_assert(OTA_LAYOUT_BANK_A_OFFSET_BYTES == 0x010000u &&
-                   OTA_LAYOUT_BANK_A_SIZE_BYTES == 0x7B4000u &&
-                   OTA_LAYOUT_BANK_B_OFFSET_BYTES == 0x7C4000u &&
-                   OTA_LAYOUT_BANK_B_SIZE_BYTES == 0x7B4000u &&
-                   OTA_LAYOUT_MAINTENANCE_JOURNAL_OFFSET_BYTES == 0xF78000u &&
-                   OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES == 0x8000u,
-               "Reference Flash bank/journal geometry changed");
+                   OTA_LAYOUT_BANK_A_SIZE_BYTES == 0x7A4000u &&
+                   OTA_LAYOUT_BANK_B_OFFSET_BYTES == 0x7B4000u &&
+                   OTA_LAYOUT_BANK_B_SIZE_BYTES == 0x7A4000u &&
+                   OTA_LAYOUT_MAINTENANCE_JOURNAL_OFFSET_BYTES == 0xF58000u &&
+                   OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES == 0x8000u &&
+                   OTA_LAYOUT_HISTORY_OFFSET_BYTES == 0xF60000u &&
+                   OTA_LAYOUT_HISTORY_SIZE_BYTES == 0x20000u,
+               "Reference Flash bank/journal/history geometry changed");
 #define OTA_LAYOUT_END(_offset, _size) ((_offset) + (_size))
 #define OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(_name) \
     _Static_assert((_name##_OFFSET_BYTES % OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES) == 0u, \
@@ -41,6 +47,7 @@ OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_BOOTLOADER);
 OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_BANK_A);
 OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_BANK_B);
 OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_MAINTENANCE_JOURNAL);
+OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_HISTORY);
 OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_CONFIG_SLOT_0);
 OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_CONFIG_SLOT_1);
 OTA_LAYOUT_ASSERT_OFFSET_ALIGNED(OTA_LAYOUT_SECURITY_IDENTITY_SLOT_0);
@@ -60,8 +67,11 @@ _Static_assert(OTA_LAYOUT_END(OTA_LAYOUT_BANK_B_OFFSET_BYTES, OTA_LAYOUT_BANK_B_
                "Bank B overlaps maintenance journal");
 _Static_assert(OTA_LAYOUT_END(OTA_LAYOUT_MAINTENANCE_JOURNAL_OFFSET_BYTES,
                              OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES) <=
+                   OTA_LAYOUT_HISTORY_OFFSET_BYTES,
+               "Maintenance journal overlaps history");
+_Static_assert(OTA_LAYOUT_END(OTA_LAYOUT_HISTORY_OFFSET_BYTES, OTA_LAYOUT_HISTORY_SIZE_BYTES) <=
                    OTA_LAYOUT_CONFIG_SLOT_0_OFFSET_BYTES,
-               "Maintenance journal overlaps configuration");
+               "History overlaps configuration");
 _Static_assert(OTA_LAYOUT_END(OTA_LAYOUT_CONFIG_SLOT_0_OFFSET_BYTES, OTA_LAYOUT_CONFIG_SLOT_SIZE_BYTES) <=
                    OTA_LAYOUT_CONFIG_SLOT_1_OFFSET_BYTES,
                "Configuration slots overlap");
