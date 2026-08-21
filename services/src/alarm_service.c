@@ -77,26 +77,32 @@ bool alarm_service_init(void)
     return true;
 }
 
-/* Finds the slot already bound to channel_id, or binds and returns the next
- * free slot.  Only ever called from alarm_service_evaluate_all(), which runs
- * on a single task, so no lock is required for the search/bind step itself;
- * readers only ever observe slots through the short critical section in
- * alarm_service_get_condition_by_index(). */
-static alarm_condition_status_t *alarm_service_find_or_bind_slot(const char *channel_id)
+/* Finds the slot already bound to channel_id, or binds the next free slot,
+ * and snapshots it while holding the brief condition lock. The alarm task is
+ * the only evaluator, but acknowledgements originate from an OPC UA task and
+ * must not race bind/snapshot/commit. */
+static bool alarm_service_find_or_bind_snapshot(const char *channel_id,
+                                                size_t *out_index,
+                                                alarm_condition_status_t *out_snapshot)
 {
     size_t free_index = ALARM_SERVICE_MAX_CONDITIONS;
 
-    if (channel_id == NULL || channel_id[0] == '\0' || g_conditions == NULL)
+    if (channel_id == NULL || channel_id[0] == '\0' || g_conditions == NULL || out_index == NULL ||
+        out_snapshot == NULL)
     {
-        return NULL;
+        return false;
     }
 
+    taskENTER_CRITICAL();
     for (size_t index = 0u; index < g_condition_count; ++index)
     {
         if (g_conditions[index].in_use &&
             strncmp(g_conditions[index].channel_id, channel_id, TELEMETRY_CHANNEL_ID_MAX_LEN) == 0)
         {
-            return &g_conditions[index];
+            *out_index = index;
+            *out_snapshot = g_conditions[index];
+            taskEXIT_CRITICAL();
+            return true;
         }
     }
 
@@ -107,7 +113,8 @@ static alarm_condition_status_t *alarm_service_find_or_bind_slot(const char *cha
     }
     else
     {
-        return NULL;
+        taskEXIT_CRITICAL();
+        return false;
     }
 
     memset(&g_conditions[free_index], 0, sizeof(g_conditions[free_index]));
@@ -118,7 +125,10 @@ static alarm_condition_status_t *alarm_service_find_or_bind_slot(const char *cha
     g_conditions[free_index].quality = SERVICE_QUALITY_UNCERTAIN;
     g_conditions[free_index].quality_fault = ALARM_QUALITY_FAULT_UNCERTAIN;
     g_conditions[free_index].process_state = ALARM_CONDITION_STATE_NORMAL;
-    return &g_conditions[free_index];
+    *out_index = free_index;
+    *out_snapshot = g_conditions[free_index];
+    taskEXIT_CRITICAL();
+    return true;
 }
 
 static double alarm_service_extract_numeric(const telemetry_channel_t *channel, bool *out_numeric)
@@ -290,8 +300,8 @@ static void alarm_service_evaluate_discrete(alarm_condition_status_t *condition,
 
 static void alarm_service_evaluate_channel(const telemetry_channel_t *channel, uint32_t now_ms)
 {
-    alarm_condition_status_t *condition;
     alarm_condition_status_t local;
+    size_t condition_index;
     const bool is_discrete = channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_BOOLEAN;
     bool numeric = false;
     const double numeric_value = is_discrete ? 0.0 : alarm_service_extract_numeric(channel, &numeric);
@@ -304,15 +314,10 @@ static void alarm_service_evaluate_channel(const telemetry_channel_t *channel, u
         return;
     }
 
-    condition = alarm_service_find_or_bind_slot(channel->metadata.id);
-    if (condition == NULL)
+    if (!alarm_service_find_or_bind_snapshot(channel->metadata.id, &condition_index, &local))
     {
         return;
     }
-
-    /* Work on a local copy so the critical section below stays a bounded
-     * struct assignment rather than spanning the whole evaluation. */
-    local = *condition;
 
     (void)snprintf(local.channel_name, sizeof(local.channel_name), "%s",
                    channel->metadata.name != NULL ? channel->metadata.name : "");
@@ -353,8 +358,29 @@ static void alarm_service_evaluate_channel(const telemetry_channel_t *channel, u
                    (local.is_discrete ? local.discrete_active
                                        : local.process_state != ALARM_CONDITION_STATE_NORMAL);
 
+#if defined(ALARM_SERVICE_TEST_HOOKS)
+    /* Host-only deterministic interleaving hook. It runs outside the
+     * condition lock, modelling an OPC UA Acknowledge between snapshot and
+     * commit. */
+    extern void alarm_service_test_before_commit(const char *channel_id);
+    alarm_service_test_before_commit(channel->metadata.id);
+#endif
+
     taskENTER_CRITICAL();
-    *condition = local;
+    if (condition_index < g_condition_count && g_conditions[condition_index].in_use &&
+        strncmp(g_conditions[condition_index].channel_id, channel->metadata.id,
+                TELEMETRY_CHANNEL_ID_MAX_LEN) == 0)
+    {
+        /* An acknowledgement newer than this evaluation snapshot wins. A
+         * new trip still clears acknowledgement when no concurrent operator
+         * action occurred. */
+        if (g_conditions[condition_index].acknowledgement_revision != local.acknowledgement_revision)
+        {
+            local.acknowledged = g_conditions[condition_index].acknowledged;
+            local.acknowledgement_revision = g_conditions[condition_index].acknowledgement_revision;
+        }
+        g_conditions[condition_index] = local;
+    }
     taskEXIT_CRITICAL();
 }
 
@@ -452,6 +478,7 @@ void alarm_service_acknowledge_all(void)
     for (size_t index = 0u; index < g_condition_count; ++index)
     {
         g_conditions[index].acknowledged = true;
+        g_conditions[index].acknowledgement_revision++;
     }
     taskEXIT_CRITICAL();
 }
@@ -472,6 +499,7 @@ bool alarm_service_acknowledge_channel(const char *channel_id)
             strncmp(g_conditions[index].channel_id, channel_id, TELEMETRY_CHANNEL_ID_MAX_LEN) == 0)
         {
             g_conditions[index].acknowledged = true;
+            g_conditions[index].acknowledgement_revision++;
             found = true;
             break;
         }

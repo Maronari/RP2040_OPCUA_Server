@@ -21,6 +21,7 @@ typedef struct
     size_t write_index;
     uint32_t generation; /* bumped whenever a write evicts the current oldest sample */
     uint32_t last_recorded_ms;
+    history_service_restore_status_t restore_status;
     history_service_channel_sample_t samples[HISTORY_SERVICE_CHANNEL_CAPACITY];
 } history_service_channel_ring_t;
 
@@ -110,6 +111,7 @@ static size_t history_service_claim_ring_locked(const char *channel_id,
         ring->write_index = 0u;
         ring->generation = 0u;
         ring->last_recorded_ms = 0u;
+        ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_READY;
         return index;
     }
     return HISTORY_SERVICE_MAX_CHANNELS;
@@ -215,24 +217,35 @@ bool history_service_init(void)
         g_store = &g_host_store;
 #endif
     }
+    g_initialized = false;
     history_service_reset();
-    g_initialized = true;
 
     if (!history_service_lock())
     {
-        return true;
+        return false;
     }
     history_service_bind_configured_channels_locked();
+    history_service_unlock();
 
 #if defined(PICO_ON_DEVICE)
     history_flash_backend_init_flash(&g_flash_backend);
     g_flash_ready = g_flash_backend.ready;
-    if (g_flash_ready)
+    if (!g_flash_ready)
     {
-        /* One PSRAM-backed scratch buffer, reused sequentially across every
-         * channel's restore() call, instead of a permanent multi-KiB
-         * static internal-SRAM allocation for a scan that only ever runs
-         * once per channel at startup (see history_flash_backend.h). */
+        for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
+        {
+            history_service_channel_ring_t *ring = &g_store->channels[index];
+
+            if (ring->channel_id[0] != '\0')
+            {
+                ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_FLASH_UNAVAILABLE;
+            }
+        }
+    }
+    else
+    {
+        /* One temporary PSRAM scratch buffer is reused sequentially across
+         * every channel restore, avoiding a permanent internal-SRAM cost. */
         history_flash_backend_scan_entry_t *restore_scratch =
             (history_flash_backend_scan_entry_t *)psram_malloc(HISTORY_SERVICE_CHANNEL_CAPACITY *
                                                                 sizeof(*restore_scratch));
@@ -240,30 +253,41 @@ bool history_service_init(void)
         for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
         {
             history_service_channel_ring_t *ring = &g_store->channels[index];
-            history_service_restore_context_t restore_context = {.ring = ring};
 
             if (ring->channel_id[0] == '\0')
             {
+                /* Bind every physical slot once. A dynamic claim that cannot
+                 * later persist will transition to an explicit degraded state. */
                 (void)history_flash_backend_bind_channel(&g_flash_backend, (uint8_t)index, NULL);
                 continue;
             }
+
             if (history_flash_backend_bind_channel(&g_flash_backend, (uint8_t)index, ring->channel_id) !=
                 HISTORY_FLASH_BACKEND_OK)
             {
+                ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_FLASH_BIND_FAILED;
                 continue;
             }
             if (restore_scratch == NULL)
             {
-                /* Degraded but safe: future writes still append/persist to
-                 * Flash correctly; only this boot's restore is skipped. */
+                /* Do not expose a partial RAM-only window as restored
+                 * persistent history. Recording remains available, while the
+                 * adapter receives a deterministic resource failure. */
+                ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_SCRATCH_ALLOCATION_FAILED;
                 continue;
             }
-            /* Restore before any concurrent reader can observe this ring:
-             * we are still inside history_service_init(), which main.c
-             * calls before the OPC UA server task starts. */
-            (void)history_flash_backend_restore(&g_flash_backend, (uint8_t)index, restore_scratch,
-                                                HISTORY_SERVICE_CHANNEL_CAPACITY,
-                                                history_service_restore_sample, &restore_context);
+            {
+                history_service_restore_context_t restore_context = {.ring = ring};
+                const history_flash_backend_result_t restore_result =
+                    history_flash_backend_restore(&g_flash_backend, (uint8_t)index, restore_scratch,
+                                                  HISTORY_SERVICE_CHANNEL_CAPACITY,
+                                                  history_service_restore_sample, &restore_context);
+
+                if (restore_result != HISTORY_FLASH_BACKEND_OK)
+                {
+                    ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_FLASH_RESTORE_FAILED;
+                }
+            }
         }
         if (restore_scratch != NULL)
         {
@@ -272,7 +296,9 @@ bool history_service_init(void)
     }
 #endif
 
-    history_service_unlock();
+    /* Flash bind/scan occurs before HistoryRead is exposed, but not while
+     * holding the history mutex: backend I/O may be slow. */
+    g_initialized = true;
     return true;
 }
 
@@ -288,6 +314,32 @@ void history_service_reset(void)
     }
     memset(g_store, 0, sizeof(*g_store));
     history_service_unlock();
+}
+
+history_service_restore_status_t history_service_get_channel_restore_status(const char *channel_id)
+{
+    size_t ring_index;
+    history_service_restore_status_t status = HISTORY_SERVICE_RESTORE_STATUS_CHANNEL_NOT_BOUND;
+
+    if (!g_initialized)
+    {
+        return HISTORY_SERVICE_RESTORE_STATUS_NOT_INITIALIZED;
+    }
+    if (!history_service_channel_id_is_bounded(channel_id))
+    {
+        return HISTORY_SERVICE_RESTORE_STATUS_CHANNEL_NOT_BOUND;
+    }
+    if (!history_service_lock())
+    {
+        return HISTORY_SERVICE_RESTORE_STATUS_LOCK_BUSY;
+    }
+    ring_index = history_service_find_ring_locked(channel_id);
+    if (ring_index != HISTORY_SERVICE_MAX_CHANNELS)
+    {
+        status = g_store->channels[ring_index].restore_status;
+    }
+    history_service_unlock();
+    return status;
 }
 
 bool history_service_record_channel_sample(const char *channel_id,
@@ -354,7 +406,21 @@ bool history_service_record_channel_sample(const char *channel_id,
         /* Best-effort persistence performed outside the PSRAM lock so a slow
          * Flash program/erase never blocks other channels' reads/writes.
          * PSRAM already holds the sample regardless of this call's result. */
-        (void)history_flash_backend_append(&g_flash_backend, (uint8_t)ring_index, &flash_record);
+        if (history_flash_backend_append(&g_flash_backend, (uint8_t)ring_index, &flash_record) !=
+            HISTORY_FLASH_BACKEND_OK)
+        {
+            /* A failed append means that persistence is no longer known
+             * complete; do not hide it behind the PSRAM cache. */
+            if (history_service_lock())
+            {
+                if (ring_index < HISTORY_SERVICE_MAX_CHANNELS)
+                {
+                    g_store->channels[ring_index].restore_status =
+                        HISTORY_SERVICE_RESTORE_STATUS_FLASH_APPEND_FAILED;
+                }
+                history_service_unlock();
+            }
+        }
     }
 #endif
 

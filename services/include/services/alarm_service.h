@@ -47,6 +47,10 @@ typedef struct
      * process_state != NORMAL, discrete_active, or quality_fault != NONE. */
     bool active;
     bool acknowledged;
+    /* Incremented under the condition lock by acknowledgement operations.
+     * Evaluation uses it to merge a concurrent acknowledgement rather than
+     * overwrite it with an older local snapshot. */
+    uint32_t acknowledgement_revision;
 
     double warning_threshold;
     double critical_threshold;

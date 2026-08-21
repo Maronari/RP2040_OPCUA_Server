@@ -9,9 +9,11 @@
 
 #include <assert.h>
 #include <float.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static bool g_fail_allocation;
 static device_profile_config_t g_export_profile;
@@ -621,6 +623,74 @@ static void test_json_alarm_tuning_round_trip(void)
     assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
 }
 
+static void test_worst_case_json_export_is_bounded(void)
+{
+    enum
+    {
+        export_buffer_size = 24576u,
+        compact_export_limit = 12288u
+    };
+    char json[export_buffer_size] = {0};
+    size_t required_size;
+    clock_t started_at;
+    clock_t elapsed;
+
+    g_export_profile = valid_candidate();
+    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
+    {
+        config_channel_definition_t *channel = &g_export_profile.channels[index];
+
+        channel->in_use = 1u;
+        channel->driver_id = CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP;
+        channel->kind = TELEMETRY_CHANNEL_KIND_ANALOG;
+        channel->value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+        (void)snprintf(channel->id, sizeof(channel->id), "worst.%u", (unsigned)index);
+        memset(channel->name, 'n', sizeof(channel->name) - 1u);
+        memset(channel->description, 'd', sizeof(channel->description) - 1u);
+        memset(channel->unit, 'u', sizeof(channel->unit) - 1u);
+        channel->minimum = -DBL_MAX;
+        channel->maximum = DBL_MAX;
+        channel->settings.scale = 1.0;
+        channel->settings.offset = 0.0;
+        channel->settings.warning_threshold = -40.0;
+        channel->settings.critical_threshold = 125.0;
+        channel->settings.low_threshold = DBL_MAX;
+        channel->settings.low_low_threshold = DBL_MAX;
+        channel->settings.alarm_hysteresis = 1.0;
+    }
+
+    started_at = clock();
+    assert(config_export_service_write_running_json(json, sizeof(json)));
+    elapsed = clock() - started_at;
+    required_size = strlen(json) + 1u;
+
+    /* The compact representation prevents a DBL_MAX fixed-point expansion
+     * from consuming the model's entire export scratch. This bound also
+     * exercises all 16 slots and their longest bounded text fields. */
+    assert(required_size < compact_export_limit);
+    assert(elapsed < CLOCKS_PER_SEC);
+    assert(strstr(json, "\"minimum\":-1.7976931348623157e308") != NULL);
+    assert(strstr(json, "\"lowThreshold\":1.7976931348623157e308") != NULL);
+    assert(strstr(json, "\"warningThreshold\":-40,\"criticalThreshold\":125") != NULL);
+
+    /* Exact one-byte shortage must fail rather than return partial JSON as
+     * success; the caller can map false to its deterministic OPC UA error. */
+    assert(required_size > 1u);
+    assert(config_export_service_write_running_json(json, required_size));
+    assert(!config_export_service_write_running_json(json, required_size - 1u));
+    assert(!config_export_service_write_running_json(NULL, required_size));
+
+    /* A persisted fixed-width field without a terminator must fail in a
+     * bounded scan, never walk into adjacent profile/PSRAM memory. */
+    g_export_profile = valid_candidate();
+    memset(g_export_profile.asset_id, 'x', sizeof(g_export_profile.asset_id));
+    assert(!config_export_service_write_running_json(json, sizeof(json)));
+
+    g_export_profile = valid_candidate();
+    g_export_profile.channels[0].settings.scale = NAN;
+    assert(!config_export_service_write_running_json(json, sizeof(json)));
+}
+
 static void test_json_i64_overflow_is_currently_saturated(void)
 {
     json_tokens_t tokens = valid_json_tokens();
@@ -730,7 +800,8 @@ static void test_validation_results_and_no_output_mutation(void)
     candidate = valid_candidate();
     candidate.channels[0].flags |= TELEMETRY_CHANNEL_FLAG_HISTORIZED;
     candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_DOUBLE;
-    expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE);
+    assert(config_validate_service_validate_candidate(&candidate, NULL, 0u) ==
+           CONFIG_VALIDATE_RESULT_OK);
     candidate = valid_candidate();
     candidate.channels[0].flags |= TELEMETRY_CHANNEL_FLAG_HISTORIZED;
     candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
@@ -759,6 +830,7 @@ int main(void)
     test_json_numeric_and_network_parsing();
     test_v040_json_channel_array_migration();
     test_json_alarm_tuning_round_trip();
+    test_worst_case_json_export_is_bounded();
     test_json_i64_overflow_is_currently_saturated();
     test_json_sscanf_trailing_junk_is_currently_accepted();
     return 0;

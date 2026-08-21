@@ -12,6 +12,47 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def main() -> int:
     source = (ROOT / "port/open62541/open62541.c").read_text(encoding="utf-8")
+    lwipopts = (ROOT / "port/lwip/lwipopts.h").read_text(encoding="utf-8")
+    heap_source = (ROOT / "port/lwip/lwip_psram_heap.c").read_text(encoding="utf-8")
+    app_main = (ROOT / "app/basic_profile/main.c").read_text(encoding="utf-8")
+    model_limits = (ROOT / "opcua_model/src/opcua_model_internal.h").read_text(encoding="utf-8")
+    if "#define LWIP_OPCUA_SECURE_SEND_MIN   16384u" not in lwipopts:
+        raise SystemExit(
+            "lwip-listener: FAIL: lwIP heap does not reserve the 16 KiB OPC UA secure-send bound"
+        )
+    if "#define MEM_SIZE                    LWIP_OPCUA_SECURE_SEND_MIN" not in lwipopts:
+        raise SystemExit(
+            "lwip-listener: FAIL: MEM_SIZE is detached from the OPC UA secure-send bound"
+        )
+    if "#define LWIP_RAM_HEAP_POINTER       g_lwip_ram_heap" not in lwipopts:
+        raise SystemExit(
+            "lwip-listener: FAIL: bounded lwIP arena is not redirected out of internal SRAM"
+        )
+    if "psram_calloc(1u, LWIP_PSRAM_HEAP_ALLOCATION_BYTES)" not in heap_source:
+        raise SystemExit(
+            "lwip-listener: FAIL: bounded lwIP PSRAM allocation is missing"
+        )
+    psram_init = app_main.find("app_init_psram_allocator();")
+    heap_init = app_main.find("lwip_psram_heap_init()")
+    task_start = app_main.find("xTaskCreate(app_init_task")
+    if psram_init < 0 or heap_init <= psram_init or task_start <= heap_init:
+        raise SystemExit(
+            "lwip-listener: FAIL: lwIP arena is not reserved after PSRAM and before network tasks"
+        )
+    if "#define OPCUA_SEND_BUFFER_SIZE 16384u" not in model_limits:
+        raise SystemExit(
+            "lwip-listener: FAIL: lwIP secure-send reservation no longer matches the OPC UA send buffer"
+        )
+    if "#define TCP_SND_BUF                 LWIP_OPCUA_SECURE_SEND_MIN" not in lwipopts or \
+            "#define LWIP_OPCUA_CONFIG_EXPORT_SEND_MIN  LWIP_OPCUA_SECURE_SEND_MIN" not in lwipopts or \
+            "#if TCP_SND_BUF < LWIP_OPCUA_CONFIG_EXPORT_SEND_MIN" not in lwipopts:
+        raise SystemExit(
+            "lwip-listener: FAIL: TCP send-window bound for ExportConfig is not enforced"
+        )
+    if "#define MEMP_NUM_TCP_SEG            48" not in lwipopts:
+        raise SystemExit(
+            "lwip-listener: FAIL: TCP segment pool is smaller than the 16 KiB send queue"
+        )
     match = re.search(
         r"TCP_listenSocketCallback\([^\{]+\{(?P<body>.*?)"
         r"/\* Log the name of the remote host \*/",

@@ -15,9 +15,25 @@
 static telemetry_channel_snapshot_t g_test_channels[TEST_MAX_CHANNELS];
 static size_t g_test_channel_count;
 static unsigned g_critical_entries;
+static const char *g_ack_interleave_channel;
+static bool g_ack_interleave_fired;
 
 void alarm_service_test_enter_critical(void) { g_critical_entries++; }
 void alarm_service_test_exit_critical(void) { g_critical_entries++; }
+
+/* Called by alarm_service.c only in this test build after it has copied a
+ * condition to local state and before it commits that local state. This is a
+ * deterministic stand-in for an independent OPC UA task acknowledging the
+ * condition in precisely the formerly lossy interleaving window. */
+void alarm_service_test_before_commit(const char *channel_id)
+{
+    if (!g_ack_interleave_fired && g_ack_interleave_channel != NULL &&
+        strcmp(channel_id, g_ack_interleave_channel) == 0)
+    {
+        g_ack_interleave_fired = true;
+        assert(alarm_service_acknowledge_channel(channel_id));
+    }
+}
 
 TickType_t xTaskGetTickCount(void) { return 0u; }
 void vTaskDelayUntil(TickType_t *previous_wake_time, TickType_t time_increment)
@@ -312,6 +328,23 @@ int main(void)
     alarm_service_acknowledge_all();
     assert(must_find("chan.ack1").acknowledged);
     assert(must_find("chan.ack2").acknowledged);
+
+    /* Acknowledge after evaluator snapshot/before its commit. The old
+     * copy-evaluate-whole-struct commit lost this acknowledgement; the
+     * revision merge must preserve it. */
+    set_numeric_channel(0u, "chan.ack1", "Ack1", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                        60.0, 75.0, 0.0, 0.0, 0.0, 0u, 20.0, SERVICE_QUALITY_GOOD, true);
+    alarm_service_evaluate_all(60025u);
+    set_numeric_channel(0u, "chan.ack1", "Ack1", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                        60.0, 75.0, 0.0, 0.0, 0.0, 0u, 80.0, SERVICE_QUALITY_GOOD, true);
+    alarm_service_evaluate_all(60050u);
+    assert(!must_find("chan.ack1").acknowledged);
+    g_ack_interleave_channel = "chan.ack1";
+    g_ack_interleave_fired = false;
+    alarm_service_evaluate_all(60075u);
+    assert(g_ack_interleave_fired);
+    assert(must_find("chan.ack1").acknowledged);
+    g_ack_interleave_channel = NULL;
 
     /* A fresh trip re-clears acknowledged independently of the other
      * channel's already-acknowledged state. */

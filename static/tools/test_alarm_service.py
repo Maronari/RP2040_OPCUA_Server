@@ -28,6 +28,7 @@ def main() -> int:
             executable = pathlib.Path(directory) / f"alarm_service_test_{limit}.exe"
             subprocess.run([
                 args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                "-DALARM_SERVICE_TEST_HOOKS=1",
                 f"-DPLATFORM_CHANNEL_LIMIT={limit}",
                 f"-I{test_dir}",
                 f"-I{root / 'services' / 'include'}",

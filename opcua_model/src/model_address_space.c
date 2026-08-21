@@ -471,6 +471,30 @@ void model_set_string_method_output(size_t output_size, UA_Variant *output, cons
     }
 }
 
+UA_StatusCode model_set_maintenance_export_method_output(size_t output_size,
+                                                         UA_Variant *output,
+                                                         size_t payload_length)
+{
+    if (output_size == 0u || output == NULL ||
+        g_model_maintenance_export_payload == NULL ||
+        payload_length >= MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY)
+    {
+        return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    }
+
+    /* MaxNodesPerMethodCall is one. The server encodes this CallResponse
+     * before it can run another method callback that reuses the scratch.
+     * A persistent view avoids the blocking large PSRAM-to-PSRAM copy. */
+    g_model_maintenance_export_output_view.length = payload_length;
+    g_model_maintenance_export_output_view.data =
+        (UA_Byte *)g_model_maintenance_export_payload;
+    UA_Variant_setScalar(&output[0],
+                         &g_model_maintenance_export_output_view,
+                         &UA_TYPES[UA_TYPES_STRING]);
+    output[0].storageType = UA_VARIANT_DATA_NODELETE;
+    return UA_STATUSCODE_GOOD;
+}
+
 void model_set_bytestring_method_output(size_t output_size,
                                                UA_Variant *output,
                                                const UA_ByteString *result)

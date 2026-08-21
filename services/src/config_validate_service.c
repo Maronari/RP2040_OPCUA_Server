@@ -1156,18 +1156,8 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
                                                 (unsigned)channel->driver_id);
             return CONFIG_VALIDATE_RESULT_INVALID_CHANNEL;
         }
-        /* v0.4.1 history storage and HistoryRead remain float-only.  Reject
-         * incompatible configuration before activation rather than exposing a
-         * historized channel whose samples would be silently discarded. */
-        if ((channel->flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u &&
-            channel->value_type != (uint8_t)TELEMETRY_CHANNEL_VALUE_FLOAT)
-        {
-            config_validate_service_set_message(message,
-                                                message_size,
-                                                "channel %u historizing requires float value type",
-                                                (unsigned)index);
-            return CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE;
-        }
+        /* v0.4.3 history owns typed samples. Driver capability validation above
+         * is the only value-type restriction needed for historized channels. */
         if (!driver_catalog_get_resource_claims(channel->driver_id,
                                                 channel->source_index,
                                                 channel->source_flags,

@@ -66,8 +66,29 @@ typedef struct
     uint32_t recorded_at_ms;
 } history_service_channel_sample_t;
 
+/* Persistence readiness for one historizing channel. HistoryRead adapters
+ * must fail closed rather than present an incomplete RAM-only window when
+ * this is anything other than READY. */
+typedef enum
+{
+    HISTORY_SERVICE_RESTORE_STATUS_READY = 0,
+    HISTORY_SERVICE_RESTORE_STATUS_NOT_INITIALIZED,
+    HISTORY_SERVICE_RESTORE_STATUS_CHANNEL_NOT_BOUND,
+    HISTORY_SERVICE_RESTORE_STATUS_FLASH_UNAVAILABLE,
+    HISTORY_SERVICE_RESTORE_STATUS_SCRATCH_ALLOCATION_FAILED,
+    HISTORY_SERVICE_RESTORE_STATUS_FLASH_BIND_FAILED,
+    HISTORY_SERVICE_RESTORE_STATUS_FLASH_RESTORE_FAILED,
+    HISTORY_SERVICE_RESTORE_STATUS_FLASH_APPEND_FAILED,
+    HISTORY_SERVICE_RESTORE_STATUS_LOCK_BUSY
+} history_service_restore_status_t;
+
 bool history_service_init(void);
 void history_service_reset(void);
+
+/* Returns the bounded, service-owned persistence state for channel_id. A
+ * configured historizing channel is READY only after its Flash ring was
+ * bound and restored successfully during initialization. */
+history_service_restore_status_t history_service_get_channel_restore_status(const char *channel_id);
 
 /* Records one sample for channel_id, applying the caller-supplied
  * record_interval_ms debounce.  Only SERVICE_QUALITY_GOOD samples with a

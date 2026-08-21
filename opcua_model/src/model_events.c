@@ -890,6 +890,7 @@ typedef struct
 
 static model_channel_alarm_slot_t g_model_channel_alarm_slots[MODEL_CHANNEL_ALARM_SLOT_CAPACITY];
 static size_t g_model_channel_alarm_slot_count;
+static bool g_model_channel_alarm_condition_type_built;
 
 static model_channel_alarm_slot_t *model_find_channel_alarm_slot(const char *channel_id)
 {
@@ -985,6 +986,17 @@ static UA_StatusCode model_create_channel_alarm_condition(UA_Server *server,
     char condition_node_id_buf[MODEL_CHANNEL_NODE_ID_MAX_LEN];
     char source_node_id_buf[MODEL_CHANNEL_NODE_ID_MAX_LEN];
 
+    if (server == NULL || channel == NULL || channel->metadata.id == NULL ||
+        channel->metadata.id[0] == '\0')
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    /* A previous retry may already have completed this condition.  Preserve
+     * that valid instance and only create the missing condition(s). */
+    if (model_find_channel_alarm_slot(channel->metadata.id) != NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
     if (g_model_channel_alarm_slot_count >= MODEL_CHANNEL_ALARM_SLOT_CAPACITY)
     {
         return UA_STATUSCODE_BADOUTOFMEMORY;
@@ -1010,27 +1022,47 @@ static UA_StatusCode model_create_channel_alarm_condition(UA_Server *server,
         return status;
     }
 
-    status = model_condition_initialize_inactive(server, created_id, "Channel alarm inactive");
+    /* open62541 creates Condition instances disabled by default.  Enable the
+     * server-side condition before publishing service-owned state; otherwise
+     * model_sync_condition() correctly observes EnabledState=false and every
+     * per-channel alarm remains at its inactive construction values. */
+    status = model_condition_set_two_state_id(server, created_id, "EnabledState", true);
     if (status != UA_STATUSCODE_GOOD)
     {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
         return status;
     }
 
-    /* Best-effort: the condition is already usable (reflecting service state
-     * every poll cycle and accepting the standard Acknowledge Method) even
-     * if this registration fails; only the ack-sync-back to alarm_service
-     * would be delayed until the next full poll reconciliation. */
-    (void)UA_Server_setConditionTwoStateVariableCallback(server,
-                                                         created_id,
-                                                         source_id,
-                                                         false,
-                                                         model_channel_alarm_acked_callback,
-                                                         UA_ENTERING_ACKEDSTATE);
+    /* Enabling writes the standard implementation's own transition message;
+     * initialize after it so an unchanged NORMAL channel retains the stable
+     * device-model message and fields. */
+    status = model_condition_initialize_inactive(server, created_id, "Channel alarm inactive");
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return status;
+    }
+
+    status = UA_Server_setConditionTwoStateVariableCallback(server,
+                                                             created_id,
+                                                             source_id,
+                                                             false,
+                                                             model_channel_alarm_acked_callback,
+                                                             UA_ENTERING_ACKEDSTATE);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return status;
+    }
 
     slot = &g_model_channel_alarm_slots[g_model_channel_alarm_slot_count];
     memset(slot, 0, sizeof(*slot));
-    (void)snprintf(slot->channel_id, sizeof(slot->channel_id), "%s",
-                   channel->metadata.id != NULL ? channel->metadata.id : "");
+    if (snprintf(slot->channel_id, sizeof(slot->channel_id), "%s", channel->metadata.id) >=
+        (int)sizeof(slot->channel_id))
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
     slot->slot_used = true;
     slot->condition_enabled = true;
     slot->last_acknowledged_seen = true;
@@ -1056,19 +1088,23 @@ UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server)
     }
     if (!g_model_alarm_conditions_available)
     {
-        return UA_STATUSCODE_GOOD;
+        return UA_STATUSCODE_BADNOTSUPPORTED;
     }
 
-    status = model_add_condition_type(server,
-                                      MODEL_CONDITION_TYPE_CHANNEL_ALARM,
-                                      "ChannelAlarmConditionType",
-                                      UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMOFFNORMALALARMTYPE));
-    if (status != UA_STATUSCODE_GOOD)
+    if (!g_model_channel_alarm_condition_type_built)
     {
-        printf("[OPC UA]\tChannelAlarmConditionType create failed: 0x%x (%s)\n",
-               status, UA_StatusCode_name(status));
-        fflush(stdout);
-        return status;
+        status = model_add_condition_type(server,
+                                          MODEL_CONDITION_TYPE_CHANNEL_ALARM,
+                                          "ChannelAlarmConditionType",
+                                          UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMOFFNORMALALARMTYPE));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tChannelAlarmConditionType create failed: 0x%x (%s)\n",
+                   status, UA_StatusCode_name(status));
+            fflush(stdout);
+            return status;
+        }
+        g_model_channel_alarm_condition_type_built = true;
     }
 
     condition_type_id = model_condition_type_node_id(MODEL_CONDITION_TYPE_CHANNEL_ALARM);
@@ -1084,7 +1120,7 @@ UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server)
 
         if (!channel_manager_copy_snapshot_by_index(index, &snapshot))
         {
-            continue;
+            return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
         }
         if (!alarm_service_value_type_is_eligible(snapshot.channel.metadata.value_type))
         {
@@ -1094,13 +1130,11 @@ UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server)
         status = model_create_channel_alarm_condition(server, &snapshot.channel, condition_type_id);
         if (status != UA_STATUSCODE_GOOD)
         {
-            /* One channel's condition failing to build must not block the
-             * rest -- conditions are independent, unlike the transactional
-             * v0.4.2 channel-node build. */
             printf("[OPC UA]\tChannel alarm condition create failed for %s: 0x%x (%s)\n",
                    snapshot.channel.metadata.id != NULL ? snapshot.channel.metadata.id : "?",
                    status, UA_StatusCode_name(status));
             fflush(stdout);
+            return status;
         }
     }
 

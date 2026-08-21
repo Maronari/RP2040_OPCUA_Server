@@ -77,7 +77,13 @@ reboot and power loss (see [docs/known_limits.md](known_limits.md) and
 return the channel's exact built-in type for every sample, not only `Float`.
 A single response page never returns more than `HISTORY_SERVICE_MAX_RETURN_COUNT`
 (128) samples for one node; a bounded continuation point lets a client page
-through the rest of a channel's retained window. The Flash-backed ring is a
+through the rest of a channel's retained window. The model retains at most 16
+session-owned continuation points for 30 seconds. Points are also bound to the
+channel NodeId, requested range, direction, and ring generation. Exhaustion
+returns `BadNoContinuationPoints`; foreign, malformed, expired, released, or
+session-closed points return `BadContinuationPointInvalid`. Sampling that wraps
+the retained ring invalidates an outstanding point, so the client restarts its
+range query instead of receiving a skewed second page. The Flash-backed ring is a
 non-transactional cyclic buffer: losing the most recent, not-yet-flushed
 samples after power loss is accepted, documented behavior, but a torn or
 unreadable sample is detected and skipped, never exposed as valid data.

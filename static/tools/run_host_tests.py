@@ -24,6 +24,7 @@ SUITES = (
     "test_config_compat.py",
     "test_config_service_identity.py",
     "test_config_validate.py",
+    "test_stage_config_roundtrip.py",
     "test_v043_opcua_adapter_sources.py",
     "test_channel_model_contract.py",
     "test_verify_channel_model.py",

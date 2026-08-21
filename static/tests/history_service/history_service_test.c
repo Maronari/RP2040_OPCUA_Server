@@ -8,12 +8,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(PICO_ON_DEVICE)
+#include "drivers/history_flash_backend.h"
+#endif
+
 static TickType_t g_tick;
 static unsigned g_mutex_take_calls;
 static bool g_force_mutex_busy;
 #if defined(PICO_ON_DEVICE)
 static bool g_psram_ready;
 static bool g_psram_allocation_fails;
+static bool g_flash_backend_ready;
+static history_flash_backend_result_t g_flash_bind_result = HISTORY_FLASH_BACKEND_OK;
+static history_flash_backend_result_t g_flash_restore_result = HISTORY_FLASH_BACKEND_OK;
+static history_flash_backend_result_t g_flash_append_result = HISTORY_FLASH_BACKEND_OK;
 
 bool psram_allocator_is_ready(void) { return g_psram_ready; }
 void *psram_calloc(size_t count, size_t size)
@@ -31,26 +39,21 @@ void psram_free(void *ptr)
 
 /* The real drivers/history_flash_backend.c binds to hardware-only headers
  * (ota_layout.h, drivers/flash_operation_coordinator.h) that do not exist on
- * the host. This device-allocation test variant only exercises
- * history_service.c's PSRAM allocation-failure gating, so it links against
- * trivial stand-ins that report "unavailable" instead of the real backend;
- * history_service.c never calls bind/restore/append once
- * history_flash_backend_init_flash() reports ready == false. */
-#include "drivers/history_flash_backend.h"
+ * the host. These device-profile stand-ins deliberately exercise both an
+ * unavailable backend and ready-backend bind/restore/append failures. */
 
 void history_flash_backend_init_flash(history_flash_backend_t *backend)
 {
     memset(backend, 0, sizeof(*backend));
-    backend->ready = false;
+    backend->ready = g_flash_backend_ready;
 }
 
 history_flash_backend_result_t history_flash_backend_bind_channel(history_flash_backend_t *backend, uint8_t slot,
                                                                    const char *channel_id)
 {
-    (void)backend;
     (void)slot;
     (void)channel_id;
-    return HISTORY_FLASH_BACKEND_NOT_BOUND;
+    return backend->ready ? g_flash_bind_result : HISTORY_FLASH_BACKEND_NOT_BOUND;
 }
 
 history_flash_backend_result_t history_flash_backend_restore(history_flash_backend_t *backend, uint8_t slot,
@@ -59,22 +62,20 @@ history_flash_backend_result_t history_flash_backend_restore(history_flash_backe
                                                               history_flash_backend_restore_cb callback,
                                                               void *user_context)
 {
-    (void)backend;
     (void)slot;
     (void)scratch;
     (void)scratch_capacity;
     (void)callback;
     (void)user_context;
-    return HISTORY_FLASH_BACKEND_NOT_BOUND;
+    return backend->ready ? g_flash_restore_result : HISTORY_FLASH_BACKEND_NOT_BOUND;
 }
 
 history_flash_backend_result_t history_flash_backend_append(history_flash_backend_t *backend, uint8_t slot,
                                                              const history_flash_backend_record_t *record)
 {
-    (void)backend;
     (void)slot;
     (void)record;
-    return HISTORY_FLASH_BACKEND_NOT_BOUND;
+    return backend->ready ? g_flash_append_result : HISTORY_FLASH_BACKEND_NOT_BOUND;
 }
 #endif
 
@@ -166,6 +167,38 @@ int main(void)
 
     assert(history_service_init());
     assert(g_mutex_take_calls > 0u);
+
+#if defined(PICO_ON_DEVICE)
+    /* Persistence must fail closed when Flash initialization is unavailable:
+     * a caller can observe this before attempting HistoryRead. */
+    assert(history_service_get_channel_restore_status("channel.float") ==
+           HISTORY_SERVICE_RESTORE_STATUS_FLASH_UNAVAILABLE);
+
+    /* A ready backend plus a temporary restore-scratch allocation failure is
+     * also explicit; init succeeds only in the documented degraded state. */
+    g_flash_backend_ready = true;
+    g_psram_allocation_fails = true;
+    assert(history_service_init());
+    assert(history_service_get_channel_restore_status("channel.float") ==
+           HISTORY_SERVICE_RESTORE_STATUS_SCRATCH_ALLOCATION_FAILED);
+    g_psram_allocation_fails = false;
+
+    /* Ready-backend failures are never silently converted to an empty,
+     * apparently-good history window. */
+    g_flash_bind_result = HISTORY_FLASH_BACKEND_IO;
+    assert(history_service_init());
+    assert(history_service_get_channel_restore_status("channel.float") ==
+           HISTORY_SERVICE_RESTORE_STATUS_FLASH_BIND_FAILED);
+    g_flash_bind_result = HISTORY_FLASH_BACKEND_OK;
+    g_flash_restore_result = HISTORY_FLASH_BACKEND_IO;
+    assert(history_service_init());
+    assert(history_service_get_channel_restore_status("channel.float") ==
+           HISTORY_SERVICE_RESTORE_STATUS_FLASH_RESTORE_FAILED);
+    g_flash_restore_result = HISTORY_FLASH_BACKEND_OK;
+    assert(history_service_init());
+    assert(history_service_get_channel_restore_status("channel.float") ==
+           HISTORY_SERVICE_RESTORE_STATUS_READY);
+#endif
 
     /* Mixed value types: float and boolean channels are independently
      * claimed and read back with the correct owned data. */
@@ -309,6 +342,18 @@ int main(void)
                                                      &unknown_generation, &more, &busy) == 0u);
         assert(unknown_generation == 0u);
     }
+
+#if defined(PICO_ON_DEVICE)
+    /* Append is outside the history mutex, but a ready backend I/O failure
+     * still makes persistence explicitly degraded for subsequent reads. */
+    g_flash_append_result = HISTORY_FLASH_BACKEND_IO;
+    g_tick = 7000u;
+    assert(history_service_record_channel_sample("channel.float", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                                                  &(history_service_value_t){.f32 = 99.0f},
+                                                  SERVICE_QUALITY_GOOD, 1900000000000000ULL, 1u));
+    assert(history_service_get_channel_restore_status("channel.float") ==
+           HISTORY_SERVICE_RESTORE_STATUS_FLASH_APPEND_FAILED);
+#endif
 
     return 0;
 }

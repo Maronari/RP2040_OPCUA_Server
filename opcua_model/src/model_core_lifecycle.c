@@ -668,6 +668,11 @@ void model_core_task(void *argument)
         vTaskDelete(NULL);
     }
 
+    /* A configuration export can own almost 12 KiB until its CallResponse is
+     * encoded. Bound the full CallRequest, not only each individual method,
+     * so batched calls cannot multiply transient PSRAM without limit. */
+    config->maxNodesPerMethodCall = OPCUA_MAX_METHODS_PER_CALL;
+
     log_opcua_heap("Network layer configured");
 
     status = model_configure_application_uri(config);

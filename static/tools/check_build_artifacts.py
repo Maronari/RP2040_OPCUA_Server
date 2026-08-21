@@ -13,6 +13,7 @@ REQUIRED_RELATIVE_PATHS = (
     "app/basic_profile/device_profile_basic.elf",
     "app/basic_profile/device_profile_basic.uf2",
     "app/basic_profile/device_profile_basic.bin",
+    "app/basic_profile/device_profile_basic.elf.map",
     "config_export.json",
     "generated/ota_layout/ota_layout.json",
     "reports/size.txt",
@@ -67,6 +68,13 @@ def main() -> int:
             else:
                 reason = "empty"
             print(f"invalid: {relative} ({reason})")
+        return 1
+
+    map_path = build_dir / "app/basic_profile/device_profile_basic.elf.map"
+    map_text = map_path.read_text(encoding="utf-8", errors="replace")
+    if ".bss.ram_heap" in map_text or "g_lwip_ram_heap" not in map_text:
+        print("artifact-check: FAIL")
+        print("invalid: lwIP heap is not linked through the bounded PSRAM arena")
         return 1
 
     print("artifact-check: PASS")

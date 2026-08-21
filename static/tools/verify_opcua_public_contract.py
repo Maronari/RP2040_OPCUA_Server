@@ -20,7 +20,7 @@ EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
     "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
 )
 EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
-    "588a36b922fc35e73f79b8dc2ee2947ba57b8b364083f6571b255d44789bc8b5"
+    "4238557fcc352be919a096230a2eb852c2dbc29b1464a7f8a71ac1804ed757e3"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
@@ -96,10 +96,14 @@ V042_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
 # byte-identical.
 V043_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/opcua_model_internal.h",
+    "opcua_model/src/model_access.c",
+    "opcua_model/src/model_address_space.c",
+    "opcua_model/src/model_configuration.c",
     "opcua_model/src/model_core_lifecycle.c",
     "opcua_model/src/model_events.c",
     "opcua_model/src/model_history.c",
     "opcua_model/src/model_maintenance.c",
+    "opcua_model/src/model_security.c",
 })
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",

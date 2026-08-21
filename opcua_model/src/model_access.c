@@ -721,6 +721,11 @@ void model_close_session_secure_wrapper(UA_Server *server,
     model_session_context_t *wrapped_context = (model_session_context_t *)session_context;
     void *base_context = wrapped_context != NULL ? wrapped_context->base_context : NULL;
 
+    /* HistoryReadRaw points are session-owned.  Drop them before either the
+     * wrapped or default access-control context can be released, preventing
+     * a later session from inheriting a recycled context address. */
+    model_history_release_session_points(session_context);
+
     if (g_default_close_session != NULL)
     {
         g_default_close_session(server, ac, session_id, base_context);

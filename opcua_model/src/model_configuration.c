@@ -1069,8 +1069,15 @@ UA_StatusCode model_get_channel_config(UA_Server *server,
     }
 
     model_format_channel_config_json((size_t)slot_index, &channel, payload, sizeof(payload));
-    model_set_string_method_output(output_size, output, payload);
-    return UA_STATUSCODE_GOOD;
+    if (output_size == 0u || output == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    {
+        UA_String string_value = UA_STRING(payload);
+        status = UA_Variant_setScalarCopy(&output[0], &string_value, &UA_TYPES[UA_TYPES_STRING]);
+    }
+    return status;
 }
 
 UA_StatusCode model_list_drivers(UA_Server *server,
@@ -1119,7 +1126,7 @@ UA_StatusCode model_get_config_state(UA_Server *server,
                                             UA_Variant *output)
 {
     UA_StatusCode status;
-    char payload[384] = {0};
+    char *const payload = g_model_maintenance_export_payload;
     const bool reboot_required = model_is_reboot_required();
     (void)server;
     (void)session_id;
@@ -1135,12 +1142,25 @@ UA_StatusCode model_get_config_state(UA_Server *server,
         return status;
     }
 
-    if (!config_export_service_write_state_json(payload, sizeof(payload), reboot_required))
+    /* The model owns one bounded PSRAM scratch buffer. MaxNodesPerMethodCall
+     * is one, so the server encodes this persistent view before any method
+     * callback can reuse the payload. */
+    if (payload == NULL)
     {
-        model_set_string_method_output(output_size, output, "{}");
-        return UA_STATUSCODE_GOOD;
+        return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    }
+    if (!config_export_service_write_state_json(payload,
+                                                MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY,
+                                                reboot_required))
+    {
+        return UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED;
     }
 
-    model_set_string_method_output(output_size, output, payload);
-    return UA_STATUSCODE_GOOD;
+    if (output_size == 0u || output == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    return model_set_maintenance_export_method_output(output_size,
+                                                      output,
+                                                      strlen(payload));
 }

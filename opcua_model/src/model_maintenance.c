@@ -1803,6 +1803,8 @@ void model_process_trust_expiry_runtime(UA_Server *server,
  * which model_core_lifecycle.c only reaches after address-space build
  * (including channel nodes) has fully completed. */
 static bool g_model_channel_alarm_conditions_built;
+static TickType_t g_model_channel_alarm_conditions_retry_at;
+static UA_StatusCode g_model_channel_alarm_conditions_last_failure;
 
 void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t *state)
 {
@@ -1822,10 +1824,36 @@ void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t
     }
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
-    if (!g_model_channel_alarm_conditions_built)
+    if (!g_model_channel_alarm_conditions_built &&
+        (g_model_channel_alarm_conditions_retry_at == 0u ||
+         (TickType_t)(xTaskGetTickCount() - g_model_channel_alarm_conditions_retry_at) <
+             (TickType_t)(~(TickType_t)0u / 2u)))
     {
-        g_model_channel_alarm_conditions_built = true;
-        (void)model_build_channel_alarm_conditions(server);
+        const UA_StatusCode condition_status = model_build_channel_alarm_conditions(server);
+        TickType_t retry_delay = pdMS_TO_TICKS(1000u);
+
+        if (condition_status == UA_STATUSCODE_GOOD)
+        {
+            /* Set only after every eligible channel has a fully initialized
+             * condition instance and acknowledgement callback. */
+            g_model_channel_alarm_conditions_built = true;
+            g_model_channel_alarm_conditions_last_failure = UA_STATUSCODE_GOOD;
+            g_model_channel_alarm_conditions_retry_at = 0u;
+        }
+        else
+        {
+            if (condition_status != g_model_channel_alarm_conditions_last_failure)
+            {
+                /* Retain the deterministic fault for diagnostics without
+                 * repeatedly filling the bounded log/event paths. */
+                g_model_channel_alarm_conditions_last_failure = condition_status;
+            }
+            if (retry_delay == 0u)
+            {
+                retry_delay = 1u;
+            }
+            g_model_channel_alarm_conditions_retry_at = xTaskGetTickCount() + retry_delay;
+        }
     }
 #endif
 
@@ -2788,7 +2816,9 @@ UA_StatusCode model_export_maintenance_journal(
             return model_export_maintenance_failure(
                 session_context, continuation, UA_STATUSCODE_BADRESOURCEUNAVAILABLE);
     }
-    model_set_string_method_output(output_size, output, g_model_maintenance_export_payload);
+    status = model_set_maintenance_export_method_output(output_size, output, offset);
+    if (status != UA_STATUSCODE_GOOD)
+        return model_export_maintenance_failure(session_context, continuation, status);
     model_audit_maintenance_accept(session_context, "ExportMaintenanceJournal");
     return UA_STATUSCODE_GOOD;
 }

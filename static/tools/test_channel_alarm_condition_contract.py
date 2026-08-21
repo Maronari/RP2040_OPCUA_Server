@@ -78,6 +78,17 @@ def main() -> int:
             "condition builder must enumerate the live channel registry")
     require(r"alarm_service_value_type_is_eligible\(snapshot\.channel\.metadata\.value_type\)",
             events, "condition builder must reuse alarm_service's eligibility rule")
+    require(r'model_condition_set_two_state_id\(server,\s*created_id,\s*'
+            r'"EnabledState",\s*true\);[\s\S]*?'
+            r'model_condition_initialize_inactive\(server,\s*created_id,\s*'
+            r'"Channel alarm inactive"\);[\s\S]*?'
+            r'UA_Server_setConditionTwoStateVariableCallback',
+            events, "created channel conditions must be enabled before inactive initialization")
+    require(r'model_condition_set_two_state_id\(server,\s*created_id,\s*'
+            r'"EnabledState",\s*true\);[\s\S]*?'
+            r'if \(status != UA_STATUSCODE_GOOD\)[\s\S]*?'
+            r'UA_Server_deleteCondition\(server,\s*created_id,\s*source_id\)',
+            events, "condition enable failure must roll back the partial instance")
 
     # The OPC UA layer only reflects alarm_service state; it must not
     # evaluate thresholds itself (no direct threshold comparisons against
