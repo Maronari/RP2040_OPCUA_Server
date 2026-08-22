@@ -430,7 +430,7 @@ Remove the remaining temperature/singleton assumptions from history and alarms.
 ### Required implementation
 
 - [ ] Replace the one global `float` ring with typed, owned records and per-channel retention policy.
-- [ ] Allow bounded RAM, PSRAM and optional Flash backends selected per profile.
+- [ ] Store bounded per-channel history in a PSRAM ring with a bounded, non-transactional Flash-backed mirror for persistence across reboot/power loss. Single supported profile (`device_profile_basic`); no compile-time RAM-only or Flash-optional backend selection in this release.
 - [ ] Do not scan the complete history ring while interrupts/scheduling are globally locked.
 - [ ] Generalize OPC UA `HistoryRead` to every historized channel.
 - [ ] Implement bounded continuation points and maximum return counts.
