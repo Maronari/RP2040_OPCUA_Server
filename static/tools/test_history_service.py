@@ -15,7 +15,8 @@ def main() -> int:
         for name, defines in (("host", []), ("device-allocation", ["-DPICO_ON_DEVICE=1"])):
             executable = pathlib.Path(directory) / f"history_service_{name}.exe"
             subprocess.run([
-                "gcc", "-std=c11", "-Wall", "-Wextra", "-Werror", *defines,
+                "gcc", "-std=c11", "-Wall", "-Wextra", "-Werror",
+                "-DHISTORY_SERVICE_TEST_HOOKS=1", *defines,
                 f"-I{test_dir}", f"-I{root / 'services' / 'include'}", f"-I{root / 'port' / 'psram'}",
                 f"-I{root / 'drivers' / 'include'}",
                 str(root / "services" / "src" / "history_service.c"),

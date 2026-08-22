@@ -497,6 +497,7 @@ size_t history_service_read_channel_samples(const char *channel_id,
     size_t collected = 0u;
     size_t matched = 0u;
     size_t scanned = 0u;
+    uint32_t captured_generation = 0u;
     bool more = false;
     bool first_chunk = true;
 
@@ -539,9 +540,10 @@ size_t history_service_read_channel_samples(const char *channel_id,
 
         ring_count = ring->count;
         oldest_index = (ring->count >= HISTORY_SERVICE_CHANNEL_CAPACITY) ? ring->write_index : 0u;
+        captured_generation = ring->generation;
         if (out_generation != NULL)
         {
-            *out_generation = ring->generation;
+            *out_generation = captured_generation;
         }
     }
     history_service_unlock();
@@ -550,6 +552,16 @@ size_t history_service_read_channel_samples(const char *channel_id,
     {
         return 0u;
     }
+
+#if defined(HISTORY_SERVICE_TEST_HOOKS)
+    /* Host-only deterministic interleaving hook. Runs outside the lock,
+     * modelling an independent writer task racing between this call's
+     * initial ring_count/oldest_index/generation snapshot and its first
+     * chunk's lock/generation re-check below -- the gap before any chunk
+     * has been copied at all. */
+    extern void history_service_test_before_scan(const char *channel_id);
+    history_service_test_before_scan(channel_id);
+#endif
 
     while (scanned < ring_count)
     {
@@ -574,6 +586,48 @@ size_t history_service_read_channel_samples(const char *channel_id,
             break;
         }
         first_chunk = false;
+
+        /* oldest_index/ring_count were captured outside this lock hold (and,
+         * for chunk 2+, outside every earlier chunk's lock hold too). The
+         * writer task (history_service_record_channel_sample, driven from
+         * sensor_manager.c's sampling path) can run in the gap between lock
+         * holds and evict/overwrite ring slots via history_service_push_locked,
+         * which bumps generation on every eviction. If that happened, the
+         * oldest_index/ring_count mapping no longer describes the physical
+         * ring: sample_index below could now name a slot the writer has
+         * already overwritten with a newer, unrelated sample. Re-checking
+         * generation here, still under the lock that guards the copy below,
+         * catches that before trusting the mapping -- this is what stops a
+         * single multi-chunk call from silently returning corrupted,
+         * duplicated, or out-of-order samples. */
+        if (g_store->channels[ring_index].generation != captured_generation)
+        {
+            history_service_unlock();
+            if (collected == 0u)
+            {
+                /* Nothing from this call can be trusted yet; ask the caller
+                 * to retry the whole request rather than hand back samples
+                 * read through a mapping already known to be stale. */
+                if (out_busy != NULL)
+                {
+                    *out_busy = true;
+                }
+                return 0u;
+            }
+            /* Samples already collected were each copied atomically while
+             * the ring's generation still matched this call's snapshot, so
+             * they remain valid; only continuing the scan with the now-stale
+             * mapping is unsafe. out_generation still reports the originally
+             * captured value, so a follow-up call built on this page's
+             * continuation point will observe a different generation and be
+             * rejected by the existing cross-call check (see
+             * history_service.h and model_history_read_raw's
+             * observed_generation != requested_generation check) instead of
+             * silently paging over the change. */
+            more = true;
+            break;
+        }
+
         for (size_t offset = 0u; offset < chunk_size; ++offset)
         {
             const size_t position = scanned + offset;
@@ -590,6 +644,14 @@ size_t history_service_read_channel_samples(const char *channel_id,
             chunk[offset] = g_store->channels[ring_index].samples[sample_index];
         }
         history_service_unlock();
+
+#if defined(HISTORY_SERVICE_TEST_HOOKS)
+        /* Host-only deterministic interleaving hook. Runs outside the lock,
+         * modelling an independent writer task racing between this chunk's
+         * copy and the next chunk's lock/generation re-check above. */
+        extern void history_service_test_after_chunk(const char *channel_id, size_t chunk_start_scanned);
+        history_service_test_after_chunk(channel_id, scanned);
+#endif
 
         for (size_t offset = 0u; offset < chunk_size; ++offset)
         {

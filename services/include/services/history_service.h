@@ -145,6 +145,22 @@ bool history_service_get_channel_generation(const char *channel_id, uint32_t *ou
  * caller should issue a follow-up call with a larger skip_matches, quoting
  * the same out_generation as a validity check).  out_busy is set true only
  * when a lock could not be acquired at all and zero samples were returned.
+ *
+ * Because the scan releases and reacquires its lock between chunks, a
+ * concurrent write (history_service_record_channel_sample) can evict/
+ * overwrite ring slots mid-scan, not just between separate calls sharing a
+ * continuation point.  Every eviction bumps the ring's generation, so each
+ * chunk re-validates the generation captured at the start of this call,
+ * still under the lock that guards that chunk's copy, before trusting the
+ * oldest-index mapping.  If the generation changed: with nothing collected
+ * yet, this call returns zero samples with out_busy set (the caller should
+ * retry the whole request); with some samples already collected, this call
+ * stops early with out_more set and out_generation still reporting the
+ * value captured at this call's start, so a follow-up call quoting it back
+ * observes the new generation and is rejected as a stale continuation point
+ * rather than silently paging over the change.  Samples already placed in
+ * out_samples before such a stop are unaffected -- each chunk is copied
+ * atomically while its generation check still matches.
  */
 size_t history_service_read_channel_samples(const char *channel_id,
                                             uint32_t start_epoch_s,
