@@ -82,7 +82,26 @@ typedef enum
     HISTORY_SERVICE_RESTORE_STATUS_LOCK_BUSY
 } history_service_restore_status_t;
 
+/**
+ * @brief Allocate the per-channel PSRAM rings and bind/restore the Flash
+ *        backend.
+ *
+ * Allocates HISTORY_SERVICE_MAX_CHANNELS independent rings from PSRAM,
+ * creates the internal FreeRTOS mutex, and (on-device) binds and restores
+ * each channel's Flash-backed mirror before returning. Call once during
+ * platform init, before any HistoryRead surface is exposed. Failure leaves
+ * the service uninitialized; it never falls back to internal SRAM.
+ *
+ * @return true on success.
+ */
 bool history_service_init(void);
+
+/**
+ * @brief Clear every channel ring's in-memory state (not the Flash mirror).
+ *
+ * Intended for host-test reset between cases; not used in normal firmware
+ * operation.
+ */
 void history_service_reset(void);
 
 /* Returns the bounded, service-owned persistence state for channel_id. A

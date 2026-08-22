@@ -69,7 +69,25 @@ typedef struct
     uint32_t debounce_deadline_ms;
 } alarm_condition_status_t;
 
+/**
+ * @brief Allocate the per-channel condition array and bind one condition
+ *        instance to every alarm-eligible channel present at startup.
+ *
+ * Eligibility is decided by alarm_service_value_type_is_eligible(). Call
+ * once during platform init, after the channel registry is populated.
+ *
+ * @return true on success.
+ */
 bool alarm_service_init(void);
+
+/**
+ * @brief FreeRTOS task entry point that periodically evaluates every alarm
+ *        condition.
+ *
+ * Calls alarm_service_evaluate_all() on a fixed period; never returns.
+ *
+ * @param argument Unused; required by the FreeRTOS task-entry signature.
+ */
 void alarm_service_task(void *argument);
 
 /* One bounded evaluation pass over every alarm-eligible channel.  Exposed
