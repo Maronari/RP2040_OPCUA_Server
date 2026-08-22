@@ -9,21 +9,58 @@
 #include "ota_layout.h"
 #endif
 
+/*
+ * Record layout (32 bytes total, unchanged since the byte budget is frozen
+ * -- see docs/releases/v0.4.3.md T3 and HISTORY_FLASH_BACKEND_RECORD_SIZE's
+ * _Static_assert chain in the header). Widening channel_id_hash from 1 byte
+ * to 4 bytes (see the header's "Channel identity binding" comment) required
+ * finding 3 bytes elsewhere within the fixed 32-byte record: SEQUENCE
+ * narrows from 64 to 32 bits.  This backend already compares sequence
+ * numbers with plain unsigned '>' (no modular/serial-wraparound handling,
+ * unlike drivers/maintenance_journal_backend.c's serial_newer()), so a
+ * 32-bit counter changes nothing about that comparison logic -- it only
+ * changes the number of appends before wraparound, from practically
+ * unbounded to ~4.29 billion per channel (physical-slot lifetime), which is
+ * decades of continuous operation even at a sustained 10 Hz record rate and
+ * is judged an acceptable trade against the identity-collision risk this
+ * change closes.
+ *
+ * The freed bytes also fund an explicit 1-byte RECORD_FORMAT_VERSION field
+ * at the exact offset the pre-widening layout always wrote as its fixed
+ * 0xA5 RECORD_MARKER_VALID byte (see below): this makes the format bump
+ * self-protecting without needing any additional bytes, and follows the
+ * same "explicit schema/version field embedded in the record, checked on
+ * decode" precedent as MAINTENANCE_JOURNAL_SCHEMA_VERSION /
+ * RECORD_OFFSET_SCHEMA in maintenance_journal_backend.c.
+ */
 enum
 {
-    RECORD_OFFSET_SEQUENCE = 0u,
-    RECORD_OFFSET_TIMESTAMP = 8u,
-    RECORD_OFFSET_RAW_VALUE = 16u,
-    RECORD_OFFSET_VALUE_TYPE = 24u,
-    RECORD_OFFSET_QUALITY = 25u,
-    RECORD_OFFSET_HASH = 26u,
-    RECORD_OFFSET_MARKER = 27u,
-    RECORD_OFFSET_CRC = 28u,
+    RECORD_OFFSET_SEQUENCE = 0u,     /* 4 bytes, uint32 (was 8 bytes/uint64) */
+    RECORD_OFFSET_TIMESTAMP = 4u,    /* 8 bytes */
+    RECORD_OFFSET_RAW_VALUE = 12u,   /* 8 bytes */
+    RECORD_OFFSET_VALUE_TYPE = 20u,  /* 1 byte */
+    RECORD_OFFSET_QUALITY = 21u,     /* 1 byte */
+    RECORD_OFFSET_HASH = 22u,        /* 4 bytes, uint32 (was 1 byte) */
+    RECORD_OFFSET_MARKER = 26u,      /* 1 byte */
+    RECORD_OFFSET_FORMAT = 27u,      /* 1 byte -- the old layout's fixed marker offset */
+    RECORD_OFFSET_CRC = 28u,         /* 4 bytes */
     RECORD_CRC_COVERED_SIZE = 28u
 };
 
 #define RECORD_MARKER_VALID 0xA5u
 #define RECORD_MARKER_ERASED 0xFFu
+
+/* Bumped from the implicit pre-widening layout (8-bit channel_id_hash,
+ * 64-bit sequence, no format byte) to this 32-bit-hash/32-bit-sequence
+ * layout. Deliberately != RECORD_MARKER_VALID (0xA5) and != 0xFF (erased):
+ * every record written by the pre-widening backend always has 0xA5 at this
+ * exact byte offset (its old RECORD_OFFSET_MARKER), so decode_record()'s
+ * format check below is a 100% reliable, deterministic rejection of any
+ * old-format record -- not merely a probabilistic one -- because it does
+ * not depend on the CRC (which is computed over the same physical byte
+ * range in both layouts and therefore still validates for genuine
+ * old-format data) or on the widened hash coincidentally mismatching. */
+#define RECORD_FORMAT_VERSION 0x02u
 
 typedef enum
 {
@@ -75,7 +112,12 @@ static uint64_t read_u64(const uint8_t *p)
     return v;
 }
 
-static uint8_t hash_channel_id(const char *channel_id)
+/* Full 32-bit FNV-1a hash of channel_id, unfolded (previous revisions of
+ * this backend XOR-folded this down to 8 bits for channel_id_hash; the
+ * fold is gone, not the hash primitive -- see the header's "Channel
+ * identity binding" comment for why the false-accept rate this bounds
+ * matters). */
+static uint32_t hash_channel_id(const char *channel_id)
 {
     uint32_t hash = 2166136261u;
     const char *p = channel_id;
@@ -90,7 +132,7 @@ static uint8_t hash_channel_id(const char *channel_id)
         hash *= 16777619u;
         ++p;
     }
-    return (uint8_t)(hash ^ (hash >> 24) ^ (hash >> 16) ^ (hash >> 8));
+    return hash;
 }
 
 static uint64_t pack_raw_value(const history_flash_backend_value_t *value,
@@ -160,22 +202,23 @@ static void unpack_raw_value(uint64_t raw, telemetry_channel_value_type_t type,
     }
 }
 
-static void encode_record(const history_flash_backend_record_t *record, uint64_t sequence,
-                          uint8_t channel_id_hash, uint8_t out[HISTORY_FLASH_BACKEND_RECORD_SIZE])
+static void encode_record(const history_flash_backend_record_t *record, uint32_t sequence,
+                          uint32_t channel_id_hash, uint8_t out[HISTORY_FLASH_BACKEND_RECORD_SIZE])
 {
     memset(out, 0xFF, HISTORY_FLASH_BACKEND_RECORD_SIZE);
-    write_u64(&out[RECORD_OFFSET_SEQUENCE], sequence);
+    write_u32(&out[RECORD_OFFSET_SEQUENCE], sequence);
     write_u64(&out[RECORD_OFFSET_TIMESTAMP], record->source_timestamp_unix_us);
     write_u64(&out[RECORD_OFFSET_RAW_VALUE], pack_raw_value(&record->value, record->value_type));
     out[RECORD_OFFSET_VALUE_TYPE] = (uint8_t)record->value_type;
     out[RECORD_OFFSET_QUALITY] = (uint8_t)record->quality;
-    out[RECORD_OFFSET_HASH] = channel_id_hash;
+    write_u32(&out[RECORD_OFFSET_HASH], channel_id_hash);
     out[RECORD_OFFSET_MARKER] = RECORD_MARKER_VALID;
+    out[RECORD_OFFSET_FORMAT] = RECORD_FORMAT_VERSION;
     write_u32(&out[RECORD_OFFSET_CRC], maintenance_journal_codec_crc32(out, RECORD_CRC_COVERED_SIZE));
 }
 
 static record_state_t decode_record(const uint8_t in[HISTORY_FLASH_BACKEND_RECORD_SIZE],
-                                    uint8_t expected_hash, uint64_t *out_sequence,
+                                    uint32_t expected_hash, uint32_t *out_sequence,
                                     history_flash_backend_record_t *out_record)
 {
     if (in[RECORD_OFFSET_MARKER] == RECORD_MARKER_ERASED)
@@ -197,16 +240,26 @@ static record_state_t decode_record(const uint8_t in[HISTORY_FLASH_BACKEND_RECOR
     {
         return RECORD_STATE_CORRUPT;
     }
-    if (in[RECORD_OFFSET_HASH] != expected_hash)
+    if (in[RECORD_OFFSET_FORMAT] != RECORD_FORMAT_VERSION)
     {
-        /* CRC-consistent but belongs to a different channel identity than
-         * currently bound to this physical slot (e.g. configuration changed
-         * across reboot). Never expose it as this channel's history. */
+        /* Either a genuinely unknown future format, or -- the case this
+         * exists to guarantee -- a record written by the pre-widening
+         * backend, whose CRC is byte-range-identical and would otherwise
+         * still validate under the new field layout. Never decode it under
+         * the current schema. */
+        return RECORD_STATE_CORRUPT;
+    }
+    if (read_u32(&in[RECORD_OFFSET_HASH]) != expected_hash)
+    {
+        /* CRC-consistent and current-format but belongs to a different
+         * channel identity than currently bound to this physical slot (e.g.
+         * configuration changed across reboot). Never expose it as this
+         * channel's history. */
         return RECORD_STATE_CORRUPT;
     }
     if (out_sequence != NULL)
     {
-        *out_sequence = read_u64(&in[RECORD_OFFSET_SEQUENCE]);
+        *out_sequence = read_u32(&in[RECORD_OFFSET_SEQUENCE]);
     }
     if (out_record != NULL)
     {
@@ -291,11 +344,11 @@ history_flash_backend_result_t history_flash_backend_restore(history_flash_backe
     history_flash_backend_channel_state_t *state;
     uint32_t channel_base;
     uint8_t pages_used[HISTORY_FLASH_BACKEND_SECTORS_PER_CHANNEL] = {0};
-    uint64_t sector_max_sequence[HISTORY_FLASH_BACKEND_SECTORS_PER_CHANNEL] = {0};
+    uint32_t sector_max_sequence[HISTORY_FLASH_BACKEND_SECTORS_PER_CHANNEL] = {0};
     bool sector_has_sequence[HISTORY_FLASH_BACKEND_SECTORS_PER_CHANNEL] = {false, false};
     size_t entry_count = 0u;
     int sector_to_drop = -1;
-    uint64_t max_replayed_sequence = 0u;
+    uint32_t max_replayed_sequence = 0u;
     bool has_replayed_sequence = false;
 
     if (backend == NULL || !backend->ready || slot >= HISTORY_FLASH_BACKEND_CHANNEL_COUNT ||
@@ -335,7 +388,7 @@ history_flash_backend_result_t history_flash_backend_restore(history_flash_backe
             for (uint8_t record_index = 0u; record_index < HISTORY_FLASH_BACKEND_RECORDS_PER_PAGE; ++record_index)
             {
                 const uint8_t *record_bytes = &g_restore_page[(size_t)record_index * HISTORY_FLASH_BACKEND_RECORD_SIZE];
-                uint64_t sequence = 0u;
+                uint32_t sequence = 0u;
                 history_flash_backend_record_t decoded = {0};
                 const record_state_t decoded_state =
                     decode_record(record_bytes, state->channel_id_hash, &sequence, &decoded);

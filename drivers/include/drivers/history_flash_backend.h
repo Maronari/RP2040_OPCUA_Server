@@ -77,18 +77,42 @@
  * 131072 == 128 KiB, matching the OTA_HISTORY_* region carved out of
  * ota/cmake/ota_layout.cmake.
  *
- * Channel identity binding: each record additionally carries a 1-byte
- * channel_id_hash (a non-cryptographic fold of the owning channel's stable
- * id).  On restore, the caller (services/history_service.c) recomputes the
- * hash for the channel_id it currently intends to bind to this physical
- * slot index and passes it in; a record whose stored hash does not match is
- * treated as foreign data left over from a different configuration (e.g. a
- * channel list edited between reboots) and is skipped, never exposed as
- * this channel's history.  This is a best-effort collision-bounded check
- * (1/256 false-accept rate on an unrelated id), not a cryptographic
- * guarantee; the full-fidelity id string is owned by the caller's PSRAM
- * ring, not replicated into every 32-byte Flash record, to stay inside the
- * budget above.
+ * Channel identity binding: each record additionally carries a 4-byte
+ * channel_id_hash (the full, unfolded 32-bit FNV-1a hash of the owning
+ * channel's stable id -- the same hash primitive already used for this
+ * check, simply no longer truncated).  On restore, the caller
+ * (services/history_service.c) recomputes the hash for the channel_id it
+ * currently intends to bind to this physical slot index and passes it in; a
+ * record whose stored hash does not match is treated as foreign data left
+ * over from a different configuration and is skipped, never exposed as this
+ * channel's history.  Physical slot assignment (services/history_service.c's
+ * first-available-ring-index claim over the channel registry, walked in
+ * registry index order) is NOT guaranteed stable across a reconfiguration
+ * that adds, removes, or reorders channels: the same physical slot can end
+ * up bound to a completely different channel_id after a reboot with an
+ * edited channel list, with only this hash to distinguish genuine records
+ * from foreign ones left behind by the previous occupant. This is still a
+ * best-effort collision-bounded check, not a cryptographic guarantee -- two
+ * distinct channel ids could theoretically hash identically, in which case
+ * foreign data would be silently accepted -- but widening from 8 to 32 bits
+ * lowers the false-accept rate on an unrelated id from 1/256 to 1/2^32. This
+ * field is the sole persisted defense against misattributing restored Flash
+ * history to the wrong channel after a config change, so its width directly
+ * bounds that risk. The full-fidelity id string itself is owned by the
+ * caller's PSRAM ring, not replicated into every 32-byte Flash record, to
+ * stay inside the budget above.
+ *
+ * Record format version: to make the 8-to-32-bit widening safe against
+ * misreading old-format data, every record also carries a 1-byte
+ * format-version marker (RECORD_FORMAT_VERSION in
+ * history_flash_backend.c), occupying the exact physical byte offset the
+ * pre-widening layout always wrote as its fixed 0xA5 valid-marker byte.  A
+ * record written under the old 8-bit-hash/64-bit-sequence layout therefore
+ * always reads back with that byte equal to 0xA5, which can never equal the
+ * current RECORD_FORMAT_VERSION; decode treats the mismatch as
+ * corrupt/foreign and skips the record, so pre-widening Flash contents are
+ * never misread as valid post-widening records.  This mirrors how
+ * drivers/maintenance_journal_backend.c versions its own record schema.
  */
 
 #define HISTORY_FLASH_BACKEND_CHANNEL_COUNT PLATFORM_CHANNEL_LIMIT
@@ -136,7 +160,7 @@ typedef struct
  * restore() call -- keeping this driver itself allocator-agnostic. */
 typedef struct
 {
-    uint64_t sequence;
+    uint32_t sequence;
     uint8_t sector;
     history_flash_backend_record_t record;
 } history_flash_backend_scan_entry_t;
@@ -158,11 +182,11 @@ typedef struct
 typedef struct
 {
     bool bound;
-    uint8_t channel_id_hash;
+    uint32_t channel_id_hash;
     uint8_t active_sector; /* 0 or 1 */
     uint8_t next_page_in_sector; /* 0..HISTORY_FLASH_BACKEND_PAGES_PER_SECTOR */
     uint8_t staging_count; /* 0..HISTORY_FLASH_BACKEND_RECORDS_PER_PAGE-1 while accumulating */
-    uint64_t next_sequence;
+    uint32_t next_sequence;
     uint8_t staging_page[HISTORY_FLASH_BACKEND_PAGE_SIZE];
 } history_flash_backend_channel_state_t;
 

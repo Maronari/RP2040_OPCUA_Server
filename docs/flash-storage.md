@@ -20,6 +20,22 @@ layout inside this region (a non-transactional cyclic buffer, unlike the
 maintenance journal) and `docs/releases/v0.4.3.md` for the frozen budget
 rationale.
 
+Each 32-byte per-sample record binds to its owning channel with a 4-byte
+`channel_id_hash` (the full, unfolded 32-bit FNV-1a hash of the channel's
+stable id) rather than the physical channel slot index: since slot
+assignment is a first-available claim over the channel registry made fresh
+at every boot (`services/history_service.c`), it is not guaranteed stable
+across a reconfiguration that adds, removes, or reorders channels, and a
+slot can end up bound to a different channel_id after such a reboot. A
+1-byte `RECORD_FORMAT_VERSION` marker (occupying the exact offset a
+pre-2026-08-22 record always wrote as its fixed valid-marker byte) makes
+this widening self-versioning: records written under the prior 8-bit-hash
+layout are deterministically rejected as corrupt/foreign on restore rather
+than risk misattributing history to the wrong channel, following the same
+embedded-schema-version precedent as `maintenance_journal_backend`'s record
+schema field. See `drivers/src/history_flash_backend.c` for the exact byte
+offsets.
+
 Application Flash mutations are serialized by the statically allocated Flash
 operation coordinator. Each lock hold performs one aligned 4 KiB erase or one
 complete aligned 256-byte page program through `flash_safe_execute`. Timeouts,

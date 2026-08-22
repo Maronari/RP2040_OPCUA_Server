@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "services/maintenance_journal_codec.h"
+
 /* NOR-flash-realistic mock: program can only clear bits (AND semantics);
  * erase sets a whole 4 KiB sector back to 0xFF. This is large enough to
  * cover every one of the 16 physical channel slots so offset math across
@@ -254,10 +256,16 @@ static void test_torn_record_is_skipped(void)
 
     /* Simulate power loss mid-write corrupting one record's payload bytes
      * (NOR flash can only clear further bits, so flipping a payload byte
-     * toward 0x00 is a physically realizable torn-write outcome). */
+     * toward 0x00 is a physically realizable torn-write outcome). Target the
+     * first byte of the raw-value field (record-relative offset 12, see
+     * RECORD_OFFSET_RAW_VALUE in drivers/src/history_flash_backend.c): for
+     * record index 3 the raw value is 3, so that byte is non-zero and
+     * clearing it is guaranteed to change the CRC-covered bytes (unlike a
+     * fixed offset that could land on an already-zero byte of a
+     * variable-width field and silently no-op). */
     {
         const uint32_t channel_base = 1u * HISTORY_FLASH_BACKEND_CHANNEL_REGION_SIZE_BYTES;
-        g_flash[channel_base + 3u * HISTORY_FLASH_BACKEND_RECORD_SIZE + 9u] = 0x00u;
+        g_flash[channel_base + 3u * HISTORY_FLASH_BACKEND_RECORD_SIZE + 12u] = 0x00u;
     }
 
     {
@@ -378,6 +386,106 @@ static void test_interrupted_swap_recovers_newer_generation(void)
     }
 }
 
+/* Regression coverage for widening channel_id_hash from 8 to 32 bits: a
+ * record hand-crafted exactly as the pre-widening backend would have
+ * written it must never be decoded as valid under the current layout, even
+ * though its CRC32 (computed over the same [0,28) byte range in both
+ * layouts) still validates. Only the new RECORD_FORMAT_VERSION byte -- at
+ * the exact offset the old layout always wrote as its fixed 0xA5
+ * valid-marker byte -- can and does catch this. */
+static void test_old_format_record_is_rejected(void)
+{
+    history_flash_backend_t backend;
+    replay_capture_t capture = {0};
+    uint8_t old_record[HISTORY_FLASH_BACKEND_RECORD_SIZE];
+    uint32_t channel_base;
+
+    reset_flash();
+    memset(old_record, 0xFF, sizeof(old_record));
+    /* Old layout: RECORD_OFFSET_SEQUENCE = 0, 8 bytes (uint64). */
+    for (size_t i = 0u; i < 8u; ++i)
+    {
+        old_record[0u + i] = (uint8_t)(0x1122334455667788ULL >> (8u * i));
+    }
+    /* Old layout: RECORD_OFFSET_TIMESTAMP = 8, 8 bytes. */
+    for (size_t i = 0u; i < 8u; ++i)
+    {
+        old_record[8u + i] = (uint8_t)(9000ULL >> (8u * i));
+    }
+    /* Old layout: RECORD_OFFSET_RAW_VALUE = 16, 8 bytes. */
+    for (size_t i = 0u; i < 8u; ++i)
+    {
+        old_record[16u + i] = (uint8_t)(42ULL >> (8u * i));
+    }
+    old_record[24] = (uint8_t)TELEMETRY_CHANNEL_VALUE_UINT32; /* old RECORD_OFFSET_VALUE_TYPE */
+    old_record[25] = (uint8_t)SERVICE_QUALITY_GOOD;           /* old RECORD_OFFSET_QUALITY */
+    /* Old RECORD_OFFSET_HASH (1 byte) deliberately chosen to equal 0xA5:
+     * this byte lands on the *new* layout's RECORD_OFFSET_MARKER, so the
+     * new marker check spuriously passes too -- proving the format check,
+     * not the marker check, is what rejects this record. */
+    old_record[26] = 0xA5u;
+    old_record[27] = 0xA5u; /* old RECORD_OFFSET_MARKER (RECORD_MARKER_VALID) */
+    {
+        const uint32_t crc = maintenance_journal_codec_crc32(old_record, 28u);
+
+        for (size_t i = 0u; i < 4u; ++i)
+        {
+            old_record[28u + i] = (uint8_t)(crc >> (8u * i));
+        }
+    }
+
+    channel_base = 9u * HISTORY_FLASH_BACKEND_CHANNEL_REGION_SIZE_BYTES;
+    memcpy(&g_flash[channel_base], old_record, sizeof(old_record));
+
+    history_flash_backend_init(&backend, &g_mock_storage);
+    assert(history_flash_backend_bind_channel(&backend, 9u, "channel.upgraded") == HISTORY_FLASH_BACKEND_OK);
+    assert(history_flash_backend_restore(&backend, 9u, g_restore_scratch, HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL, capture_replay, &capture) == HISTORY_FLASH_BACKEND_OK);
+
+    assert(capture.count == 0u);
+    assert(backend.channels[9].next_sequence == 0u);
+}
+
+/* Regression coverage that channel_id_hash is genuinely a full 32-bit value
+ * now, not an 8-bit value zero-extended into a wider field: two distinct
+ * channel ids must produce distinct stored hashes, and the upper three
+ * bytes of the hash (which an unwidened 8-bit scheme could never populate)
+ * must not all be zero. */
+static void test_channel_id_hash_uses_full_32_bits(void)
+{
+    history_flash_backend_t backend;
+    replay_capture_t capture_a = {0};
+    replay_capture_t capture_b = {0};
+    /* RECORD_OFFSET_HASH in drivers/src/history_flash_backend.c. */
+    const uint32_t hash_offset = 22u;
+
+    reset_flash();
+    history_flash_backend_init(&backend, &g_mock_storage);
+    assert(history_flash_backend_bind_channel(&backend, 4u, "channel.hash.a") == HISTORY_FLASH_BACKEND_OK);
+    assert(history_flash_backend_bind_channel(&backend, 6u, "channel.hash.b") == HISTORY_FLASH_BACKEND_OK);
+    assert(history_flash_backend_restore(&backend, 4u, g_restore_scratch, HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL, capture_replay, &capture_a) == HISTORY_FLASH_BACKEND_OK);
+    assert(history_flash_backend_restore(&backend, 6u, g_restore_scratch, HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL, capture_replay, &capture_b) == HISTORY_FLASH_BACKEND_OK);
+
+    for (size_t i = 0u; i < HISTORY_FLASH_BACKEND_RECORDS_PER_PAGE; ++i)
+    {
+        const history_flash_backend_record_t record_a = make_record(TELEMETRY_CHANNEL_VALUE_UINT32, 6000u + i, i);
+        const history_flash_backend_record_t record_b = make_record(TELEMETRY_CHANNEL_VALUE_UINT32, 7000u + i, i);
+
+        assert(history_flash_backend_append(&backend, 4u, &record_a) == HISTORY_FLASH_BACKEND_OK);
+        assert(history_flash_backend_append(&backend, 6u, &record_b) == HISTORY_FLASH_BACKEND_OK);
+    }
+
+    {
+        const uint32_t base_a = 4u * HISTORY_FLASH_BACKEND_CHANNEL_REGION_SIZE_BYTES;
+        const uint32_t base_b = 6u * HISTORY_FLASH_BACKEND_CHANNEL_REGION_SIZE_BYTES;
+        const uint8_t *hash_a = &g_flash[base_a + hash_offset];
+        const uint8_t *hash_b = &g_flash[base_b + hash_offset];
+
+        assert(memcmp(hash_a, hash_b, 4u) != 0);
+        assert(hash_a[1] != 0u || hash_a[2] != 0u || hash_a[3] != 0u);
+        assert(hash_b[1] != 0u || hash_b[2] != 0u || hash_b[3] != 0u);
+    }
+}
+
 int main(void)
 {
     test_empty_restore();
@@ -386,6 +494,8 @@ int main(void)
     test_torn_record_is_skipped();
     test_foreign_channel_hash_mismatch_is_skipped();
     test_interrupted_swap_recovers_newer_generation();
+    test_old_format_record_is_rejected();
+    test_channel_id_hash_uses_full_32_bits();
     printf("history flash backend host suite: PASS\n");
     return 0;
 }
