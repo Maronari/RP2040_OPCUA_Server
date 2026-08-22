@@ -938,6 +938,7 @@ void model_process_alarm_conditions(UA_Server *server, model_event_runtime_state
 /* v0.4.3 per-channel alarm condition model (T6), defined in model_events.c. */
 UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server);
 void model_process_channel_alarm_conditions(UA_Server *server);
+UA_StatusCode model_fix_condition_method_arguments(UA_Server *server);
 UA_StatusCode model_set_event_bool_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_Boolean value);
 UA_StatusCode model_set_event_uint32_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_UInt32 value);
 UA_StatusCode model_set_event_float_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_Float value);

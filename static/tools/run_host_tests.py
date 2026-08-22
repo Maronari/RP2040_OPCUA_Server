@@ -42,6 +42,7 @@ SUITES = (
     "test_ota_state.py",
     "test_alarm_service.py",
     "test_channel_alarm_condition_contract.py",
+    "test_condition_method_arguments_contract.py",
     "test_rp2_ua_datetime_clock.py",
     "test_w5x00_transport.py",
     "test_open62541_lwip_listener.py",

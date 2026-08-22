@@ -448,6 +448,21 @@ UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return UA_STATUSCODE_GOOD;
     }
 
+    /* Work around this firmware's compiled-in namespace zero leaving the
+     * standard ConditionRefresh/ConditionRefresh2/Acknowledge/AddComment
+     * Methods' InputArguments value empty; see model_events.c for details.
+     * Must run before any client can call these shared, namespace-0 Method
+     * nodes. */
+    status = model_fix_condition_method_arguments(server);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tA&C condition Method argument fix-up failed: 0x%x (%s)\n",
+               status, UA_StatusCode_name(status));
+        fflush(stdout);
+        g_model_alarm_conditions_available = false;
+        return status;
+    }
+
     status = model_enable_condition_source(server,
                                            model_device_node_id(),
                                            model_security_node_id());

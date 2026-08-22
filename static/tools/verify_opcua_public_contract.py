@@ -20,7 +20,7 @@ EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
     "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
 )
 EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
-    "4238557fcc352be919a096230a2eb852c2dbc29b1464a7f8a71ac1804ed757e3"
+    "0f8e85b8477ff3edc77968806ad0cc509c3cfafd81594cc6318915ff48a00bf3"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.

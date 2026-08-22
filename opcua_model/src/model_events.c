@@ -1317,4 +1317,107 @@ void model_process_channel_alarm_conditions(UA_Server *server)
     }
 }
 
+typedef struct
+{
+    const char *name;
+    UA_NodeId data_type;
+} model_method_argument_spec_t;
+
+static UA_StatusCode model_write_method_input_arguments(UA_Server *server,
+                                                         UA_NodeId input_arguments_node,
+                                                         const model_method_argument_spec_t *specs,
+                                                         size_t spec_count)
+{
+    UA_Argument arguments[2];
+    UA_Variant value;
+    UA_StatusCode status;
+
+    if (spec_count == 0u || spec_count > (sizeof(arguments) / sizeof(arguments[0])))
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    for (size_t index = 0u; index < spec_count; ++index)
+    {
+        UA_Argument_init(&arguments[index]);
+        arguments[index].name = UA_STRING((char *)specs[index].name);
+        arguments[index].dataType = specs[index].data_type;
+        arguments[index].valueRank = UA_VALUERANK_SCALAR;
+        arguments[index].description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)specs[index].name);
+    }
+
+    UA_Variant_init(&value);
+    status = UA_Variant_setArrayCopy(&value, arguments, spec_count, &UA_TYPES[UA_TYPES_ARGUMENT]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = UA_Server_writeValue(server, input_arguments_node, value);
+    UA_Variant_clear(&value);
+    return status;
+}
+
+/*
+ * This firmware's compiled-in namespace-zero data leaves the InputArguments
+ * value empty (Null Variant) for every standard Alarms & Conditions Method
+ * that takes parameters (ConditionRefresh, ConditionRefresh2, Acknowledge,
+ * AddComment) -- confirmed by reading those nodes live during v0.4.3 hardware
+ * verification. open62541's generic Method dispatcher
+ * (checkAdjustArguments()) requires a populated Argument[] value on that node
+ * before it will invoke the callback at all, so every call to one of these
+ * Methods failed with BadInternalError before reaching this file's own
+ * callback code, regardless of the caller-supplied EventId/SubscriptionId.
+ * Populate the standard Part 9 argument signatures once at startup so the
+ * shared Method nodes behave like a normal open62541 build; this writes
+ * static namespace-0 node metadata, not per-condition or per-channel state.
+ */
+UA_StatusCode model_fix_condition_method_arguments(UA_Server *server)
+{
+    model_method_argument_spec_t refresh_args[1];
+    model_method_argument_spec_t refresh2_args[2];
+    model_method_argument_spec_t event_id_comment_args[2];
+    UA_StatusCode status;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    refresh_args[0].name = "SubscriptionId";
+    refresh_args[0].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_UINT32);
+
+    refresh2_args[0].name = "SubscriptionId";
+    refresh2_args[0].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_UINT32);
+    refresh2_args[1].name = "MonitoredItemId";
+    refresh2_args[1].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_UINT32);
+
+    event_id_comment_args[0].name = "EventId";
+    event_id_comment_args[0].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_BYTESTRING);
+    event_id_comment_args[1].name = "Comment";
+    event_id_comment_args[1].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_LOCALIZEDTEXT);
+
+    status = model_write_method_input_arguments(
+        server, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH_INPUTARGUMENTS),
+        refresh_args, 1u);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_method_input_arguments(
+            server, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH2_INPUTARGUMENTS),
+            refresh2_args, 2u);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_method_input_arguments(
+            server, UA_NODEID_NUMERIC(0, UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_ACKNOWLEDGE_INPUTARGUMENTS),
+            event_id_comment_args, 2u);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_method_input_arguments(
+            server, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_ADDCOMMENT_INPUTARGUMENTS),
+            event_id_comment_args, 2u);
+    }
+    return status;
+}
+
 #endif /* UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS */

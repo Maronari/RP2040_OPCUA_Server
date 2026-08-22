@@ -55451,14 +55451,38 @@ checkAdjustArguments(UA_Server *server, UA_Session *session,
                      UA_Variant *args, UA_StatusCode *inputArgumentResults) {
     /* Verify that we have a Variant containing UA_Argument (scalar or array) in
      * the "InputArguments" node */
-    if(argRequirements->valueSourceType != UA_VALUESOURCETYPE_INTERNAL)
+    if(argRequirements->valueSourceType != UA_VALUESOURCETYPE_INTERNAL) {
+        /* RP2040 diagnostic: pinpoint which Arguments node lacks an internal
+         * value source (v0.4.3 Acknowledge/ConditionRefresh BadInternalError
+         * investigation). Remove once root cause is confirmed. */
+        UA_LOG_ERROR(server->config.logging, UA_LOGCATEGORY_SERVER,
+                     "checkAdjustArguments: Arguments node ns=%u;i=%u has "
+                     "valueSourceType=%d (expected INTERNAL=%d)",
+                     argRequirements->head.nodeId.namespaceIndex,
+                     argRequirements->head.nodeId.identifier.numeric,
+                     (int)argRequirements->valueSourceType,
+                     (int)UA_VALUESOURCETYPE_INTERNAL);
         return UA_STATUSCODE_BADINTERNALERROR;
-    if(!argRequirements->valueSource.internal.value.hasValue)
+    }
+    if(!argRequirements->valueSource.internal.value.hasValue) {
+        UA_LOG_ERROR(server->config.logging, UA_LOGCATEGORY_SERVER,
+                     "checkAdjustArguments: Arguments node ns=%u;i=%u has an "
+                     "internal value source but hasValue=false",
+                     argRequirements->head.nodeId.namespaceIndex,
+                     argRequirements->head.nodeId.identifier.numeric);
         return UA_STATUSCODE_BADINTERNALERROR;
+    }
 
     const UA_Variant *argVal = &argRequirements->valueSource.internal.value.value;
-    if(argVal->type != &UA_TYPES[UA_TYPES_ARGUMENT])
+    if(argVal->type != &UA_TYPES[UA_TYPES_ARGUMENT]) {
+        UA_LOG_ERROR(server->config.logging, UA_LOGCATEGORY_SERVER,
+                     "checkAdjustArguments: Arguments node ns=%u;i=%u value "
+                     "type is '%s', expected 'Argument'",
+                     argRequirements->head.nodeId.namespaceIndex,
+                     argRequirements->head.nodeId.identifier.numeric,
+                     argVal->type != NULL ? argVal->type->typeName : "NULL");
         return UA_STATUSCODE_BADINTERNALERROR;
+    }
 
     /* Verify the number of arguments. A scalar argument value is interpreted as
      * an array of length 1. */
@@ -55533,8 +55557,15 @@ callWithResolvedMethodAndObject(UA_Server *server, UA_Session *session,
                                 const UA_MethodNode *resolvedMethod,
                                 const UA_Node *callContext) {
     /* Is there a method to execute? */
-    if(!resolvedMethod->method)
+    if(!resolvedMethod->method) {
+        /* RP2040 diagnostic: see checkAdjustArguments() above for context. */
+        UA_LOG_ERROR(server->config.logging, UA_LOGCATEGORY_SERVER,
+                     "callWithResolvedMethodAndObject: method node ns=%u;i=%u "
+                     "has no callback function attached",
+                     resolvedMethod->head.nodeId.namespaceIndex,
+                     resolvedMethod->head.nodeId.identifier.numeric);
         return UA_STATUSCODE_BADINTERNALERROR;
+    }
 
     /* Verify access rights */
     UA_Boolean executable = resolvedMethod->executable;
@@ -55669,6 +55700,22 @@ callWithMethodAndObject(UA_Server *server, UA_Session *session,
     /* The resolved methodId is different */
     const UA_MethodNode *resolvedMethod = (const UA_MethodNode*)callMethod;
     if(!UA_NodeId_equal(&resolvedMethodId, &callMethod->head.nodeId)) {
+        /* RP2040 diagnostic: see checkAdjustArguments() above for context.
+         * findChildByBrowsename() resolved a DIFFERENT NodeId than the one
+         * the client passed as methodId - dump both so we can tell whether
+         * this build's namespace0_generated data disagrees with the
+         * UA_NS0ID_* header constants used by the client/this file. */
+        UA_LOG_INFO(server->config.logging, UA_LOGCATEGORY_SERVER,
+                   "callWithMethodAndObject: object ns=%u;i=%u resolved "
+                   "browseName-matched method to ns=%u;i=%u, but client "
+                   "requested methodId ns=%u;i=%u",
+                   callObject->head.nodeId.namespaceIndex,
+                   callObject->head.nodeId.identifier.numeric,
+                   resolvedMethodId.namespaceIndex,
+                   resolvedMethodId.identifier.numeric,
+                   callMethod->head.nodeId.namespaceIndex,
+                   callMethod->head.nodeId.identifier.numeric);
+
         /* Check whether the original MethodId comes from an ObjectType that is
          * upwards in the type hierarchy. Downwards in the type hierarchy (or
          * even completely unrelated) is not allowed. */
@@ -55677,6 +55724,9 @@ callWithMethodAndObject(UA_Server *server, UA_Session *session,
                                          &callMethod->head.nodeId,
                                          &callMethod->head.browseName);
         if(res != UA_STATUSCODE_GOOD) {
+            UA_LOG_INFO(server->config.logging, UA_LOGCATEGORY_SERVER,
+                       "callWithMethodAndObject: checkMethodInTypeHierarchy "
+                       "-> %s", UA_StatusCode_name(res));
             if(res == UA_STATUSCODE_BADNOTFOUND)
                 res = UA_STATUSCODE_BADMETHODINVALID;
             goto errout;
@@ -55690,6 +55740,11 @@ callWithMethodAndObject(UA_Server *server, UA_Session *session,
                                        UA_REFERENCETYPESET_NONE,
                                        UA_BROWSEDIRECTION_INVALID);
         if(!resolvedMethod) {
+            UA_LOG_INFO(server->config.logging, UA_LOGCATEGORY_SERVER,
+                       "callWithMethodAndObject: NODESTORE_GET_SELECTIVE "
+                       "found no node for resolved methodId ns=%u;i=%u",
+                       resolvedMethodId.namespaceIndex,
+                       resolvedMethodId.identifier.numeric);
             res = UA_STATUSCODE_BADINTERNALERROR;
             goto errout;
         }
