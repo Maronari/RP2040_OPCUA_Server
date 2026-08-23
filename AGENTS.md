@@ -13,7 +13,7 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.4.2 — Generic OPC UA Channel Information Model**.
+  **v0.4.3 — Multi-Channel History and Alarm Engine**.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -88,12 +88,14 @@ Delegation rules:
 8. Subagent work does not expand authorization or roadmap scope. Preserve
    unrelated user changes shared through the working tree.
 
-For v0.3.3 implementation, keep assignments aligned with
-`docs/releases/v0.3.3.md`: `embedded-systems` owns the journal codec, Flash
-backend, recovery, and maintenance-service integration; `iot-engineer` owns
-OPC UA export/reset, condition and audit semantics, and automated client
-verification; `build-engineer` owns build/artifact and Flash-layout checks; and
-`code-reviewer` performs the final independent review.
+For v0.4.3 implementation, keep assignments aligned with
+`docs/releases/v0.4.3.md`: `embedded-systems` owns the per-channel PSRAM
+history store, the Flash-backed history ring, and alarm-condition
+evaluation/state in `alarm_service`; `iot-engineer` owns generalized
+`HistoryRead`, the OPC UA alarm-condition model, and automated client
+verification; `build-engineer` owns build/artifact and Flash-layout checks;
+and `code-reviewer` performs the final independent review. History and
+alarms are independent subsystems and may be implemented in parallel.
 
 ## Architecture boundaries
 
@@ -128,43 +130,51 @@ verification; `build-engineer` owns build/artifact and Flash-layout checks; and
 - Use a single version source for runtime firmware revision, OTA metadata,
   configuration export, artifacts, tags, and documentation.
 
-## v0.4.2 constraints
+## v0.4.3 constraints
 
-- Treat tag `v0.4.1` and commit
-  `a5ebc3231faf658325ad02e997f05acf8601e8bf` as the immutable implementation
+- Treat tag `v0.4.2` and commit
+  `568dfd4e2a77c2db6fca4cd9a65e6279624928d6` as the immutable implementation
   and compatibility baseline.
-- Follow `docs/releases/v0.4.2.md`; do not start the multi-channel history and
-  alarm engine scheduled for v0.4.3 or live model regeneration scheduled for
+- Follow `docs/releases/v0.4.3.md`; do not start OPC UA Part 11 Historical
+  Event Access scheduled for v0.8.1 or live model regeneration scheduled for
   v0.5.0.
-- Build the public OPC UA channel hierarchy from bounded channel-registry
-  snapshots at server startup. Services remain the sole owners of channel
-  metadata, values, quality, timestamps and driver operations.
-- Freeze and document the deterministic channel NodeId grammar before model
-  implementation. NodeIds must derive from validated channel IDs, never slot
-  order, addresses, generations or boot state.
-- Expose every accepted runtime value type with its exact OPC UA built-in type.
-  Read value, quality and source timestamp from one coherent snapshot; do not
-  regenerate a valid service timestamp in the adapter.
-- Use standard `EUInformation` and `Range` values where applicable. Keep every
-  model string, callback context and temporary allocation explicitly bounded.
-- Route writes through a service-owned, generation-safe channel write API.
-  Enforce the existing role policy, exact type conversion and writable
-  capability before invoking a driver outside global critical sections.
-- Roll back partial channel-model construction deterministically and never
-  expose a partially initialized model as successful.
-- Preserve all unrelated v0.4.1 public NodeIds, BrowseNames, method signatures,
-  events, permissions and configuration fields. Keep the legacy temperature
-  NodeId as a deprecated stateless view of the same registry-owned sample.
-- Verification must discover channels by browsing and must not assume
-  `Temperature1`, a fixed channel count, registry order or a particular driver.
+- Replace the single global `float` history ring in `history_service.c` with
+  a per-channel, typed, owned PSRAM ring plus a bounded, per-channel
+  Flash-backed ring for persistence across reboot/power loss, in a QSPI
+  region distinct from the maintenance journal. The Flash ring is a cyclic
+  buffer with a per-sample CRC/valid-marker, not a transactional
+  commit-page/recovery design like the maintenance journal; losing the
+  newest unwritten samples on power loss is accepted, exposing a torn
+  sample is not.
+- Use one fixed sample-count retention capacity per channel, uniform across
+  channels; no per-channel-configurable retention in this release.
+- History reads must use bounded per-chunk critical sections; never hold one
+  lock across a full multi-channel ring scan.
+- Generalize OPC UA `HistoryRead`/`HistoryReadRaw` to every
+  historizing-enabled channel with bounded continuation points and maximum
+  return counts. Do not implement `ReadEventDetails` or any event/alarm
+  history surface.
+- Replace the `alarm_service_status_t` singleton with one independent
+  condition instance per alarm-eligible channel (every numeric or `Boolean`
+  channel, keyed by stable channel ID, no per-channel opt-in field).
+- Support high, high-high, low, low-low numeric alarms with configurable
+  hysteresis and debounce/delay, discrete state alarm for `Boolean`
+  channels, and a distinct fault state for invalid/stale channel quality
+  that does not overwrite the last good-quality alarm state. Preserve
+  acknowledgement state independently per condition.
+- Keep alarm transitions as live OPC UA events through the existing
+  Events/Audit bridge only. Do not add a Flash journal or any persisted
+  history for alarms in this release — that is v0.8.1 scope.
+- Preserve all unrelated v0.4.2 public NodeIds, BrowseNames, method
+  signatures, events, permissions and configuration fields.
 
-## v0.4.2 OTA verification authorization
+## v0.4.3 OTA verification authorization
 
-For v0.4.2 verification only, Codex is authorized to stage and upload a
+For v0.4.3 verification only, Codex is authorized to stage and upload a
 verified firmware artifact to the user-designated reference test device through
 the existing authenticated OTA workflow in `static/tools/stage_ota.py`, finalize
 the update and reboot with the explicit `--reboot-after-finalize` option when
-the planned reboot/NodeId-stability check requires it.
+the planned reboot/history-restoration check requires it.
 
 Before upload, record and verify the endpoint/device identity, board/profile,
 artifact version, hash/CRC and current OTA status. Use the matching generated
@@ -172,8 +182,10 @@ manifest and payload. Do not target an unidentified or production device,
 weaken authentication or integrity checks, alter security/trust/commissioning,
 or add/change OTA functionality. Abort staging on failure where the existing
 workflow permits it, and record transfer, finalize, reboot, reconnect, health
-and recovery/rollback outcomes. This authorization expires when v0.4.2 work is
-complete.
+and recovery/rollback outcomes. If network OTA repeats the resume failure
+observed during v0.4.2 hardware verification (commit `568dfd4`), fall back to
+direct USB BOOTSEL flashing and record which path was used. This authorization
+expires when v0.4.3 work is complete.
 
 ## Build and verification
 
@@ -192,10 +204,11 @@ For every feature:
 
 - Add positive, negative, authorization, illegal-state, and resource-limit tests.
   Add reboot/power-loss tests when persistence is involved.
-- For v0.4.2, add tests for deterministic NodeIds, mixed typed channels,
-  metadata types, quality/timestamp propagation, writable/read-only role
-  enforcement, partial-build rollback, reboot stability and legacy-temperature
-  equivalence.
+- For v0.4.3, add tests for mixed-value-type per-channel history, Flash
+  power-loss injection (before/during/after a sample write, corrupt/torn
+  sample skip, restoration after reboot), `HistoryRead` continuation-point
+  exhaustion, simultaneous independent multi-channel alarms, hysteresis and
+  debounce timing, and invalid/stale-quality fault-state entry/exit.
 - Verification scripts must exit nonzero on failure. CI release gates must
   actually fail; do not use `continue-on-error`, unconditional `|| true`, or
   smoke tests that assert no behavior.
@@ -203,7 +216,7 @@ For every feature:
   warnings.
 - Confirm affected behavior with an automated open62541/asyncua client and
   UaExpert when public OPC UA behavior is touched. Compare the public contract
-  and exported NodeSet/inventory against tag v0.4.1 and document every intended
+  and exported NodeSet/inventory against tag v0.4.2 and document every intended
   addition.
 - Record artifact sizes and memory/stack impact. Update public NodeId/schema
   documentation, README, release notes, and tools when affected.
