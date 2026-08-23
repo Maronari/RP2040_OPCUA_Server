@@ -152,11 +152,22 @@ bool model_find_history_channel_id(const UA_NodeId *node_id,
             continue;
         }
 
-        channel_value_node = UA_NODEID_STRING(1, channel_value_node_id);
+        channel_value_node = UA_NODEID_STRING(g_model_channel_namespace_index,
+                                              channel_value_node_id);
         if (UA_NodeId_equal(node_id, &channel_value_node))
         {
             model_copy_string_safe(out_channel_id, out_channel_id_size, channel->metadata.id);
             return out_channel_id[0] != '\0';
+        }
+        if (model_build_legacy_channel_node_id(channel, "Value", channel_value_node_id,
+                                               sizeof(channel_value_node_id)))
+        {
+            channel_value_node = UA_NODEID_STRING(1, channel_value_node_id);
+            if (UA_NodeId_equal(node_id, &channel_value_node))
+            {
+                model_copy_string_safe(out_channel_id, out_channel_id_size, channel->metadata.id);
+                return out_channel_id[0] != '\0';
+            }
         }
     }
 
@@ -178,12 +189,39 @@ void model_fill_history_data_value(const history_service_channel_sample_t *sampl
                                           UA_DataValue *value)
 {
     UA_DateTime timestamp = 0;
+    const UA_StatusCode status = model_quality_to_status(sample->quality);
 
     UA_DataValue_init(value);
-    UA_Variant_setScalarCopy(&value->value, &sample->value, &UA_TYPES[UA_TYPES_FLOAT]);
-    value->hasValue = true;
-    value->hasStatus = true;
-    value->status = model_quality_to_status(sample->quality);
+
+    /* Mirrors model_set_channel_runtime_value()'s live-read type mapping so
+     * HistoryRead reports the channel's real type instead of a hardcoded
+     * Float, for every type history_service can retain (STRING channels are
+     * never historized, so no STRING case is needed here). */
+    switch (sample->value_type)
+    {
+    case TELEMETRY_CHANNEL_VALUE_DOUBLE:
+        (void)model_set_double_value(value, sample->value.f64, status);
+        break;
+    case TELEMETRY_CHANNEL_VALUE_INT32:
+        (void)model_set_int32_value(value, sample->value.i32, status);
+        break;
+    case TELEMETRY_CHANNEL_VALUE_UINT32:
+        (void)model_set_uint32_value(value, sample->value.u32, status);
+        break;
+    case TELEMETRY_CHANNEL_VALUE_INT64:
+        (void)model_set_int64_value(value, (UA_Int64)sample->value.i64, status);
+        break;
+    case TELEMETRY_CHANNEL_VALUE_UINT64:
+        (void)model_set_uint64_value(value, (UA_UInt64)sample->value.u64, status);
+        break;
+    case TELEMETRY_CHANNEL_VALUE_BOOLEAN:
+        (void)model_set_boolean_value(value, sample->value.boolean, status);
+        break;
+    case TELEMETRY_CHANNEL_VALUE_FLOAT:
+    default:
+        (void)model_set_float_value(value, sample->value.f32, status);
+        break;
+    }
 
     (void)model_source_timestamp_to_datetime(sample->source_timestamp_unix_us, &timestamp);
 
@@ -205,6 +243,229 @@ void model_fill_history_data_value(const history_service_channel_sample_t *sampl
 void model_history_database_clear(UA_HistoryDatabase *history_database)
 {
     (void)history_database;
+}
+
+/*
+ * v0.4.3 deliberately keeps HistoryReadRaw cursors server-side in a fixed
+ * table.  The 12-byte wire value is only an opaque table key; the table holds
+ * the owner session, node/channel, query range and retained-window generation.
+ * Consequently a cursor cannot be replayed by another session, cannot grow
+ * without bound, and is invalidated (rather than silently skewed) after the
+ * underlying history ring generation changes.  Clients restart from their
+ * requested range after BADCONTINUATIONPOINTINVALID.
+ */
+#define MODEL_HISTORY_CONTINUATION_MAGIC 0x48524350u /* "PCRH", little-endian */
+
+static void model_history_write_u32(uint8_t *out, uint32_t value)
+{
+    for (size_t i = 0u; i < 4u; ++i)
+    {
+        out[i] = (uint8_t)(value >> (8u * i));
+    }
+}
+
+static uint32_t model_history_read_u32(const uint8_t *in)
+{
+    uint32_t value = 0u;
+    for (size_t i = 0u; i < 4u; ++i)
+    {
+        value |= (uint32_t)in[i] << (8u * i);
+    }
+    return value;
+}
+
+static bool model_history_encode_continuation_point(uint32_t token, UA_ByteString *out)
+{
+    uint8_t bytes[MODEL_HISTORY_CONTINUATION_POINT_SIZE];
+
+    if (out == NULL)
+    {
+        return false;
+    }
+    model_history_write_u32(&bytes[0], MODEL_HISTORY_CONTINUATION_MAGIC);
+    model_history_write_u32(&bytes[4], token);
+    model_history_write_u32(&bytes[8], token ^ MODEL_HISTORY_CONTINUATION_MAGIC ^ 0xa5c3f17du);
+    if (UA_ByteString_allocBuffer(out, sizeof(bytes)) != UA_STATUSCODE_GOOD)
+    {
+        return false;
+    }
+    memcpy(out->data, bytes, sizeof(bytes));
+    return true;
+}
+
+static bool model_history_decode_continuation_point(const UA_ByteString *in, uint32_t *out_token)
+{
+    uint32_t token;
+
+    if (in == NULL || out_token == NULL || in->data == NULL ||
+        in->length != MODEL_HISTORY_CONTINUATION_POINT_SIZE ||
+        model_history_read_u32(&in->data[0]) != MODEL_HISTORY_CONTINUATION_MAGIC)
+    {
+        return false;
+    }
+    token = model_history_read_u32(&in->data[4]);
+    if (token == 0u || model_history_read_u32(&in->data[8]) !=
+                           (token ^ MODEL_HISTORY_CONTINUATION_MAGIC ^ 0xa5c3f17du))
+    {
+        return false;
+    }
+    *out_token = token;
+    return true;
+}
+
+static bool model_history_tick_reached(TickType_t now, TickType_t deadline)
+{
+    return (TickType_t)(now - deadline) < (TickType_t)(~(TickType_t)0u / 2u);
+}
+
+static void model_history_expire_continuations(TickType_t now)
+{
+    for (size_t index = 0u; index < MODEL_HISTORY_CONTINUATION_CAPACITY; ++index)
+    {
+        model_history_continuation_t *const continuation = &g_model_history_continuations[index];
+        if (continuation->active && model_history_tick_reached(now, continuation->expires_at))
+        {
+            memset(continuation, 0, sizeof(*continuation));
+        }
+    }
+}
+
+static bool model_history_capture_node(const UA_NodeId *node_id,
+                                       UA_UInt16 *out_namespace_index,
+                                       char *out_identifier,
+                                       size_t out_identifier_size)
+{
+    if (node_id == NULL || out_namespace_index == NULL || out_identifier == NULL ||
+        out_identifier_size == 0u || node_id->identifierType != UA_NODEIDTYPE_STRING ||
+        node_id->identifier.string.data == NULL ||
+        node_id->identifier.string.length >= out_identifier_size)
+    {
+        return false;
+    }
+    *out_namespace_index = node_id->namespaceIndex;
+    memcpy(out_identifier, node_id->identifier.string.data, node_id->identifier.string.length);
+    out_identifier[node_id->identifier.string.length] = '\0';
+    return true;
+}
+
+static bool model_history_continuation_query_matches(const model_history_continuation_t *continuation,
+                                                      const void *session_context,
+                                                      const UA_NodeId *node_id,
+                                                      const char *channel_id,
+                                                      uint32_t start_epoch_s,
+                                                      uint32_t end_epoch_s,
+                                                      bool descending)
+{
+    UA_UInt16 namespace_index = 0u;
+    char node_identifier[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+
+    return continuation != NULL && continuation->active &&
+           continuation->session_context == session_context &&
+           continuation->start_epoch_s == start_epoch_s &&
+           continuation->end_epoch_s == end_epoch_s &&
+           continuation->descending == descending && channel_id != NULL &&
+           strcmp(continuation->channel_id, channel_id) == 0 &&
+           model_history_capture_node(node_id, &namespace_index, node_identifier, sizeof(node_identifier)) &&
+           continuation->node_namespace_index == namespace_index &&
+           strcmp(continuation->node_identifier, node_identifier) == 0;
+}
+
+static model_history_continuation_t *model_history_find_continuation(
+    uint32_t token,
+    const void *session_context,
+    const UA_NodeId *node_id,
+    const char *channel_id,
+    uint32_t start_epoch_s,
+    uint32_t end_epoch_s,
+    bool descending)
+{
+    for (size_t index = 0u; index < MODEL_HISTORY_CONTINUATION_CAPACITY; ++index)
+    {
+        model_history_continuation_t *const continuation = &g_model_history_continuations[index];
+        if (continuation->active && continuation->token == token &&
+            model_history_continuation_query_matches(continuation, session_context, node_id, channel_id,
+                                                     start_epoch_s, end_epoch_s, descending))
+        {
+            return continuation;
+        }
+    }
+    return NULL;
+}
+
+static model_history_continuation_t *model_history_reserve_continuation(
+    const void *session_context,
+    const UA_NodeId *node_id,
+    const char *channel_id,
+    uint32_t generation,
+    uint32_t skip_matches,
+    uint32_t start_epoch_s,
+    uint32_t end_epoch_s,
+    bool descending,
+    TickType_t now)
+{
+    UA_UInt16 namespace_index = 0u;
+    char node_identifier[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+    model_history_continuation_t *continuation = NULL;
+    TickType_t lifetime = pdMS_TO_TICKS(MODEL_HISTORY_CONTINUATION_EXPIRY_MS);
+
+    if (!model_history_capture_node(node_id, &namespace_index, node_identifier, sizeof(node_identifier)) ||
+        channel_id == NULL || channel_id[0] == '\0')
+    {
+        return NULL;
+    }
+    if (lifetime == 0u)
+    {
+        lifetime = 1u;
+    }
+    for (size_t index = 0u; index < MODEL_HISTORY_CONTINUATION_CAPACITY; ++index)
+    {
+        if (!g_model_history_continuations[index].active)
+        {
+            continuation = &g_model_history_continuations[index];
+            break;
+        }
+    }
+    if (continuation == NULL)
+    {
+        return NULL;
+    }
+
+    ++g_model_history_continuation_next_token;
+    if (g_model_history_continuation_next_token == 0u)
+    {
+        ++g_model_history_continuation_next_token;
+    }
+    memset(continuation, 0, sizeof(*continuation));
+    continuation->active = true;
+    continuation->session_context = session_context;
+    continuation->token = g_model_history_continuation_next_token;
+    continuation->generation = generation;
+    continuation->skip_matches = skip_matches;
+    continuation->start_epoch_s = start_epoch_s;
+    continuation->end_epoch_s = end_epoch_s;
+    continuation->descending = descending;
+    continuation->expires_at = now + lifetime;
+    continuation->node_namespace_index = namespace_index;
+    (void)snprintf(continuation->channel_id, sizeof(continuation->channel_id), "%s", channel_id);
+    (void)snprintf(continuation->node_identifier, sizeof(continuation->node_identifier), "%s", node_identifier);
+    return continuation;
+}
+
+void model_history_release_session_points(const void *session_context)
+{
+    if (session_context == NULL)
+    {
+        return;
+    }
+    for (size_t index = 0u; index < MODEL_HISTORY_CONTINUATION_CAPACITY; ++index)
+    {
+        if (g_model_history_continuations[index].active &&
+            g_model_history_continuations[index].session_context == session_context)
+        {
+            memset(&g_model_history_continuations[index], 0,
+                   sizeof(g_model_history_continuations[index]));
+        }
+    }
 }
 
 void model_history_read_raw(UA_Server *server,
@@ -230,17 +491,21 @@ void model_history_read_raw(UA_Server *server,
                                      : 0u;
     const bool descending = history_read_details != NULL &&
                             history_read_details->startTime > history_read_details->endTime;
+    /* HISTORY_SERVICE_MAX_RETURN_COUNT is the frozen hard per-call cap
+     * (see services/include/services/history_service.h); a smaller
+     * client-requested numValuesPerNode is honored, a larger or unbounded
+     * (0) request is capped, with a continuation point offered for the
+     * remainder. */
     const size_t max_values_per_node = (history_read_details == NULL ||
                                         history_read_details->numValuesPerNode == 0u ||
-                                        history_read_details->numValuesPerNode > HISTORY_SERVICE_CHANNEL_CAPACITY)
-                                           ? HISTORY_SERVICE_CHANNEL_CAPACITY
+                                        history_read_details->numValuesPerNode > HISTORY_SERVICE_MAX_RETURN_COUNT)
+                                           ? HISTORY_SERVICE_MAX_RETURN_COUNT
                                            : (size_t)history_read_details->numValuesPerNode;
+    const TickType_t now = xTaskGetTickCount();
     (void)server;
     (void)history_database_context;
     (void)session_id;
-    (void)session_context;
     (void)request_header;
-    (void)release_continuation_points;
 
     if (sample_buffer == NULL)
     {
@@ -255,18 +520,19 @@ void model_history_read_raw(UA_Server *server,
     {
         UA_HistoryData *result_history_data = history_data[index];
         size_t sample_count = 0u;
-        bool truncated = false;
+        bool history_more = false;
         bool history_busy = false;
+        uint32_t token = 0u;
+        uint32_t requested_generation = 0u;
+        uint32_t skip_matches = 0u;
+        uint32_t observed_generation = 0u;
+        char history_channel_id[TELEMETRY_CHANNEL_ID_MAX_LEN] = {0};
+        model_history_continuation_t *continuation = NULL;
+        bool reserved_continuation = false;
 
         if (result_history_data == NULL)
         {
             response->results[index].statusCode = UA_STATUSCODE_BADOUTOFMEMORY;
-            continue;
-        }
-
-        if (nodes_to_read[index].continuationPoint.length > 0u)
-        {
-            response->results[index].statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
             continue;
         }
 
@@ -276,8 +542,6 @@ void model_history_read_raw(UA_Server *server,
             continue;
         }
 
-        char history_channel_id[TELEMETRY_CHANNEL_ID_MAX_LEN] = {0};
-
         if (!model_find_history_channel_id(&nodes_to_read[index].nodeId,
                                            history_channel_id,
                                            sizeof(history_channel_id)))
@@ -286,14 +550,64 @@ void model_history_read_raw(UA_Server *server,
             continue;
         }
 
+        model_history_expire_continuations(now);
+
+        if (nodes_to_read[index].continuationPoint.length > 0u)
+        {
+            if (!model_history_decode_continuation_point(&nodes_to_read[index].continuationPoint,
+                                                         &token))
+            {
+                response->results[index].statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
+                continue;
+            }
+            continuation = model_history_find_continuation(token, session_context,
+                                                            &nodes_to_read[index].nodeId,
+                                                            history_channel_id, start_epoch_s,
+                                                            end_epoch_s, descending);
+            if (continuation == NULL)
+            {
+                response->results[index].statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
+                continue;
+            }
+        }
+
+        if (release_continuation_points)
+        {
+            if (continuation == NULL)
+            {
+                response->results[index].statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
+                continue;
+            }
+            memset(continuation, 0, sizeof(*continuation));
+            response->results[index].statusCode = UA_STATUSCODE_GOOD;
+            continue;
+        }
+
+        if (continuation != NULL)
+        {
+            requested_generation = continuation->generation;
+            skip_matches = continuation->skip_matches;
+        }
+
+        if (history_service_get_channel_restore_status(history_channel_id) !=
+            HISTORY_SERVICE_RESTORE_STATUS_READY)
+        {
+            /* Persisted history was not restored completely.  Exposing only
+             * a volatile tail would silently lose history, so fail closed. */
+            response->results[index].statusCode = UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+            continue;
+        }
+
         sample_count = history_service_read_channel_samples(history_channel_id,
                                                             start_epoch_s,
                                                             end_epoch_s,
                                                             descending,
                                                             max_values_per_node,
+                                                            (size_t)skip_matches,
                                                             sample_buffer,
-                                                            HISTORY_SERVICE_CHANNEL_CAPACITY,
-                                                            &truncated,
+                                                            HISTORY_SERVICE_MAX_RETURN_COUNT,
+                                                            &observed_generation,
+                                                            &history_more,
                                                             &history_busy);
 
         if (history_busy)
@@ -302,12 +616,72 @@ void model_history_read_raw(UA_Server *server,
             continue;
         }
 
+        if (continuation != NULL && observed_generation != requested_generation)
+        {
+            /* The channel's retained window changed (a wraparound evicted
+             * samples) since this continuation point was issued: the skip
+             * cursor no longer means the same thing. */
+            memset(continuation, 0, sizeof(*continuation));
+            response->results[index].statusCode = UA_STATUSCODE_BADCONTINUATIONPOINTINVALID;
+            continue;
+        }
+
+        if (history_more && sample_count == 0u)
+        {
+            response->results[index].statusCode = UA_STATUSCODE_BADINTERNALERROR;
+            continue;
+        }
+
+        if (history_more)
+        {
+            const uint32_t next_skip_matches = skip_matches + (uint32_t)sample_count;
+
+            if (next_skip_matches < skip_matches)
+            {
+                response->results[index].statusCode = UA_STATUSCODE_BADOUTOFRANGE;
+                continue;
+            }
+            if (continuation == NULL)
+            {
+                continuation = model_history_reserve_continuation(session_context,
+                                                                   &nodes_to_read[index].nodeId,
+                                                                   history_channel_id,
+                                                                   observed_generation,
+                                                                   next_skip_matches,
+                                                                   start_epoch_s,
+                                                                   end_epoch_s,
+                                                                   descending,
+                                                                   now);
+                if (continuation == NULL)
+                {
+                    response->results[index].statusCode = UA_STATUSCODE_BADNOCONTINUATIONPOINTS;
+                    continue;
+                }
+                reserved_continuation = true;
+            }
+            if (!model_history_encode_continuation_point(continuation->token,
+                                                         &response->results[index].continuationPoint))
+            {
+                if (reserved_continuation)
+                {
+                    memset(continuation, 0, sizeof(*continuation));
+                }
+                response->results[index].statusCode = UA_STATUSCODE_BADOUTOFMEMORY;
+                continue;
+            }
+        }
+
         if (sample_count > 0u)
         {
             result_history_data->dataValues =
                 (UA_DataValue *)UA_Array_new(sample_count, &UA_TYPES[UA_TYPES_DATAVALUE]);
             if (result_history_data->dataValues == NULL)
             {
+                UA_ByteString_clear(&response->results[index].continuationPoint);
+                if (reserved_continuation)
+                {
+                    memset(continuation, 0, sizeof(*continuation));
+                }
                 response->results[index].statusCode = UA_STATUSCODE_BADOUTOFMEMORY;
                 result_history_data->dataValuesSize = 0u;
                 continue;
@@ -322,7 +696,23 @@ void model_history_read_raw(UA_Server *server,
             }
         }
 
-        (void)truncated;
+        if (history_more)
+        {
+            TickType_t lifetime = pdMS_TO_TICKS(MODEL_HISTORY_CONTINUATION_EXPIRY_MS);
+            if (lifetime == 0u)
+            {
+                lifetime = 1u;
+            }
+            continuation->generation = observed_generation;
+            continuation->skip_matches = skip_matches + (uint32_t)sample_count;
+            continuation->expires_at = now + lifetime;
+        }
+        else if (continuation != NULL)
+        {
+            /* A final page consumes the point even if it contains no values. */
+            memset(continuation, 0, sizeof(*continuation));
+        }
+
         response->results[index].statusCode = UA_STATUSCODE_GOOD;
     }
 }
@@ -429,6 +819,7 @@ UA_StatusCode model_read_value(UA_Server *server,
         model_apply_now_source_timestamp(include_source_timestamp, value);
         return model_set_int32_value(value, (UA_Int32)report.state, UA_STATUSCODE_GOOD);
     }
+    case MODEL_NODE_CHANNEL_VALUE:
     case MODEL_NODE_PROCESS_TEMPERATURE_VALUE:
     {
         telemetry_channel_snapshot_t snapshot = {0};
@@ -496,6 +887,7 @@ UA_StatusCode model_read_value(UA_Server *server,
         }
         return model_set_string_value(value, "", UA_STATUSCODE_GOOD);
     }
+    case MODEL_NODE_CHANNEL_SAMPLE_PERIOD_MS:
     case MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS:
     {
         telemetry_channel_snapshot_t snapshot = {0};
@@ -505,6 +897,18 @@ UA_StatusCode model_read_value(UA_Server *server,
         if (model_copy_channel_from_context(context, &snapshot) && channel->settings.sample_period_ms > 0u)
         {
             return model_set_uint32_value(value, channel->settings.sample_period_ms, UA_STATUSCODE_GOOD);
+        }
+        return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
+    }
+    case MODEL_NODE_CHANNEL_PUBLISH_PERIOD_MS:
+    {
+        telemetry_channel_snapshot_t snapshot = {0};
+        const telemetry_channel_t *channel = &snapshot.channel;
+
+        model_apply_now_source_timestamp(include_source_timestamp, value);
+        if (model_copy_channel_from_context(context, &snapshot))
+        {
+            return model_set_uint32_value(value, channel->settings.publish_period_ms, UA_STATUSCODE_GOOD);
         }
         return model_set_uint32_value(value, 0u, UA_STATUSCODE_GOOD);
     }
@@ -522,16 +926,49 @@ UA_StatusCode model_read_value(UA_Server *server,
     }
     case MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE:
     {
-        alarm_service_status_t status = {0};
-        alarm_service_get_status(&status);
+        alarm_condition_status_t condition = {0};
         model_apply_now_source_timestamp(include_source_timestamp, value);
         if (context != NULL && context->channel_id != NULL &&
-            status.channel_id != NULL &&
-            strcmp(context->channel_id, status.channel_id) == 0)
+            alarm_service_get_condition_by_channel_id(context->channel_id, &condition))
         {
+            /* Lossy legacy 2-state projection of the v0.4.3 per-channel
+             * condition: LOW/LOW_LOW have no legacy equivalent and are
+             * reported as WARNING/CRITICAL, same as HIGH/HIGH_HIGH, matching
+             * the alarm_service compatibility shim's own projection. A
+             * quality fault takes precedence over process/discrete state, so
+             * a channel that was WARNING/HIGH and then goes stale still
+             * reports "Invalid" here even though the service keeps the
+             * sticky process state visible via alarm_service_get_condition_by_channel_id
+             * to any v0.4.3-aware caller. */
+            telemetry_alarm_state_t legacy_state = TELEMETRY_ALARM_STATE_NORMAL;
+            if (condition.quality_fault != ALARM_QUALITY_FAULT_NONE)
+            {
+                legacy_state = TELEMETRY_ALARM_STATE_INVALID;
+            }
+            else if (condition.is_discrete)
+            {
+                legacy_state = condition.discrete_active ? TELEMETRY_ALARM_STATE_WARNING : TELEMETRY_ALARM_STATE_NORMAL;
+            }
+            else
+            {
+                switch (condition.process_state)
+                {
+                case ALARM_CONDITION_STATE_HIGH_HIGH:
+                case ALARM_CONDITION_STATE_LOW_LOW:
+                    legacy_state = TELEMETRY_ALARM_STATE_CRITICAL;
+                    break;
+                case ALARM_CONDITION_STATE_HIGH:
+                case ALARM_CONDITION_STATE_LOW:
+                    legacy_state = TELEMETRY_ALARM_STATE_WARNING;
+                    break;
+                default:
+                    legacy_state = TELEMETRY_ALARM_STATE_NORMAL;
+                    break;
+                }
+            }
             return model_set_string_value(value,
-                                          model_alarm_state_to_string(status.state),
-                                          model_quality_to_status(status.quality));
+                                          model_alarm_state_to_string(legacy_state),
+                                          model_quality_to_status(condition.quality));
         }
         return model_set_string_value(value, "Invalid", UA_STATUSCODE_BADNOTSUPPORTED);
     }

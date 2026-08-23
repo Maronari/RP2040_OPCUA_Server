@@ -15,8 +15,34 @@ def main() -> int:
     args = parser.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
     with tempfile.TemporaryDirectory(prefix="config-compat-") as directory:
+        temporary = pathlib.Path(directory)
+        stack_object = temporary / "config_compat_stack.o"
+        subprocess.run([
+            args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-O0",
+            "-fstack-usage", "-DPLATFORM_CHANNEL_LIMIT=16",
+            f"-I{root / 'services' / 'include'}", "-c",
+            str(root / "services" / "src" / "config_compat.c"),
+            "-o", str(stack_object),
+        ], check=True)
+        stack_usage = stack_object.with_suffix(".su")
+        if not stack_usage.is_file():
+            raise SystemExit("config compatibility stack-usage report was not generated")
+        decode_usage = None
+        for line in stack_usage.read_text(encoding="utf-8").splitlines():
+            fields = line.split("\t")
+            if len(fields) < 2 or ":config_compat_" not in fields[0]:
+                continue
+            stack_bytes = int(fields[1])
+            if stack_bytes > 512:
+                raise SystemExit(
+                    f"configuration compatibility helper stack use {stack_bytes} exceeds 512-byte bound")
+            if fields[0].endswith(":config_compat_decode_binary"):
+                decode_usage = stack_bytes
+        if decode_usage is None:
+            raise SystemExit("config_compat_decode_binary is absent from stack-usage report")
+
         for limit in (1, 4, 16):
-            executable = pathlib.Path(directory) / f"config_compat_test_{limit}.exe"
+            executable = temporary / f"config_compat_test_{limit}.exe"
             subprocess.run([
                 args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
                 f"-DPLATFORM_CHANNEL_LIMIT={limit}",

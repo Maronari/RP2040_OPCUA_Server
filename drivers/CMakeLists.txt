@@ -16,6 +16,7 @@ endif()
 add_library(FIRMWARE_DRIVERS STATIC
         src/flash_storage_driver.c
         src/maintenance_journal_backend.c
+        src/history_flash_backend.c
         ../services/src/maintenance_journal_codec.c
         src/led_driver.c
         src/platform_clock.c

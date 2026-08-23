@@ -58,6 +58,17 @@ typedef union
     char string[TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN];
 } telemetry_channel_value_t;
 
+/* This value is copied into the channel registry with its metadata.  It is
+ * deliberately not a driver_context view: callers can report the configured
+ * source without depending on driver-private storage or registry slot order. */
+typedef struct
+{
+    uint8_t driver_id;
+    uint8_t source_index;
+    uint8_t source_flags;
+    uint8_t reserved;
+} telemetry_channel_source_descriptor_t;
+
 typedef struct
 {
     bool has_minimum;
@@ -74,6 +85,7 @@ typedef struct
     telemetry_channel_kind_t kind;
     telemetry_channel_value_type_t value_type;
     const char *unit;
+    telemetry_channel_source_descriptor_t source;
     telemetry_channel_range_t range;
     uint32_t flags;
 } telemetry_channel_metadata_t;
@@ -100,6 +112,20 @@ typedef struct
     double offset;
     double warning_threshold;
     double critical_threshold;
+    /*
+     * v0.4.3 alarm tuning fields, appended after the v0.4.2 fields above so
+     * the common prefix of this struct keeps a stable byte layout for the
+     * config_compat.c migration decoder.  Migrated v0.4.0-v0.4.2 records
+     * use a finite disabled-lower-side sentinel because those layouts had no
+     * low thresholds; their hysteresis and debounce fields remain zero,
+     * reproducing the instantaneous v0.4.2 high-side behavior.  Native
+     * v0.4.3 configurations may explicitly set either lower threshold to
+     * zero when it is coherently ordered with the high threshold.
+     */
+    double low_threshold;
+    double low_low_threshold;
+    double alarm_hysteresis;
+    uint32_t alarm_debounce_ms;
 } telemetry_channel_settings_t;
 
 struct telemetry_driver_vtbl;

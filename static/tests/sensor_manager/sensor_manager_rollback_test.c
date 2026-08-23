@@ -34,10 +34,11 @@ void config_service_set_runtime_apply_callback(config_service_runtime_apply_fn c
 {
     (void)callback;
 }
-bool history_service_record_channel_sample(const char *id, float value, service_quality_t quality,
+bool history_service_record_channel_sample(const char *id, telemetry_channel_value_type_t value_type,
+                                           const history_service_value_t *value, service_quality_t quality,
                                            uint64_t timestamp, uint32_t interval)
 {
-    (void)id; (void)value; (void)quality; (void)timestamp; (void)interval;
+    (void)id; (void)value_type; (void)value; (void)quality; (void)timestamp; (void)interval;
     return true;
 }
 bool time_service_get_utc_time_us(uint64_t *out_timestamp)

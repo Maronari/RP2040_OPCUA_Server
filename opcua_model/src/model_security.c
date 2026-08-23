@@ -13,7 +13,7 @@ UA_StatusCode model_export_config(UA_Server *server,
                                          UA_Variant *output)
 {
     UA_StatusCode status;
-    char payload[4096] = {0};
+    char *const payload = g_model_maintenance_export_payload;
     (void)server;
     (void)session_id;
     (void)method_context;
@@ -28,14 +28,25 @@ UA_StatusCode model_export_config(UA_Server *server,
         return status;
     }
 
-    if (!config_export_service_write_running_json(payload, sizeof(payload)))
+    if (payload == NULL)
     {
-        model_set_string_method_output(output_size, output, "{}");
-        return UA_STATUSCODE_GOOD;
+        return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    }
+    /* MaxNodesPerMethodCall is one, so the server encodes the persistent
+     * response view before another method callback can reuse this scratch. */
+    if (!config_export_service_write_running_json(payload,
+                                                  MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY))
+    {
+        return UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED;
     }
 
-    model_set_string_method_output(output_size, output, payload);
-    return UA_STATUSCODE_GOOD;
+    if (output_size == 0u || output == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    return model_set_maintenance_export_method_output(output_size,
+                                                      output,
+                                                      strlen(payload));
 }
 
 UA_StatusCode model_refresh_runtime_trust_backends(UA_Server *server)
@@ -807,4 +818,3 @@ UA_StatusCode model_begin_trust_list_import(UA_Server *server,
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
-

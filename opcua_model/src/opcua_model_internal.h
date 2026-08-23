@@ -52,6 +52,8 @@ UA_ConnectionManager *UA_ConnectionManager_new_MQTT(const UA_String eventSourceN
 #endif
 
 #define MODEL_BOOTSTRAP_APPLICATION_URI "urn:open62541.server.application"
+#define MODEL_CHANNEL_NAMESPACE_URI "urn:maronari:rp2-industrial-opcua:channel-model"
+#define MODEL_CHANNEL_NODE_ID_MAX_LEN 128u
 
 #define fflush(_stream) stdio_flush()
 
@@ -81,6 +83,11 @@ typedef enum
     MODEL_NODE_PROCESS_TEMPERATURE_UPDATE_PERIOD_MS,
     MODEL_NODE_PROCESS_TEMPERATURE_HISTORY_INTERVAL_MS,
     MODEL_NODE_PROCESS_TEMPERATURE_ALARM_STATE,
+    /* v0.4.2 generic channel adapter nodes.  These contain no channel state;
+     * their bounded contexts only hold a stable channel identifier. */
+    MODEL_NODE_CHANNEL_VALUE,
+    MODEL_NODE_CHANNEL_SAMPLE_PERIOD_MS,
+    MODEL_NODE_CHANNEL_PUBLISH_PERIOD_MS,
     MODEL_NODE_DIAG_UPTIME_SEC,
     MODEL_NODE_DIAG_RESET_CAUSE,
     MODEL_NODE_DIAG_FREE_HEAP,
@@ -182,7 +189,6 @@ typedef struct
     bool initialized;
     network_manager_status_t network_status;
     sensor_manager_snapshot_t sensor_snapshot;
-    alarm_service_status_t alarm_status;
     bool server_certificate_expiry_seen;
     uint32_t server_certificate_expiry_state;
     bool trust_expiry_seen;
@@ -527,8 +533,9 @@ enum
    small for UaExpert/Prosys, while 32 KiB per direction is too expensive for
    the current RP2350 RAM budget once security/events are enabled. 16 KiB
    keeps secure setup working and avoids per-connection heap spikes. */
-#define OPCUA_SEND_BUFFER_SIZE 8192u
+#define OPCUA_SEND_BUFFER_SIZE 16384u
 #define OPCUA_RECV_BUFFER_SIZE 16384u
+#define OPCUA_MAX_METHODS_PER_CALL 1u
 #define MODEL_NODE_MAINTENANCE_CONFIGURATION "Device.Maintenance.Configuration"
 #define MODEL_NODE_MAINTENANCE_FIRMWARE "Device.Maintenance.Firmware"
 #define MODEL_NODE_MAINTENANCE_SECURITY "Device.Maintenance.Security"
@@ -614,6 +621,12 @@ enum
 #define MODEL_MAINTENANCE_EXPORT_TOKEN_CAPACITY 16u
 #define MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY 24576u
 #define MODEL_MAINTENANCE_EXPORT_EXPIRY_MS 30000u
+/* HistoryReadRaw continuation points deliberately consume a fixed number of
+ * adapter-owned slots.  A point is session-owned and expires rather than
+ * becoming an unbounded server-side cursor. */
+#define MODEL_HISTORY_CONTINUATION_CAPACITY 16u
+#define MODEL_HISTORY_CONTINUATION_POINT_SIZE 12u
+#define MODEL_HISTORY_CONTINUATION_EXPIRY_MS 30000u
 #define MODEL_PUBSUB_TOPIC_MAX_LEN 96u
 #define MODEL_PUBSUB_CLIENT_ID_MAX_LEN 64u
 #define MODEL_PUBSUB_TELEMETRY_TOPIC_SUFFIX "telemetry"
@@ -644,6 +657,21 @@ enum
 /* Adapter-only state. Services retain all business, configuration, alarm,
  * security, history and OTA state; callbacks only translate to their APIs. */
 typedef struct { bool active; uint32_t token; TickType_t expires_at; maintenance_service_export_cursor_t cursor; } model_maintenance_export_continuation_t;
+typedef struct
+{
+    bool active;
+    const void *session_context;
+    uint32_t token;
+    uint32_t generation;
+    uint32_t skip_matches;
+    uint32_t start_epoch_s;
+    uint32_t end_epoch_s;
+    bool descending;
+    TickType_t expires_at;
+    char channel_id[TELEMETRY_CHANNEL_ID_MAX_LEN];
+    UA_UInt16 node_namespace_index;
+    char node_identifier[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+} model_history_continuation_t;
 _Static_assert(MAINTENANCE_SERVICE_EXPORT_PAGE_MAX == 4u,
                "v0.3.3 export page contract changed");
 _Static_assert(MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY == 4u,
@@ -654,6 +682,7 @@ _Static_assert(MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY >=
 _Static_assert(MODEL_MAINTENANCE_EXPORT_EXPIRY_MS == 30000u,
                "v0.3.3 continuation expiry contract changed");
 #define MODEL_CHANNEL_FIELD_CONTEXT_COUNT 7u
+#define MODEL_GENERIC_CHANNEL_CONTEXT_COUNT 3u
 #define MODEL_EVENT_FIELD_PATH_CAPACITY 64u
 typedef struct
 {
@@ -671,6 +700,9 @@ typedef struct opcua_model_context {
     uint8_t maintenance_reject_tokens;
     model_maintenance_export_continuation_t maintenance_export_continuations[MODEL_MAINTENANCE_EXPORT_CONTINUATION_CAPACITY];
     uint32_t maintenance_export_next_token; char *maintenance_export_payload;
+    UA_String maintenance_export_output_view;
+    model_history_continuation_t history_continuations[MODEL_HISTORY_CONTINUATION_CAPACITY];
+    uint32_t history_continuation_next_token;
     history_service_channel_sample_t *history_read_sample_buffer;
     model_pending_actions_t pending_actions; device_profile_config_t address_space_config_snapshot;
     bool address_space_config_snapshot_valid; model_activate_session_fn default_activate_session;
@@ -678,6 +710,7 @@ typedef struct opcua_model_context {
     model_get_user_executable_on_object_fn default_get_user_executable_on_object;
     model_get_user_access_level_fn default_get_user_access_level; model_allow_browse_node_fn default_allow_browse_node;
     uint8_t history_backend_context; UA_UInt16 di_namespace_index; UA_UInt16 amb_namespace_index;
+    UA_UInt16 channel_namespace_index;
     UA_DataTypeMember amb_name_node_id_members[2]; UA_DataType amb_name_node_id_type;
     UA_DataType amb_maintenance_method_type;
     UA_DataTypeArray amb_custom_types; bool amb_custom_types_registered; UA_UInt32 alias_last_change;
@@ -694,6 +727,7 @@ typedef struct opcua_model_context {
     UA_Logger ua_logger; model_node_context_t fixed_node_contexts[FIXED_CTX_COUNT];
     model_node_context_t task_node_contexts[3];
     model_node_context_t channel_node_contexts[PLATFORM_CHANNEL_LIMIT][MODEL_CHANNEL_FIELD_CONTEXT_COUNT];
+    model_node_context_t generic_channel_node_contexts[PLATFORM_CHANNEL_LIMIT][MODEL_GENERIC_CHANNEL_CONTEXT_COUNT];
 } opcua_model_context_t;
 opcua_model_context_t *model_context_get(void);
 void model_context_set_server_handles(UA_Server *server, UA_ServerConfig *config);
@@ -723,6 +757,9 @@ void model_core_task(void *argument);
 #define g_model_maintenance_export_continuations (model_context_get()->maintenance_export_continuations)
 #define g_model_maintenance_export_next_token (model_context_get()->maintenance_export_next_token)
 #define g_model_maintenance_export_payload (model_context_get()->maintenance_export_payload)
+#define g_model_maintenance_export_output_view (model_context_get()->maintenance_export_output_view)
+#define g_model_history_continuations (model_context_get()->history_continuations)
+#define g_model_history_continuation_next_token (model_context_get()->history_continuation_next_token)
 #define g_model_history_read_sample_buffer (model_context_get()->history_read_sample_buffer)
 #define g_pending_actions (model_context_get()->pending_actions)
 #define g_model_address_space_config_snapshot (model_context_get()->address_space_config_snapshot)
@@ -736,6 +773,8 @@ void model_core_task(void *argument);
 #define g_history_backend_context (model_context_get()->history_backend_context)
 #define g_model_di_namespace_index (model_context_get()->di_namespace_index)
 #define g_model_amb_namespace_index (model_context_get()->amb_namespace_index)
+#define g_model_channel_namespace_index (model_context_get()->channel_namespace_index)
+#define g_generic_channel_node_contexts (model_context_get()->generic_channel_node_contexts)
 #define g_model_amb_name_node_id_members (model_context_get()->amb_name_node_id_members)
 #define g_model_amb_name_node_id_type (model_context_get()->amb_name_node_id_type)
 #define g_model_amb_maintenance_method_type (model_context_get()->amb_maintenance_method_type)
@@ -811,6 +850,7 @@ bool model_copy_channel_from_context(const model_node_context_t *context,
 bool model_copy_channel_settings(const char *channel_id, telemetry_channel_settings_t *out_settings);
 UA_NodeId model_channel_value_type_to_data_type(telemetry_channel_value_type_t value_type);
 bool model_build_channel_node_id(const telemetry_channel_t *channel, const char *field_name, char *buffer, size_t buffer_size);
+bool model_build_legacy_channel_node_id(const telemetry_channel_t *channel, const char *field_name, char *buffer, size_t buffer_size);
 bool model_channel_requires_server_rebuild(const config_channel_definition_t *lhs, const config_channel_definition_t *rhs);
 bool model_byte_array_changed(const uint8_t *lhs, const uint8_t *rhs, size_t size);
 bool model_config_requires_server_reboot(const device_profile_config_t *lhs, const device_profile_config_t *rhs);
@@ -895,6 +935,11 @@ model_security_condition_reason_t model_evaluate_security_condition(char *messag
 void model_sync_condition(UA_Server *server, const UA_NodeId condition_id, const UA_NodeId source_id, bool *was_active, uint32_t *was_reason, bool *was_enabled, TickType_t *next_enable_poll, uint32_t reason, UA_UInt16 severity, UA_StatusCode quality, const char *active_message, const char *normal_message);
 void model_process_device_health_conditions(UA_Server *server, model_event_runtime_state_t *state);
 void model_process_alarm_conditions(UA_Server *server, model_event_runtime_state_t *state);
+/* v0.4.3 per-channel alarm condition model (T6), defined in model_events.c. */
+UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server);
+void model_process_channel_alarm_conditions(UA_Server *server);
+UA_StatusCode model_fix_condition_method_arguments(UA_Server *server);
+UA_StatusCode model_fix_server_condition_refresh_reference(UA_Server *server);
 UA_StatusCode model_set_event_bool_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_Boolean value);
 UA_StatusCode model_set_event_uint32_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_UInt32 value);
 UA_StatusCode model_set_event_float_field(UA_KeyValueMap *event_fields, const char *browse_name, UA_Float value);
@@ -966,6 +1011,7 @@ UA_StatusCode model_set_channel_runtime_value(UA_DataValue *value, const telemet
 uint32_t model_datetime_to_epoch_seconds(UA_DateTime value);
 void model_fill_history_data_value(const history_service_channel_sample_t *sample, UA_TimestampsToReturn timestamps_to_return, UA_DataValue *value);
 void model_history_database_clear(UA_HistoryDatabase *history_database);
+void model_history_release_session_points(const void *session_context);
 void model_history_read_raw(UA_Server *server, void *history_database_context, const UA_NodeId *session_id, void *session_context, const UA_RequestHeader *request_header, const UA_ReadRawModifiedDetails *history_read_details, UA_TimestampsToReturn timestamps_to_return, UA_Boolean release_continuation_points, size_t nodes_to_read_size, const UA_HistoryReadValueId *nodes_to_read, UA_HistoryReadResponse *response, UA_HistoryData *const *const history_data);
 UA_StatusCode model_read_value(UA_Server *server, const UA_NodeId *session_id, void *session_context, const UA_NodeId *node_id, void *node_context, UA_Boolean include_source_timestamp, const UA_NumericRange *range, UA_DataValue *value);
 UA_StatusCode model_write_value(UA_Server *server, const UA_NodeId *session_id, void *session_context, const UA_NodeId *node_id, void *node_context, const UA_NumericRange *range, const UA_DataValue *value);
@@ -1067,6 +1113,9 @@ void model_fill_uint32_argument(UA_Argument *argument, const char *name, const c
 void model_fill_double_argument(UA_Argument *argument, const char *name, const char *description);
 void model_fill_boolean_argument(UA_Argument *argument, const char *name, const char *description);
 void model_set_string_method_output(size_t output_size, UA_Variant *output, const char *result);
+UA_StatusCode model_set_maintenance_export_method_output(size_t output_size,
+                                                         UA_Variant *output,
+                                                         size_t payload_length);
 void model_set_bytestring_method_output(size_t output_size, UA_Variant *output, const UA_ByteString *result);
 UA_StatusCode model_add_method_node_with_boolean_result(UA_Server *server, UA_NodeId maintenance_folder_id, const char *node_id, const char *method_name, const char *description, UA_MethodCallback callback, size_t input_size, UA_Argument *input_arguments);
 UA_StatusCode model_add_method_node_with_string_result(UA_Server *server, UA_NodeId maintenance_folder_id, const char *node_id, const char *method_name, const char *description, UA_MethodCallback callback, size_t input_size, UA_Argument *input_arguments);
@@ -1124,8 +1173,9 @@ UA_StatusCode model_add_change_password_method_node(UA_Server *server, UA_NodeId
 UA_StatusCode model_add_set_role_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_disable_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_delete_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
-UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server, UA_NodeId task_folder_id, const char *task_object_id, const char *task_display_name, model_node_context_t *task_context);
+UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server, UA_NodeId task_folder_id, const char *task_object_id, const char *task_display_name, const char *registered_task_name, model_node_context_t *task_context);
 UA_StatusCode model_add_channel_nodes(UA_Server *server, UA_NodeId channels_folder_id, size_t channel_index, const telemetry_channel_t *channel);
+UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server, UA_NodeId channels_folder_id, size_t channel_index, const telemetry_channel_t *channel);
 UA_StatusCode model_build_address_space(UA_Server *server);
 bool opcua_model_init(const opcua_model_config_t *config);
 bool model_certificate_view_is_pem(const security_service_blob_view_t *certificate);

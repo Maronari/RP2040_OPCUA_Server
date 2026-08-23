@@ -5,9 +5,11 @@ industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
 `waveshare_core2350b_16mb_psram8mb`; the default application target is
 `device_profile_basic`.
 
-The current implementation target is `v0.4.1`. It hardens the generic channel
-runtime on top of the modular `v0.4.0` OPC UA adapter while preserving the
-externally visible address-space and behavior contract.
+The current implementation target is `v0.4.3`. It generalizes per-channel
+history (PSRAM plus a Flash-backed ring surviving reboot/power loss) and adds
+per-channel Alarms & Conditions on top of the generic OPC UA channel
+information model released in `v0.4.2`, while preserving unrelated public
+contracts.
 
 ## What The Firmware Already Implements
 
@@ -25,15 +27,27 @@ externally visible address-space and behavior contract.
 - A bounded, manager-owned multi-channel runtime with coherent typed snapshots,
   Unix-microsecond source timestamps, explicit driver lifecycle/capabilities,
   and deterministic hardware-resource conflict rejection.
+- A discovery-based generic channel address space with the deterministic NodeId,
+  metadata, timestamp, quality, and write contract documented in
+  [docs/channel_model.md](docs/channel_model.md).
+- Per-channel history (typed PSRAM ring plus a Flash-backed ring surviving
+  reboot/power loss) exposed through a generalized OPC UA `HistoryRead` with
+  bounded continuation points.
+- Per-channel Alarms & Conditions (high/high-high/low/low-low with
+  hysteresis and debounce for numeric channels, a discrete state for Boolean
+  channels, and a quality-fault state that never overwrites the last
+  good-quality alarm state) with independent per-condition acknowledgement.
 
 ## Current Boundaries
 
 - This is not a production security baseline yet. OTA payload integrity is
   still CRC based; signed OTA and rollback-health confirmation are scheduled for
   later roadmap releases.
-- The OPC UA adapter remains the v0.4.0 public compatibility surface. The new
-  generic OPC UA channel information model and NodeIds remain scheduled for
-  v0.4.2.
+- Multi-channel history and alarm generalization is the current implementation
+  work. Alarm history is not persisted to Flash in this release (live OPC UA
+  events only); OPC UA Part 11 Historical Event Access is scheduled for
+  v0.8.1, and transactional live model regeneration remains scheduled for
+  v0.5.0.
 - The built-in `adc_voltage` channel driver is limited to protected low-voltage
   RP2350 ADC use and is not the industrial `AI0..AI3` implementation from
   `HARDWARE_MVP.md`; industrial analog inputs require the dedicated external
@@ -73,7 +87,7 @@ with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and builds the default `all` target.
 
 ## Release Artifacts
 
-The `v0.4.1` release workflow treats these as required artifacts for the
+The `v0.4.2` release workflow treats these as required artifacts for the
 reference Debug build:
 
 - `device_profile_basic.elf`
@@ -95,10 +109,11 @@ manifest, and release-artifact evidence agree. Tag builds must use
 
 ## Verification
 
-The blocking `v0.4.1` CI split is:
+The blocking `v0.4.2` CI split is:
 
 - `host`: the deterministic host/static suite runner plus its explicit injected
-  failure proof and the blocking `v0.4.0` public OPC UA inventory comparison.
+  failure proof, the blocking `v0.4.1` public OPC UA inventory comparison, and
+  the generic channel-model contract checks.
 - `firmware`: reference Debug configure/build, size reporting, version
   verification, and positive/negative artifact checks.
 - `analysis`: first-party cppcheck over `drivers`, `services`, `opcua_model`,

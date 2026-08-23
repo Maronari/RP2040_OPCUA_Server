@@ -1,5 +1,8 @@
 ﻿#include "services/config_export_service.h"
 
+#include <float.h>
+#include <math.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -39,26 +42,71 @@ static void config_json_writer_init(config_json_writer_t *writer, char *buffer, 
     }
 }
 
-static void config_json_writer_append_raw(config_json_writer_t *writer, const char *text)
+static void config_json_writer_append_bytes(config_json_writer_t *writer, const char *text, size_t text_length)
 {
-    int written = 0;
-
     if (writer == NULL || writer->overflow || text == NULL)
     {
         return;
     }
 
-    written = snprintf(writer->buffer + writer->length,
-                       writer->capacity - writer->length,
-                       "%s",
-                       text);
-    if (written < 0 || (size_t)written >= (writer->capacity - writer->length))
+    /* Keep one byte for NUL. This avoids format-parser overhead for every
+     * literal JSON token and has a fixed linear copy bound. */
+    if (text_length >= writer->capacity - writer->length)
     {
         writer->overflow = true;
         return;
     }
 
-    writer->length += (size_t)written;
+    memcpy(writer->buffer + writer->length, text, text_length);
+    writer->length += text_length;
+    writer->buffer[writer->length] = '\0';
+}
+
+static void config_json_writer_append_raw(config_json_writer_t *writer, const char *text)
+{
+    if (text != NULL)
+    {
+        config_json_writer_append_bytes(writer, text, strlen(text));
+    }
+}
+
+static void config_json_writer_append_char(config_json_writer_t *writer, char value)
+{
+    config_json_writer_append_bytes(writer, &value, 1u);
+}
+
+static void config_json_writer_append_u64(config_json_writer_t *writer, uint64_t value)
+{
+    char digits[20];
+    size_t length = 0u;
+
+    do
+    {
+        digits[length++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value != 0u && length < sizeof(digits));
+
+    while (length > 0u)
+    {
+        config_json_writer_append_char(writer, digits[--length]);
+    }
+}
+
+static void config_json_writer_append_i64(config_json_writer_t *writer, int64_t value)
+{
+    uint64_t magnitude;
+
+    if (value < 0)
+    {
+        config_json_writer_append_char(writer, '-');
+        /* Avoid signed overflow for INT64_MIN. */
+        magnitude = (uint64_t)(-(value + 1)) + 1u;
+    }
+    else
+    {
+        magnitude = (uint64_t)value;
+    }
+    config_json_writer_append_u64(writer, magnitude);
 }
 
 static void config_json_writer_append_format(config_json_writer_t *writer, const char *format, ...)
@@ -86,19 +134,28 @@ static void config_json_writer_append_format(config_json_writer_t *writer, const
     writer->length += (size_t)written;
 }
 
-static void config_json_writer_append_quoted(config_json_writer_t *writer, const char *text)
+static void config_json_writer_append_quoted(config_json_writer_t *writer,
+                                             const char *text,
+                                             size_t text_capacity)
 {
-    const char *cursor = text != NULL ? text : "";
+    const char *cursor = text;
+    size_t index = 0u;
 
     if (writer == NULL || writer->overflow)
     {
         return;
     }
 
-    config_json_writer_append_raw(writer, "\"");
-    while (*cursor != '\0' && !writer->overflow)
+    if (cursor == NULL)
     {
-        switch (*cursor)
+        cursor = "";
+        text_capacity = 1u;
+    }
+
+    config_json_writer_append_char(writer, '\"');
+    while (index < text_capacity && cursor[index] != '\0' && !writer->overflow)
+    {
+        switch (cursor[index])
         {
         case '\\':
             config_json_writer_append_raw(writer, "\\\\");
@@ -116,20 +173,86 @@ static void config_json_writer_append_quoted(config_json_writer_t *writer, const
             config_json_writer_append_raw(writer, "\\t");
             break;
         default:
-            config_json_writer_append_format(writer, "%c", *cursor);
+            config_json_writer_append_char(writer, cursor[index]);
             break;
         }
 
-        cursor++;
+        index++;
     }
-    config_json_writer_append_raw(writer, "\"");
+    if (index == text_capacity)
+    {
+        /* Persisted fixed-width text must be NUL terminated. Failing closed
+         * prevents an unbounded scan into adjacent configuration/PSRAM. */
+        writer->overflow = true;
+        return;
+    }
+    config_json_writer_append_char(writer, '\"');
+}
+
+/* DBL_MAX is the persisted high-only lower-alarm sentinel. Formatting it via
+ * %.6f produces more than 300 decimal digits, once for each configured slot.
+ * These common values avoid newlib soft-float formatting entirely; the
+ * finite DBL_MAX spelling round-trips exactly and remains valid JSON. */
+static void config_json_writer_append_double(config_json_writer_t *writer, double value)
+{
+    if (writer == NULL || writer->overflow)
+    {
+        return;
+    }
+    if (!isfinite(value))
+    {
+        writer->overflow = true;
+        return;
+    }
+
+    if (value == 0.0)
+    {
+        config_json_writer_append_raw(writer, "0");
+    }
+    else if (value == 1.0)
+    {
+        config_json_writer_append_raw(writer, "1");
+    }
+    else if (value == -1.0)
+    {
+        config_json_writer_append_raw(writer, "-1");
+    }
+    else if (value == DBL_MAX)
+    {
+        config_json_writer_append_raw(writer, "1.7976931348623157e308");
+    }
+    else if (value == -DBL_MAX)
+    {
+        config_json_writer_append_raw(writer, "-1.7976931348623157e308");
+    }
+    else if (value > -9223372036854775808.0 && value < 9223372036854775808.0)
+    {
+        const int64_t integer = (int64_t)value;
+
+        if ((double)integer == value)
+        {
+            /* The live profile's thresholds and ranges are commonly whole
+             * degrees/counts. Emit them without invoking newlib dtoa. */
+            config_json_writer_append_i64(writer, integer);
+        }
+        else
+        {
+            config_json_writer_append_format(writer, "%.17g", value);
+        }
+    }
+    else
+    {
+        /* A finite non-default value is bounded by the fixed channel count;
+         * 17 significant digits preserve a double round trip. */
+        config_json_writer_append_format(writer, "%.17g", value);
+    }
 }
 
 static void config_json_writer_append_ipv4(config_json_writer_t *writer, const uint8_t address[4])
 {
     if (address == NULL)
     {
-        config_json_writer_append_quoted(writer, "0.0.0.0");
+        config_json_writer_append_quoted(writer, "0.0.0.0", sizeof("0.0.0.0"));
         return;
     }
 
@@ -145,7 +268,7 @@ static void config_json_writer_append_mac(config_json_writer_t *writer, const ui
 {
     if (mac == NULL)
     {
-        config_json_writer_append_quoted(writer, "00:00:00:00:00:00");
+        config_json_writer_append_quoted(writer, "00:00:00:00:00:00", sizeof("00:00:00:00:00:00"));
         return;
     }
 
@@ -176,44 +299,47 @@ static bool config_export_service_write_profile_json(const device_profile_config
     config_json_writer_append_raw(&writer, "\"schemaVersion\":1,");
     config_json_writer_append_raw(&writer, "\"device\":{");
     config_json_writer_append_raw(&writer, "\"manufacturer\":");
-    config_json_writer_append_quoted(&writer, config->manufacturer);
+    config_json_writer_append_quoted(&writer, config->manufacturer, sizeof(config->manufacturer));
     config_json_writer_append_raw(&writer, ",\"model\":");
-    config_json_writer_append_quoted(&writer, config->model);
+    config_json_writer_append_quoted(&writer, config->model, sizeof(config->model));
     config_json_writer_append_raw(&writer, ",\"deviceName\":");
-    config_json_writer_append_quoted(&writer, config->device_name);
+    config_json_writer_append_quoted(&writer, config->device_name, sizeof(config->device_name));
     config_json_writer_append_raw(&writer, ",\"opcuaHostname\":");
-    config_json_writer_append_quoted(&writer, config->opcua_hostname);
+    config_json_writer_append_quoted(&writer, config->opcua_hostname, sizeof(config->opcua_hostname));
     config_json_writer_append_raw(&writer, ",\"serialNumber\":");
-    config_json_writer_append_quoted(&writer, config->serial_number);
+    config_json_writer_append_quoted(&writer, config->serial_number, sizeof(config->serial_number));
     config_json_writer_append_raw(&writer, ",\"productInstanceUri\":");
-    config_json_writer_append_quoted(&writer, config->product_instance_uri);
+    config_json_writer_append_quoted(&writer, config->product_instance_uri, sizeof(config->product_instance_uri));
     config_json_writer_append_raw(&writer, ",\"assetId\":");
-    config_json_writer_append_quoted(&writer, config->asset_id);
+    config_json_writer_append_quoted(&writer, config->asset_id, sizeof(config->asset_id));
     config_json_writer_append_raw(&writer, ",\"hwRevision\":");
-    config_json_writer_append_quoted(&writer, config->hw_revision);
+    config_json_writer_append_quoted(&writer, config->hw_revision, sizeof(config->hw_revision));
     config_json_writer_append_raw(&writer, ",\"fwRevision\":");
-    config_json_writer_append_quoted(&writer, config->fw_revision);
+    config_json_writer_append_quoted(&writer, config->fw_revision, sizeof(config->fw_revision));
     config_json_writer_append_raw(&writer, ",\"buildTime\":");
-    config_json_writer_append_quoted(&writer, config->build_time);
+    config_json_writer_append_quoted(&writer, config->build_time, sizeof(config->build_time));
     config_json_writer_append_raw(&writer, ",\"gitHash\":");
-    config_json_writer_append_quoted(&writer, config->git_hash);
+    config_json_writer_append_quoted(&writer, config->git_hash, sizeof(config->git_hash));
     config_json_writer_append_raw(&writer, ",\"location\":");
-    config_json_writer_append_quoted(&writer, config->location);
+    config_json_writer_append_quoted(&writer, config->location, sizeof(config->location));
     config_json_writer_append_raw(&writer, ",\"assetClass\":");
-    config_json_writer_append_quoted(&writer, config->asset_class);
+    config_json_writer_append_quoted(&writer, config->asset_class, sizeof(config->asset_class));
     config_json_writer_append_format(&writer,
                                      ",\"manufactureDateUtc\":%lld,\"calibrationDateUtc\":%lld",
                                      (long long)config->manufacture_date_utc,
                                      (long long)config->calibration_date_utc);
     config_json_writer_append_raw(&writer, ",\"hierarchicalLocationPath\":");
-    config_json_writer_append_quoted(&writer, config->hierarchical_location_path);
+    config_json_writer_append_quoted(&writer, config->hierarchical_location_path,
+                                     sizeof(config->hierarchical_location_path));
     config_json_writer_append_raw(&writer, ",\"operationalLocationPath\":");
-    config_json_writer_append_quoted(&writer, config->operational_location_path);
+    config_json_writer_append_quoted(&writer, config->operational_location_path,
+                                     sizeof(config->operational_location_path));
     config_json_writer_append_raw(&writer, "},");
 
     config_json_writer_append_raw(&writer, "\"network\":{");
     config_json_writer_append_raw(&writer, "\"mode\":");
-    config_json_writer_append_quoted(&writer, config_export_network_mode_to_string(config->network_mode));
+    config_json_writer_append_quoted(&writer, config_export_network_mode_to_string(config->network_mode),
+                                     sizeof("static"));
     config_json_writer_append_raw(&writer, ",\"mac\":");
     config_json_writer_append_mac(&writer, config->mac);
     config_json_writer_append_raw(&writer, ",\"staticIp\":");
@@ -228,7 +354,7 @@ static bool config_export_service_write_profile_json(const device_profile_config
 
     config_json_writer_append_raw(&writer, "\"time\":{");
     config_json_writer_append_raw(&writer, "\"ntpServer\":");
-    config_json_writer_append_quoted(&writer, config->ntp_server);
+    config_json_writer_append_quoted(&writer, config->ntp_server, sizeof(config->ntp_server));
     config_json_writer_append_format(&writer,
                                      ",\"timezoneOffsetMinutes\":%d},",
                                      (int)config->timezone_offset_minutes);
@@ -239,9 +365,9 @@ static bool config_export_service_write_profile_json(const device_profile_config
                                      config->enable_mqtt_pubsub ? "true" : "false",
                                      config->mqtt_pubsub_use_json ? "true" : "false");
     config_json_writer_append_raw(&writer, "\"brokerUrl\":");
-    config_json_writer_append_quoted(&writer, config->mqtt_broker_url);
+    config_json_writer_append_quoted(&writer, config->mqtt_broker_url, sizeof(config->mqtt_broker_url));
     config_json_writer_append_raw(&writer, ",\"topicRoot\":");
-    config_json_writer_append_quoted(&writer, config->mqtt_topic_root);
+    config_json_writer_append_quoted(&writer, config->mqtt_topic_root, sizeof(config->mqtt_topic_root));
     config_json_writer_append_raw(&writer, "},");
 
     config_json_writer_append_raw(&writer, "\"diagnostics\":{");
@@ -278,30 +404,42 @@ static bool config_export_service_write_profile_json(const device_profile_config
                                          (unsigned)channel->source_index,
                                          (unsigned)channel->source_flags);
         config_json_writer_append_raw(&writer, "\"id\":");
-        config_json_writer_append_quoted(&writer, channel->id);
+        config_json_writer_append_quoted(&writer, channel->id, sizeof(channel->id));
         config_json_writer_append_raw(&writer, ",\"name\":");
-        config_json_writer_append_quoted(&writer, channel->name);
+        config_json_writer_append_quoted(&writer, channel->name, sizeof(channel->name));
         config_json_writer_append_raw(&writer, ",\"description\":");
-        config_json_writer_append_quoted(&writer, channel->description);
+        config_json_writer_append_quoted(&writer, channel->description, sizeof(channel->description));
         config_json_writer_append_raw(&writer, ",\"unit\":");
-        config_json_writer_append_quoted(&writer, channel->unit);
+        config_json_writer_append_quoted(&writer, channel->unit, sizeof(channel->unit));
+        config_json_writer_append_format(&writer, ",\"flags\":%lu,\"minimum\":", (unsigned long)channel->flags);
+        config_json_writer_append_double(&writer, channel->minimum);
+        config_json_writer_append_raw(&writer, ",\"maximum\":");
+        config_json_writer_append_double(&writer, channel->maximum);
         config_json_writer_append_format(&writer,
-                                         ",\"flags\":%lu,\"minimum\":%.6f,\"maximum\":%.6f,\"hasMinimum\":%s,\"hasMaximum\":%s,"
-                                         "\"enabled\":%s,\"samplePeriodMs\":%lu,\"publishPeriodMs\":%lu,\"historyIntervalMs\":%lu,"
-                                         "\"scale\":%.6f,\"offset\":%.6f,\"warningThreshold\":%.6f,\"criticalThreshold\":%.6f}",
-                                         (unsigned long)channel->flags,
-                                         channel->minimum,
-                                         channel->maximum,
+                                         ",\"hasMinimum\":%s,\"hasMaximum\":%s,\"enabled\":%s,"
+                                         "\"samplePeriodMs\":%lu,\"publishPeriodMs\":%lu,\"historyIntervalMs\":%lu,"
+                                         "\"scale\":",
                                          channel->has_minimum != 0u ? "true" : "false",
                                          channel->has_maximum != 0u ? "true" : "false",
                                          channel->settings.enabled ? "true" : "false",
                                          (unsigned long)channel->settings.sample_period_ms,
                                          (unsigned long)channel->settings.publish_period_ms,
-                                         (unsigned long)channel->settings.history_interval_ms,
-                                         channel->settings.scale,
-                                         channel->settings.offset,
-                                         channel->settings.warning_threshold,
-                                         channel->settings.critical_threshold);
+                                         (unsigned long)channel->settings.history_interval_ms);
+        config_json_writer_append_double(&writer, channel->settings.scale);
+        config_json_writer_append_raw(&writer, ",\"offset\":");
+        config_json_writer_append_double(&writer, channel->settings.offset);
+        config_json_writer_append_raw(&writer, ",\"warningThreshold\":");
+        config_json_writer_append_double(&writer, channel->settings.warning_threshold);
+        config_json_writer_append_raw(&writer, ",\"criticalThreshold\":");
+        config_json_writer_append_double(&writer, channel->settings.critical_threshold);
+        config_json_writer_append_raw(&writer, ",\"lowThreshold\":");
+        config_json_writer_append_double(&writer, channel->settings.low_threshold);
+        config_json_writer_append_raw(&writer, ",\"lowLowThreshold\":");
+        config_json_writer_append_double(&writer, channel->settings.low_low_threshold);
+        config_json_writer_append_raw(&writer, ",\"alarmHysteresis\":");
+        config_json_writer_append_double(&writer, channel->settings.alarm_hysteresis);
+        config_json_writer_append_format(&writer, ",\"alarmDebounceMs\":%lu}",
+                                         (unsigned long)channel->settings.alarm_debounce_ms);
     }
     config_json_writer_append_raw(&writer, "]}");
 

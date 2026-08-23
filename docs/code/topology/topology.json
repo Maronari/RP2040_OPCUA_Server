@@ -1,0 +1,4574 @@
+{
+  "system": "RP2350 OPC UA Firmware",
+  "root": {
+    "id": "sys",
+    "name": "RP2350 OPC UA Firmware",
+    "kind": "system",
+    "children": [
+      {
+        "id": "dom:app",
+        "name": "app",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:app/basic_profile/main.c",
+            "name": "main.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 692,
+            "file": "app/basic_profile/main.c"
+          },
+          {
+            "id": "f:app/basic_profile/ota_layout_sanity.c",
+            "name": "ota_layout_sanity.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 128,
+            "file": "app/basic_profile/ota_layout_sanity.c"
+          }
+        ]
+      },
+      {
+        "id": "dom:drivers",
+        "name": "drivers",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:drivers/src/adc_voltage_channel_driver.c",
+            "name": "adc_voltage_channel_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 66,
+            "file": "drivers/src/adc_voltage_channel_driver.c"
+          },
+          {
+            "id": "f:drivers/src/flash_operation_coordinator.c",
+            "name": "flash_operation_coordinator.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 134,
+            "file": "drivers/src/flash_operation_coordinator.c"
+          },
+          {
+            "id": "f:drivers/src/flash_storage_driver.c",
+            "name": "flash_storage_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 131,
+            "file": "drivers/src/flash_storage_driver.c"
+          },
+          {
+            "id": "f:drivers/src/gpio_input_channel_driver.c",
+            "name": "gpio_input_channel_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 72,
+            "file": "drivers/src/gpio_input_channel_driver.c"
+          },
+          {
+            "id": "f:drivers/src/history_flash_backend.c",
+            "name": "history_flash_backend.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 583,
+            "file": "drivers/src/history_flash_backend.c"
+          },
+          {
+            "id": "f:drivers/src/internal_temperature_channel_driver.c",
+            "name": "internal_temperature_channel_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 55,
+            "file": "drivers/src/internal_temperature_channel_driver.c"
+          },
+          {
+            "id": "f:drivers/src/led_driver.c",
+            "name": "led_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 41,
+            "file": "drivers/src/led_driver.c"
+          },
+          {
+            "id": "f:drivers/src/maintenance_journal_backend.c",
+            "name": "maintenance_journal_backend.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 733,
+            "file": "drivers/src/maintenance_journal_backend.c"
+          },
+          {
+            "id": "f:drivers/src/platform_clock.c",
+            "name": "platform_clock.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 28,
+            "file": "drivers/src/platform_clock.c"
+          },
+          {
+            "id": "f:drivers/src/rtc_driver.c",
+            "name": "rtc_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 211,
+            "file": "drivers/src/rtc_driver.c"
+          },
+          {
+            "id": "f:drivers/src/temp_sensor_driver.c",
+            "name": "temp_sensor_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 33,
+            "file": "drivers/src/temp_sensor_driver.c"
+          },
+          {
+            "id": "f:drivers/src/w5x00_ethernet_driver.c",
+            "name": "w5x00_ethernet_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1030,
+            "file": "drivers/src/w5x00_ethernet_driver.c"
+          },
+          {
+            "id": "f:drivers/src/watchdog_driver.c",
+            "name": "watchdog_driver.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 43,
+            "file": "drivers/src/watchdog_driver.c"
+          },
+          {
+            "id": "f:drivers/include/drivers/flash_operation_coordinator.h",
+            "name": "flash_operation_coordinator.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 33,
+            "file": "drivers/include/drivers/flash_operation_coordinator.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/flash_storage_driver.h",
+            "name": "flash_storage_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 11,
+            "file": "drivers/include/drivers/flash_storage_driver.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/history_flash_backend.h",
+            "name": "history_flash_backend.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 241,
+            "file": "drivers/include/drivers/history_flash_backend.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/led_driver.h",
+            "name": "led_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 14,
+            "file": "drivers/include/drivers/led_driver.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/maintenance_journal_backend.h",
+            "name": "maintenance_journal_backend.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 161,
+            "file": "drivers/include/drivers/maintenance_journal_backend.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/native_channel_driver.h",
+            "name": "native_channel_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 34,
+            "file": "drivers/include/drivers/native_channel_driver.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/platform_clock.h",
+            "name": "platform_clock.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 7,
+            "file": "drivers/include/drivers/platform_clock.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/rtc_driver.h",
+            "name": "rtc_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 14,
+            "file": "drivers/include/drivers/rtc_driver.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/temp_sensor_driver.h",
+            "name": "temp_sensor_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 10,
+            "file": "drivers/include/drivers/temp_sensor_driver.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/w5x00_ethernet_driver.h",
+            "name": "w5x00_ethernet_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 86,
+            "file": "drivers/include/drivers/w5x00_ethernet_driver.h"
+          },
+          {
+            "id": "f:drivers/include/drivers/watchdog_driver.h",
+            "name": "watchdog_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 13,
+            "file": "drivers/include/drivers/watchdog_driver.h"
+          }
+        ]
+      },
+      {
+        "id": "dom:services",
+        "name": "services",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:services/src/alarm_service.c",
+            "name": "alarm_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 577,
+            "file": "services/src/alarm_service.c"
+          },
+          {
+            "id": "f:services/src/channel_manager.c",
+            "name": "channel_manager.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 570,
+            "file": "services/src/channel_manager.c"
+          },
+          {
+            "id": "f:services/src/config_compat.c",
+            "name": "config_compat.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 368,
+            "file": "services/src/config_compat.c"
+          },
+          {
+            "id": "f:services/src/config_export_service.c",
+            "name": "config_export_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 524,
+            "file": "services/src/config_export_service.c"
+          },
+          {
+            "id": "f:services/src/config_import_service.c",
+            "name": "config_import_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 222,
+            "file": "services/src/config_import_service.c"
+          },
+          {
+            "id": "f:services/src/config_reset_service.c",
+            "name": "config_reset_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 74,
+            "file": "services/src/config_reset_service.c"
+          },
+          {
+            "id": "f:services/src/config_service.c",
+            "name": "config_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 981,
+            "file": "services/src/config_service.c"
+          },
+          {
+            "id": "f:services/src/config_store_service.c",
+            "name": "config_store_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 277,
+            "file": "services/src/config_store_service.c"
+          },
+          {
+            "id": "f:services/src/config_validate_service.c",
+            "name": "config_validate_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1385,
+            "file": "services/src/config_validate_service.c"
+          },
+          {
+            "id": "f:services/src/device_health_service.c",
+            "name": "device_health_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 233,
+            "file": "services/src/device_health_service.c"
+          },
+          {
+            "id": "f:services/src/diag_service.c",
+            "name": "diag_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 235,
+            "file": "services/src/diag_service.c"
+          },
+          {
+            "id": "f:services/src/driver_catalog.c",
+            "name": "driver_catalog.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 235,
+            "file": "services/src/driver_catalog.c"
+          },
+          {
+            "id": "f:services/src/firmware_update_service.c",
+            "name": "firmware_update_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 194,
+            "file": "services/src/firmware_update_service.c"
+          },
+          {
+            "id": "f:services/src/history_service.c",
+            "name": "history_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 629,
+            "file": "services/src/history_service.c"
+          },
+          {
+            "id": "f:services/src/maintenance_journal_codec.c",
+            "name": "maintenance_journal_codec.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 698,
+            "file": "services/src/maintenance_journal_codec.c"
+          },
+          {
+            "id": "f:services/src/maintenance_service.c",
+            "name": "maintenance_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1152,
+            "file": "services/src/maintenance_service.c"
+          },
+          {
+            "id": "f:services/src/network_manager.c",
+            "name": "network_manager.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 265,
+            "file": "services/src/network_manager.c"
+          },
+          {
+            "id": "f:services/src/security_certificate_group_service.c",
+            "name": "security_certificate_group_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 313,
+            "file": "services/src/security_certificate_group_service.c"
+          },
+          {
+            "id": "f:services/src/security_identity_import_service.c",
+            "name": "security_identity_import_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 701,
+            "file": "services/src/security_identity_import_service.c"
+          },
+          {
+            "id": "f:services/src/security_service.c",
+            "name": "security_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1519,
+            "file": "services/src/security_service.c"
+          },
+          {
+            "id": "f:services/src/security_state_service.c",
+            "name": "security_state_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 332,
+            "file": "services/src/security_state_service.c"
+          },
+          {
+            "id": "f:services/src/security_trust_expiry_service.c",
+            "name": "security_trust_expiry_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 374,
+            "file": "services/src/security_trust_expiry_service.c"
+          },
+          {
+            "id": "f:services/src/security_trust_import_service.c",
+            "name": "security_trust_import_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 361,
+            "file": "services/src/security_trust_import_service.c"
+          },
+          {
+            "id": "f:services/src/sensor_manager.c",
+            "name": "sensor_manager.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 457,
+            "file": "services/src/sensor_manager.c"
+          },
+          {
+            "id": "f:services/src/time_service.c",
+            "name": "time_service.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 161,
+            "file": "services/src/time_service.c"
+          },
+          {
+            "id": "f:services/src/config_store_limits.h",
+            "name": "config_store_limits.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 12,
+            "file": "services/src/config_store_limits.h"
+          },
+          {
+            "id": "f:services/include/services/alarm_service.h",
+            "name": "alarm_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 126,
+            "file": "services/include/services/alarm_service.h"
+          },
+          {
+            "id": "f:services/include/services/channel_config.h",
+            "name": "channel_config.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 24,
+            "file": "services/include/services/channel_config.h"
+          },
+          {
+            "id": "f:services/include/services/channel_manager.h",
+            "name": "channel_manager.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 69,
+            "file": "services/include/services/channel_manager.h"
+          },
+          {
+            "id": "f:services/include/services/config_compat.h",
+            "name": "config_compat.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 24,
+            "file": "services/include/services/config_compat.h"
+          },
+          {
+            "id": "f:services/include/services/config_export_service.h",
+            "name": "config_export_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 12,
+            "file": "services/include/services/config_export_service.h"
+          },
+          {
+            "id": "f:services/include/services/config_import_service.h",
+            "name": "config_import_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 50,
+            "file": "services/include/services/config_import_service.h"
+          },
+          {
+            "id": "f:services/include/services/config_reset_service.h",
+            "name": "config_reset_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 17,
+            "file": "services/include/services/config_reset_service.h"
+          },
+          {
+            "id": "f:services/include/services/config_service.h",
+            "name": "config_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 151,
+            "file": "services/include/services/config_service.h"
+          },
+          {
+            "id": "f:services/include/services/config_store_service.h",
+            "name": "config_store_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 34,
+            "file": "services/include/services/config_store_service.h"
+          },
+          {
+            "id": "f:services/include/services/config_validate_service.h",
+            "name": "config_validate_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 57,
+            "file": "services/include/services/config_validate_service.h"
+          },
+          {
+            "id": "f:services/include/services/config_wire.h",
+            "name": "config_wire.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 38,
+            "file": "services/include/services/config_wire.h"
+          },
+          {
+            "id": "f:services/include/services/device_channels.h",
+            "name": "device_channels.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 17,
+            "file": "services/include/services/device_channels.h"
+          },
+          {
+            "id": "f:services/include/services/device_health_service.h",
+            "name": "device_health_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 56,
+            "file": "services/include/services/device_health_service.h"
+          },
+          {
+            "id": "f:services/include/services/diag_service.h",
+            "name": "diag_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 65,
+            "file": "services/include/services/diag_service.h"
+          },
+          {
+            "id": "f:services/include/services/driver_catalog.h",
+            "name": "driver_catalog.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 81,
+            "file": "services/include/services/driver_catalog.h"
+          },
+          {
+            "id": "f:services/include/services/firmware_update_service.h",
+            "name": "firmware_update_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 49,
+            "file": "services/include/services/firmware_update_service.h"
+          },
+          {
+            "id": "f:services/include/services/history_service.h",
+            "name": "history_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 143,
+            "file": "services/include/services/history_service.h"
+          },
+          {
+            "id": "f:services/include/services/maintenance_journal_codec.h",
+            "name": "maintenance_journal_codec.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 86,
+            "file": "services/include/services/maintenance_journal_codec.h"
+          },
+          {
+            "id": "f:services/include/services/maintenance_service.h",
+            "name": "maintenance_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 279,
+            "file": "services/include/services/maintenance_service.h"
+          },
+          {
+            "id": "f:services/include/services/network_manager.h",
+            "name": "network_manager.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 38,
+            "file": "services/include/services/network_manager.h"
+          },
+          {
+            "id": "f:services/include/services/platform_limits.h",
+            "name": "platform_limits.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 28,
+            "file": "services/include/services/platform_limits.h"
+          },
+          {
+            "id": "f:services/include/services/security_certificate_group_service.h",
+            "name": "security_certificate_group_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 15,
+            "file": "services/include/services/security_certificate_group_service.h"
+          },
+          {
+            "id": "f:services/include/services/security_identity_import_service.h",
+            "name": "security_identity_import_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 81,
+            "file": "services/include/services/security_identity_import_service.h"
+          },
+          {
+            "id": "f:services/include/services/security_service.h",
+            "name": "security_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 103,
+            "file": "services/include/services/security_service.h"
+          },
+          {
+            "id": "f:services/include/services/security_state_service.h",
+            "name": "security_state_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 33,
+            "file": "services/include/services/security_state_service.h"
+          },
+          {
+            "id": "f:services/include/services/security_trust_expiry_service.h",
+            "name": "security_trust_expiry_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 46,
+            "file": "services/include/services/security_trust_expiry_service.h"
+          },
+          {
+            "id": "f:services/include/services/security_trust_import_service.h",
+            "name": "security_trust_import_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 70,
+            "file": "services/include/services/security_trust_import_service.h"
+          },
+          {
+            "id": "f:services/include/services/sensor_manager.h",
+            "name": "sensor_manager.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 34,
+            "file": "services/include/services/sensor_manager.h"
+          },
+          {
+            "id": "f:services/include/services/service_types.h",
+            "name": "service_types.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 68,
+            "file": "services/include/services/service_types.h"
+          },
+          {
+            "id": "f:services/include/services/telemetry_channel.h",
+            "name": "telemetry_channel.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 160,
+            "file": "services/include/services/telemetry_channel.h"
+          },
+          {
+            "id": "f:services/include/services/telemetry_driver.h",
+            "name": "telemetry_driver.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 42,
+            "file": "services/include/services/telemetry_driver.h"
+          },
+          {
+            "id": "f:services/include/services/time_service.h",
+            "name": "time_service.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 42,
+            "file": "services/include/services/time_service.h"
+          }
+        ]
+      },
+      {
+        "id": "dom:opcua_model",
+        "name": "opcua_model",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:opcua_model/src/model_access.c",
+            "name": "model_access.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1088,
+            "file": "opcua_model/src/model_access.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_address_space.c",
+            "name": "model_address_space.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 3632,
+            "file": "opcua_model/src/model_address_space.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_channels.c",
+            "name": "model_channels.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 698,
+            "file": "opcua_model/src/model_channels.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_common.c",
+            "name": "model_common.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 277,
+            "file": "opcua_model/src/model_common.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_configuration.c",
+            "name": "model_configuration.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1167,
+            "file": "opcua_model/src/model_configuration.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_core_lifecycle.c",
+            "name": "model_core_lifecycle.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1024,
+            "file": "opcua_model/src/model_core_lifecycle.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_diagnostics.c",
+            "name": "model_diagnostics.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 391,
+            "file": "opcua_model/src/model_diagnostics.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_events.c",
+            "name": "model_events.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1424,
+            "file": "opcua_model/src/model_events.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_history.c",
+            "name": "model_history.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1404,
+            "file": "opcua_model/src/model_history.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_identity_di_amb.c",
+            "name": "model_identity_di_amb.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 661,
+            "file": "opcua_model/src/model_identity_di_amb.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_maintenance.c",
+            "name": "model_maintenance.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 2840,
+            "file": "opcua_model/src/model_maintenance.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_ota.c",
+            "name": "model_ota.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 1320,
+            "file": "opcua_model/src/model_ota.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_pubsub.c",
+            "name": "model_pubsub.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 593,
+            "file": "opcua_model/src/model_pubsub.c"
+          },
+          {
+            "id": "f:opcua_model/src/model_security.c",
+            "name": "model_security.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 821,
+            "file": "opcua_model/src/model_security.c"
+          },
+          {
+            "id": "f:opcua_model/src/opcua_model.c",
+            "name": "opcua_model.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 13,
+            "file": "opcua_model/src/opcua_model.c"
+          },
+          {
+            "id": "f:opcua_model/src/opcua_model_context.c",
+            "name": "opcua_model_context.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 123,
+            "file": "opcua_model/src/opcua_model_context.c"
+          },
+          {
+            "id": "f:opcua_model/src/opcua_model_internal.h",
+            "name": "opcua_model_internal.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 1195,
+            "file": "opcua_model/src/opcua_model_internal.h"
+          },
+          {
+            "id": "f:opcua_model/include/opcua_model/opcua_model.h",
+            "name": "opcua_model.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 25,
+            "file": "opcua_model/include/opcua_model/opcua_model.h"
+          }
+        ]
+      },
+      {
+        "id": "dom:ota",
+        "name": "ota",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:ota/src/ota_flash.c",
+            "name": "ota_flash.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 334,
+            "file": "ota/src/ota_flash.c"
+          },
+          {
+            "id": "f:ota/src/ota_flash_backend_application.c",
+            "name": "ota_flash_backend_application.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 46,
+            "file": "ota/src/ota_flash_backend_application.c"
+          },
+          {
+            "id": "f:ota/src/ota_state.c",
+            "name": "ota_state.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 107,
+            "file": "ota/src/ota_state.c"
+          },
+          {
+            "id": "f:ota/src/ota_flash_backend.h",
+            "name": "ota_flash_backend.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 20,
+            "file": "ota/src/ota_flash_backend.h"
+          },
+          {
+            "id": "f:ota/include/ota/ota_flash.h",
+            "name": "ota_flash.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 51,
+            "file": "ota/include/ota/ota_flash.h"
+          },
+          {
+            "id": "f:ota/include/ota/ota_state.h",
+            "name": "ota_state.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 50,
+            "file": "ota/include/ota/ota_state.h"
+          }
+        ]
+      },
+      {
+        "id": "dom:bootloader",
+        "name": "bootloader",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:bootloader/main.c",
+            "name": "main.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 545,
+            "file": "bootloader/main.c"
+          }
+        ]
+      },
+      {
+        "id": "dom:boards",
+        "name": "boards",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:boards/include/boards/waveshare_core2350b_16mb_psram8mb.h",
+            "name": "waveshare_core2350b_16mb_psram8mb.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 91,
+            "file": "boards/include/boards/waveshare_core2350b_16mb_psram8mb.h"
+          },
+          {
+            "id": "f:boards/include/boards/weact_studio_rp2350a_16mb.h",
+            "name": "weact_studio_rp2350a_16mb.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 91,
+            "file": "boards/include/boards/weact_studio_rp2350a_16mb.h"
+          }
+        ]
+      },
+      {
+        "id": "dom:static/tests",
+        "name": "static/tests",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:static/tests/alarm_service/alarm_service_test.c",
+            "name": "alarm_service_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 417,
+            "file": "static/tests/alarm_service/alarm_service_test.c"
+          },
+          {
+            "id": "f:static/tests/channel_manager/channel_manager_test.c",
+            "name": "channel_manager_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 145,
+            "file": "static/tests/channel_manager/channel_manager_test.c"
+          },
+          {
+            "id": "f:static/tests/channel_manager/driver_catalog_test.c",
+            "name": "driver_catalog_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 63,
+            "file": "static/tests/channel_manager/driver_catalog_test.c"
+          },
+          {
+            "id": "f:static/tests/channel_runtime/channel_runtime_test.c",
+            "name": "channel_runtime_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 456,
+            "file": "static/tests/channel_runtime/channel_runtime_test.c"
+          },
+          {
+            "id": "f:static/tests/config_compat/config_compat_test.c",
+            "name": "config_compat_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 398,
+            "file": "static/tests/config_compat/config_compat_test.c"
+          },
+          {
+            "id": "f:static/tests/config_service_identity/config_service_identity_test.c",
+            "name": "config_service_identity_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 168,
+            "file": "static/tests/config_service_identity/config_service_identity_test.c"
+          },
+          {
+            "id": "f:static/tests/config_transaction/config_transaction_test.c",
+            "name": "config_transaction_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 152,
+            "file": "static/tests/config_transaction/config_transaction_test.c"
+          },
+          {
+            "id": "f:static/tests/config_validate/config_validate_test.c",
+            "name": "config_validate_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 838,
+            "file": "static/tests/config_validate/config_validate_test.c"
+          },
+          {
+            "id": "f:static/tests/history_flash_backend/history_flash_backend_test.c",
+            "name": "history_flash_backend_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 392,
+            "file": "static/tests/history_flash_backend/history_flash_backend_test.c"
+          },
+          {
+            "id": "f:static/tests/history_service/history_service_test.c",
+            "name": "history_service_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 360,
+            "file": "static/tests/history_service/history_service_test.c"
+          },
+          {
+            "id": "f:static/tests/maintenance_journal_backend/maintenance_journal_backend_test.c",
+            "name": "maintenance_journal_backend_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 567,
+            "file": "static/tests/maintenance_journal_backend/maintenance_journal_backend_test.c"
+          },
+          {
+            "id": "f:static/tests/maintenance_journal_codec/maintenance_journal_codec_test.c",
+            "name": "maintenance_journal_codec_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 366,
+            "file": "static/tests/maintenance_journal_codec/maintenance_journal_codec_test.c"
+          },
+          {
+            "id": "f:static/tests/maintenance_service/maintenance_service_atomic_test.c",
+            "name": "maintenance_service_atomic_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 93,
+            "file": "static/tests/maintenance_service/maintenance_service_atomic_test.c"
+          },
+          {
+            "id": "f:static/tests/maintenance_service/maintenance_service_contract_test.c",
+            "name": "maintenance_service_contract_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 151,
+            "file": "static/tests/maintenance_service/maintenance_service_contract_test.c"
+          },
+          {
+            "id": "f:static/tests/maintenance_service/maintenance_service_journal_test.c",
+            "name": "maintenance_service_journal_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 133,
+            "file": "static/tests/maintenance_service/maintenance_service_journal_test.c"
+          },
+          {
+            "id": "f:static/tests/opcua_network_parse/opcua_network_parse_test.c",
+            "name": "opcua_network_parse_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 78,
+            "file": "static/tests/opcua_network_parse/opcua_network_parse_test.c"
+          },
+          {
+            "id": "f:static/tests/ota_state/ota_state_test.c",
+            "name": "ota_state_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 68,
+            "file": "static/tests/ota_state/ota_state_test.c"
+          },
+          {
+            "id": "f:static/tests/rp2_ua_datetime_clock/rp2_ua_datetime_clock_test.c",
+            "name": "rp2_ua_datetime_clock_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 93,
+            "file": "static/tests/rp2_ua_datetime_clock/rp2_ua_datetime_clock_test.c"
+          },
+          {
+            "id": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+            "name": "sensor_manager_rollback_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 182,
+            "file": "static/tests/sensor_manager/sensor_manager_rollback_test.c"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+            "name": "w5x00_transport_test.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 531,
+            "file": "static/tests/w5x00_transport/w5x00_transport_test.c"
+          },
+          {
+            "id": "f:static/tests/alarm_service/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 18,
+            "file": "static/tests/alarm_service/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/alarm_service/task.h",
+            "name": "task.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 10,
+            "file": "static/tests/alarm_service/task.h"
+          },
+          {
+            "id": "f:static/tests/channel_manager/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 8,
+            "file": "static/tests/channel_manager/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/channel_manager/task.h",
+            "name": "task.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 4,
+            "file": "static/tests/channel_manager/task.h"
+          },
+          {
+            "id": "f:static/tests/channel_runtime/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 8,
+            "file": "static/tests/channel_runtime/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/channel_runtime/task.h",
+            "name": "task.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 4,
+            "file": "static/tests/channel_runtime/task.h"
+          },
+          {
+            "id": "f:static/tests/config_service_identity/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 8,
+            "file": "static/tests/config_service_identity/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/config_service_identity/ota_layout.h",
+            "name": "ota_layout.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 7,
+            "file": "static/tests/config_service_identity/ota_layout.h"
+          },
+          {
+            "id": "f:static/tests/config_service_identity/task.h",
+            "name": "task.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 5,
+            "file": "static/tests/config_service_identity/task.h"
+          },
+          {
+            "id": "f:static/tests/config_transaction/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 13,
+            "file": "static/tests/config_transaction/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/config_transaction/ota_layout.h",
+            "name": "ota_layout.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 5,
+            "file": "static/tests/config_transaction/ota_layout.h"
+          },
+          {
+            "id": "f:static/tests/config_transaction/task.h",
+            "name": "task.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 10,
+            "file": "static/tests/config_transaction/task.h"
+          },
+          {
+            "id": "f:static/tests/config_validate/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 10,
+            "file": "static/tests/config_validate/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/config_validate/ota_layout.h",
+            "name": "ota_layout.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 8,
+            "file": "static/tests/config_validate/ota_layout.h"
+          },
+          {
+            "id": "f:static/tests/history_service/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 17,
+            "file": "static/tests/history_service/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/history_service/semphr.h",
+            "name": "semphr.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 18,
+            "file": "static/tests/history_service/semphr.h"
+          },
+          {
+            "id": "f:static/tests/history_service/task.h",
+            "name": "task.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 8,
+            "file": "static/tests/history_service/task.h"
+          },
+          {
+            "id": "f:static/tests/maintenance_service/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 8,
+            "file": "static/tests/maintenance_service/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/sensor_manager/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 13,
+            "file": "static/tests/sensor_manager/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/sensor_manager/task.h",
+            "name": "task.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 9,
+            "file": "static/tests/sensor_manager/task.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/FreeRTOS.h",
+            "name": "FreeRTOS.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 15,
+            "file": "static/tests/w5x00_transport/FreeRTOS.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/semphr.h",
+            "name": "semphr.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 14,
+            "file": "static/tests/w5x00_transport/semphr.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/socket.h",
+            "name": "socket.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 32,
+            "file": "static/tests/w5x00_transport/socket.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/w5500.h",
+            "name": "w5500.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 21,
+            "file": "static/tests/w5x00_transport/w5500.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/w5x00_spi.h",
+            "name": "w5x00_spi.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 5,
+            "file": "static/tests/w5x00_transport/w5x00_spi.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/wizchip_conf.h",
+            "name": "wizchip_conf.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 13,
+            "file": "static/tests/w5x00_transport/wizchip_conf.h"
+          },
+          {
+            "id": "f:static/tests/config_service_identity/pico/unique_id.h",
+            "name": "unique_id.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 16,
+            "file": "static/tests/config_service_identity/pico/unique_id.h"
+          },
+          {
+            "id": "f:static/tests/config_transaction/pico/unique_id.h",
+            "name": "unique_id.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 11,
+            "file": "static/tests/config_transaction/pico/unique_id.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/lwip/dhcp.h",
+            "name": "dhcp.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 6,
+            "file": "static/tests/w5x00_transport/lwip/dhcp.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/lwip/netif.h",
+            "name": "netif.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 54,
+            "file": "static/tests/w5x00_transport/lwip/netif.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/lwip/pbuf.h",
+            "name": "pbuf.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 19,
+            "file": "static/tests/w5x00_transport/lwip/pbuf.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/lwip/stats.h",
+            "name": "stats.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 5,
+            "file": "static/tests/w5x00_transport/lwip/stats.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/lwip/tcpip.h",
+            "name": "tcpip.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 6,
+            "file": "static/tests/w5x00_transport/lwip/tcpip.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/netif/etharp.h",
+            "name": "etharp.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 6,
+            "file": "static/tests/w5x00_transport/netif/etharp.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/pico/async_context_freertos.h",
+            "name": "async_context_freertos.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 11,
+            "file": "static/tests/w5x00_transport/pico/async_context_freertos.h"
+          },
+          {
+            "id": "f:static/tests/w5x00_transport/pico/lwip_freertos.h",
+            "name": "lwip_freertos.h",
+            "kind": "module",
+            "language": "c",
+            "loc": 5,
+            "file": "static/tests/w5x00_transport/pico/lwip_freertos.h"
+          }
+        ]
+      },
+      {
+        "id": "dom:examples",
+        "name": "examples",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+            "name": "w5x00_opc_dhcp.c",
+            "kind": "module",
+            "language": "c",
+            "loc": 475,
+            "file": "examples/opc_dhcp/w5x00_opc_dhcp.c"
+          }
+        ]
+      },
+      {
+        "id": "dom:build",
+        "name": "CMake targets",
+        "kind": "domain",
+        "children": [
+          {
+            "id": "t:FIRMWARE_DRIVERS",
+            "name": "FIRMWARE_DRIVERS",
+            "kind": "job"
+          },
+          {
+            "id": "t:bintool",
+            "name": "bintool",
+            "kind": "job"
+          },
+          {
+            "id": "t:xip_ram_perms",
+            "name": "xip_ram_perms",
+            "kind": "job"
+          },
+          {
+            "id": "t:otp_header_parse",
+            "name": "otp_header_parse",
+            "kind": "job"
+          },
+          {
+            "id": "t:OTA_SHARED",
+            "name": "OTA_SHARED",
+            "kind": "job"
+          },
+          {
+            "id": "t:whereami",
+            "name": "whereami",
+            "kind": "job"
+          },
+          {
+            "id": "t:OTA_FLASH_BACKEND_APPLICATION",
+            "name": "OTA_FLASH_BACKEND_APPLICATION",
+            "kind": "job"
+          },
+          {
+            "id": "t:FLASH_OPERATION_COORDINATOR",
+            "name": "FLASH_OPERATION_COORDINATOR",
+            "kind": "job"
+          },
+          {
+            "id": "t:simple_publisher",
+            "name": "simple_publisher",
+            "kind": "job"
+          },
+          {
+            "id": "t:tests",
+            "name": "tests",
+            "kind": "job"
+          },
+          {
+            "id": "t:mqttc",
+            "name": "mqttc",
+            "kind": "job"
+          },
+          {
+            "id": "t:simple_subscriber",
+            "name": "simple_subscriber",
+            "kind": "job"
+          },
+          {
+            "id": "t:flash_nuke",
+            "name": "flash_nuke",
+            "kind": "job"
+          },
+          {
+            "id": "t:bearssl_publisher",
+            "name": "bearssl_publisher",
+            "kind": "job"
+          },
+          {
+            "id": "t:enc_bootloader",
+            "name": "enc_bootloader",
+            "kind": "job"
+          },
+          {
+            "id": "t:openssl_publisher",
+            "name": "openssl_publisher",
+            "kind": "job"
+          },
+          {
+            "id": "t:elf2uf2",
+            "name": "elf2uf2",
+            "kind": "job"
+          },
+          {
+            "id": "t:picoboot_connection_cxx",
+            "name": "picoboot_connection_cxx",
+            "kind": "job"
+          },
+          {
+            "id": "t:picoboot_connection_header",
+            "name": "picoboot_connection_header",
+            "kind": "job"
+          },
+          {
+            "id": "t:flash_id",
+            "name": "flash_id",
+            "kind": "job"
+          },
+          {
+            "id": "t:FIRMWARE_SERVICES",
+            "name": "FIRMWARE_SERVICES",
+            "kind": "job"
+          },
+          {
+            "id": "t:picotool",
+            "name": "picotool",
+            "kind": "job"
+          },
+          {
+            "id": "t:regs_headers",
+            "name": "regs_headers",
+            "kind": "job"
+          },
+          {
+            "id": "t:errors",
+            "name": "errors",
+            "kind": "job"
+          },
+          {
+            "id": "t:elf",
+            "name": "elf",
+            "kind": "job"
+          },
+          {
+            "id": "t:picoboot_connection",
+            "name": "picoboot_connection",
+            "kind": "job"
+          },
+          {
+            "id": "t:reconnect_subscriber",
+            "name": "reconnect_subscriber",
+            "kind": "job"
+          },
+          {
+            "id": "t:bio_publisher",
+            "name": "bio_publisher",
+            "kind": "job"
+          },
+          {
+            "id": "t:mbedtls",
+            "name": "mbedtls",
+            "kind": "job"
+          },
+          {
+            "id": "t:OPCUA_DEVICE_MODEL",
+            "name": "OPCUA_DEVICE_MODEL",
+            "kind": "job"
+          },
+          {
+            "id": "t:mbedtls_publisher",
+            "name": "mbedtls_publisher",
+            "kind": "job"
+          }
+        ]
+      }
+    ]
+  },
+  "edges": [
+    {
+      "source": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "target": "f:static/tests/config_service_identity/pico/unique_id.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_identity_di_amb.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "target": "f:static/tests/w5x00_transport/lwip/pbuf.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:static/tests/config_transaction/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:static/tests/history_service/semphr.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/config_transaction/task.h",
+      "target": "f:static/tests/config_transaction/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:static/tests/history_service/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/alarm_service/task.h",
+      "target": "f:static/tests/alarm_service/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_diagnostics.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "target": "f:static/tests/w5x00_transport/w5500.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_context.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:ota/src/ota_flash.c",
+      "target": "f:ota/src/ota_flash_backend.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/task.h",
+      "target": "f:static/tests/sensor_manager/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/history_service/semphr.h",
+      "target": "f:static/tests/history_service/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "target": "f:static/tests/w5x00_transport/socket.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/alarm_service/alarm_service_test.c",
+      "target": "f:static/tests/alarm_service/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:ota/src/ota_flash_backend_application.c",
+      "target": "f:ota/src/ota_flash_backend.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_pubsub.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/alarm_service/alarm_service_test.c",
+      "target": "f:static/tests/alarm_service/task.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:static/tests/sensor_manager/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/history_service/task.h",
+      "target": "f:static/tests/history_service/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:static/tests/config_transaction/pico/unique_id.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/semphr.h",
+      "target": "f:static/tests/w5x00_transport/FreeRTOS.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/opcua_model_internal.h",
+      "kind": "include"
+    },
+    {
+      "source": "f:services/src/security_trust_import_service.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/channel_manager_test.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:services/src/config_export_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:services/src/config_reset_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/driver_catalog.c",
+      "target": "f:drivers/src/internal_temperature_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/task.h",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_state_service.c",
+      "target": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/model_diagnostics.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/telemetry_channel.h",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/device_health_service.c",
+      "target": "f:services/src/diag_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/history_flash_backend.c",
+      "target": "f:services/src/maintenance_journal_codec.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/flash_operation_coordinator.c",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_store_service.h",
+      "target": "f:services/src/config_store_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/history_flash_backend.h",
+      "target": "f:drivers/src/history_flash_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/FreeRTOS.h",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/security_identity_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_validate_service.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_identity_import_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/ota_state/ota_state_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_identity_import_service.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/model_events.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/maintenance_journal_backend.h",
+      "target": "f:drivers/src/maintenance_journal_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_journal_codec/maintenance_journal_codec_test.c",
+      "target": "f:static/tests/history_flash_backend/history_flash_backend_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:drivers/src/flash_storage_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:ota/src/ota_flash.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:opcua_model/src/opcua_model.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:ota/src/ota_flash_backend_application.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/diag_service.h",
+      "target": "f:services/src/diag_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:opcua_model/src/model_address_space.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:opcua_model/src/model_identity_di_amb.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:services/src/security_trust_expiry_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/channel_manager_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/platform_clock.h",
+      "target": "f:drivers/src/platform_clock.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/alarm_service.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/native_channel_driver.h",
+      "target": "f:drivers/src/adc_voltage_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_runtime/channel_runtime_test.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_reset_service.c",
+      "target": "f:services/src/config_store_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:opcua_model/src/model_events.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/history_flash_backend.c",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/channel_manager.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:opcua_model/src/model_history.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:services/src/security_certificate_group_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/network_manager.h",
+      "target": "f:services/src/network_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_journal_codec/maintenance_journal_codec_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/config_export_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/firmware_update_service.c",
+      "target": "f:ota/src/ota_flash.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/sensor_manager.h",
+      "target": "f:services/src/sensor_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/watchdog_driver.h",
+      "target": "f:drivers/src/watchdog_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "target": "f:app/basic_profile/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_service.c",
+      "target": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:drivers/src/led_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/history_service.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:opcua_model/src/model_history.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/lwip/dhcp.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/model_pubsub.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/security_trust_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/time_service.c",
+      "target": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_service/maintenance_service_journal_test.c",
+      "target": "f:drivers/src/maintenance_journal_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/sensor_manager.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_certificate_group_service.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_wire.h",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_runtime/channel_runtime_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/device_health_service.h",
+      "target": "f:services/src/device_health_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:services/src/maintenance_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/alarm_service/alarm_service_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:services/src/network_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/native_channel_driver.h",
+      "target": "f:drivers/src/internal_temperature_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/maintenance_service.c",
+      "target": "f:drivers/src/maintenance_journal_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_events.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:services/src/config_validate_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/network_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5500.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/model_address_space.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:ota/include/ota/ota_state.h",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/history_service.c",
+      "target": "f:drivers/src/history_flash_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:opcua_model/src/model_configuration.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_identity_import_service.c",
+      "target": "f:services/src/security_state_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/sensor_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_compat/config_compat_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/time_service.h",
+      "target": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/driver_catalog.h",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_service_identity/pico/unique_id.h",
+      "target": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/model_history.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/alarm_service/task.h",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/alarm_service.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/model_common.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_store_service.c",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:opcua_model/src/model_address_space.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/FreeRTOS.h",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/firmware_update_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/security_state_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_service.c",
+      "target": "f:services/src/security_state_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/network_manager.c",
+      "target": "f:drivers/src/w5x00_ethernet_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/sensor_manager.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:services/src/alarm_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_journal_codec/maintenance_journal_codec_test.c",
+      "target": "f:services/src/maintenance_journal_codec.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_state_service.c",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/diag_service.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_validate_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:drivers/src/platform_clock.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_identity_di_amb.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:opcua_model/src/model_address_space.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:opcua_model/src/model_identity_di_amb.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_address_space.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_identity_di_amb.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/flash_storage_driver.h",
+      "target": "f:drivers/src/flash_storage_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/sensor_manager.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/config_validate_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/led_driver.h",
+      "target": "f:drivers/src/led_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/opcua_network_parse/opcua_network_parse_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/model_configuration.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/device_health_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:opcua_model/src/model_common.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/security_certificate_group_service.h",
+      "target": "f:services/src/security_certificate_group_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/device_health_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/driver_catalog_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:opcua_model/src/model_common.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:drivers/src/flash_storage_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:services/src/diag_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_history.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_identity_import_service.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:ota/src/ota_flash.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/sensor_manager.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:services/src/config_store_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/diag_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_trust_expiry_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_trust_expiry_service.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/history_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/rp2_ua_datetime_clock/rp2_ua_datetime_clock_test.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:opcua_model/src/model_configuration.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/sensor_manager.c",
+      "target": "f:services/src/history_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/flash_operation_coordinator.h",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_import_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_service.c",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/maintenance_service.h",
+      "target": "f:services/src/maintenance_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/include/opcua_model/opcua_model.h",
+      "target": "f:opcua_model/src/opcua_model.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_compat/config_compat_test.c",
+      "target": "f:services/src/config_compat.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_pubsub.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/driver_catalog.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_reset_service.h",
+      "target": "f:services/src/config_reset_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/w5x00_ethernet_driver.c",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/security_state_service.h",
+      "target": "f:services/src/security_state_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/network_manager.c",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/alarm_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/alarm_service/FreeRTOS.h",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/opcua_model_context.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:opcua_model/src/model_configuration.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/history_service.c",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/rp2_ua_datetime_clock/rp2_ua_datetime_clock_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_configuration.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/wizchip_conf.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/history_service.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_export_service.c",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:opcua_model/src/model_events.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/alarm_service/alarm_service_test.c",
+      "target": "f:services/src/alarm_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_export_service.h",
+      "target": "f:services/src/config_export_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/channel_manager.h",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_diagnostics.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_flash_backend/history_flash_backend_test.c",
+      "target": "f:drivers/src/history_flash_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:drivers/src/watchdog_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/security_trust_import_service.h",
+      "target": "f:services/src/security_trust_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/security_state_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:opcua_model/src/model_address_space.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/sensor_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_identity_import_service.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_flash_backend/history_flash_backend_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/pico/unique_id.h",
+      "target": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/w5x00_ethernet_driver.h",
+      "target": "f:drivers/src/w5x00_ethernet_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_validate_service.h",
+      "target": "f:services/src/config_validate_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/history_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_service/maintenance_service_contract_test.c",
+      "target": "f:services/src/maintenance_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:services/src/config_export_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/device_health_service.c",
+      "target": "f:services/src/firmware_update_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/security_identity_import_service.h",
+      "target": "f:services/src/security_identity_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_journal_backend/maintenance_journal_backend_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:opcua_model/src/model_common.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "target": "f:services/src/config_store_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_store_service.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:opcua_model/src/model_pubsub.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_validate_service.c",
+      "target": "f:services/src/config_compat.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_core_lifecycle.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/network_manager.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/security_trust_expiry_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/alarm_service.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_events.c",
+      "target": "f:services/src/maintenance_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5x00_spi.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_validate_service.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/lwip/pbuf.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_common.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/ota_state/ota_state_test.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/sensor_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/semphr.h",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_reset_service.c",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:ota/src/ota_flash_backend_application.c",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_trust_import_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/model_address_space.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/config_store_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:services/src/security_state_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/maintenance_journal_backend.c",
+      "target": "f:drivers/src/history_flash_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/network_manager.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:services/src/config_store_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:opcua_model/src/model_configuration.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/security_certificate_group_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:opcua_model/src/model_security.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_service/maintenance_service_atomic_test.c",
+      "target": "f:services/src/maintenance_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_security.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/security_trust_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/firmware_update_service.h",
+      "target": "f:services/src/firmware_update_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_export_service.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/security_trust_expiry_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/sensor_manager.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/socket.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/diag_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/sensor_manager.c",
+      "target": "f:static/tests/config_transaction/config_transaction_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/lwip/netif.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/model_events.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/history_service.h",
+      "target": "f:services/src/history_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/netif/etharp.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_compat.h",
+      "target": "f:services/src/config_compat.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model.c",
+      "target": "f:opcua_model/src/model_core_lifecycle.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_service/maintenance_service_atomic_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:drivers/src/led_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/time_service.c",
+      "target": "f:drivers/src/rtc_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/opcua_model.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/temp_sensor_driver.h",
+      "target": "f:drivers/src/temp_sensor_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:drivers/src/led_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:services/src/history_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_diagnostics.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "target": "f:drivers/src/w5x00_ethernet_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_journal_backend/maintenance_journal_backend_test.c",
+      "target": "f:services/src/maintenance_journal_codec.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/security_service.h",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/diag_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/driver_catalog_test.c",
+      "target": "f:drivers/src/adc_voltage_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_identity_import_service.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/channel_manager.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:opcua_model/src/model_pubsub.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:bootloader/main.c",
+      "target": "f:ota/src/ota_flash.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/alarm_service.h",
+      "target": "f:services/src/alarm_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_pubsub.c",
+      "target": "f:opcua_model/src/model_channels.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/time_service.c",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_service.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/driver_catalog.c",
+      "target": "f:drivers/src/gpio_input_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/flash_operation_coordinator.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_import_service.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/maintenance_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/channel_manager.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/channel_manager_test.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:drivers/src/history_flash_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_journal_backend/maintenance_journal_backend_test.c",
+      "target": "f:drivers/src/maintenance_journal_backend.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/opcua_model_context.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_diagnostics.c",
+      "target": "f:opcua_model/src/model_configuration.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_maintenance.c",
+      "target": "f:services/src/network_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:services/src/history_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "target": "f:services/src/config_validate_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/network_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:ota/src/ota_flash.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_trust_import_service.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:ota/include/ota/ota_flash.h",
+      "target": "f:ota/src/ota_flash.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/history_service_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/security_trust_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/lwip/tcpip.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_history.c",
+      "target": "f:services/src/history_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/maintenance_journal_codec.h",
+      "target": "f:services/src/maintenance_journal_codec.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/internal_temperature_channel_driver.c",
+      "target": "f:drivers/src/temp_sensor_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/time_service.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/task.h",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_reset_service.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/time_service.c",
+      "target": "f:services/src/network_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_pubsub.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/sensor_manager/sensor_manager_rollback_test.c",
+      "target": "f:services/src/sensor_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/driver_catalog_test.c",
+      "target": "f:drivers/src/internal_temperature_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/pico/async_context_freertos.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_validate_service.c",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/maintenance_journal_backend.c",
+      "target": "f:services/src/maintenance_journal_codec.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:bootloader/main.c",
+      "target": "f:ota/src/ota_state.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/model_identity_di_amb.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/network_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/history_service/task.h",
+      "target": "f:static/tests/alarm_service/alarm_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/config_validate_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/security_trust_expiry_service.h",
+      "target": "f:services/src/security_trust_expiry_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/alarm_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_security.c",
+      "target": "f:services/src/security_identity_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/semphr.h",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_trust_expiry_service.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/opcua_model_internal.h",
+      "target": "f:opcua_model/src/model_ota.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_service/maintenance_service_journal_test.c",
+      "target": "f:services/src/maintenance_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_runtime/channel_runtime_test.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/opcua_network_parse/opcua_network_parse_test.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/time_service.h",
+      "target": "f:services/src/time_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/model_maintenance.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/driver_catalog_test.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/alarm_service/alarm_service_test.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_service.h",
+      "target": "f:services/src/config_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_service/maintenance_service_contract_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/model_history.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "target": "f:drivers/src/w5x00_ethernet_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/driver_catalog.c",
+      "target": "f:drivers/src/adc_voltage_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/rtc_driver.h",
+      "target": "f:drivers/src/rtc_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_access.c",
+      "target": "f:opcua_model/src/model_events.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_diagnostics.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/firmware_update_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:examples/opc_dhcp/w5x00_opc_dhcp.c",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_validate/config_validate_test.c",
+      "target": "f:services/src/config_validate_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/maintenance_service/maintenance_service_journal_test.c",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/channel_manager/driver_catalog_test.c",
+      "target": "f:drivers/src/gpio_input_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/w5x00_ethernet_driver.c",
+      "target": "f:static/tests/history_service/history_service_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_channels.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:services/src/config_compat.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_pubsub.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/device_health_service.c",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/src/maintenance_journal_backend.c",
+      "target": "f:drivers/src/flash_operation_coordinator.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:app/basic_profile/main.c",
+      "target": "f:services/src/security_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_configuration.c",
+      "target": "f:services/src/alarm_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_service.c",
+      "target": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:drivers/include/drivers/native_channel_driver.h",
+      "target": "f:drivers/src/gpio_input_channel_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/config_export_service.c",
+      "target": "f:services/src/config_store_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/history_service.c",
+      "target": "f:services/src/channel_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_transaction/config_transaction_test.c",
+      "target": "f:services/src/driver_catalog.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_address_space.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:ota/src/ota_flash_backend.h",
+      "target": "f:bootloader/main.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/src/security_state_service.c",
+      "target": "f:static/tests/config_validate/config_validate_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/config_service_identity/config_service_identity_test.c",
+      "target": "f:drivers/src/flash_storage_driver.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_ota.c",
+      "target": "f:services/src/sensor_manager.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:static/tests/w5x00_transport/pico/lwip_freertos.h",
+      "target": "f:static/tests/w5x00_transport/w5x00_transport_test.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_common.c",
+      "target": "f:opcua_model/src/model_access.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:services/include/services/config_import_service.h",
+      "target": "f:services/src/config_import_service.c",
+      "kind": "call"
+    },
+    {
+      "source": "f:opcua_model/src/model_core_lifecycle.c",
+      "target": "f:opcua_model/src/model_security.c",
+      "kind": "call"
+    },
+    {
+      "source": "t:FIRMWARE_DRIVERS",
+      "target": "t:FLASH_OPERATION_COORDINATOR",
+      "kind": "call"
+    },
+    {
+      "source": "t:OPCUA_DEVICE_MODEL",
+      "target": "t:FIRMWARE_SERVICES",
+      "kind": "call"
+    },
+    {
+      "source": "t:OTA_FLASH_BACKEND_APPLICATION",
+      "target": "t:FLASH_OPERATION_COORDINATOR",
+      "kind": "call"
+    },
+    {
+      "source": "t:FIRMWARE_SERVICES",
+      "target": "t:FIRMWARE_DRIVERS",
+      "kind": "call"
+    },
+    {
+      "source": "t:FIRMWARE_SERVICES",
+      "target": "t:OTA_SHARED",
+      "kind": "call"
+    },
+    {
+      "source": "t:bio_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:openssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:mbedtls_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:bearssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:reconnect_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:tests",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:regs_headers",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:bintool",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:elf2uf2",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:whereami",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_cxx",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:mbedtls",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection_cxx",
+      "target": "t:picoboot_connection",
+      "kind": "call"
+    },
+    {
+      "source": "t:bio_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:openssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:mbedtls_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:bearssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:reconnect_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:tests",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:regs_headers",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:bintool",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:elf2uf2",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:whereami",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_cxx",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:mbedtls",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection_cxx",
+      "target": "t:picoboot_connection",
+      "kind": "call"
+    },
+    {
+      "source": "t:bio_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:openssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:mbedtls_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:bearssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:reconnect_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:tests",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:regs_headers",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:bintool",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:elf2uf2",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:whereami",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_cxx",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:mbedtls",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection_cxx",
+      "target": "t:picoboot_connection",
+      "kind": "call"
+    },
+    {
+      "source": "t:bio_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:openssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:mbedtls_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:bearssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:reconnect_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:tests",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:regs_headers",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:bintool",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:elf2uf2",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:whereami",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_cxx",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:mbedtls",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection_cxx",
+      "target": "t:picoboot_connection",
+      "kind": "call"
+    },
+    {
+      "source": "t:bio_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:openssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:mbedtls_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:bearssl_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_publisher",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:simple_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:reconnect_subscriber",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:tests",
+      "target": "t:mqttc",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:regs_headers",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:bintool",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:elf2uf2",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:whereami",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picotool",
+      "target": "t:picoboot_connection_cxx",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:mbedtls",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:bintool",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:elf",
+      "kind": "call"
+    },
+    {
+      "source": "t:elf2uf2",
+      "target": "t:errors",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection",
+      "target": "t:picoboot_connection_header",
+      "kind": "call"
+    },
+    {
+      "source": "t:picoboot_connection_cxx",
+      "target": "t:picoboot_connection",
+      "kind": "call"
+    }
+  ],
+  "entryPoints": [
+    "f:bootloader/main.c",
+    "f:app/basic_profile/main.c"
+  ],
+  "deadEnds": [
+    "f:app/basic_profile/ota_layout_sanity.c",
+    "f:ota/src/ota_flash_backend_application.c",
+    "f:static/tests/channel_manager/channel_manager_test.c",
+    "f:static/tests/channel_manager/driver_catalog_test.c",
+    "f:static/tests/channel_runtime/channel_runtime_test.c",
+    "f:static/tests/config_compat/config_compat_test.c",
+    "f:static/tests/maintenance_journal_backend/maintenance_journal_backend_test.c",
+    "f:static/tests/maintenance_journal_codec/maintenance_journal_codec_test.c",
+    "f:static/tests/maintenance_service/maintenance_service_atomic_test.c",
+    "f:static/tests/maintenance_service/maintenance_service_contract_test.c",
+    "f:static/tests/maintenance_service/maintenance_service_journal_test.c",
+    "f:static/tests/opcua_network_parse/opcua_network_parse_test.c",
+    "f:static/tests/ota_state/ota_state_test.c",
+    "f:static/tests/rp2_ua_datetime_clock/rp2_ua_datetime_clock_test.c",
+    "f:static/tests/sensor_manager/sensor_manager_rollback_test.c"
+  ],
+  "observations": [
+    "This graph is regex-based, not a real C parser: it resolves direct calls to the first same-named function definition found anywhere in first-party sources, so it can mis-attribute calls when two files define functions with the same name.",
+    "Function-pointer/vtable dispatch (driver operation tables, open62541 callback registration, FreeRTOS task entry points passed by address) is invisible to this extraction and is documented separately in docs/code/call-graphs.md and docs/code/freertos.md with manual path:line citations.",
+    "15 modules show zero inbound static call/include edges; most of these are reached only through function pointers or task creation and are NOT actually dead \u2014 treat this list as candidates requiring manual confirmation, not conclusions.",
+    "libraries/, open62541_v1.5.3/, and port/ are excluded as vendor/third-party and are not represented as graph nodes."
+  ],
+  "flows": []
+}

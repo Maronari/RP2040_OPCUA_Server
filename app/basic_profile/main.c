@@ -18,6 +18,7 @@
 #include "opcua_model/opcua_model.h"
 #endif
 #include "ota/ota_flash.h"
+#include "lwip_psram_heap.h"
 #include "psram_allocator.h"
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
@@ -588,6 +589,10 @@ int main(void)
     app_wait_for_usb_console();
     app_init_psram_allocator();
     app_install_exception_handlers();
+    if (!lwip_psram_heap_init())
+    {
+        app_fault_trap("lwIP PSRAM heap unavailable", 200u);
+    }
 
     printf("[APP]\t\tBooting %s FW=%s HW=%s Build=%s Git=%s\n",
            g_basic_profile.device_name,

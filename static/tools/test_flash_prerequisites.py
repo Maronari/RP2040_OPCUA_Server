@@ -13,9 +13,10 @@ class FlashPrerequisiteTests(unittest.TestCase):
     def test_reference_layout_and_all_pairs(self):
         regions = [
             ("bootloader", 0x000000, 0x010000),
-            ("bank_a", 0x010000, 0x7B4000),
-            ("bank_b", 0x7C4000, 0x7B4000),
-            ("maintenance_journal", 0xF78000, 0x008000),
+            ("bank_a", 0x010000, 0x7A4000),
+            ("bank_b", 0x7B4000, 0x7A4000),
+            ("maintenance_journal", 0xF58000, 0x008000),
+            ("history", 0xF60000, 0x020000),
             ("config_0", 0xF80000, 0x010000),
             ("config_1", 0xF90000, 0x010000),
             ("identity_0", 0xFA0000, 0x010000),
@@ -40,9 +41,10 @@ class FlashPrerequisiteTests(unittest.TestCase):
         if generated.exists():
             actual = json.loads(generated.read_text())["regions"]
             expected = {
-                "bank_a": (0x010000, 0x7B4000),
-                "bank_b": (0x7C4000, 0x7B4000),
-                "maintenance_journal": (0xF78000, 0x8000),
+                "bank_a": (0x010000, 0x7A4000),
+                "bank_b": (0x7B4000, 0x7A4000),
+                "maintenance_journal": (0xF58000, 0x8000),
+                "history": (0xF60000, 0x20000),
             }
             for name, (offset, size) in expected.items():
                 self.assertEqual(actual[name]["offset_bytes"], offset)
@@ -50,7 +52,9 @@ class FlashPrerequisiteTests(unittest.TestCase):
 
     def test_generated_templates_publish_journal(self):
         for relative in ("ota/cmake/ota_layout.h.in", "ota/cmake/ota_layout.json.in"):
-            self.assertIn("MAINTENANCE_JOURNAL", (ROOT / relative).read_text().upper())
+            text = (ROOT / relative).read_text().upper()
+            self.assertIn("MAINTENANCE_JOURNAL", text)
+            self.assertIn("HISTORY", text)
 
     def test_legacy_driver_is_read_only(self):
         header = (ROOT / "drivers/include/drivers/flash_storage_driver.h").read_text()
@@ -145,16 +149,23 @@ class FlashPrerequisiteTests(unittest.TestCase):
             ROOT / "drivers/include/drivers/flash_operation_coordinator.h"
         ).read_text()
         source = (ROOT / "drivers/src/flash_operation_coordinator.c").read_text()
+        # Doc-comment prose gets rewrapped across Doxygen passes, which
+        # shifts exactly where a ` * ` continuation marker falls mid-phrase
+        # (confirmed live: this test broke on a rewrap that changed no
+        # actual content). Collapse all whitespace/comment-continuation
+        # runs to a single space before asserting phrase content, so the
+        # check verifies the contract is documented, not its exact wrap
+        # column.
+        flattened = re.sub(r"[\s*]+", " ", header)
         self.assertIn("internal SRAM", header)
-        self.assertRegex(header, r"XIP\s+\*\s+Flash is unavailable")
-        self.assertRegex(header, r"PSRAM is not\s+\*\s+part of this contract")
-        self.assertIn("caller-owned residency invariant", header)
-        self.assertRegex(
-            header,
-            r"rejecting executable-Flash addresses does not prove"
-            r" that any other pointer\s+\*\s+is internal SRAM",
+        self.assertIn("XIP Flash is unavailable", flattened)
+        self.assertIn("PSRAM is not part of this contract", flattened)
+        self.assertIn("caller-owned residency invariant", flattened)
+        self.assertIn(
+            "rejecting addresses inside the executing firmware image", flattened
         )
-        self.assertRegex(header, r"journal page buffers")
+        self.assertIn("does not prove that any other pointer is internal SRAM", flattened)
+        self.assertIn("statically owned in internal SRAM", flattened)
         self.assertIn("flash_operation_source_is_executable_flash", source)
         self.assertIn("__flash_binary_start", source)
         self.assertIn("__flash_binary_end", source)

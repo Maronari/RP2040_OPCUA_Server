@@ -62,6 +62,7 @@ endif()
 
 target_sources(LWIP_FILES PRIVATE
         ${PORT_DIR}/lwip/w5x00_lwip.c
+        ${PORT_DIR}/lwip/lwip_psram_heap.c
         )
 
 target_include_directories(LWIP_FILES PUBLIC
@@ -77,6 +78,7 @@ target_include_directories(LWIP_FILES PUBLIC
 target_link_libraries(LWIP_FILES PUBLIC
         FREERTOS_FILES
         ETHERNET_FILES
+        PSRAM_ALLOCATOR
         pico_lwip
         pico_lwip_nosys
         pico_lwip_contrib_freertos_headers

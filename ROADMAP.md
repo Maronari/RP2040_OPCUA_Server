@@ -2,11 +2,11 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.4.0`, commit `8a454945aaccc3d381a2e889e90b53569415b705`.
+> **Current baseline:** `v0.4.2`, commit `568dfd4e2a77c2db6fca4cd9a65e6279624928d6`.
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 
-This file defines the implementation order from the `v0.4.0` baseline to
+This file defines the implementation order from the `v0.4.2` baseline to
 `v1.0.0`. Codex must follow the versions sequentially and must not pull work
 from a later version into the current one unless this file is deliberately
 updated first.
@@ -430,7 +430,7 @@ Remove the remaining temperature/singleton assumptions from history and alarms.
 ### Required implementation
 
 - [ ] Replace the one global `float` ring with typed, owned records and per-channel retention policy.
-- [ ] Allow bounded RAM, PSRAM and optional Flash backends selected per profile.
+- [ ] Store bounded per-channel history in a PSRAM ring with a bounded, non-transactional Flash-backed mirror for persistence across reboot/power loss. Single supported profile (`device_profile_basic`); no compile-time RAM-only or Flash-optional backend selection in this release.
 - [ ] Do not scan the complete history ring while interrupts/scheduling are globally locked.
 - [ ] Generalize OPC UA `HistoryRead` to every historized channel.
 - [ ] Implement bounded continuation points and maximum return counts.
@@ -957,15 +957,15 @@ Codex must not implement the following before a roadmap revision assigns an exac
 ## 8. Immediate next action
 
 The next implementation target is
-**`v0.4.1 — Channel Runtime Hardening`**.
+**`v0.4.3 — Multi-Channel History and Alarm Engine`**.
 
 Before coding, Codex must:
 
-1. use tag `v0.4.0` as the immutable implementation and compatibility baseline;
-2. follow the file-level execution plan in `docs/releases/v0.4.1.md`;
-3. preserve the v0.4.0 public OPC UA contract and configuration fields;
-4. define channel ownership, synchronization, timestamp and driver-lifecycle
-   contracts before changing public service headers;
-5. define migration for persisted v0.4.0 configurations before increasing the
-   channel capacity;
-6. only then start implementation limited to `v0.4.1`.
+1. use tag `v0.4.2` as the immutable implementation and compatibility baseline;
+2. follow the file-level execution plan in `docs/releases/v0.4.3.md`;
+3. preserve unrelated v0.4.2 public contracts and configuration fields;
+4. freeze the per-channel history record, Flash layout, continuation-point and
+   alarm-condition contracts before changing implementation code;
+5. verify mixed-type history, bounded continuation points, independent alarms,
+   persistence and the affected public OPC UA contract;
+6. only then start implementation limited to `v0.4.3`.

@@ -21,6 +21,8 @@ typedef struct
     bool fail_self_test;
     bool fail_read;
     bool fail_write;
+    bool reconfigure_during_write;
+    telemetry_driver_result_t write_result;
 } loopback_context_t;
 
 static unsigned g_events[TEST_MAX_CHANNELS * 4u];
@@ -113,12 +115,22 @@ static telemetry_driver_result_t loopback_write(telemetry_channel_t *channel,
     {
         return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
     }
+    if (context->write_result != TELEMETRY_DRIVER_RESULT_OK)
+    {
+        return context->write_result;
+    }
     if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_STRING &&
         memchr(value->string, '\0', TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN) == NULL)
     {
         return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT;
     }
     channel->runtime.value = *value;
+    if (context->reconfigure_during_write)
+    {
+        telemetry_channel_settings_t settings = channel->settings;
+        settings.publish_period_ms = 1u;
+        assert(channel_manager_update_settings(channel->metadata.id, &settings));
+    }
     return TELEMETRY_DRIVER_RESULT_OK;
 }
 
@@ -152,6 +164,14 @@ static const telemetry_driver_vtbl_t g_loopback_driver = {
     .stop = loopback_stop,
     .read = loopback_read,
     .write = loopback_write,
+    .configure = loopback_configure,
+    .self_test = loopback_self_test,
+};
+
+static const telemetry_driver_vtbl_t g_no_write_driver = {
+    .start = loopback_start,
+    .stop = loopback_stop,
+    .read = loopback_read,
     .configure = loopback_configure,
     .self_test = loopback_self_test,
 };
@@ -243,15 +263,17 @@ static bool activate(channel_config_t *configs, size_t count)
 
 static void write_and_verify(size_t index, telemetry_channel_value_t value)
 {
-    channel_manager_driver_operation_t operation = {0};
     telemetry_channel_snapshot_t snapshot = {0};
-    telemetry_driver_result_t result;
+    telemetry_channel_snapshot_t returned = {0};
 
-    assert(channel_manager_acquire_driver_operation(index, &operation));
-    result = operation.snapshot.channel.driver->write(&operation.snapshot.channel, &value);
-    assert(result == TELEMETRY_DRIVER_RESULT_OK);
-    assert(channel_manager_publish_driver_operation(&operation));
-    channel_manager_release_driver_operation(&operation);
+    assert(channel_manager_copy_snapshot_by_index(index, &snapshot));
+    assert(channel_manager_write_value(snapshot.channel.metadata.id,
+                                       snapshot.channel.metadata.value_type,
+                                       &value,
+                                       &returned) == CHANNEL_MANAGER_WRITE_RESULT_OK);
+    assert(returned.channel.runtime.quality == SERVICE_QUALITY_GOOD);
+    assert(returned.channel.runtime.source_timestamp_unix_us == 1700000000000000ULL);
+    assert(returned.channel.runtime.sample_count == snapshot.channel.runtime.sample_count + 1u);
     assert(channel_manager_copy_snapshot_by_index(index, &snapshot));
     switch (snapshot.channel.metadata.value_type)
     {
@@ -302,7 +324,6 @@ static void test_all_types_boundaries_and_read_failure(void)
     char ids[TEST_MAX_CHANNELS][TELEMETRY_CHANNEL_ID_MAX_LEN];
     char names[TEST_MAX_CHANNELS][TELEMETRY_CHANNEL_NAME_MAX_LEN];
     telemetry_channel_value_t value = {0};
-    channel_manager_driver_operation_t operation = {0};
     telemetry_channel_snapshot_t snapshot = {0};
 
     build_configs(configs, contexts, ids, names, TEST_MAX_CHANNELS);
@@ -319,11 +340,9 @@ static void test_all_types_boundaries_and_read_failure(void)
     value.string[TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN - 1u] = '\0';
     write_and_verify(7u, value);
 
-    assert(channel_manager_acquire_driver_operation(7u, &operation));
     memset(value.string, 'x', sizeof(value.string));
-    assert(operation.snapshot.channel.driver->write(&operation.snapshot.channel, &value) ==
-           TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT);
-    channel_manager_release_driver_operation(&operation);
+    assert(channel_manager_write_value("c07", TELEMETRY_CHANNEL_VALUE_STRING, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_TYPE_MISMATCH);
     contexts[3].fail_read = true;
     assert(!channel_manager_poll_all(99u));
     assert(channel_manager_copy_snapshot_by_index(3u, &snapshot));
@@ -331,6 +350,85 @@ static void test_all_types_boundaries_and_read_failure(void)
     assert(snapshot.channel.runtime.error_count == 1u);
     assert(channel_manager_copy_snapshot_by_index(0u, &snapshot));
     assert(snapshot.channel.runtime.source_timestamp_unix_us == 1700000000000000ULL);
+}
+
+static void test_write_rejections_and_failure_cleanup(void)
+{
+    channel_config_t configs[8];
+    loopback_context_t contexts[8];
+    char ids[8][TELEMETRY_CHANNEL_ID_MAX_LEN];
+    char names[8][TELEMETRY_CHANNEL_NAME_MAX_LEN];
+    telemetry_channel_value_t value = {.f32 = 1.0f};
+    telemetry_channel_snapshot_t before = {0};
+    telemetry_channel_snapshot_t after = {0};
+    channel_manager_driver_operation_t operation = {0};
+
+    build_configs(configs, contexts, ids, names, 8u);
+    reset_events();
+    assert(activate(configs, 8u));
+    assert(channel_manager_write_value("missing", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_NOT_FOUND);
+
+    build_configs(configs, contexts, ids, names, 8u);
+    configs[0].metadata.flags &= ~TELEMETRY_CHANNEL_FLAG_WRITABLE;
+    reset_events();
+    assert(activate(configs, 8u));
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_READ_ONLY);
+
+    build_configs(configs, contexts, ids, names, 8u);
+    configs[0].settings.enabled = false;
+    reset_events();
+    assert(activate(configs, 8u));
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_DISABLED);
+
+    build_configs(configs, contexts, ids, names, 8u);
+    reset_events();
+    assert(activate(configs, 8u));
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_DOUBLE, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_TYPE_MISMATCH);
+    assert(channel_manager_write_value("c00", (telemetry_channel_value_type_t)99, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_TYPE_MISMATCH);
+    assert(channel_manager_copy_snapshot_by_id("c00", &before));
+
+    contexts[0].write_result = TELEMETRY_DRIVER_RESULT_UNSUPPORTED;
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_UNSUPPORTED);
+    contexts[0].write_result = TELEMETRY_DRIVER_RESULT_TIMEOUT;
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_TIMEOUT);
+    contexts[0].write_result = TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_HARDWARE_FAILURE);
+    contexts[0].write_result = TELEMETRY_DRIVER_RESULT_NO_MEMORY;
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE);
+    contexts[0].write_result = TELEMETRY_DRIVER_RESULT_INVALID_STATE;
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_INVALID_LIFECYCLE);
+    assert(channel_manager_copy_snapshot_by_id("c00", &after));
+    assert(memcmp(&before.channel.runtime, &after.channel.runtime, sizeof(before.channel.runtime)) == 0);
+
+    assert(channel_manager_acquire_driver_operation(0u, &operation));
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE);
+    channel_manager_release_driver_operation(&operation);
+
+    contexts[0].write_result = TELEMETRY_DRIVER_RESULT_OK;
+    contexts[0].reconfigure_during_write = true;
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_STALE);
+    contexts[0].reconfigure_during_write = false;
+    assert(channel_manager_copy_snapshot_by_id("c00", &after));
+    assert(memcmp(&before.channel.runtime, &after.channel.runtime, sizeof(before.channel.runtime)) == 0);
+
+    build_configs(configs, contexts, ids, names, 8u);
+    configs[0].driver = &g_no_write_driver;
+    reset_events();
+    assert(activate(configs, 8u));
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_UNSUPPORTED);
 }
 
 static void test_invalid_lifecycle_states(void)
@@ -352,5 +450,6 @@ int main(void)
     test_invalid_lifecycle_states();
     test_lifecycle_rollback_and_known_good();
     test_all_types_boundaries_and_read_failure();
+    test_write_rejections_and_failure_cleanup();
     return 0;
 }

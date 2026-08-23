@@ -165,7 +165,11 @@ def parse_args():
         "--max-depth",
         type=int,
         default=64,
-        help="Maximum browse depth from Root (default: 64)",
+        help="Maximum browse depth from the selected browse root (default: 64)",
+    )
+    parser.add_argument(
+        "--start-node",
+        help="Optional NodeId to use as the bounded browse root (default: Root)",
     )
     parser.add_argument(
         "--export-values",
@@ -408,7 +412,7 @@ async def configure_client_security(client, args):
         print(f"Using server certificate: {server_cert}")
 
 
-async def collect_namespace_nodes(client, namespace_index, max_depth):
+async def collect_namespace_nodes(client, namespace_index, max_depth, start_node=None):
     """Collect namespace nodes reachable from Root via hierarchical references."""
 
     namespace_array = await client.get_namespace_array()
@@ -417,11 +421,12 @@ async def collect_namespace_nodes(client, namespace_index, max_depth):
 
     namespace_uri = namespace_array[namespace_index]
     print(f"Namespace URI: {namespace_uri}")
-    print("Browsing from Root folder...")
+    browse_root = client.get_node(ua.NodeId.from_string(start_node)) if start_node else client.nodes.root
+    print(f"Browsing from {node_label(browse_root)}...")
 
     visited = set()
     exported = {}
-    stack = [(client.nodes.root, 0)]
+    stack = [(browse_root, 0)]
 
     while stack:
         node, depth = stack.pop()
@@ -450,8 +455,11 @@ async def collect_namespace_nodes(client, namespace_index, max_depth):
     return namespace_uri, list(exported.values())
 
 
-async def export_namespace_nodes(client, namespace_index, output_path, max_depth, export_values):
-    namespace_uri, nodes = await collect_namespace_nodes(client, namespace_index, max_depth)
+async def export_namespace_nodes(client, namespace_index, output_path, max_depth,
+                                 export_values, start_node=None):
+    namespace_uri, nodes = await collect_namespace_nodes(
+        client, namespace_index, max_depth, start_node
+    )
 
     if not nodes:
         print("Warning: no nodes were found in the requested namespace")
@@ -501,6 +509,7 @@ async def main_async():
             output_path,
             args.max_depth,
             args.export_values,
+            args.start_node,
         )
     except Exception as exc:
         print(f"ERROR: {exc}")

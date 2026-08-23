@@ -43,8 +43,14 @@ bool model_core_init(const opcua_model_config_t *config)
 #ifdef UA_ENABLE_HISTORIZING
     if (g_model_history_read_sample_buffer == NULL)
     {
+        /* Bounded to the frozen per-call HistoryRead cap (v0.4.3), not the
+         * per-channel retention capacity: a single HistoryReadRaw call never
+         * returns more than HISTORY_SERVICE_MAX_RETURN_COUNT samples for one
+         * node (see model_history.c), so this scratch buffer only needs to
+         * hold that many, with the rest of a channel's retained window paged
+         * through bounded continuation points. */
         g_model_history_read_sample_buffer = (history_service_channel_sample_t *)psram_malloc(
-            HISTORY_SERVICE_CHANNEL_CAPACITY * sizeof(*g_model_history_read_sample_buffer));
+            HISTORY_SERVICE_MAX_RETURN_COUNT * sizeof(*g_model_history_read_sample_buffer));
         if (g_model_history_read_sample_buffer == NULL)
         {
             if (maintenance_export_payload_allocated)
@@ -662,6 +668,11 @@ void model_core_task(void *argument)
         vTaskDelete(NULL);
     }
 
+    /* A configuration export can own almost 12 KiB until its CallResponse is
+     * encoded. Bound the full CallRequest, not only each individual method,
+     * so batched calls cannot multiply transient PSRAM without limit. */
+    config->maxNodesPerMethodCall = OPCUA_MAX_METHODS_PER_CALL;
+
     log_opcua_heap("Network layer configured");
 
     status = model_configure_application_uri(config);
@@ -787,7 +798,11 @@ void model_core_task(void *argument)
     config->historyDatabase.clear = model_history_database_clear;
     config->historyDatabase.readRaw = model_history_read_raw;
     config->accessHistoryDataCapability = true;
-    config->maxReturnDataValues = HISTORY_SERVICE_CHANNEL_CAPACITY;
+    /* Advertise the actual enforced per-call cap (see model_history.c),
+     * not the larger per-channel retention capacity: a client that reads
+     * this capability and sets numValuesPerNode accordingly should never be
+     * surprised by a continuation point on the first call. */
+    config->maxReturnDataValues = HISTORY_SERVICE_MAX_RETURN_COUNT;
     log_opcua_heap("Historizing configured");
 #endif
 

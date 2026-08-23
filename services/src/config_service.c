@@ -289,6 +289,18 @@ static void config_service_normalize_channel(config_channel_definition_t *channe
         channel->settings.critical_threshold = channel->settings.warning_threshold;
     }
 
+    /* Symmetric low-side clamp: low-low must be at or below low, mirroring
+     * the existing critical/warning clamp above. */
+    if (channel->settings.low_low_threshold > channel->settings.low_threshold)
+    {
+        channel->settings.low_low_threshold = channel->settings.low_threshold;
+    }
+
+    if (channel->settings.alarm_hysteresis < 0.0)
+    {
+        channel->settings.alarm_hysteresis = 0.0;
+    }
+
     if (!channel->settings.enabled)
     {
         channel->flags &= ~TELEMETRY_CHANNEL_FLAG_ENABLED;

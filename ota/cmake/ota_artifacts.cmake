@@ -54,7 +54,7 @@ if(TARGET ota_bootloader AND TARGET device_profile_basic_bank_a)
 
     add_custom_command(
         OUTPUT ${FACTORY_FULL_UF2}
-        COMMAND ${picotool_INSTALL_DIR}/picotool/picotool.exe uf2 convert --quiet
+        COMMAND ${CMAKE_BINARY_DIR}/_deps/picotool/picotool.exe uf2 convert --quiet
                 ${FACTORY_FULL_BIN}
                 ${FACTORY_FULL_UF2}
                 -o ${OTA_FLASH_XIP_BASE_HEX}

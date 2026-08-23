@@ -1,6 +1,7 @@
 ﻿#include <services/config_validate_service.h>
 
 #include <ctype.h>
+#include <float.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -866,6 +867,28 @@ static config_validate_service_result_t config_json_parse_channel_object(config_
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
     result = config_json_expect_named_double(reader, false, "criticalThreshold", "channels[].criticalThreshold", &channel.settings.critical_threshold);
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+    /* v0.4.0-v0.4.2 JSON export has no lower alarm tuning suffix.  Preserve
+     * high-only behavior for that public schema by mapping its omission to
+     * the same finite sentinel used by the binary compatibility decoder.
+     * Once a suffix begins, all four v0.4.3 fields are mandatory and ordered
+     * exactly as the exporter writes them. */
+    config_json_reader_skip_whitespace(reader);
+    if (reader->cursor < reader->end && *reader->cursor != '}')
+    {
+        result = config_json_expect_named_double(reader, false, "lowThreshold", "channels[].lowThreshold", &channel.settings.low_threshold);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_expect_named_double(reader, false, "lowLowThreshold", "channels[].lowLowThreshold", &channel.settings.low_low_threshold);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_expect_named_double(reader, false, "alarmHysteresis", "channels[].alarmHysteresis", &channel.settings.alarm_hysteresis);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+        result = config_json_expect_named_u32(reader, false, "alarmDebounceMs", "channels[].alarmDebounceMs", &channel.settings.alarm_debounce_ms);
+        if (result != CONFIG_VALIDATE_RESULT_OK) return result;
+    }
+    else
+    {
+        channel.settings.low_threshold = DBL_MAX;
+        channel.settings.low_low_threshold = DBL_MAX;
+    }
     result = config_json_reader_expect_char(reader, '}', "channel object");
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
 
@@ -1117,18 +1140,24 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
                                                 (unsigned)channel->driver_id);
             return CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE;
         }
-        /* v0.4.1 history storage and HistoryRead remain float-only.  Reject
-         * incompatible configuration before activation rather than exposing a
-         * historized channel whose samples would be silently discarded. */
-        if ((channel->flags & TELEMETRY_CHANNEL_FLAG_HISTORIZED) != 0u &&
-            channel->value_type != (uint8_t)TELEMETRY_CHANNEL_VALUE_FLOAT)
+        /* Preserve v0.4.1 opaque reserved-flag payloads.  An otherwise-valid
+         * v0.4.2 writable declaration must be backed by the catalog/vtable
+         * before it can reach activation. */
+        if ((channel->flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u &&
+            (channel->flags & ~(TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_HISTORIZED |
+                                TELEMETRY_CHANNEL_FLAG_ALARM_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE)) == 0u &&
+            ((driver->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u || driver->driver == NULL ||
+             driver->driver->write == NULL))
         {
             config_validate_service_set_message(message,
                                                 message_size,
-                                                "channel %u historizing requires float value type",
-                                                (unsigned)index);
-            return CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE;
+                                                "channel %u is writable but driver %u has no write operation",
+                                                (unsigned)index,
+                                                (unsigned)channel->driver_id);
+            return CONFIG_VALIDATE_RESULT_INVALID_CHANNEL;
         }
+        /* v0.4.3 history owns typed samples. Driver capability validation above
+         * is the only value-type restriction needed for historized channels. */
         if (!driver_catalog_get_resource_claims(channel->driver_id,
                                                 channel->source_index,
                                                 channel->source_flags,

@@ -31,6 +31,9 @@
 #include <stdio.h>
 #include "hardware/watchdog.h"
 #include "ua_port_alloc.h"
+#ifdef UA_ENABLE_NODESET_INJECTOR
+#include "nodesetinjector.h"
+#endif
 
 static void
 rp2_open62541_init_checkpoint(const char *stage) {
@@ -55448,14 +55451,17 @@ checkAdjustArguments(UA_Server *server, UA_Session *session,
                      UA_Variant *args, UA_StatusCode *inputArgumentResults) {
     /* Verify that we have a Variant containing UA_Argument (scalar or array) in
      * the "InputArguments" node */
-    if(argRequirements->valueSourceType != UA_VALUESOURCETYPE_INTERNAL)
+    if(argRequirements->valueSourceType != UA_VALUESOURCETYPE_INTERNAL) {
         return UA_STATUSCODE_BADINTERNALERROR;
-    if(!argRequirements->valueSource.internal.value.hasValue)
+    }
+    if(!argRequirements->valueSource.internal.value.hasValue) {
         return UA_STATUSCODE_BADINTERNALERROR;
+    }
 
     const UA_Variant *argVal = &argRequirements->valueSource.internal.value.value;
-    if(argVal->type != &UA_TYPES[UA_TYPES_ARGUMENT])
+    if(argVal->type != &UA_TYPES[UA_TYPES_ARGUMENT]) {
         return UA_STATUSCODE_BADINTERNALERROR;
+    }
 
     /* Verify the number of arguments. A scalar argument value is interpreted as
      * an array of length 1. */
@@ -55530,8 +55536,9 @@ callWithResolvedMethodAndObject(UA_Server *server, UA_Session *session,
                                 const UA_MethodNode *resolvedMethod,
                                 const UA_Node *callContext) {
     /* Is there a method to execute? */
-    if(!resolvedMethod->method)
+    if(!resolvedMethod->method) {
         return UA_STATUSCODE_BADINTERNALERROR;
+    }
 
     /* Verify access rights */
     UA_Boolean executable = resolvedMethod->executable;
@@ -297491,7 +297498,15 @@ TCP_listenSocketCallback(UA_ConnectionManager *cm, TCP_FD *conn, short event) {
     UA_FD newsockfd = lwip_accept(conn->rfd.fd, (struct sockaddr*)&remote, &remote_size);
     if(newsockfd == UA_INVALID_FD) {
         /* Temporary error -- retry */
-        if(UA_ERRNO == UA_INTERRUPTED)
+        if(UA_ERRNO == 0 ||
+           UA_ERRNO == UA_INTERRUPTED ||
+           UA_ERRNO == UA_WOULDBLOCK ||
+           UA_ERRNO == UA_AGAIN ||
+           UA_ERRNO == ENFILE ||
+           UA_ERRNO == ENOMEM ||
+           UA_ERRNO == ENOBUFS ||
+           UA_ERRNO == ECONNABORTED ||
+           UA_ERRNO == ECONNRESET)
             return;
 
         /* Close the listen socket */

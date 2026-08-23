@@ -56,6 +56,9 @@ static void test_owned_metadata_and_snapshot_copy(void)
     telemetry_channel_snapshot_t snapshot = {0};
     telemetry_channel_snapshot_t clone = {0};
 
+    channel.metadata.source = (telemetry_channel_source_descriptor_t){
+        .driver_id = 7u, .source_index = 8u, .source_flags = 9u, .reserved = 0u};
+
     channel_manager_init();
     assert(channel_manager_register(&channel, NULL));
     strcpy(id, "bad");
@@ -64,9 +67,13 @@ static void test_owned_metadata_and_snapshot_copy(void)
     assert(channel_manager_copy_snapshot_by_id("one", &snapshot));
     assert(strcmp(snapshot.channel.metadata.id, "one") == 0);
     assert(strcmp(snapshot.channel.metadata.name, "One") == 0);
+    assert(snapshot.channel.metadata.source.driver_id == 7u);
+    assert(snapshot.channel.metadata.source.source_index == 8u);
+    assert(snapshot.channel.metadata.source.source_flags == 9u);
     telemetry_channel_snapshot_clone(&clone, &snapshot);
     assert(clone.channel.metadata.id == clone.id);
     assert(strcmp(clone.channel.metadata.id, "one") == 0);
+    assert(clone.channel.metadata.source.driver_id == 7u);
 }
 
 static void test_capacity_and_stale_operation(void)

@@ -59,7 +59,7 @@ LEGACY_AUTO_CLIENT_CERT_DIRS = (
     'rp2040_opcua_config',
 )
 CONFIG_SCHEMA_VERSION = 1
-CONFIG_MAX_CHANNELS = 4
+CONFIG_MAX_CHANNELS = 16
 CONFIGURATION_NODE_ID = 'ns=1;s=Device.Maintenance.Configuration'
 SYSTEM_NODE_ID = 'ns=1;s=Device.Maintenance.System'
 METHOD_GET_CONFIG_STATE = 'ns=1;s=Device.Maintenance.GetConfigState'
@@ -361,6 +361,10 @@ def canonicalize_channel(channel, slot):
         'offset': coerce_number(require_key(channel, 'offset', f'channels[{slot}]'), f'channels[{slot}].offset'),
         'warningThreshold': coerce_number(require_key(channel, 'warningThreshold', f'channels[{slot}]'), f'channels[{slot}].warningThreshold'),
         'criticalThreshold': coerce_number(require_key(channel, 'criticalThreshold', f'channels[{slot}]'), f'channels[{slot}].criticalThreshold'),
+        'lowThreshold': coerce_number(require_key(channel, 'lowThreshold', f'channels[{slot}]'), f'channels[{slot}].lowThreshold'),
+        'lowLowThreshold': coerce_number(require_key(channel, 'lowLowThreshold', f'channels[{slot}]'), f'channels[{slot}].lowLowThreshold'),
+        'alarmHysteresis': coerce_number(require_key(channel, 'alarmHysteresis', f'channels[{slot}]'), f'channels[{slot}].alarmHysteresis'),
+        'alarmDebounceMs': coerce_u32(require_key(channel, 'alarmDebounceMs', f'channels[{slot}]'), f'channels[{slot}].alarmDebounceMs'),
     }
 
 

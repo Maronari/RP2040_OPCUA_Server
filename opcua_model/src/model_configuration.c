@@ -1,5 +1,78 @@
 #include "opcua_model_internal.h"
 
+static UA_StatusCode model_channel_write_result_to_status(channel_manager_write_result_t result)
+{
+    switch (result)
+    {
+    case CHANNEL_MANAGER_WRITE_RESULT_OK: return UA_STATUSCODE_GOOD;
+    case CHANNEL_MANAGER_WRITE_RESULT_NOT_FOUND: return UA_STATUSCODE_BADNODEIDUNKNOWN;
+    case CHANNEL_MANAGER_WRITE_RESULT_DISABLED:
+    case CHANNEL_MANAGER_WRITE_RESULT_STALE:
+    case CHANNEL_MANAGER_WRITE_RESULT_INVALID_LIFECYCLE: return UA_STATUSCODE_BADINVALIDSTATE;
+    case CHANNEL_MANAGER_WRITE_RESULT_READ_ONLY: return UA_STATUSCODE_BADNOTWRITABLE;
+    case CHANNEL_MANAGER_WRITE_RESULT_TYPE_MISMATCH: return UA_STATUSCODE_BADTYPEMISMATCH;
+    case CHANNEL_MANAGER_WRITE_RESULT_UNSUPPORTED: return UA_STATUSCODE_BADNOTSUPPORTED;
+    case CHANNEL_MANAGER_WRITE_RESULT_TIMEOUT: return UA_STATUSCODE_BADTIMEOUT;
+    case CHANNEL_MANAGER_WRITE_RESULT_HARDWARE_FAILURE: return UA_STATUSCODE_BADDEVICEFAILURE;
+    case CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE: return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    default: return UA_STATUSCODE_BADINTERNALERROR;
+    }
+}
+
+static UA_StatusCode model_copy_channel_write_variant(const UA_Variant *variant,
+                                                       telemetry_channel_value_type_t type,
+                                                       telemetry_channel_value_t *out_value)
+{
+    const UA_String *string_value;
+
+    if (variant == NULL || out_value == NULL || variant->data == NULL)
+    {
+        return UA_STATUSCODE_BADNODATA;
+    }
+    memset(out_value, 0, sizeof(*out_value));
+    switch (type)
+    {
+    case TELEMETRY_CHANNEL_VALUE_FLOAT:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_FLOAT])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        out_value->f32 = *(const UA_Float *)variant->data;
+        return UA_STATUSCODE_GOOD;
+    case TELEMETRY_CHANNEL_VALUE_DOUBLE:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_DOUBLE])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        out_value->f64 = *(const UA_Double *)variant->data;
+        return UA_STATUSCODE_GOOD;
+    case TELEMETRY_CHANNEL_VALUE_INT32:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_INT32])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        out_value->i32 = *(const UA_Int32 *)variant->data;
+        return UA_STATUSCODE_GOOD;
+    case TELEMETRY_CHANNEL_VALUE_UINT32:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_UINT32])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        out_value->u32 = *(const UA_UInt32 *)variant->data;
+        return UA_STATUSCODE_GOOD;
+    case TELEMETRY_CHANNEL_VALUE_INT64:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_INT64])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        out_value->i64 = *(const UA_Int64 *)variant->data;
+        return UA_STATUSCODE_GOOD;
+    case TELEMETRY_CHANNEL_VALUE_UINT64:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_UINT64])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        out_value->u64 = *(const UA_UInt64 *)variant->data;
+        return UA_STATUSCODE_GOOD;
+    case TELEMETRY_CHANNEL_VALUE_BOOLEAN:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_BOOLEAN])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        out_value->boolean = *(const UA_Boolean *)variant->data;
+        return UA_STATUSCODE_GOOD;
+    case TELEMETRY_CHANNEL_VALUE_STRING:
+        if (!UA_Variant_hasScalarType(variant, &UA_TYPES[UA_TYPES_STRING])) return UA_STATUSCODE_BADTYPEMISMATCH;
+        string_value = (const UA_String *)variant->data;
+        if (string_value->length >= TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN ||
+            (string_value->length > 0u && string_value->data == NULL)) return UA_STATUSCODE_BADOUTOFRANGE;
+        if (string_value->length > 0u) memcpy(out_value->string, string_value->data, string_value->length);
+        out_value->string[string_value->length] = '\0';
+        return UA_STATUSCODE_GOOD;
+    default:
+        return UA_STATUSCODE_BADTYPEMISMATCH;
+    }
+}
+
 UA_StatusCode model_write_value(UA_Server *server,
                                        const UA_NodeId *session_id,
                                        void *session_context,
@@ -57,6 +130,33 @@ UA_StatusCode model_write_value(UA_Server *server,
 
     switch (context->kind)
     {
+    case MODEL_NODE_CHANNEL_VALUE:
+    {
+        telemetry_channel_snapshot_t snapshot = {0};
+        telemetry_channel_value_t channel_value;
+        UA_StatusCode conversion_status;
+
+        if (!model_session_is_secure(session_context))
+        {
+            return UA_STATUSCODE_BADSECURITYMODEINSUFFICIENT;
+        }
+        if (!model_copy_channel_from_context(context, &snapshot))
+        {
+            return UA_STATUSCODE_BADNODEIDUNKNOWN;
+        }
+        conversion_status = model_copy_channel_write_variant(&value->value,
+                                                             snapshot.channel.metadata.value_type,
+                                                             &channel_value);
+        if (conversion_status != UA_STATUSCODE_GOOD)
+        {
+            return conversion_status;
+        }
+        return model_channel_write_result_to_status(
+            channel_manager_write_value(context->channel_id,
+                                        snapshot.channel.metadata.value_type,
+                                        &channel_value,
+                                        NULL));
+    }
     case MODEL_NODE_IDENT_ASSET_ID:
     {
         char asset_id[CONFIG_SERVICE_ASSET_ID_MAX_LEN] = {0};
@@ -969,8 +1069,15 @@ UA_StatusCode model_get_channel_config(UA_Server *server,
     }
 
     model_format_channel_config_json((size_t)slot_index, &channel, payload, sizeof(payload));
-    model_set_string_method_output(output_size, output, payload);
-    return UA_STATUSCODE_GOOD;
+    if (output_size == 0u || output == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    {
+        UA_String string_value = UA_STRING(payload);
+        status = UA_Variant_setScalarCopy(&output[0], &string_value, &UA_TYPES[UA_TYPES_STRING]);
+    }
+    return status;
 }
 
 UA_StatusCode model_list_drivers(UA_Server *server,
@@ -1019,7 +1126,7 @@ UA_StatusCode model_get_config_state(UA_Server *server,
                                             UA_Variant *output)
 {
     UA_StatusCode status;
-    char payload[384] = {0};
+    char *const payload = g_model_maintenance_export_payload;
     const bool reboot_required = model_is_reboot_required();
     (void)server;
     (void)session_id;
@@ -1035,12 +1142,25 @@ UA_StatusCode model_get_config_state(UA_Server *server,
         return status;
     }
 
-    if (!config_export_service_write_state_json(payload, sizeof(payload), reboot_required))
+    /* The model owns one bounded PSRAM scratch buffer. MaxNodesPerMethodCall
+     * is one, so the server encodes this persistent view before any method
+     * callback can reuse the payload. */
+    if (payload == NULL)
     {
-        model_set_string_method_output(output_size, output, "{}");
-        return UA_STATUSCODE_GOOD;
+        return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    }
+    if (!config_export_service_write_state_json(payload,
+                                                MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY,
+                                                reboot_required))
+    {
+        return UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED;
     }
 
-    model_set_string_method_output(output_size, output, payload);
-    return UA_STATUSCODE_GOOD;
+    if (output_size == 0u || output == NULL)
+    {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    return model_set_maintenance_export_method_output(output_size,
+                                                      output,
+                                                      strlen(payload));
 }

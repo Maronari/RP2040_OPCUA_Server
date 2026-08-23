@@ -831,4 +831,654 @@ UA_StatusCode model_set_amb_maintenance_state(
     return status;
 }
 
+/*
+ * v0.4.3 per-channel alarm condition model (T6).
+ *
+ * NodeId grammar: one condition instance per alarm-eligible channel, derived
+ * deterministically from the v0.4.2 channel NodeId grammar
+ * (model_build_channel_node_id(), "Device.Channels.c_" + hex(channel id) +
+ * "." + field) by using the sibling field name "AlarmCondition" -- e.g.
+ * "Device.Channels.c_74656D7031.AlarmCondition" for channel id "temp1".
+ * This can never collide with an existing channel field name because every
+ * existing channel field ("Value", "SamplePeriodMs", ...) is a distinct
+ * fixed string.  Both the condition instance and its ConditionSource (the
+ * channel object itself, i.e. the same NodeId with no field suffix) live in
+ * the channel namespace (g_model_channel_namespace_index), matching where
+ * the channel objects themselves live, rather than the ns=1 "Device.*"
+ * strings used by the pre-existing Security/DeviceHealth conditions.
+ *
+ * Condition type: "Types.Conditions.ChannelAlarmConditionType", a subtype of
+ * the standard SystemOffNormalAlarmType (same base used by
+ * SecurityFaultConditionType), giving every channel condition the standard
+ * ActiveState/AckedState/Retain/Severity/Quality/Message fields plus the
+ * standard Acknowledge Method for free.
+ *
+ * Quality-fault surfacing: the condition's standard Quality field mirrors
+ * alarm_condition_status_t.quality_fault (GOOD/UNCERTAIN/BAD) and Severity
+ * reflects whichever of {quality fault, process/discrete alarm} is more
+ * urgent; the Message text explicitly names both when they are
+ * simultaneously true.  This deliberately does not overwrite ActiveState:
+ * ActiveState/Retain answer "does this condition need attention right now"
+ * for either reason, while the separate service-level
+ * alarm_condition_status_t (readable via alarm_service_get_condition_by_*)
+ * keeps process_state and quality_fault fully separate for any richer
+ * surfacing a future release chooses to add.
+ */
+#define MODEL_CONDITION_TYPE_CHANNEL_ALARM "Types.Conditions.ChannelAlarmConditionType"
+#define MODEL_CHANNEL_ALARM_CONDITION_FIELD_NAME "AlarmCondition"
+#define MODEL_CHANNEL_ALARM_SLOT_CAPACITY PLATFORM_CHANNEL_LIMIT
+
+/*
+ * Deliberately small: the condition/source NodeId strings are never cached
+ * here.  They are cheap to rebuild on demand from channel_id via
+ * channel_manager_copy_snapshot_by_id() + model_build_channel_node_id(), and
+ * at up to PLATFORM_CHANNEL_LIMIT slots the two MODEL_CHANNEL_NODE_ID_MAX_LEN
+ * (128 byte) buffers this struct used to carry per slot would have added
+ * several KB of permanent internal SRAM .bss just to avoid a bounded, rare
+ * (poll-cycle or Acknowledge-Method-frequency) registry lookup + string
+ * build. */
+typedef struct
+{
+    bool slot_used;
+    char channel_id[TELEMETRY_CHANNEL_ID_MAX_LEN];
+    bool condition_active;
+    uint32_t condition_reason;
+    bool condition_enabled;
+    TickType_t next_enable_poll;
+    bool last_acknowledged_seen;
+} model_channel_alarm_slot_t;
+
+static model_channel_alarm_slot_t g_model_channel_alarm_slots[MODEL_CHANNEL_ALARM_SLOT_CAPACITY];
+static size_t g_model_channel_alarm_slot_count;
+static bool g_model_channel_alarm_condition_type_built;
+
+static model_channel_alarm_slot_t *model_find_channel_alarm_slot(const char *channel_id)
+{
+    if (channel_id == NULL || channel_id[0] == '\0')
+    {
+        return NULL;
+    }
+    for (size_t index = 0u; index < g_model_channel_alarm_slot_count; ++index)
+    {
+        if (g_model_channel_alarm_slots[index].slot_used &&
+            strcmp(g_model_channel_alarm_slots[index].channel_id, channel_id) == 0)
+        {
+            return &g_model_channel_alarm_slots[index];
+        }
+    }
+    return NULL;
+}
+
+/* Rebuilds the condition instance NodeId (and optionally its ConditionSource
+ * NodeId) for a channel from its stable id, mirroring the strings computed
+ * once at creation time in model_create_channel_alarm_condition() without
+ * caching them permanently. */
+static bool model_channel_alarm_node_ids(const char *channel_id,
+                                         char *condition_buf,
+                                         size_t condition_buf_size,
+                                         char *source_buf,
+                                         size_t source_buf_size)
+{
+    telemetry_channel_snapshot_t snapshot = {0};
+
+    if (!channel_manager_copy_snapshot_by_id(channel_id, &snapshot))
+    {
+        return false;
+    }
+    if (condition_buf != NULL &&
+        !model_build_channel_node_id(&snapshot.channel, MODEL_CHANNEL_ALARM_CONDITION_FIELD_NAME,
+                                     condition_buf, condition_buf_size))
+    {
+        return false;
+    }
+    if (source_buf != NULL &&
+        !model_build_channel_node_id(&snapshot.channel, NULL, source_buf, source_buf_size))
+    {
+        return false;
+    }
+    return true;
+}
+
+/* Called once when a client acknowledges a per-channel condition through the
+ * standard OPC UA Acknowledge Method (open62541 invokes this internally on
+ * the AckedState/Id transition to true).  Mirrors the acknowledgement back
+ * into the owning alarm_service condition so service-level acknowledgement
+ * state stays authoritative and independent per channel, per the v0.4.3
+ * requirement. */
+static UA_StatusCode model_channel_alarm_acked_callback(UA_Server *server, const UA_NodeId *condition)
+{
+    (void)server;
+    if (condition == NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+    for (size_t index = 0u; index < g_model_channel_alarm_slot_count; ++index)
+    {
+        model_channel_alarm_slot_t *slot = &g_model_channel_alarm_slots[index];
+        char condition_node_id_buf[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+        UA_NodeId candidate;
+
+        if (!slot->slot_used ||
+            !model_channel_alarm_node_ids(slot->channel_id, condition_node_id_buf,
+                                          sizeof(condition_node_id_buf), NULL, 0u))
+        {
+            continue;
+        }
+        candidate = UA_NODEID_STRING(g_model_channel_namespace_index, condition_node_id_buf);
+        if (UA_NodeId_equal(condition, &candidate))
+        {
+            (void)alarm_service_acknowledge_channel(slot->channel_id);
+            slot->last_acknowledged_seen = true;
+            break;
+        }
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_create_channel_alarm_condition(UA_Server *server,
+                                                           const telemetry_channel_t *channel,
+                                                           const UA_NodeId condition_type_id)
+{
+    model_channel_alarm_slot_t *slot;
+    UA_NodeId created_id = UA_NODEID_NULL;
+    UA_NodeId source_id;
+    UA_StatusCode status;
+    char condition_node_id_buf[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+    char source_node_id_buf[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+
+    if (server == NULL || channel == NULL || channel->metadata.id == NULL ||
+        channel->metadata.id[0] == '\0')
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    /* A previous retry may already have completed this condition.  Preserve
+     * that valid instance and only create the missing condition(s). */
+    if (model_find_channel_alarm_slot(channel->metadata.id) != NULL)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+    if (g_model_channel_alarm_slot_count >= MODEL_CHANNEL_ALARM_SLOT_CAPACITY)
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+    if (!model_build_channel_node_id(channel, MODEL_CHANNEL_ALARM_CONDITION_FIELD_NAME,
+                                     condition_node_id_buf, sizeof(condition_node_id_buf)) ||
+        !model_build_channel_node_id(channel, NULL, source_node_id_buf, sizeof(source_node_id_buf)))
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+
+    source_id = UA_NODEID_STRING(g_model_channel_namespace_index, source_node_id_buf);
+    status = UA_Server_createCondition(server,
+                                       UA_NODEID_STRING(g_model_channel_namespace_index, condition_node_id_buf),
+                                       condition_type_id,
+                                       UA_QUALIFIEDNAME(g_model_channel_namespace_index,
+                                                        (char *)MODEL_CHANNEL_ALARM_CONDITION_FIELD_NAME),
+                                       source_id,
+                                       UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                       &created_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    /* This firmware's compiled-in namespace-zero data does not give
+     * AcknowledgeableConditionType a direct HasComponent reference to the
+     * standard Acknowledge Method (confirmed live during v0.4.3 hardware
+     * verification: open62541's callWithMethodAndObject() resolves the
+     * callable method for an object via a direct, non-inherited
+     * findChildByBrowsename() lookup on that exact object -- it does not
+     * walk the HasTypeDefinition/isSubtypeOf chain -- so every condition
+     * instance created from a type lacking that reference has no way to
+     * reach Acknowledge at all, failing every call with BadMethodInvalid
+     * before this project's own model_channel_alarm_acked_callback() is
+     * ever reached). Add the reference directly on this instance so
+     * Acknowledge is callable on it, the same "patch the compiled-in
+     * namespace-zero gap once at the point of use" approach already used by
+     * model_fix_condition_method_arguments() for these Methods'
+     * InputArguments. */
+    status = UA_Server_addReference(server,
+                                    created_id,
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                    UA_EXPANDEDNODEID_NUMERIC(
+                                        0, UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_ACKNOWLEDGE),
+                                    true);
+    if (status != UA_STATUSCODE_GOOD && status != UA_STATUSCODE_BADDUPLICATEREFERENCENOTALLOWED)
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return status;
+    }
+
+    /* open62541 creates Condition instances disabled by default.  Enable the
+     * server-side condition before publishing service-owned state; otherwise
+     * model_sync_condition() correctly observes EnabledState=false and every
+     * per-channel alarm remains at its inactive construction values. */
+    status = model_condition_set_two_state_id(server, created_id, "EnabledState", true);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return status;
+    }
+
+    /* Enabling writes the standard implementation's own transition message;
+     * initialize after it so an unchanged NORMAL channel retains the stable
+     * device-model message and fields. */
+    status = model_condition_initialize_inactive(server, created_id, "Channel alarm inactive");
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return status;
+    }
+
+    status = UA_Server_setConditionTwoStateVariableCallback(server,
+                                                             created_id,
+                                                             source_id,
+                                                             false,
+                                                             model_channel_alarm_acked_callback,
+                                                             UA_ENTERING_ACKEDSTATE);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return status;
+    }
+
+    slot = &g_model_channel_alarm_slots[g_model_channel_alarm_slot_count];
+    memset(slot, 0, sizeof(*slot));
+    if (snprintf(slot->channel_id, sizeof(slot->channel_id), "%s", channel->metadata.id) >=
+        (int)sizeof(slot->channel_id))
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
+    slot->slot_used = true;
+    slot->condition_enabled = true;
+    slot->last_acknowledged_seen = true;
+    ++g_model_channel_alarm_slot_count;
+
+    return UA_STATUSCODE_GOOD;
+}
+
+/* Builds one stable condition instance per alarm-eligible channel.  Must run
+ * after the channel objects themselves exist in the address space; see the
+ * one-shot call site in model_process_runtime_events() for why this cannot
+ * be invoked from model_build_alarm_conditions() (which runs before channel
+ * nodes are built). */
+UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server)
+{
+    UA_NodeId condition_type_id;
+    size_t channel_count;
+    UA_StatusCode status;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    if (!g_model_alarm_conditions_available)
+    {
+        return UA_STATUSCODE_BADNOTSUPPORTED;
+    }
+
+    if (!g_model_channel_alarm_condition_type_built)
+    {
+        status = model_add_condition_type(server,
+                                          MODEL_CONDITION_TYPE_CHANNEL_ALARM,
+                                          "ChannelAlarmConditionType",
+                                          UA_NODEID_NUMERIC(0, UA_NS0ID_SYSTEMOFFNORMALALARMTYPE));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tChannelAlarmConditionType create failed: 0x%x (%s)\n",
+                   status, UA_StatusCode_name(status));
+            fflush(stdout);
+            return status;
+        }
+        g_model_channel_alarm_condition_type_built = true;
+    }
+
+    condition_type_id = model_condition_type_node_id(MODEL_CONDITION_TYPE_CHANNEL_ALARM);
+    channel_count = channel_manager_count();
+    if (channel_count > PLATFORM_CHANNEL_LIMIT)
+    {
+        channel_count = PLATFORM_CHANNEL_LIMIT;
+    }
+
+    for (size_t index = 0u; index < channel_count; ++index)
+    {
+        telemetry_channel_snapshot_t snapshot = {0};
+
+        if (!channel_manager_copy_snapshot_by_index(index, &snapshot))
+        {
+            return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+        }
+        if (!alarm_service_value_type_is_eligible(snapshot.channel.metadata.value_type))
+        {
+            continue;
+        }
+
+        status = model_create_channel_alarm_condition(server, &snapshot.channel, condition_type_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            printf("[OPC UA]\tChannel alarm condition create failed for %s: 0x%x (%s)\n",
+                   snapshot.channel.metadata.id != NULL ? snapshot.channel.metadata.id : "?",
+                   status, UA_StatusCode_name(status));
+            fflush(stdout);
+            return status;
+        }
+    }
+
+    return UA_STATUSCODE_GOOD;
+}
+
+static uint32_t model_channel_alarm_reason(const alarm_condition_status_t *condition)
+{
+    uint32_t reason = condition->is_discrete ? (condition->discrete_active ? 1u : 0u)
+                                             : (uint32_t)condition->process_state;
+    reason |= ((uint32_t)condition->quality_fault) << 8;
+    return reason;
+}
+
+static void model_format_channel_alarm_message(const alarm_condition_status_t *condition,
+                                               char *message,
+                                               size_t message_size,
+                                               UA_UInt16 *out_severity,
+                                               UA_StatusCode *out_quality)
+{
+    const bool process_active = condition->is_discrete ? condition->discrete_active
+                                                        : condition->process_state != ALARM_CONDITION_STATE_NORMAL;
+    const char *process_text;
+    UA_UInt16 severity = 100u;
+    UA_StatusCode quality = UA_STATUSCODE_GOOD;
+
+    if (condition->is_discrete)
+    {
+        process_text = condition->discrete_active ? "Discrete alarm active" : "Discrete alarm inactive";
+        if (condition->discrete_active)
+        {
+            severity = 600u;
+        }
+    }
+    else
+    {
+        switch (condition->process_state)
+        {
+        case ALARM_CONDITION_STATE_LOW:
+            process_text = "Low alarm active";
+            severity = 550u;
+            break;
+        case ALARM_CONDITION_STATE_HIGH:
+            process_text = "High alarm active";
+            severity = 650u;
+            break;
+        case ALARM_CONDITION_STATE_LOW_LOW:
+            process_text = "Low-low alarm active";
+            severity = 800u;
+            break;
+        case ALARM_CONDITION_STATE_HIGH_HIGH:
+            process_text = "High-high alarm active";
+            severity = 850u;
+            break;
+        case ALARM_CONDITION_STATE_NORMAL:
+        default:
+            process_text = "Channel alarm inactive";
+            break;
+        }
+    }
+
+    switch (condition->quality_fault)
+    {
+    case ALARM_QUALITY_FAULT_BAD:
+        quality = UA_STATUSCODE_BADSENSORFAILURE;
+        severity = severity > 800u ? severity : 800u;
+        break;
+    case ALARM_QUALITY_FAULT_UNCERTAIN:
+        quality = UA_STATUSCODE_UNCERTAIN;
+        severity = severity > 500u ? severity : 500u;
+        break;
+    case ALARM_QUALITY_FAULT_NONE:
+    default:
+        break;
+    }
+
+    if (condition->quality_fault != ALARM_QUALITY_FAULT_NONE && process_active)
+    {
+        snprintf(message, message_size, "%s (last good-quality state) while channel quality is %s",
+                 process_text, condition->quality_fault == ALARM_QUALITY_FAULT_BAD ? "BAD" : "UNCERTAIN");
+    }
+    else if (condition->quality_fault != ALARM_QUALITY_FAULT_NONE)
+    {
+        snprintf(message, message_size, "Channel quality is %s (last known state: %s)",
+                 condition->quality_fault == ALARM_QUALITY_FAULT_BAD ? "BAD" : "UNCERTAIN", process_text);
+    }
+    else
+    {
+        snprintf(message, message_size, "%s", process_text);
+    }
+
+    if (out_severity != NULL)
+    {
+        *out_severity = severity;
+    }
+    if (out_quality != NULL)
+    {
+        *out_quality = quality;
+    }
+}
+
+/* Reflects alarm_service-owned per-channel condition state onto the A&C
+ * condition instances built by model_build_channel_alarm_conditions() -- it
+ * evaluates no threshold itself, only translates already-evaluated service
+ * state into ActiveState/Severity/Quality/Message and standard condition
+ * events, exactly like model_process_device_health_conditions() already
+ * does for DeviceHealth.  Also reconciles AckedState from the service side
+ * (e.g. after AcknowledgeAllAlarms) since a client can also acknowledge
+ * through the standard per-condition Method, handled by
+ * model_channel_alarm_acked_callback() above. */
+void model_process_channel_alarm_conditions(UA_Server *server)
+{
+    size_t condition_count;
+
+    if (server == NULL || !g_model_alarm_conditions_available)
+    {
+        return;
+    }
+
+    condition_count = alarm_service_get_condition_count();
+    for (size_t index = 0u; index < condition_count; ++index)
+    {
+        alarm_condition_status_t condition = {0};
+        model_channel_alarm_slot_t *slot;
+        char message[192];
+        char condition_node_id_buf[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+        char source_node_id_buf[MODEL_CHANNEL_NODE_ID_MAX_LEN];
+        UA_UInt16 severity = 100u;
+        UA_StatusCode quality = UA_STATUSCODE_GOOD;
+        uint32_t reason;
+        UA_NodeId condition_node_id;
+        UA_NodeId source_node_id;
+
+        if (!alarm_service_get_condition_by_index(index, &condition) || !condition.in_use)
+        {
+            continue;
+        }
+
+        slot = model_find_channel_alarm_slot(condition.channel_id);
+        if (slot == NULL)
+        {
+            /* The channel became alarm-eligible after the one-shot
+             * condition build ran (should not happen in v0.4.3, since
+             * channels are fixed at startup); skip until a future release
+             * adds dynamic condition creation. */
+            continue;
+        }
+        if (!model_channel_alarm_node_ids(condition.channel_id, condition_node_id_buf,
+                                          sizeof(condition_node_id_buf), source_node_id_buf,
+                                          sizeof(source_node_id_buf)))
+        {
+            continue;
+        }
+
+        reason = model_channel_alarm_reason(&condition);
+        model_format_channel_alarm_message(&condition, message, sizeof(message), &severity, &quality);
+
+        condition_node_id = UA_NODEID_STRING(g_model_channel_namespace_index, condition_node_id_buf);
+        source_node_id = UA_NODEID_STRING(g_model_channel_namespace_index, source_node_id_buf);
+
+        model_sync_condition(server,
+                             condition_node_id,
+                             source_node_id,
+                             &slot->condition_active,
+                             &slot->condition_reason,
+                             &slot->condition_enabled,
+                             &slot->next_enable_poll,
+                             reason,
+                             severity,
+                             quality,
+                             message,
+                             "Channel alarm inactive");
+
+        if (condition.acknowledged != slot->last_acknowledged_seen)
+        {
+            (void)model_condition_set_two_state_id(server, condition_node_id, "AckedState",
+                                                   condition.acknowledged ? true : false);
+            slot->last_acknowledged_seen = condition.acknowledged;
+        }
+    }
+}
+
+typedef struct
+{
+    const char *name;
+    UA_NodeId data_type;
+} model_method_argument_spec_t;
+
+static UA_StatusCode model_write_method_input_arguments(UA_Server *server,
+                                                         UA_NodeId input_arguments_node,
+                                                         const model_method_argument_spec_t *specs,
+                                                         size_t spec_count)
+{
+    UA_Argument arguments[2];
+    UA_Variant value;
+    UA_StatusCode status;
+
+    if (spec_count == 0u || spec_count > (sizeof(arguments) / sizeof(arguments[0])))
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    for (size_t index = 0u; index < spec_count; ++index)
+    {
+        UA_Argument_init(&arguments[index]);
+        arguments[index].name = UA_STRING((char *)specs[index].name);
+        arguments[index].dataType = specs[index].data_type;
+        arguments[index].valueRank = UA_VALUERANK_SCALAR;
+        arguments[index].description = UA_LOCALIZEDTEXT((char *)"en-US", (char *)specs[index].name);
+    }
+
+    UA_Variant_init(&value);
+    status = UA_Variant_setArrayCopy(&value, arguments, spec_count, &UA_TYPES[UA_TYPES_ARGUMENT]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    status = UA_Server_writeValue(server, input_arguments_node, value);
+    UA_Variant_clear(&value);
+    return status;
+}
+
+/*
+ * This firmware's compiled-in namespace-zero data leaves the InputArguments
+ * value empty (Null Variant) for every standard Alarms & Conditions Method
+ * that takes parameters (ConditionRefresh, ConditionRefresh2, Acknowledge,
+ * AddComment) -- confirmed by reading those nodes live during v0.4.3 hardware
+ * verification. open62541's generic Method dispatcher
+ * (checkAdjustArguments()) requires a populated Argument[] value on that node
+ * before it will invoke the callback at all, so every call to one of these
+ * Methods failed with BadInternalError before reaching this file's own
+ * callback code, regardless of the caller-supplied EventId/SubscriptionId.
+ * Populate the standard Part 9 argument signatures once at startup so the
+ * shared Method nodes behave like a normal open62541 build; this writes
+ * static namespace-0 node metadata, not per-condition or per-channel state.
+ */
+UA_StatusCode model_fix_condition_method_arguments(UA_Server *server)
+{
+    model_method_argument_spec_t refresh_args[1];
+    model_method_argument_spec_t refresh2_args[2];
+    model_method_argument_spec_t event_id_comment_args[2];
+    UA_StatusCode status;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    refresh_args[0].name = "SubscriptionId";
+    refresh_args[0].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_UINT32);
+
+    refresh2_args[0].name = "SubscriptionId";
+    refresh2_args[0].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_UINT32);
+    refresh2_args[1].name = "MonitoredItemId";
+    refresh2_args[1].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_UINT32);
+
+    event_id_comment_args[0].name = "EventId";
+    event_id_comment_args[0].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_BYTESTRING);
+    event_id_comment_args[1].name = "Comment";
+    event_id_comment_args[1].data_type = UA_NODEID_NUMERIC(0, UA_NS0ID_LOCALIZEDTEXT);
+
+    status = model_write_method_input_arguments(
+        server, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH_INPUTARGUMENTS),
+        refresh_args, 1u);
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_method_input_arguments(
+            server, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH2_INPUTARGUMENTS),
+            refresh2_args, 2u);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_method_input_arguments(
+            server, UA_NODEID_NUMERIC(0, UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_ACKNOWLEDGE_INPUTARGUMENTS),
+            event_id_comment_args, 2u);
+    }
+    if (status == UA_STATUSCODE_GOOD)
+    {
+        status = model_write_method_input_arguments(
+            server, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_ADDCOMMENT_INPUTARGUMENTS),
+            event_id_comment_args, 2u);
+    }
+    return status;
+}
+
+/*
+ * Same underlying gap as model_fix_condition_method_arguments() above, but
+ * for the standard ConditionRefresh Method (Part 9): this firmware's
+ * compiled-in namespace-zero data does not give the Server object (the
+ * fixed instance the spec requires clients to call ConditionRefresh on, not
+ * ServerType) a direct HasComponent reference to it, and
+ * callWithMethodAndObject()'s findChildByBrowsename() lookup is a direct,
+ * non-inherited check on that exact object -- confirmed live during v0.4.3
+ * hardware verification (BadMethodInvalid with no
+ * "resolved browseName-matched method to a different NodeId" diagnostic,
+ * meaning no match was found at all, not merely a mismatched one). Add the
+ * missing reference once at startup.
+ */
+UA_StatusCode model_fix_server_condition_refresh_reference(UA_Server *server)
+{
+    UA_StatusCode status;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    status = UA_Server_addReference(server,
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER),
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                    UA_EXPANDEDNODEID_NUMERIC(
+                                        0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH),
+                                    true);
+    if (status == UA_STATUSCODE_BADDUPLICATEREFERENCENOTALLOWED)
+    {
+        return UA_STATUSCODE_GOOD;
+    }
+    return status;
+}
+
 #endif /* UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS */

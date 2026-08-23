@@ -35,6 +35,7 @@
 #include <stdint.h>
 
 extern void set_system_time(uint32_t sec);
+extern unsigned char *g_lwip_ram_heap;
 
 /* Prevent having to link sys_arch.c (we don't test the API layers in unit tests) */
 #define NO_SYS                      0
@@ -52,7 +53,17 @@ extern void set_system_time(uint32_t sec);
 #define LWIP_NETIF_LOOPBACK         1
 #define LWIP_HAVE_LOOPIF            1
 #define LWIP_MULTICAST_TX_OPTIONS   1
-#define MEM_SIZE                    4000
+/*
+ * open62541 is configured with a 16 KiB secure send buffer.  ExportConfig's
+ * bounded 16-channel response is sent through a blocking lwIP socket, so the
+ * lwIP heap must be able to hold one secure response rather than failing to
+ * queue it partway through.  Internal SRAM cannot hold this bound alongside
+ * the required 360 KiB FreeRTOS heap, so startup reserves this fixed-size
+ * arena from PSRAM before lwIP is initialized.
+ */
+#define LWIP_OPCUA_SECURE_SEND_MIN   16384u
+#define MEM_SIZE                    LWIP_OPCUA_SECURE_SEND_MIN
+#define LWIP_RAM_HEAP_POINTER       g_lwip_ram_heap
 
 #define LWIP_TCP_KEEPALIVE          0
 
@@ -67,7 +78,19 @@ extern void set_system_time(uint32_t sec);
 #define LWIP_NETIF_STATUS_CALLBACK  1
 
 #define TCP_MSS                     (1500 /*mtu*/ - 20 /*iphdr*/ - 20 /*tcphhr*/)
-#define TCP_SND_BUF                 (8 * TCP_MSS)
+#define TCP_SND_BUF                 LWIP_OPCUA_SECURE_SEND_MIN
+
+#if MEM_SIZE < LWIP_OPCUA_SECURE_SEND_MIN
+#error "lwIP MEM_SIZE must carry one bounded OPC UA secure response"
+#endif
+
+/* The configured TCP queue must accept the same bounded secure chunk as the
+ * lwIP heap. Otherwise a blocking socket write can wait forever for capacity
+ * that the request-processing task itself must release. */
+#define LWIP_OPCUA_CONFIG_EXPORT_SEND_MIN  LWIP_OPCUA_SECURE_SEND_MIN
+#if TCP_SND_BUF < LWIP_OPCUA_CONFIG_EXPORT_SEND_MIN
+#error "lwIP TCP_SND_BUF cannot carry the bounded OPC UA configuration export"
+#endif
 
 #define LWIP_HTTPD_CGI              0
 #define LWIP_HTTPD_SSI              0
@@ -107,7 +130,7 @@ extern void set_system_time(uint32_t sec);
 #define MEMP_NUM_NETCONN            10
 #define PBUF_POOL_SIZE              7
 #define MEMP_NUM_PBUF               16
-#define MEMP_NUM_TCP_SEG            32
+#define MEMP_NUM_TCP_SEG            48
 #define MEMP_NUM_TCP_WND            6
 #define DEFAULT_UDP_RECVMBOX_SIZE   6
 #define DEFAULT_TCP_RECVMBOX_SIZE   128
