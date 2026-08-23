@@ -138,6 +138,10 @@ EXPECTED_CONTINUATION_EXPIRY_S = 30.0
 CONTINUATION_EXPIRY_MARGIN_S = 3.0
 
 MAINTENANCE_NODE_ID = "ns=1;s=Device.Maintenance"
+# GetChannelConfig/SetChannelConfig/ApplyConfig are registered under the
+# Configuration sub-folder (MODEL_NODE_MAINTENANCE_CONFIGURATION in
+# opcua_model/src/opcua_model_internal.h), not the Maintenance folder itself.
+MAINTENANCE_CONFIGURATION_NODE_ID = "ns=1;s=Device.Maintenance.Configuration"
 METHOD_SET_CHANNEL_CONFIG = "ns=1;s=Device.Maintenance.SetChannelConfig"
 METHOD_GET_CHANNEL_CONFIG = "ns=1;s=Device.Maintenance.GetChannelConfig"
 METHOD_APPLY_CONFIG = "ns=1;s=Device.Maintenance.ApplyConfig"
@@ -413,7 +417,7 @@ def verify_continuation_pool_constants(audit):
 # --------------------------------------------------------------------------
 
 async def get_channel_config_json(client, ua, slot_index):
-    maintenance = client.get_node(ua.NodeId.from_string(MAINTENANCE_NODE_ID))
+    maintenance = client.get_node(ua.NodeId.from_string(MAINTENANCE_CONFIGURATION_NODE_ID))
     method_id = ua.NodeId.from_string(METHOD_GET_CHANNEL_CONFIG)
     result = await maintenance.call_method(method_id, ua.Variant(slot_index, ua.VariantType.UInt32))
     text = result[0] if isinstance(result, (list, tuple)) else result
@@ -431,7 +435,7 @@ async def find_channel_slot(client, ua, channel_id):
 async def set_channel_config(client, ua, slot_index, config, *, warning_threshold=None,
                              critical_threshold=None, sample_period_ms=None,
                              history_interval_ms=None):
-    maintenance = client.get_node(ua.NodeId.from_string(MAINTENANCE_NODE_ID))
+    maintenance = client.get_node(ua.NodeId.from_string(MAINTENANCE_CONFIGURATION_NODE_ID))
     method_id = ua.NodeId.from_string(METHOD_SET_CHANNEL_CONFIG)
     inputs = (
         ua.Variant(slot_index, ua.VariantType.UInt32),
@@ -458,7 +462,7 @@ async def set_channel_config(client, ua, slot_index, config, *, warning_threshol
 
 
 async def apply_config(client, ua):
-    maintenance = client.get_node(ua.NodeId.from_string(MAINTENANCE_NODE_ID))
+    maintenance = client.get_node(ua.NodeId.from_string(MAINTENANCE_CONFIGURATION_NODE_ID))
     method_id = ua.NodeId.from_string(METHOD_APPLY_CONFIG)
     result = await maintenance.call_method(method_id)
     value = result[0] if isinstance(result, (list, tuple)) else result
@@ -500,13 +504,32 @@ class ChannelStagingGuard:
         self.staged = False
 
 
-async def full_history_snapshot(client, ua, value_node):
+async def full_history_snapshot(client, ua, value_node, max_attempts=5):
     """A stitched, continuation-consuming full read using asyncua's own
     pagination loop -- used only to observe ring size/oldest-timestamp, not
-    as a correctness assertion (that happens in verify_pagination)."""
+    as a correctness assertion (that happens in verify_pagination).
+
+    On a channel sampling continuously at steady state, the ring is already
+    full and evicting on every new sample, so a multi-page read spanning
+    more than one sample interval can legitimately race a generation bump
+    mid-read -- this is exactly the condition the da0b057 generation-race
+    fix and the cross-call generation check are supposed to reject, and
+    asyncua's own read_raw_history pagination loop has no way to know that
+    a BadContinuationPointInvalid here just means "the ring moved, retry the
+    whole snapshot" rather than a real failure. Retry a bounded number of
+    times before giving up for real."""
     start = datetime(1970, 1, 2, tzinfo=timezone.utc)
     end = datetime.now(timezone.utc) + timedelta(seconds=5)
-    return await value_node.read_raw_history(starttime=start, endtime=end, numvalues=0)
+    last_exc = None
+    for _ in range(max_attempts):
+        try:
+            return await value_node.read_raw_history(starttime=start, endtime=end, numvalues=0)
+        except Exception as exc:
+            if "BadContinuationPointInvalid" not in type(exc).__name__ and \
+               "BadContinuationPointInvalid" not in str(exc):
+                raise
+            last_exc = exc
+    raise last_exc
 
 
 async def wait_for_ring_wrap(client, ua, audit, value_node, sample_period_s, timeout_s):
@@ -548,11 +571,38 @@ async def wait_for_sample_count(client, ua, audit, value_node, target_count, tim
 # Requirement 2: pagination correctness across > 128 samples.
 # --------------------------------------------------------------------------
 
-async def verify_pagination(client, ua, audit, value_node, max_return_count):
+async def verify_pagination(client, ua, audit, value_node, max_return_count, max_attempts=5):
     start = datetime(1970, 1, 2, tzinfo=timezone.utc)
     end = datetime.now(timezone.utc) + timedelta(seconds=5)
 
-    reference = await value_node.read_raw_history(starttime=start, endtime=end, numvalues=0)
+    # The whole reference/page1/page2 triple is retried together (not just
+    # individual reads): on a continuously-sampling channel the ring is
+    # already full and evicting every sample interval, so the reference read
+    # (many slow round trips) and the page1+page2 read (two fast round
+    # trips) can each observe a different, legitimately-advancing window --
+    # a mismatch here does not by itself mean corruption, only that the two
+    # reads landed on different sides of an eviction. Only report a real
+    # failure if every attempt disagrees.
+    matches = False
+    for attempt in range(1, max_attempts + 1):
+        reference = await full_history_snapshot(client, ua, value_node)
+        page1 = await history_read_raw(client, ua, value_node.nodeid, start, end, max_return_count)
+        page1_samples = result_samples(page1)
+        page2 = await history_read_raw(client, ua, value_node.nodeid, start, end, max_return_count,
+                                       continuation=page1.ContinuationPoint)
+        page2_samples = result_samples(page2)
+        stitched = page1_samples + page2_samples
+        reference_prefix = reference[:len(stitched)]
+        matches = len(stitched) == len(reference_prefix) and all(
+            a.Value.Value == b.Value.Value and a.SourceTimestamp == b.SourceTimestamp
+            for a, b in zip(stitched, reference_prefix))
+        if matches:
+            if attempt > 1:
+                audit.info(f"pagination reference/page1/page2 agreed on attempt {attempt}/"
+                          f"{max_attempts} (earlier attempt(s) raced a live eviction, as "
+                          "expected on a continuously-sampling channel)")
+            break
+
     audit.check(len(reference) > max_return_count,
                 f"reference stitched read has more than {max_return_count} samples "
                 f"(got {len(reference)}) -- proves a single page cannot cover it", "pagination")
@@ -560,32 +610,20 @@ async def verify_pagination(client, ua, audit, value_node, max_return_count):
     # Requesting exactly the server's own page cap as numValuesPerNode still
     # forces a second page whenever more than one page of data exists, since
     # HISTORY_SERVICE_MAX_RETURN_COUNT is already the server-side ceiling.
-    page1 = await history_read_raw(client, ua, value_node.nodeid, start, end, max_return_count)
     audit.check(status_matches(page1.StatusCode, 0),
                 f"page 1: HistoryRead status Good (got {status_name(page1.StatusCode)})",
                 "pagination")
-    page1_samples = result_samples(page1)
     audit.equal(len(page1_samples), max_return_count,
                 "page 1 sample count matches the requested/bounded page size", "pagination")
     audit.check(bool(page1.ContinuationPoint),
                 "page 1 returns a non-empty continuation point (more data remains)",
                 "pagination")
-
-    page2 = await history_read_raw(client, ua, value_node.nodeid, start, end, max_return_count,
-                                   continuation=page1.ContinuationPoint)
     audit.check(status_matches(page2.StatusCode, 0),
                 f"page 2 (same continuation point): HistoryRead status Good "
                 f"(got {status_name(page2.StatusCode)})", "pagination")
-    page2_samples = result_samples(page2)
-
-    stitched = page1_samples + page2_samples
-    reference_prefix = reference[:len(stitched)]
-    matches = len(stitched) == len(reference_prefix) and all(
-        a.Value.Value == b.Value.Value and a.SourceTimestamp == b.SourceTimestamp
-        for a, b in zip(stitched, reference_prefix))
     audit.check(matches, "page 1 + page 2 stitched together exactly match the reference "
-                "read's first N samples: no gap, no duplicate, ring order preserved",
-                "pagination")
+                f"read's first N samples: no gap, no duplicate, ring order preserved "
+                f"(after up to {max_attempts} attempts)", "pagination")
 
     # Drain any remaining pages so this test leaves no continuation point
     # occupying the pool.
@@ -827,7 +865,19 @@ async def force_channel_alarm_high(client, ua, audit, channel_id, label):
 
     ns = await resolve_channel_namespace(client, ua)
     value_node = await channel_value_node(client, ua, ns, channel_id)
-    current = await value_node.read_value()
+    # read_data_value() (unlike read_value()) does not raise on a non-Good
+    # StatusCode -- a channel with no real transducer attached (e.g. a
+    # floating ADC pin used only to provision a second numeric test channel)
+    # can legitimately read back Uncertain/Bad quality, which must be
+    # reported as a clear audit failure here rather than crash the whole run.
+    current_data_value = await value_node.read_data_value()
+    if not status_matches(current_data_value.StatusCode, 0):
+        audit.check(False, f"{label}: channel quality is "
+                    f"{status_name(current_data_value.StatusCode)}, not Good; "
+                    "--force-alarm needs a Good-quality live value to compute a "
+                    "forcing threshold from", "force-alarm")
+        return guard, False
+    current = current_data_value.Value.Value
     try:
         current_value = float(current)
     except (TypeError, ValueError):
@@ -945,8 +995,21 @@ async def capture_active_event_id(client, ua, audit, condition_node, channel_id,
     subscription = None
     try:
         subscription = await client.create_subscription(100, collector)
+        # Subscribe at the Server object (ns=0;i=2253), not the condition
+        # instance node directly. Per model_enable_condition_source() in
+        # opcua_model/src/model_maintenance.c, the EventNotifier bit and
+        # HasNotifier chain are wired on the condition's *source* object
+        # (the channel/device the condition is about), the same pattern the
+        # OPC UA A&C spec expects clients to rely on -- subscribing straight
+        # at a condition instance is not a valid event-notifier target here
+        # and open62541 rejects the resulting MonitoredItem with
+        # BadNotSupported. The Server object is always a valid subscribe
+        # point when Events are implemented at all; ConditionEventCollector
+        # already filters client-side by ConditionId/SourceNode, so this
+        # still only keeps events for the specific condition being watched.
         await subscription.subscribe_events(
-            sourcenode=condition_node, evtypes=client.get_node(ua.NodeId(2782, 0)))
+            sourcenode=client.get_node(ua.NodeId(2253, 0)),
+            evtypes=client.get_node(ua.NodeId(2782, 0)))
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if collector.events:

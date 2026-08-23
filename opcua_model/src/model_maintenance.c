@@ -463,6 +463,19 @@ UA_StatusCode model_build_alarm_conditions(UA_Server *server)
         return status;
     }
 
+    /* Same compiled-in namespace-zero gap, but for the Server object's own
+     * missing HasComponent reference to ConditionRefresh; see
+     * model_fix_server_condition_refresh_reference() in model_events.c. */
+    status = model_fix_server_condition_refresh_reference(server);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        printf("[OPC UA]\tConditionRefresh reference fix-up failed: 0x%x (%s)\n",
+               status, UA_StatusCode_name(status));
+        fflush(stdout);
+        g_model_alarm_conditions_available = false;
+        return status;
+    }
+
     status = model_enable_condition_source(server,
                                            model_device_node_id(),
                                            model_security_node_id());

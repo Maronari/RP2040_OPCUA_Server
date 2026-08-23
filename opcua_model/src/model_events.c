@@ -1022,6 +1022,33 @@ static UA_StatusCode model_create_channel_alarm_condition(UA_Server *server,
         return status;
     }
 
+    /* This firmware's compiled-in namespace-zero data does not give
+     * AcknowledgeableConditionType a direct HasComponent reference to the
+     * standard Acknowledge Method (confirmed live during v0.4.3 hardware
+     * verification: open62541's callWithMethodAndObject() resolves the
+     * callable method for an object via a direct, non-inherited
+     * findChildByBrowsename() lookup on that exact object -- it does not
+     * walk the HasTypeDefinition/isSubtypeOf chain -- so every condition
+     * instance created from a type lacking that reference has no way to
+     * reach Acknowledge at all, failing every call with BadMethodInvalid
+     * before this project's own model_channel_alarm_acked_callback() is
+     * ever reached). Add the reference directly on this instance so
+     * Acknowledge is callable on it, the same "patch the compiled-in
+     * namespace-zero gap once at the point of use" approach already used by
+     * model_fix_condition_method_arguments() for these Methods'
+     * InputArguments. */
+    status = UA_Server_addReference(server,
+                                    created_id,
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                    UA_EXPANDEDNODEID_NUMERIC(
+                                        0, UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_ACKNOWLEDGE),
+                                    true);
+    if (status != UA_STATUSCODE_GOOD && status != UA_STATUSCODE_BADDUPLICATEREFERENCENOTALLOWED)
+    {
+        (void)UA_Server_deleteCondition(server, created_id, source_id);
+        return status;
+    }
+
     /* open62541 creates Condition instances disabled by default.  Enable the
      * server-side condition before publishing service-owned state; otherwise
      * model_sync_condition() correctly observes EnabledState=false and every
@@ -1416,6 +1443,40 @@ UA_StatusCode model_fix_condition_method_arguments(UA_Server *server)
         status = model_write_method_input_arguments(
             server, UA_NODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_ADDCOMMENT_INPUTARGUMENTS),
             event_id_comment_args, 2u);
+    }
+    return status;
+}
+
+/*
+ * Same underlying gap as model_fix_condition_method_arguments() above, but
+ * for the standard ConditionRefresh Method (Part 9): this firmware's
+ * compiled-in namespace-zero data does not give the Server object (the
+ * fixed instance the spec requires clients to call ConditionRefresh on, not
+ * ServerType) a direct HasComponent reference to it, and
+ * callWithMethodAndObject()'s findChildByBrowsename() lookup is a direct,
+ * non-inherited check on that exact object -- confirmed live during v0.4.3
+ * hardware verification (BadMethodInvalid with no
+ * "resolved browseName-matched method to a different NodeId" diagnostic,
+ * meaning no match was found at all, not merely a mismatched one). Add the
+ * missing reference once at startup.
+ */
+UA_StatusCode model_fix_server_condition_refresh_reference(UA_Server *server)
+{
+    UA_StatusCode status;
+
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    status = UA_Server_addReference(server,
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER),
+                                    UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                                    UA_EXPANDEDNODEID_NUMERIC(
+                                        0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH),
+                                    true);
+    if (status == UA_STATUSCODE_BADDUPLICATEREFERENCENOTALLOWED)
+    {
+        return UA_STATUSCODE_GOOD;
     }
     return status;
 }
