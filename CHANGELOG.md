@@ -4,6 +4,35 @@ This file tracks the firmware release line through `v0.4.2`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
 
+## v0.4.3
+
+- History: replaces the single global `float` ring with a per-channel,
+  typed PSRAM ring plus a bounded, non-transactional Flash-backed mirror
+  that survives reboot/power loss. `HistoryRead` is generalized to every
+  historizing channel with bounded continuation points (16, 30s expiry)
+  and a 128-sample page cap; chunked scans never hold one lock across a
+  full multi-channel pass, and a channel identity hash was widened to
+  32-bit before the on-flash record format froze.
+- Alarms: replaces the singleton alarm status with one independent
+  condition instance per alarm-eligible channel, supporting
+  high/high-high, low/low-low, hysteresis, debounce, discrete boolean
+  state, and a distinct invalid/stale-quality fault state.
+  Acknowledgement state is independent per condition; transitions remain
+  live-event only (no Flash journal — that is v0.8.1 scope).
+- Fixes found during hardware verification: a within-call generation race
+  in chunked `HistoryRead`, and two pre-existing gaps unrelated to this
+  release's own scope — standard `Acknowledge`/`ConditionRefresh` were
+  completely uncallable (missing `HasComponent` references in the
+  compiled namespace-zero nodeset), and the task stack high-watermark
+  diagnostic nodes always returned `BadNotFound`.
+- Verification: `static/tools/verify_v043.py`, a real asyncua
+  protocol-level verifier run against the reference RP2350 board — 67/67
+  checks covering mixed-type HistoryRead, pagination, continuation-point
+  exhaustion/release/expiry/foreign-session/generation invalidation, two
+  simultaneous independent conditions, and standard Acknowledge/
+  ConditionRefresh. See `docs/releases/v0.4.3-verification-report.md`.
+- Release plan: `docs/releases/v0.4.3.md`.
+
 ## v0.4.2
 
 - OPC UA model: reflects every startup registry channel through one generic,
