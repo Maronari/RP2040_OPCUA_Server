@@ -19,8 +19,19 @@ EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
 EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
     "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
 )
+# Updated 2026-08-23 (from 0f8e85b8477ff3edc77968806ad0cc509c3cfafd81594cc6318915ff48a00bf3)
+# for commit 5bed455: fixing the missing HasComponent references that left
+# standard Acknowledge/ConditionRefresh completely uncallable (BadMethodInvalid
+# on every prior release) adds exactly three new node_and_browse_calls entries
+# -- UA_EXPANDEDNODEID_NUMERIC(0, UA_NS0ID_ACKNOWLEDGEABLECONDITIONTYPE_ACKNOWLEDGE),
+# UA_EXPANDEDNODEID_NUMERIC(0, UA_NS0ID_CONDITIONTYPE_CONDITIONREFRESH), and
+# UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER) -- plus one new diagnostic printf
+# string and one removed one (both non-UA log text). No entries were removed
+# from string_literals, node_and_browse_calls or public_attribute_assignments;
+# confirmed by diffing this script's own public_inventory() output against
+# commit d48fd06 (pre-fix) before recording this hash.
 EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
-    "0f8e85b8477ff3edc77968806ad0cc509c3cfafd81594cc6318915ff48a00bf3"
+    "a9a3b7610c5484987a9f01fd67cd2515876177071ea1bedbfa8595873ab3c4f8"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
@@ -104,6 +115,17 @@ V043_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/model_history.c",
     "opcua_model/src/model_maintenance.c",
     "opcua_model/src/model_security.c",
+})
+# A post-v0.4.2 Doxygen documentation pass (comment-only edits to public
+# headers, per this project's own policy for that kind of change) added
+# doc comments to opcua_model.h without touching any field, signature, or
+# ordering. Confirmed by diffing docs/architecture-map's opcua_model.h
+# against the v0.4.2 baseline commit and by strip_c_comments() below still
+# matching after the exact same normalization applied to the byte-stable
+# comparison -- if a future change disguises a real contract break as also
+# touching comments, the comment-stripped comparison still catches it.
+V043_REVIEWED_COMMENT_ONLY_DRIFT_PATHS = frozenset({
+    "opcua_model/include/opcua_model/opcua_model.h",
 })
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",
@@ -189,6 +211,35 @@ def normalized_source(data: bytes) -> bytes:
         b"",
         data,
     )
+
+
+_COMMENT_OR_LITERAL_RE = re.compile(
+    br'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*.*?\*/|//[^\n]*',
+    re.DOTALL,
+)
+
+
+def strip_c_comments(data: bytes) -> bytes:
+    """Replace /* */ and // comments with nothing, leaving string/char
+    literals untouched (a literal containing "//" or "/*" must not be
+    treated as a comment). Used only to prove a BYTE_STABLE_PUBLIC_CONTRACT_PATHS
+    file's drift is comment-only for an explicitly reviewed exception -- see
+    V043_REVIEWED_COMMENT_ONLY_DRIFT_PATHS -- never to loosen the default
+    byte-exact comparison itself."""
+
+    def _replace(match: "re.Match[bytes]") -> bytes:
+        token = match.group(0)
+        if token.startswith(b"/*") or token.startswith(b"//"):
+            return b""
+        return token
+
+    stripped = _COMMENT_OR_LITERAL_RE.sub(_replace, data)
+    # Removing a comment can leave trailing whitespace on its line, or an
+    # extra blank line where a whole doc-comment block used to sit; neither
+    # is a real content difference once the comment itself is gone.
+    stripped = re.sub(br"[ \t]+\n", b"\n", stripped)
+    stripped = re.sub(br"\n{2,}", b"\n", stripped)
+    return stripped
 
 
 def aggregate_current_source(source_dir: pathlib.Path) -> bytes:
@@ -492,7 +543,12 @@ def main() -> int:
         baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
         current_data = normalized_source((source_dir / relative).read_bytes())
         if current_data != baseline_data:
-            raise SystemExit(f"opcua-contract: FAIL: contract file drift: {relative}")
+            if relative in V043_REVIEWED_COMMENT_ONLY_DRIFT_PATHS and (
+                strip_c_comments(current_data) == strip_c_comments(baseline_data)
+            ):
+                pass
+            else:
+                raise SystemExit(f"opcua-contract: FAIL: contract file drift: {relative}")
         stable_files.append({"path": relative, "sha256": sha256(current_data)})
 
     reviewed_internal_drift: list[dict[str, str]] = []

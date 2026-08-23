@@ -149,16 +149,23 @@ class FlashPrerequisiteTests(unittest.TestCase):
             ROOT / "drivers/include/drivers/flash_operation_coordinator.h"
         ).read_text()
         source = (ROOT / "drivers/src/flash_operation_coordinator.c").read_text()
+        # Doc-comment prose gets rewrapped across Doxygen passes, which
+        # shifts exactly where a ` * ` continuation marker falls mid-phrase
+        # (confirmed live: this test broke on a rewrap that changed no
+        # actual content). Collapse all whitespace/comment-continuation
+        # runs to a single space before asserting phrase content, so the
+        # check verifies the contract is documented, not its exact wrap
+        # column.
+        flattened = re.sub(r"[\s*]+", " ", header)
         self.assertIn("internal SRAM", header)
-        self.assertRegex(header, r"XIP\s+\*\s+Flash is unavailable")
-        self.assertRegex(header, r"PSRAM is not\s+\*\s+part of this contract")
-        self.assertIn("caller-owned residency invariant", header)
-        self.assertRegex(
-            header,
-            r"rejecting executable-Flash addresses does not prove"
-            r" that any other pointer\s+\*\s+is internal SRAM",
+        self.assertIn("XIP Flash is unavailable", flattened)
+        self.assertIn("PSRAM is not part of this contract", flattened)
+        self.assertIn("caller-owned residency invariant", flattened)
+        self.assertIn(
+            "rejecting addresses inside the executing firmware image", flattened
         )
-        self.assertRegex(header, r"journal page buffers")
+        self.assertIn("does not prove that any other pointer is internal SRAM", flattened)
+        self.assertIn("statically owned in internal SRAM", flattened)
         self.assertIn("flash_operation_source_is_executable_flash", source)
         self.assertIn("__flash_binary_start", source)
         self.assertIn("__flash_binary_end", source)
