@@ -1437,6 +1437,7 @@ UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
                                                           UA_NodeId task_folder_id,
                                                           const char *task_object_id,
                                                           const char *task_display_name,
+                                                          const char *registered_task_name,
                                                           model_node_context_t *task_context)
 {
     char stack_node_id[96] = {0};
@@ -1455,6 +1456,17 @@ UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
     }
 
     snprintf(stack_node_id, sizeof(stack_node_id), "%s.StackHighWatermark", task_object_id);
+
+    /* model_read_diag_value()'s MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER case
+     * (opcua_model/src/model_history.c) looks up diag_service_get_task_info_by_name()
+     * with context->task_name, and only reaches that case when context->kind
+     * matches -- both were previously left unset (kind defaulting to 0 ==
+     * MODEL_NODE_IDENT_MANUFACTURER, task_name to NULL), so every read of
+     * this node returned BadNotFound regardless of whether the named task
+     * was actually registered. registered_task_name is the actual xTaskCreate() name
+     * (e.g. "OpcUaTask"), not the short display name used for the NodeId. */
+    task_context->kind = MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER;
+    task_context->task_name = registered_task_name;
 
     return model_add_readonly_variable(server,
                                        stack_node_id,
@@ -2777,6 +2789,7 @@ UA_StatusCode model_build_address_space(UA_Server *server)
                                                       task_id,
                                                       "Device.Diagnostics.Task.OPC",
                                                       "OPC",
+                                                      "OpcUaTask",
                                                       &g_task_node_contexts[0]);
         if (status != UA_STATUSCODE_GOOD)
         {
@@ -2787,6 +2800,7 @@ UA_StatusCode model_build_address_space(UA_Server *server)
                                                       task_id,
                                                       "Device.Diagnostics.Task.SPI",
                                                       "SPI",
+                                                      "NetworkTask",
                                                       &g_task_node_contexts[1]);
         if (status != UA_STATUSCODE_GOOD)
         {
@@ -2797,6 +2811,7 @@ UA_StatusCode model_build_address_space(UA_Server *server)
                                                       task_id,
                                                       "Device.Diagnostics.Task.TEMP",
                                                       "TEMP",
+                                                      "SensorTask",
                                                       &g_task_node_contexts[2]);
         if (status != UA_STATUSCODE_GOOD)
         {

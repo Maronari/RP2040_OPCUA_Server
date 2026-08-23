@@ -1173,7 +1173,7 @@ UA_StatusCode model_add_change_password_method_node(UA_Server *server, UA_NodeId
 UA_StatusCode model_add_set_role_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_disable_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_delete_user_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
-UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server, UA_NodeId task_folder_id, const char *task_object_id, const char *task_display_name, model_node_context_t *task_context);
+UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server, UA_NodeId task_folder_id, const char *task_object_id, const char *task_display_name, const char *registered_task_name, model_node_context_t *task_context);
 UA_StatusCode model_add_channel_nodes(UA_Server *server, UA_NodeId channels_folder_id, size_t channel_index, const telemetry_channel_t *channel);
 UA_StatusCode model_add_legacy_temperature_nodes(UA_Server *server, UA_NodeId channels_folder_id, size_t channel_index, const telemetry_channel_t *channel);
 UA_StatusCode model_build_address_space(UA_Server *server);
