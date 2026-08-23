@@ -593,9 +593,15 @@ async def verify_pagination(client, ua, audit, value_node, max_return_count, max
         page2_samples = result_samples(page2)
         stitched = page1_samples + page2_samples
         reference_prefix = reference[:len(stitched)]
-        matches = len(stitched) == len(reference_prefix) and all(
+        # Require both reads to have actually succeeded, not just the
+        # stitched content to line up -- a failed page2 (empty samples)
+        # could otherwise trivially "match" a reference truncated to the
+        # same short, page1-only length and be mistaken for a pass.
+        content_matches = len(stitched) == len(reference_prefix) and all(
             a.Value.Value == b.Value.Value and a.SourceTimestamp == b.SourceTimestamp
             for a, b in zip(stitched, reference_prefix))
+        matches = (status_matches(page1.StatusCode, 0) and status_matches(page2.StatusCode, 0) and
+                  len(page1_samples) == max_return_count and content_matches)
         if matches:
             if attempt > 1:
                 audit.info(f"pagination reference/page1/page2 agreed on attempt {attempt}/"
@@ -834,19 +840,28 @@ async def read_condition_semantics(client, ua, condition_node):
 
 
 class ConditionEventCollector:
-    def __init__(self, condition_node_id):
+    def __init__(self, condition_node_id, source_node_id=None):
         self.condition_node_id = condition_node_id
+        # The condition's *source* (the channel object the condition is
+        # about -- source_id in model_create_channel_alarm_condition() /
+        # model_enable_condition_source() in opcua_model/src/model_events.c
+        # and model_maintenance.c), not the condition instance itself.
+        # BaseEventType's SourceNode field on a condition event is always
+        # populated with this source, never the condition instance's own
+        # NodeId; comparing SourceNode against the condition instance (as
+        # this fallback used to do) can never match, confirmed live during
+        # v0.4.3 hardware verification -- no event was ever collected until
+        # this was corrected.
+        self.source_node_id = source_node_id
         self.events = []
 
     def event_notification(self, event):
         condition_id = getattr(event, "ConditionId", None)
         if condition_id is not None and condition_id == self.condition_node_id:
             self.events.append(event)
-        elif condition_id is None:
-            # Some open62541 builds surface the emitting node via SourceNode
-            # instead of ConditionId on the notification; keep both paths.
+        elif condition_id is None and self.source_node_id is not None:
             source_node = getattr(event, "SourceNode", None)
-            if source_node == self.condition_node_id:
+            if source_node == self.source_node_id:
                 self.events.append(event)
 
 
@@ -865,12 +880,13 @@ async def force_channel_alarm_high(client, ua, audit, channel_id, label):
 
     ns = await resolve_channel_namespace(client, ua)
     value_node = await channel_value_node(client, ua, ns, channel_id)
-    # read_data_value() (unlike read_value()) does not raise on a non-Good
-    # StatusCode -- a channel with no real transducer attached (e.g. a
-    # floating ADC pin used only to provision a second numeric test channel)
-    # can legitimately read back Uncertain/Bad quality, which must be
-    # reported as a clear audit failure here rather than crash the whole run.
-    current_data_value = await value_node.read_data_value()
+    # raise_on_bad_status=False: read_data_value() defaults to raising on a
+    # non-Good StatusCode too, same as read_value() -- confirmed live after
+    # this call still crashed the run once with the default. A channel can
+    # legitimately read back transient Uncertain/Bad quality (e.g. briefly
+    # after an unrelated channel's ApplyConfig), which must be reported as a
+    # clear audit failure here rather than crash the whole run.
+    current_data_value = await value_node.read_data_value(raise_on_bad_status=False)
     if not status_matches(current_data_value.StatusCode, 0):
         audit.check(False, f"{label}: channel quality is "
                     f"{status_name(current_data_value.StatusCode)}, not Good; "
@@ -915,7 +931,7 @@ async def verify_two_simultaneous_alarms(client, ua, audit, ns, channels, force_
             audit.check(False, message, "alarm")
         else:
             audit.skip("two-channel simultaneous/independent alarm check", message, "alarm")
-        return []
+        return [], []
 
     guards = []
     condition_nodes = []
@@ -952,7 +968,7 @@ async def verify_two_simultaneous_alarms(client, ua, audit, ns, channels, force_
                            "neither --force-alarm was passed nor are both requested "
                            "channels naturally active right now; pass --force-alarm to "
                            "force this deterministically", "alarm")
-                return []
+                return [], []
 
         semantics = {}
         for channel_id, condition_node in condition_nodes:
@@ -965,7 +981,7 @@ async def verify_two_simultaneous_alarms(client, ua, audit, ns, channels, force_
         (id_a, node_a), (id_b, node_b) = condition_nodes[0], condition_nodes[1]
         before_a = await read_condition_semantics(client, ua, node_a)
         before_b = await read_condition_semantics(client, ua, node_b)
-        event_id_a = await capture_active_event_id(client, ua, audit, node_a, id_a)
+        event_id_a = await capture_active_event_id(client, ua, audit, node_a, id_a, ns)
         if event_id_a is not None:
             await call_acknowledge(client, ua, node_a, event_id_a,
                                    f"independence check ack of {id_a}")
@@ -979,19 +995,29 @@ async def verify_two_simultaneous_alarms(client, ua, audit, ns, channels, force_
         audit.equal(after_b["active"], before_b["active"],
                     f"{id_b}: acknowledging {id_a} did not affect {id_b}'s ActiveState",
                     "alarm")
-    finally:
+    except BaseException:
+        # Only restore here on an exception -- the success path leaves the
+        # guards open so the caller can run verify_acknowledge_and_refresh()
+        # against a condition that is still actually active (restoring here
+        # unconditionally, as this function used to, undid the forced HIGH
+        # state before that check ever ran, confirmed live during v0.4.3
+        # hardware verification). The caller owns restoring `guards` in the
+        # success case.
         for guard in guards:
             await guard.restore()
-    return condition_nodes
+        raise
+    return condition_nodes, guards
 
 
-async def capture_active_event_id(client, ua, audit, condition_node, channel_id, timeout_s=15.0):
+async def capture_active_event_id(client, ua, audit, condition_node, channel_id, ns,
+                                  timeout_s=15.0):
     """Subscribes briefly to capture a real EventId for the active condition
     -- open62541's standard Acknowledge implementation validates EventId
     against its outstanding-event list, so a fabricated EventId would be
     rejected with BadEventIdUnknown rather than exercising the real
     semantics this project already implements."""
-    collector = ConditionEventCollector(condition_node.nodeid)
+    source_node = await channel_source_node(client, ua, ns, channel_id)
+    collector = ConditionEventCollector(condition_node.nodeid, source_node.nodeid)
     subscription = None
     try:
         subscription = await client.create_subscription(100, collector)
@@ -1050,7 +1076,7 @@ async def call_condition_refresh(client, ua, subscription_id):
         method_id, ua.Variant(subscription_id, ua.VariantType.UInt32))
 
 
-async def verify_acknowledge_and_refresh(client, ua, audit, condition_nodes):
+async def verify_acknowledge_and_refresh(client, ua, audit, condition_nodes, ns):
     if not condition_nodes:
         audit.skip("standard Acknowledge Method on an active condition", "no active "
                    "condition available (--force-alarm was not enabled or forcing failed)",
@@ -1059,13 +1085,21 @@ async def verify_acknowledge_and_refresh(client, ua, audit, condition_nodes):
                    "refresh")
         return
 
-    channel_id, condition_node = condition_nodes[0]
+    # condition_nodes[0] may already have been acknowledged by
+    # verify_two_simultaneous_alarms's own independence check (it
+    # deliberately acknowledges the first condition to prove doing so
+    # doesn't affect the second) -- re-acknowledging it here would fail with
+    # BadConditionBranchAlreadyAcked, confirmed live during v0.4.3 hardware
+    # verification. The last entry is never touched by that check (with one
+    # channel, [-1] is just [0]; with two, it's the second, still-unacked
+    # condition), so use it instead.
+    channel_id, condition_node = condition_nodes[-1]
     before = await read_condition_semantics(client, ua, condition_node)
     audit.check(before["active"] is True,
                 f"{channel_id}: condition is active before Acknowledge is exercised",
                 "acknowledge")
 
-    event_id = await capture_active_event_id(client, ua, audit, condition_node, channel_id)
+    event_id = await capture_active_event_id(client, ua, audit, condition_node, channel_id, ns)
     if not audit.check(event_id is not None,
                        f"{channel_id}: captured a real EventId for the active condition "
                        "via subscription (required by the standard Acknowledge Method's "
@@ -1088,12 +1122,16 @@ async def verify_acknowledge_and_refresh(client, ua, audit, condition_nodes):
                     f"{channel_id}: Acknowledge does not clear ActiveState (still active "
                     "while the underlying process condition persists)", "acknowledge")
 
-    events = ConditionEventCollector(condition_node.nodeid)
+    refresh_source_node = await channel_source_node(client, ua, ns, channel_id)
+    events = ConditionEventCollector(condition_node.nodeid, refresh_source_node.nodeid)
     subscription = None
     try:
         subscription = await client.create_subscription(100, events)
+        # Server object (ns=0;i=2253), not the condition instance -- see the
+        # matching fix in capture_active_event_id() above.
         await subscription.subscribe_events(
-            sourcenode=condition_node, evtypes=client.get_node(ua.NodeId(2782, 0)))
+            sourcenode=client.get_node(ua.NodeId(2253, 0)),
+            evtypes=client.get_node(ua.NodeId(2782, 0)))
         before_count = len(events.events)
         await call_condition_refresh(client, ua, subscription.subscription_id)
         deadline = time.monotonic() + 15.0
@@ -1180,16 +1218,23 @@ async def verify_v043(args, ua, audit):
             if staging_guard is not None:
                 await staging_guard.restore()
 
-        condition_nodes = await verify_two_simultaneous_alarms(
+        condition_nodes, alarm_guards = await verify_two_simultaneous_alarms(
             client, ua, audit, ns, channels, args.force_alarm,
             args.require_two_channel_alarms, args.alarm_wait_timeout)
 
-        if not condition_nodes and args.force_alarm:
-            channel_id = primary_channel_id
-            condition_node = await channel_alarm_condition_node(client, ua, ns, channel_id)
-            guard, ok = await force_channel_alarm_high(client, ua, audit, channel_id,
-                                                        "force-alarm[primary]")
-            try:
+        # alarm_guards (and, below, the primary-channel fallback's guard) are
+        # deliberately NOT restored until after verify_acknowledge_and_refresh
+        # has run: it needs condition_nodes[0] to still actually be active,
+        # which restoring here first would undo before that check ever saw
+        # it (confirmed live during v0.4.3 hardware verification).
+        try:
+            if not condition_nodes and args.force_alarm:
+                channel_id = primary_channel_id
+                condition_node = await channel_alarm_condition_node(client, ua, ns, channel_id)
+                guard, ok = await force_channel_alarm_high(client, ua, audit, channel_id,
+                                                            "force-alarm[primary]")
+                if guard is not None:
+                    alarm_guards.append(guard)
                 if ok:
                     reached, _ = await wait_for_condition_active(condition_node, True,
                                                                   args.alarm_wait_timeout)
@@ -1197,11 +1242,11 @@ async def verify_v043(args, ua, audit):
                                 f"{args.alarm_wait_timeout:.0f}s", "alarm")
                     if reached:
                         condition_nodes = [(channel_id, condition_node)]
-            finally:
-                if guard is not None:
-                    await guard.restore()
 
-        await verify_acknowledge_and_refresh(client, ua, audit, condition_nodes)
+            await verify_acknowledge_and_refresh(client, ua, audit, condition_nodes, ns)
+        finally:
+            for guard in alarm_guards:
+                await guard.restore()
     finally:
         await safe_disconnect(client, audit, "primary client disconnect")
 
