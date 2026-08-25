@@ -1,3 +1,19 @@
+/**
+ * @file
+ * @brief Native channel driver for discrete/boolean GPIO input channels.
+ *
+ * Responsibilities: implement the start/stop/read slots of
+ * telemetry_driver_vtbl_t for GPIO-input channels (see
+ * drivers/include/drivers/native_channel_driver.h for the shared vtable
+ * contract). Supports optional logical invert and mutually-exclusive
+ * pull-up/pull-down configuration via source_flags.
+ *
+ * Ownership: no persistent state -- each read reconfigures/reads directly
+ * against the pin identified in the channel's driver_context.
+ *
+ * Concurrency: none; per the header's file-level doc, all calls arrive
+ * serialized from SensorTask.
+ */
 #include "drivers/native_channel_driver.h"
 
 #include "hardware/gpio.h"
@@ -6,6 +22,7 @@
 #define NATIVE_GPIO_SOURCE_PULLUP (1u << 1u)
 #define NATIVE_GPIO_SOURCE_PULLDOWN (1u << 2u)
 
+/** @brief Reinterpret channel->driver_context as this driver's source selector, or NULL. */
 static const native_channel_source_t *gpio_source(const telemetry_channel_t *channel)
 {
     return channel != NULL ? (const native_channel_source_t *)channel->driver_context : NULL;

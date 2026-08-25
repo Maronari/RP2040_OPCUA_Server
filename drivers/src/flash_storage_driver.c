@@ -1,3 +1,20 @@
+/**
+ * @file
+ * @brief Legacy single-sector Flash configuration importer (read-only).
+ *
+ * Responsibilities:
+ * - Read and validate a fixed-format header + CRC32 payload from the last
+ *   Flash sector, reached via direct XIP pointer dereference (not through
+ *   flash_operation_coordinator, since this driver only ever reads).
+ * - Never erase or program: this sector overlaps the current OTA-state
+ *   allocation, so writing here would corrupt OTA metadata.
+ *
+ * Ownership: no persistent runtime state; every call re-reads Flash.
+ *
+ * Concurrency: none needed -- Flash reads via XIP do not require the
+ * flash_operation_coordinator mutex (that mutex only serializes
+ * erase/program, which suspend XIP).
+ */
 #include "drivers/flash_storage_driver.h"
 
 #include <string.h>
@@ -10,6 +27,7 @@
 #define FLASH_STORAGE_REGION_SIZE FLASH_SECTOR_SIZE
 #define FLASH_STORAGE_OFFSET      (PICO_FLASH_SIZE_BYTES - FLASH_STORAGE_REGION_SIZE)
 
+/** @brief On-Flash header preceding the legacy payload; magic/version/size/CRC32 guarded. */
 typedef struct {
     uint32_t magic;
     uint16_t version;
@@ -18,11 +36,13 @@ typedef struct {
     uint32_t crc32;
 } flash_storage_header_t;
 
+/** @brief Maximum payload bytes available after the fixed-size header within one sector. */
 static size_t flash_storage_payload_capacity(void)
 {
     return FLASH_STORAGE_REGION_SIZE - sizeof(flash_storage_header_t);
 }
 
+/** @brief CRC-32/ISO-HDLC (reflected, standard zlib polynomial) over @p data. */
 static uint32_t flash_storage_crc32(const uint8_t *data, size_t size)
 {
     uint32_t crc = 0xFFFFFFFFu;
@@ -40,6 +60,7 @@ static uint32_t flash_storage_crc32(const uint8_t *data, size_t size)
     return ~crc;
 }
 
+/** @brief Check magic/version/exact payload_size==expected_size against @p header. */
 static bool flash_storage_validate_header(const flash_storage_header_t *header, size_t expected_size)
 {
     if (header == NULL)

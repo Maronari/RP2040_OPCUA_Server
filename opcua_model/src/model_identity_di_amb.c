@@ -1,3 +1,31 @@
+/**
+ * @file
+ * @brief AMB (Asset Management Basic) companion-spec location hierarchy,
+ *        DI (Device Integration) functional-group/identification-property
+ *        node builders, and the AMB `FindAlias`/asset-alias glob matcher.
+ *
+ * Responsibilities:
+ * - Builds and rebuilds the AMB `Locations.Hierarchical`/`Locations.Operational`
+ *   subtrees from `device_profile_config_t` location paths, including their
+ *   `NodeVersion` change-notification properties.
+ * - Thin DI node builders (`FunctionalGroupType` folders, identification
+ *   property variables) shared by `model_address_space.c`.
+ * - A self-contained SQL-LIKE-style glob matcher (`%`, `_`, `[...]` classes)
+ *   used only to resolve `FindAlias` method calls against configured asset
+ *   aliases; no external glob library is used.
+ *
+ * Ownership:
+ * No persistent state owned here. Location/alias node identities are
+ * transient open62541 server-side nodes rebuilt from `config_service`-owned
+ * `device_profile_config_t` data; see `opcua_model_internal.h` for the full
+ * per-function contract.
+ *
+ * Concurrency:
+ * All functions run on `OpcUaTask`: the location/DI builders during
+ * `model_build_address_space` (startup) or from the `SetLocationPaths`
+ * method callback (`model_refresh_amb_locations`), the alias matcher from
+ * the `FindAlias` method callback (`model_find_asset_alias`).
+ */
 #include "opcua_model_internal.h"
 
 UA_StatusCode model_add_location_node_version(UA_Server *server,
@@ -56,6 +84,11 @@ UA_StatusCode model_write_location_node_version(UA_Server *server,
                                 value);
 }
 
+/* Deletes deepest-level-first ("<prefix>.N" down to "<prefix>.0") so no
+ * child ever briefly outlives a deleted parent. BADNODEIDUNKNOWN is treated
+ * as success (idempotent: a level that was never created, e.g. because the
+ * configured path was shallower than CONFIG_SERVICE_LOCATION_MAX_DEPTH, is
+ * not an error). */
 UA_StatusCode model_delete_location_tree(UA_Server *server,
                                                 const char *node_id_prefix)
 {
@@ -85,6 +118,15 @@ UA_StatusCode model_delete_location_tree(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* Tokenizes a copy of path (strtok_r; the original string is left intact)
+ * on '/' and creates one Object node per segment, chaining each new node
+ * as the parent of the next. Bounded by CONFIG_SERVICE_LOCATION_MAX_DEPTH
+ * and by the fixed-size node_id/parent_node_id stack buffers (no heap
+ * allocation). On a mid-loop failure this returns immediately without
+ * deleting the nodes already created for this path — callers that need a
+ * clean rebuild (model_refresh_amb_locations) call
+ * model_delete_location_tree first/rely on being retried, there is no
+ * automatic rollback here. */
 UA_StatusCode model_build_location_path(UA_Server *server,
                                                const char *path,
                                                const char *node_id_prefix,
@@ -536,6 +578,12 @@ bool model_alias_pattern_is_valid(const UA_String *pattern)
     return true;
 }
 
+/* matches[]/references[] are fixed at size 2 because at most two alias
+ * candidates exist (ProductInstanceUri, AssetId); which ones are considered
+ * is selected by object_id (Aliases root vs the three AMB alias-category
+ * folders) rather than by the reference_filter input, which is only used to
+ * short-circuit with an empty result if the caller asked for a reference
+ * type other than AliasFor (UA_NS0ID_ALIASFOR). */
 UA_StatusCode model_find_asset_alias(UA_Server *server,
                                             const UA_NodeId *session_id,
                                             void *session_context,

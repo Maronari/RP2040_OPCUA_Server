@@ -1,3 +1,7 @@
+/**
+ * @file
+ * @brief Chunked trust-list import pipeline. See header for module-level docs.
+ */
 #include "services/security_trust_import_service.h"
 
 #include <string.h>
@@ -8,6 +12,7 @@
 #include "ota/ota_state.h"
 #include "services/security_service.h"
 
+/** Single in-flight import session; see `security_trust_import_service.h` file header for lifetime/ownership. */
 typedef struct
 {
     bool session_active;
@@ -19,8 +24,10 @@ typedef struct
     security_trust_import_service_result_t last_result;
 } security_trust_import_runtime_t;
 
+/** The sole trust-list import session; owned by this module, one at a time. */
 static security_trust_import_runtime_t g_security_trust_import_runtime = {0};
 
+/** @brief Frees the staging buffer (if any) and resets the session fields to idle, preserving `last_result`. */
 static void security_trust_import_service_clear_session(void)
 {
     if (g_security_trust_import_runtime.payload_buffer != NULL)
@@ -43,6 +50,11 @@ static bool security_trust_import_service_payload_complete(void)
            g_security_trust_import_runtime.bytes_written == g_security_trust_import_runtime.expected_payload_size;
 }
 
+/**
+ * @brief Validates the staged payload's CRC32 against the caller-declared
+ * `expected_payload_crc32`. Only meaningful once the payload is fully
+ * written; returns false for an incomplete or absent session.
+ */
 static bool security_trust_import_service_payload_crc32_matches(void)
 {
     if (!security_trust_import_service_payload_complete() ||
@@ -56,6 +68,7 @@ static bool security_trust_import_service_payload_crc32_matches(void)
            g_security_trust_import_runtime.expected_payload_crc32;
 }
 
+/** @brief Sniffs whether the staged payload is PEM-encoded ("-----BEGIN" prefix) vs. raw DER, to size the mbedTLS parse length. */
 static bool security_trust_import_service_payload_is_pem(const uint8_t *payload, size_t payload_size)
 {
     static const char pem_prefix[] = "-----BEGIN";
@@ -65,6 +78,17 @@ static bool security_trust_import_service_payload_is_pem(const uint8_t *payload,
            memcmp(payload, pem_prefix, sizeof(pem_prefix) - 1u) == 0;
 }
 
+/**
+ * @brief Core validation logic shared by `validate_staged()`/`apply_staged()`:
+ * checks session/completeness/CRC32/schema version, then parses the staged
+ * bytes as an X.509 certificate chain via mbedTLS.
+ *
+ * @param out_certificate_count On `SECURITY_TRUST_IMPORT_RESULT_OK`, set to
+ * the number of certificates recovered (guaranteed >= 1).
+ * @return `SECURITY_TRUST_IMPORT_RESULT_OK`, `_NOT_ACTIVE`, `_NOT_READY`,
+ * `_CRC_MISMATCH`, `_SCHEMA_MISMATCH`, or `_PARSE_FAILED` (including the
+ * case where parsing "succeeds" but yields zero usable certificates).
+ */
 static security_trust_import_service_result_t security_trust_import_service_validate_payload(uint32_t *out_certificate_count)
 {
     mbedtls_x509_crt certificates;

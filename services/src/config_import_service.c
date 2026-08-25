@@ -1,3 +1,18 @@
+/**
+ * @file
+ * @brief Implementation of the config-import chunked-upload session
+ * declared in `services/config_import_service.h`.
+ *
+ * Responsibilities: manage the single heap-allocated staging buffer for an
+ * in-progress import, tracking bytes written and lazily verifying CRC32
+ * once the payload is complete.
+ *
+ * Ownership: `g_config_import_runtime` is the module's sole state; its
+ * `payload_buffer` is the only heap allocation this module makes/frees.
+ *
+ * Concurrency: no internal synchronization; see the header's concurrency
+ * note.
+ */
 #include "services/config_import_service.h"
 
 #include <string.h>
@@ -7,6 +22,11 @@
 #include <config_store_limits.h>
 #include "ota/ota_state.h"
 
+/**
+ * @brief Runtime state for the single active (or absent) import session.
+ * Owner: `config_import_service`, lifetime for the duration of one
+ * begin -> write -> abort cycle. Not synchronized — see file-level comment.
+ */
 typedef struct
 {
     bool session_active;
@@ -20,6 +40,11 @@ typedef struct
 
 static config_import_runtime_t g_config_import_runtime = {0};
 
+/**
+ * @brief Frees the staging buffer (if any) and resets every session field
+ * except `last_result`.
+ * @note Performs a heap free via `vPortFree()`.
+ */
 static void config_import_service_clear_session(void)
 {
     if (g_config_import_runtime.payload_buffer != NULL)

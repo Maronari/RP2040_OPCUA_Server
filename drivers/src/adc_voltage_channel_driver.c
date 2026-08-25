@@ -1,7 +1,24 @@
+/**
+ * @file
+ * @brief Native channel driver for external ADC-voltage inputs 0-3.
+ *
+ * Responsibilities: implement the start/stop/read slots of
+ * telemetry_driver_vtbl_t for ADC-voltage channels (see
+ * drivers/include/drivers/native_channel_driver.h for the shared vtable
+ * contract).
+ *
+ * Ownership: g_adc_ready is a single file-static flag shared by every
+ * ADC-voltage channel instance -- it tracks the physical ADC peripheral
+ * (a singleton resource), not any one channel.
+ *
+ * Concurrency: none; per the header's file-level doc, all calls arrive
+ * serialized from SensorTask.
+ */
 #include "drivers/native_channel_driver.h"
 
 #include "hardware/adc.h"
 
+/** True once any ADC-voltage channel has called adc_init(); shared across all instances. */
 static bool g_adc_ready;
 
 bool native_adc_voltage_source_is_valid(uint8_t source_index, uint8_t source_flags)
@@ -9,6 +26,7 @@ bool native_adc_voltage_source_is_valid(uint8_t source_index, uint8_t source_fla
     return source_index <= 3u && source_flags == 0u;
 }
 
+/** @brief Reinterpret channel->driver_context as this driver's source selector, or NULL. */
 static const native_channel_source_t *adc_source(const telemetry_channel_t *channel)
 {
     return channel != NULL ? (const native_channel_source_t *)channel->driver_context : NULL;

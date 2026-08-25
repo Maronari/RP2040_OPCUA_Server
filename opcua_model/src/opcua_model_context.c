@@ -1,6 +1,44 @@
+/**
+ * @file
+ * @brief Owns the single `opcua_model_context_t` singleton instance and its
+ *        three accessor functions.
+ *
+ * Responsibilities:
+ * - Statically allocates and default-initializes `g_model_context`
+ *   (including the fixed-size `fixed_node_contexts`/`task_node_contexts`
+ *   node-context arrays every DataSource callback is handed as
+ *   `nodeContext`).
+ * - Exposes `model_context_get()` as the sole accessor and
+ *   `model_context_set_server_handles()` / `model_context_delete_server()`
+ *   as the only writers of the `server`/`server_config` handles.
+ *
+ * Ownership:
+ * `g_model_context` has static storage duration for the process lifetime;
+ * it is never heap-allocated, copied, or freed. See `opcua_model_context_t`
+ * in `opcua_model_internal.h` for the full field-by-field ownership and
+ * concurrency contract.
+ *
+ * Concurrency:
+ * Populated here only at static-initialization time (single-threaded,
+ * before any FreeRTOS task starts). All runtime reads/writes thereafter go
+ * through `model_context_get()` from `OpcUaTask`/open62541 callback context,
+ * except the audit-event ring and maintenance-reject limiter fields, which
+ * are guarded with `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` at their call
+ * sites elsewhere in `opcua_model`.
+ */
 #include "opcua_model_internal.h"
 
-/* One static-lifetime adapter context; no service-owned state is copied here. */
+/**
+ * @brief The one static-lifetime `opcua_model_context_t` instance backing
+ *        `model_context_get()`.
+ *
+ * Only `maintenance_reject_tokens`, `ua_logger`, `fixed_node_contexts`, and
+ * `task_node_contexts` are given explicit initializers; every other field
+ * (including `channel_node_contexts`/`generic_channel_node_contexts`, which
+ * are populated later by the address-space builder) starts zero-initialized
+ * per C's static-storage rules. No service-owned business state is copied
+ * into this struct — see the file-level comment above.
+ */
 static opcua_model_context_t g_model_context = {
     .maintenance_reject_tokens = MODEL_MAINTENANCE_REJECT_GLOBAL_BURST,
     .ua_logger = {model_ua_logger_log, NULL, NULL},
@@ -105,6 +143,10 @@ void model_context_set_server_handles(UA_Server *server, UA_ServerConfig *config
     g_model_context.server_config = config;
 }
 
+/* Only clears the stored handles when @p server is the one currently
+ * tracked, so deleting a stale/already-replaced UA_Server pointer (should
+ * that ever happen) cannot null out a different, still-live server's
+ * handles. */
 void model_context_delete_server(UA_Server *server)
 {
     if (server == NULL)

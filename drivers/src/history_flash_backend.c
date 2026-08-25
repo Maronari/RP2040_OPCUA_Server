@@ -1,3 +1,24 @@
+/**
+ * @file
+ * @brief Implementation of the v0.4.3 Flash-backed per-channel history ring
+ *        (see drivers/include/drivers/history_flash_backend.h for the full
+ *        design rationale and physical layout).
+ *
+ * Responsibilities:
+ * - Encode/decode the fixed 32-byte record format (versioned, CRC32'd).
+ * - Reconstruct each channel slot's write cursor from Flash contents on
+ *   restore, replaying valid records oldest-to-newest and reclaiming one
+ *   stale sector left over from an interrupted swap.
+ * - Batch 8 records per FLASH_PAGE_SIZE page program, erasing the opposite
+ *   sector once the active sector fills (two-generation double-buffer).
+ *
+ * Ownership: g_restore_page is the only driver-owned static buffer (one
+ * page, reused across every restore() call); the much larger per-channel
+ * scan working set is caller-owned (see the header's scan_entry_t doc).
+ *
+ * Concurrency: none -- see history_flash_backend_t's doc comment in the
+ * header for the single-task-caller assumption.
+ */
 #include "drivers/history_flash_backend.h"
 
 #include <string.h>
@@ -62,6 +83,17 @@ enum
  * old-format data) or on the widened hash coincidentally mismatching. */
 #define RECORD_FORMAT_VERSION 0x02u
 
+/**
+ * @brief Result of classifying one 32-byte on-Flash record slot during
+ *        restore/write-cursor reconstruction.
+ *
+ * `RECORD_STATE_BLANK` means every byte reads as the Flash-erased value
+ * (0xFF) -- an untouched or successfully-erased slot. `RECORD_STATE_VALID`
+ * means the record's format byte and CRC32 both check out.
+ * `RECORD_STATE_CORRUPT` means the slot was written (not blank) but failed
+ * validation -- e.g. a torn write left by a reset mid-program -- and is
+ * treated as the end of the valid record run during restore.
+ */
 typedef enum
 {
     RECORD_STATE_BLANK = 0,
@@ -117,6 +149,7 @@ static uint64_t read_u64(const uint8_t *p)
  * fold is gone, not the hash primitive -- see the header's "Channel
  * identity binding" comment for why the false-accept rate this bounds
  * matters). */
+/** @brief Full 32-bit FNV-1a hash of @p channel_id (0 for NULL); see the header's "Channel identity binding" doc. */
 static uint32_t hash_channel_id(const char *channel_id)
 {
     uint32_t hash = 2166136261u;
@@ -135,6 +168,7 @@ static uint32_t hash_channel_id(const char *channel_id)
     return hash;
 }
 
+/** @brief Reinterpret @p value's active union member as a bit-pattern uint64_t per @p type. */
 static uint64_t pack_raw_value(const history_flash_backend_value_t *value,
                                telemetry_channel_value_type_t type)
 {
@@ -167,6 +201,7 @@ static uint64_t pack_raw_value(const history_flash_backend_value_t *value,
     }
 }
 
+/** @brief Inverse of pack_raw_value(): decode @p raw's bit pattern into @p out_value per @p type. */
 static void unpack_raw_value(uint64_t raw, telemetry_channel_value_type_t type,
                              history_flash_backend_value_t *out_value)
 {
@@ -202,6 +237,15 @@ static void unpack_raw_value(uint64_t raw, telemetry_channel_value_type_t type,
     }
 }
 
+/**
+ * @brief Serialize one sample into the fixed 32-byte on-Flash record format.
+ *
+ * Fills unused bytes with 0xFF (erased-Flash pattern) before writing
+ * fields, writes RECORD_MARKER_VALID and RECORD_FORMAT_VERSION, and appends
+ * a CRC32 over the first RECORD_CRC_COVERED_SIZE bytes.
+ *
+ * @param out Exactly HISTORY_FLASH_BACKEND_RECORD_SIZE bytes, fully overwritten.
+ */
 static void encode_record(const history_flash_backend_record_t *record, uint32_t sequence,
                           uint32_t channel_id_hash, uint8_t out[HISTORY_FLASH_BACKEND_RECORD_SIZE])
 {
@@ -217,6 +261,20 @@ static void encode_record(const history_flash_backend_record_t *record, uint32_t
     write_u32(&out[RECORD_OFFSET_CRC], maintenance_journal_codec_crc32(out, RECORD_CRC_COVERED_SIZE));
 }
 
+/**
+ * @brief Decode and validate one on-Flash record: erased/blank check, marker,
+ *        CRC32, format-version, and channel-identity-hash checks, in order.
+ *
+ * Any failed check (including a foreign channel_id_hash or a pre-widening
+ * old-format record) yields RECORD_STATE_CORRUPT, never a partially-decoded
+ * @p out_record -- the caller must never expose a corrupt/foreign record.
+ *
+ * @param expected_hash channel_id_hash the physical slot is currently bound to.
+ * @param out_sequence Optional; set only when the record is RECORD_STATE_VALID.
+ * @param out_record Optional; set only when the record is RECORD_STATE_VALID.
+ * @return RECORD_STATE_BLANK if fully erased (0xFF); RECORD_STATE_CORRUPT if
+ *         any validation fails; RECORD_STATE_VALID otherwise.
+ */
 static record_state_t decode_record(const uint8_t in[HISTORY_FLASH_BACKEND_RECORD_SIZE],
                                     uint32_t expected_hash, uint32_t *out_sequence,
                                     history_flash_backend_record_t *out_record)
@@ -271,6 +329,7 @@ static record_state_t decode_record(const uint8_t in[HISTORY_FLASH_BACKEND_RECOR
     return RECORD_STATE_VALID;
 }
 
+/** @brief True if every byte of @p page is 0xFF (erased Flash, no records ever written). */
 static bool page_is_blank(const uint8_t page[HISTORY_FLASH_BACKEND_PAGE_SIZE])
 {
     for (size_t i = 0u; i < HISTORY_FLASH_BACKEND_PAGE_SIZE; ++i)
@@ -328,12 +387,23 @@ history_flash_backend_result_t history_flash_backend_bind_channel(history_flash_
     return HISTORY_FLASH_BACKEND_OK;
 }
 
+/** @brief Read one full page via the backend's injected storage callback. */
 static bool read_page(history_flash_backend_t *backend, uint32_t offset,
                       uint8_t out[HISTORY_FLASH_BACKEND_PAGE_SIZE])
 {
     return backend->storage.read(backend->storage.context, offset, out, HISTORY_FLASH_BACKEND_PAGE_SIZE);
 }
 
+/*
+ * Implementation notes (see header for the full public contract):
+ * scans both sectors page-by-page to find each sector's fill level and
+ * highest valid sequence number; if both sectors are completely full, it
+ * infers an interrupted sector-swap and marks the lower-sequence sector for
+ * erase (sector_to_drop) instead of trusting an already-full "active"
+ * sector. Every recognized-valid record across both sectors is bounded
+ * insertion-sorted by sequence before replay, so callback() always sees
+ * strictly increasing sequence order regardless of physical layout.
+ */
 history_flash_backend_result_t history_flash_backend_restore(history_flash_backend_t *backend,
                                                               uint8_t slot,
                                                               history_flash_backend_scan_entry_t *scratch,
@@ -499,6 +569,19 @@ history_flash_backend_result_t history_flash_backend_restore(history_flash_backe
     return HISTORY_FLASH_BACKEND_OK;
 }
 
+/**
+ * @brief Program the staging page to Flash once full, swapping sectors if
+ *        the active sector is now completely written.
+ *
+ * No-op (returns OK) if the staging buffer is not yet full. If a previous
+ * sector-swap erase failed, next_page_in_sector is left at the
+ * out-of-range sentinel and this returns HISTORY_FLASH_BACKEND_IO on every
+ * call until a retry of that erase succeeds -- writes to this slot are
+ * refused meanwhile, but the already-programmed sector remains readable.
+ *
+ * @note Hardware side effect: at most one Flash program call, plus (only on
+ *       a sector boundary) one Flash erase call, per invocation.
+ */
 static history_flash_backend_result_t flush_staging_if_full(history_flash_backend_t *backend, uint8_t slot)
 {
     history_flash_backend_channel_state_t *state = &backend->channels[slot];
@@ -586,6 +669,7 @@ history_flash_backend_result_t history_flash_backend_append(history_flash_backen
 }
 
 #if defined(PICO_ON_DEVICE)
+/** @brief Storage read callback: bounds-checked direct XIP read at OTA_LAYOUT_HISTORY_ORIGIN + offset. */
 static bool history_flash_read(void *unused, uint32_t offset, uint8_t *dst, size_t n)
 {
     (void)unused;
@@ -597,6 +681,7 @@ static bool history_flash_read(void *unused, uint32_t offset, uint8_t *dst, size
     return true;
 }
 
+/** @brief Storage program callback: bounds-checked, routed through the shared flash_operation_coordinator. */
 static bool history_flash_program(void *unused, uint32_t offset, const uint8_t page[HISTORY_FLASH_BACKEND_PAGE_SIZE])
 {
     (void)unused;
@@ -607,6 +692,7 @@ static bool history_flash_program(void *unused, uint32_t offset, const uint8_t p
     return flash_operation_program_page(OTA_LAYOUT_HISTORY_OFFSET_BYTES + offset, page) == FLASH_OPERATION_OK;
 }
 
+/** @brief Storage erase callback: bounds-checked, routed through the shared flash_operation_coordinator. */
 static bool history_flash_erase(void *unused, uint32_t offset)
 {
     (void)unused;

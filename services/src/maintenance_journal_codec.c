@@ -1,3 +1,26 @@
+/**
+ * @file
+ * @brief Schema-1 maintenance journal record codec implementation; see
+ *        services/include/services/maintenance_journal_codec.h for the
+ *        public API contract.
+ *
+ * Responsibilities:
+ * - Fixed-offset little-endian field packing/unpacking (`get_u16`/`put_u16`
+ *   etc.) for the 1024-byte canonical slot layout defined by the
+ *   `OFFSET_*` enum below.
+ * - Length-prefixed canonical string encode/decode/validate
+ *   (`put_string`/`get_string`/`string_is_canonical`), each string's
+ *   unused capacity padded with 0xFF and validated as UTF-8.
+ * - Whole-record structural validation shared between encode (defense in
+ *   depth against building a malformed record) and decode (rejecting
+ *   anything not byte-for-byte canonical).
+ *
+ * Ownership: stateless - no file-static data; every function operates only
+ * on caller-provided buffers/structs.
+ *
+ * Concurrency: pure functions with no shared/global state, so safe to call
+ * from any task or from host test code without synchronization.
+ */
 #include "services/maintenance_journal_codec.h"
 
 #include <float.h>
@@ -6,6 +29,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+/** @brief Fixed byte offsets of every schema-1 field within the 1024-byte canonical slot. */
 enum
 {
     OFFSET_MAGIC = 0u,
@@ -63,17 +87,20 @@ _Static_assert(sizeof(double) == 8u && FLT_RADIX == 2 && DBL_MANT_DIG == 53 &&
                    DBL_MAX_EXP == 1024,
                "schema-1 downtime requires IEEE-754 binary64");
 
+/** @brief Reads a little-endian 16-bit field from @p data (wire-format decode; portable regardless of host endianness). */
 static uint16_t get_u16(const uint8_t *data)
 {
     return (uint16_t)data[0] | ((uint16_t)data[1] << 8u);
 }
 
+/** @brief Reads a little-endian 32-bit field from @p data (wire-format decode). */
 static uint32_t get_u32(const uint8_t *data)
 {
     return (uint32_t)data[0] | ((uint32_t)data[1] << 8u) |
            ((uint32_t)data[2] << 16u) | ((uint32_t)data[3] << 24u);
 }
 
+/** @brief Reads a little-endian 64-bit field from @p data (wire-format decode). */
 static uint64_t get_u64(const uint8_t *data)
 {
     uint64_t result = 0u;
@@ -86,12 +113,14 @@ static uint64_t get_u64(const uint8_t *data)
     return result;
 }
 
+/** @brief Writes @p value as a little-endian 16-bit field into @p data (wire-format encode). */
 static void put_u16(uint8_t *data, uint16_t value)
 {
     data[0] = (uint8_t)value;
     data[1] = (uint8_t)(value >> 8u);
 }
 
+/** @brief Writes @p value as a little-endian 32-bit field into @p data (wire-format encode). */
 static void put_u32(uint8_t *data, uint32_t value)
 {
     uint8_t index;
@@ -102,6 +131,7 @@ static void put_u32(uint8_t *data, uint32_t value)
     }
 }
 
+/** @brief Writes @p value as a little-endian 64-bit field into @p data (wire-format encode). */
 static void put_u64(uint8_t *data, uint64_t value)
 {
     uint8_t index;
@@ -112,6 +142,7 @@ static void put_u64(uint8_t *data, uint64_t value)
     }
 }
 
+/** @brief Returns true if all @p size bytes at @p data equal @p expected; used to verify canonical 0xFF padding/filler regions. */
 static bool bytes_are(const uint8_t *data, size_t size, uint8_t expected)
 {
     size_t index;
@@ -126,26 +157,41 @@ static bool bytes_are(const uint8_t *data, size_t size, uint8_t expected)
     return true;
 }
 
+/** @brief Range-checks a decoded `maintenance_service_state_t` byte (relies on the enum's contiguous 0-based values). */
 static bool state_is_valid(uint8_t value)
 {
     return value <= (uint8_t)MAINTENANCE_SERVICE_STATE_EXECUTING;
 }
 
+/** @brief Range-checks a decoded `maintenance_service_method_t` byte. */
 static bool method_is_valid(uint8_t value)
 {
     return value <= (uint8_t)MAINTENANCE_SERVICE_METHOD_REMOTE;
 }
 
+/** @brief Range-checks a decoded `maintenance_journal_operation_t` byte. */
 static bool operation_is_valid(uint8_t value)
 {
     return value <= (uint8_t)MAINTENANCE_JOURNAL_OPERATION_RESET;
 }
 
+/** @brief Range-checks a decoded `maintenance_service_transition_t` byte. */
 static bool transition_is_valid(uint8_t value)
 {
     return value <= (uint8_t)MAINTENANCE_SERVICE_TRANSITION_EXECUTING_TO_FINISHED;
 }
 
+/**
+ * @brief Validates that @p type/@p operation/@p transition form one of the
+ *        fixed set of legal record-kind combinations.
+ *
+ * A RESET record must pair with OPERATION_RESET and TRANSITION_NONE. A
+ * SNAPSHOT record must pair one of PLAN/RESCHEDULE/START/FINISH with the
+ * exact corresponding state transition (e.g. START only with
+ * PLANNED_TO_EXECUTING). Any other combination - even individually valid
+ * enum values - is rejected. Shared by both encode-time validation and
+ * decode-time structural validation so the two stay in lockstep.
+ */
 static bool record_kind_is_valid(uint8_t type, uint8_t operation, uint8_t transition)
 {
     if (type == (uint8_t)MAINTENANCE_JOURNAL_RECORD_RESET)
@@ -169,6 +215,23 @@ static bool record_kind_is_valid(uint8_t type, uint8_t operation, uint8_t transi
             transition == (uint8_t)MAINTENANCE_SERVICE_TRANSITION_EXECUTING_TO_FINISHED);
 }
 
+/**
+ * @brief Validates that @p length bytes at @p data form well-formed,
+ *        NUL-free UTF-8 (1-4 byte sequences, no overlong encodings, no
+ *        surrogate-range 3-byte sequences).
+ *
+ * Rejects an embedded NUL byte outright (journal strings are
+ * length-prefixed, not NUL-terminated on the wire, so an embedded NUL would
+ * be ambiguous/unexpected data). For each multi-byte lead byte, checks the
+ * exact continuation-byte count and the overlong/out-of-range exclusions
+ * required by the UTF-8 grammar (e.g. 0xE0 must be followed by a
+ * continuation byte >= 0xA0; 0xF4 must be followed by one <= 0x8F).
+ *
+ * @param data Candidate UTF-8 byte sequence.
+ * @param length Number of bytes to validate.
+ * @return true if every byte forms part of a well-formed UTF-8 sequence
+ *         with no embedded NUL.
+ */
 static bool validate_utf8(const uint8_t *data, size_t length)
 {
     size_t index = 0u;
@@ -236,6 +299,24 @@ static bool validate_utf8(const uint8_t *data, size_t length)
     return true;
 }
 
+/**
+ * @brief Computes the NUL-terminated length of a fixed-capacity C string
+ *        field, requiring it to be well-formed for the wire encoding.
+ *
+ * A field is accepted only if it contains exactly one NUL terminator
+ * somewhere within @p capacity bytes, every byte after that NUL is also
+ * NUL (no garbage past the terminator - the source buffer must already be
+ * zero-padded), and the bytes before the NUL are valid UTF-8
+ * (validate_utf8()). Used by put_string() before encoding a native
+ * in-memory string field into the canonical length-prefixed wire form.
+ *
+ * @param text Candidate fixed-capacity string buffer.
+ * @param capacity Total buffer size, including the terminator.
+ * @param out_length Receives the string length (excluding terminator) on success.
+ * @return true if @p text is a well-formed, fully-zero-padded, UTF-8 string
+ *         within @p capacity; false otherwise (including if @p text/
+ *         @p out_length is NULL or @p capacity is 0).
+ */
 static bool get_native_string_length(const char *text, size_t capacity, size_t *out_length)
 {
     size_t length;
@@ -264,6 +345,26 @@ static bool get_native_string_length(const char *text, size_t capacity, size_t *
     return false;
 }
 
+/**
+ * @brief Encodes a native fixed-capacity C string as a canonical
+ *        length-prefixed field: one length byte followed by the raw UTF-8 bytes.
+ *
+ * Does not zero/pad the remaining destination capacity itself - callers
+ * pre-fill the slot with 0xFF (see maintenance_journal_codec_encode()) so
+ * unused trailing bytes end up as the canonical filler that
+ * string_is_canonical() later checks for.
+ *
+ * @param destination Output buffer; must have room for `1 + capacity - 1`
+ *        bytes (length byte plus up to `capacity - 1` string bytes).
+ * @param capacity Field capacity, matching the corresponding
+ *        `MAINTENANCE_SERVICE_*_CAPACITY` constant (includes the implicit
+ *        length-byte budget).
+ * @param source Native fixed-capacity source string; validated via
+ *        get_native_string_length().
+ * @param require_nonempty If true, an empty string is rejected.
+ * @return true on success; false if @p source is not a well-formed native
+ *         string for this field or violates @p require_nonempty.
+ */
 static bool put_string(uint8_t *destination, size_t capacity, const char *source,
                        bool require_nonempty)
 {
@@ -279,6 +380,21 @@ static bool put_string(uint8_t *destination, size_t capacity, const char *source
     return true;
 }
 
+/**
+ * @brief Validates that an encoded length-prefixed string field is exactly
+ *        canonical: valid UTF-8 payload plus all-0xFF unused trailing capacity.
+ *
+ * This is the decode-side counterpart to put_string()'s encoding
+ * convention; used both by get_string() (before extracting the value) and
+ * directly by whole-record canonical-form checks
+ * (activity_is_canonical()) that only need a yes/no answer.
+ *
+ * @param source Encoded field: length byte followed by @p capacity - 1 bytes.
+ * @param capacity Field capacity (including the length byte).
+ * @param require_nonempty If true, a zero-length string is rejected.
+ * @return true if the field's length is in range, its payload is valid
+ *         UTF-8, and every unused trailing byte is exactly 0xFF.
+ */
 static bool string_is_canonical(const uint8_t *source, size_t capacity,
                                 bool require_nonempty)
 {
@@ -293,6 +409,19 @@ static bool string_is_canonical(const uint8_t *source, size_t capacity,
     return true;
 }
 
+/**
+ * @brief Decodes a canonical length-prefixed field into a NUL-terminated
+ *        native C string, after validating it is exactly canonical.
+ *
+ * @param source Encoded field: length byte followed by @p capacity - 1 bytes.
+ * @param capacity Field capacity (including the length byte).
+ * @param destination Output buffer; must have room for the decoded string
+ *        plus a NUL terminator (at most @p capacity - 1 bytes plus NUL).
+ * @param require_nonempty If true, a zero-length string is rejected.
+ * @return true if string_is_canonical() accepts @p source, in which case
+ *         @p destination is populated and NUL-terminated; false otherwise
+ *         (destination left untouched).
+ */
 static bool get_string(const uint8_t *source, size_t capacity, char *destination,
                        bool require_nonempty)
 {
@@ -307,6 +436,21 @@ static bool get_string(const uint8_t *source, size_t capacity, char *destination
     return true;
 }
 
+/**
+ * @brief Converts an estimated-downtime `double` to its canonical wire
+ *        representation (raw IEEE-754 binary64 bits, with a fixed all-zero
+ *        encoding for the value 0.0).
+ *
+ * Rejects non-finite values, negative values, and values exceeding
+ * MAINTENANCE_SERVICE_MAX_DOWNTIME_MS before encoding. The 0.0 special
+ * case avoids relying on IEEE-754 negative-zero bit patterns ever reaching
+ * the wire.
+ *
+ * @param value Downtime value in milliseconds.
+ * @param out_bits Receives the raw bit pattern on success; must be non-NULL.
+ * @return true if @p value is finite, in `[0, MAINTENANCE_SERVICE_MAX_DOWNTIME_MS]`,
+ *         and @p out_bits is non-NULL.
+ */
 static bool double_to_bits(double value, uint64_t *out_bits)
 {
     uint64_t bits;
@@ -326,6 +470,21 @@ static bool double_to_bits(double value, uint64_t *out_bits)
     return true;
 }
 
+/**
+ * @brief Converts a raw wire bit pattern back to an estimated-downtime
+ *        `double`, rejecting any pattern that is not canonical.
+ *
+ * The decoded value must be finite and within
+ * `[0, MAINTENANCE_SERVICE_MAX_DOWNTIME_MS]`; additionally, a decoded value
+ * of 0.0 is only accepted if @p bits was exactly the canonical all-zero
+ * encoding (rejects an alternate/non-canonical bit pattern that happens to
+ * also evaluate to 0.0, e.g. negative zero), matching double_to_bits()'s
+ * encoding convention.
+ *
+ * @param bits Raw IEEE-754 binary64 bit pattern from the wire.
+ * @param out_value Receives the decoded value on success.
+ * @return true if @p bits decodes to a canonical, in-range downtime value.
+ */
 static bool bits_to_double(uint64_t bits, double *out_value)
 {
     double value;
@@ -340,6 +499,7 @@ static bool bits_to_double(uint64_t bits, double *out_value)
     return true;
 }
 
+/** @brief Returns true if @p activity is all-zero (the "no activity recorded" sentinel), by exact byte comparison. */
 static bool activity_is_empty(const maintenance_activity_t *activity)
 {
     static const maintenance_activity_t empty_activity = {0};
@@ -347,6 +507,29 @@ static bool activity_is_empty(const maintenance_activity_t *activity)
     return memcmp(activity, &empty_activity, sizeof(*activity)) == 0;
 }
 
+/**
+ * @brief Encodes a `maintenance_activity_t` (operation id, supplier,
+ *        personnel, actor, result, serviced/replaced parts, downtime,
+ *        method, planned time) into its fixed-offset fields within @p slot.
+ *
+ * Validates every field before writing any of them: planned time must be
+ * positive, downtime must convert via double_to_bits(), method must be a
+ * valid `maintenance_service_method_t`, serviced/replaced part counts must
+ * not exceed MAINTENANCE_SERVICE_MAX_PARTS, and every string field must
+ * encode successfully via put_string() (operation_id and actor are
+ * required-nonempty; supplier/personnel/result may be empty). Part-slot
+ * strings beyond each count are still encoded, but with
+ * `require_nonempty=false`, so unused part slots become empty canonical
+ * strings rather than leftover 0xFF filler.
+ *
+ * @param activity Activity record to encode.
+ * @param slot Destination slot buffer (fields written at their `OFFSET_*`
+ *        positions; caller has already filled the slot with 0xFF).
+ * @return true if every field validated and encoded successfully; false on
+ *         the first validation failure (partial writes into @p slot may
+ *         have occurred but the caller discards the whole encode attempt
+ *         on failure).
+ */
 static bool encode_activity(const maintenance_activity_t *activity, uint8_t *slot)
 {
     uint8_t index;
@@ -399,6 +582,24 @@ static bool encode_activity(const maintenance_activity_t *activity, uint8_t *slo
     return true;
 }
 
+/**
+ * @brief Decodes the fixed-offset activity fields from @p slot into @p activity.
+ *
+ * Performs the inverse of encode_activity(), with the same field-range and
+ * string-canonicality checks (planned time positive, method valid, part
+ * counts bounded, every string field canonical via get_string()). Callers
+ * must already know @p slot has `has_activity` set (this function does not
+ * check that flag). Its only caller, maintenance_journal_codec_decode(),
+ * calls activity_is_canonical() on the same slot first and discards this
+ * function's return value (`(void)decode_activity(...)`), relying on that
+ * prior check to guarantee success here - so a false return in that
+ * context would indicate the two validation paths have diverged.
+ *
+ * @param slot Source slot buffer.
+ * @param activity Destination activity struct.
+ * @return true if every field decoded successfully; false on the first
+ *         invalid/non-canonical field.
+ */
 static bool decode_activity(const uint8_t *slot, maintenance_activity_t *activity)
 {
     uint8_t index;
@@ -456,6 +657,22 @@ static bool decode_activity(const uint8_t *slot, maintenance_activity_t *activit
     return true;
 }
 
+/**
+ * @brief Validates that the fixed-offset activity fields within @p slot are
+ *        exactly canonical, without decoding them into a struct.
+ *
+ * Checks the same constraints as decode_activity() (planned time positive,
+ * method valid, part counts bounded, downtime bits canonical via
+ * bits_to_double()) plus string_is_canonical() for every string field
+ * (operation_id, supplier, personnel, actor, result, and every part-slot
+ * string). This is the authoritative canonical-form check invoked by
+ * maintenance_journal_codec_decode() before it trusts a slot enough to
+ * call decode_activity(); a slot that fails this check is rejected as
+ * MAINTENANCE_JOURNAL_CODEC_MALFORMED.
+ *
+ * @param slot Source slot buffer.
+ * @return true if every activity field is exactly canonical.
+ */
 static bool activity_is_canonical(const uint8_t *slot)
 {
     uint64_t downtime_bits;

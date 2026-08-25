@@ -1,3 +1,13 @@
+/**
+ * @file
+ * @brief Implementation of factory-reset scope parsing/execution declared
+ * in `services/config_reset_service.h`.
+ *
+ * Ownership: no persistent state.
+ * Concurrency: no internal synchronization; delegates entirely to the
+ * synchronization of `config_service`/`config_store_service`/
+ * `config_import_service`.
+ */
 #include "services/config_reset_service.h"
 
 #include <string.h>
@@ -55,7 +65,12 @@ bool config_reset_service_execute(config_reset_scope_t scope)
         return false;
     }
 
-    /* Keep the last bootable slot until defaults are running. */
+    /* Order is deliberate: the running configuration is switched to
+     * defaults (config_service_apply(), in PSRAM/RAM) *before* the config
+     * store's Flash slots are erased below. If this erase step fails, the
+     * running configuration is already defaults but the persisted Flash
+     * record has not been touched yet (not statically confirmed what a
+     * subsequent boot does with a *partially* erased slot pair). */
     if (!config_store_reset())
     {
         return false;

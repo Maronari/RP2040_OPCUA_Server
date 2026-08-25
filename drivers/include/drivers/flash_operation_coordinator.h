@@ -1,3 +1,11 @@
+/**
+ * @file
+ * @brief Public API for the single serialization point over on-chip Flash
+ *        erase/program on RP2350.
+ *
+ * See drivers/src/flash_operation_coordinator.c for the implementation-level
+ * file doc; this header carries the full contract.
+ */
 #ifndef DRIVERS_FLASH_OPERATION_COORDINATOR_H
 #define DRIVERS_FLASH_OPERATION_COORDINATOR_H
 
@@ -5,14 +13,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/** @brief Result codes for flash_operation_erase_sector()/flash_operation_program_page(). */
 typedef enum
 {
     FLASH_OPERATION_OK = 0,
-    FLASH_OPERATION_NOT_INITIALIZED,
-    FLASH_OPERATION_INVALID_ARGUMENT,
-    FLASH_OPERATION_NESTED,
-    FLASH_OPERATION_TIMEOUT,
-    FLASH_OPERATION_SAFE_EXEC_FAILED
+    FLASH_OPERATION_NOT_INITIALIZED,   /**< flash_operation_coordinator_init() was never called. */
+    FLASH_OPERATION_INVALID_ARGUMENT,  /**< Misaligned/out-of-range offset, or a program page overlapping the executing firmware image. */
+    FLASH_OPERATION_NESTED,            /**< Same-task re-entrant acquisition detected; rejected rather than deadlocking. */
+    FLASH_OPERATION_TIMEOUT,           /**< Mutex not acquired within FLASH_OPERATION_LOCK_TIMEOUT_MS. */
+    FLASH_OPERATION_SAFE_EXEC_FAILED   /**< pico_flash's flash_safe_execute() reported failure. */
 } flash_operation_result_t;
 
 /**

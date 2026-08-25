@@ -1,9 +1,24 @@
+/**
+ * @file
+ * @brief OTA update session coordinator; see
+ *        services/include/services/firmware_update_service.h for the
+ *        public API contract.
+ *
+ * Ownership: `g_firmware_update_runtime` (session flag, embedded
+ * `ota_flash_writer_t`, expected CRC/version, last result) is owned
+ * exclusively by this module.
+ *
+ * Concurrency: no internal locking; relies on all callers running from the
+ * OPC UA method-callback context (see file-level note in the header) so
+ * only one session is ever manipulated at a time.
+ */
 #include "services/firmware_update_service.h"
 
 #include <string.h>
 
 #include "ota/ota_flash.h"
 
+/** @brief Runtime state for the single in-flight (or most recently completed) OTA session. */
 typedef struct
 {
     bool session_active;
@@ -15,6 +30,7 @@ typedef struct
 
 static firmware_update_runtime_t g_firmware_update_runtime = {0};
 
+/** @brief Maps an `ota_flash_status_t` from the OTA flash writer to the service's result vocabulary. */
 static firmware_update_service_result_t firmware_update_service_map_flash_status(ota_flash_status_t status)
 {
     switch (status)
@@ -34,6 +50,7 @@ static firmware_update_service_result_t firmware_update_service_map_flash_status
     }
 }
 
+/** @brief Resets the writer and clears session/CRC/version fields, without touching `last_result`. */
 static void firmware_update_service_clear_session(void)
 {
     ota_flash_writer_init(&g_firmware_update_runtime.writer);

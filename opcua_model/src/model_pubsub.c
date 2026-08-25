@@ -1,3 +1,34 @@
+/**
+ * @file
+ * @brief Builds the open62541 PubSub/MQTT address-space objects (Connection,
+ *        WriterGroups, DataSetWriters, PublishedDataSets) and owns the
+ *        adapter-side PubSub runtime state; also hosts the cross-task
+ *        pending-audit-event queue (unrelated to PubSub, but the only other
+ *        piece of state in this codebase written from a non-`OpcUaTask`
+ *        context, hence grouped with the other lock-guarded state here).
+ *
+ * Responsibilities:
+ * - `model_configure_pubsub_publishers()` is the single startup entry point
+ *   that resets runtime state, registers the MQTT connection manager,
+ *   builds one telemetry Writer chain per enabled channel, and builds the
+ *   Events-mirror Writer chain.
+ * - Mirrors the most recently emitted/published event into
+ *   `g_model_pubsub_event_mirror` for the `Device.Messaging.LastPubSubEvent*`
+ *   read-only nodes.
+ *
+ * Ownership:
+ * `g_model_pubsub` / `g_model_pubsub_event_mirror` (both fields of
+ * `opcua_model_context_t`) are adapter/model runtime state, not
+ * `services/`-owned business state — see `opcua_model_context_t` in
+ * `opcua_model_internal.h`.
+ *
+ * Concurrency:
+ * PubSub setup/config functions run once on `OpcUaTask` during startup;
+ * `model_pubsub_trigger_event_publish` runs on `OpcUaTask` per poll
+ * iteration. `model_queue_pending_audit_event` is the one exception — it may
+ * be called from `security_service`'s audit callback on a different task,
+ * and is synchronized with `taskENTER_CRITICAL`/`taskEXIT_CRITICAL`.
+ */
 #include "opcua_model_internal.h"
 
 void model_pubsub_state_change_callback(UA_Server *server,
@@ -142,6 +173,13 @@ UA_StatusCode model_pubsub_add_mqtt_connection(UA_Server *server)
     return UA_Server_addPubSubConnection(server, &connection_config, &g_model_pubsub.connection_id);
 }
 
+/* @note The JSON message-settings block is only compiled under
+ * `UA_ENABLE_JSON_ENCODING`. If that macro is undefined while
+ * `g_model_pubsub.use_json` is true at runtime (JSON was requested by
+ * config), `writer_group_config.encodingMimeType`/`messageSettings` are left
+ * at their `memset`-zeroed defaults instead of being set to JSON — the build
+ * must enable JSON encoding for `mqtt_pubsub_use_json` to actually take
+ * effect. */
 UA_StatusCode model_pubsub_add_writer_group(UA_Server *server,
                                                    const char *name,
                                                    const char *topic,
@@ -216,6 +254,10 @@ UA_StatusCode model_pubsub_add_writer_group(UA_Server *server,
     return status;
 }
 
+/* @note Same `UA_ENABLE_JSON_ENCODING`-gated behavior as
+ * model_pubsub_add_writer_group(): if that macro is undefined,
+ * `writer_config.messageSettings` is never set for a JSON-requested writer
+ * and is left at its `memset`-zeroed default. */
 UA_StatusCode model_pubsub_add_data_set_writer(UA_Server *server,
                                                       const UA_NodeId writer_group_id,
                                                       const UA_NodeId pds_id,
@@ -271,6 +313,14 @@ UA_StatusCode model_pubsub_add_data_set_writer(UA_Server *server,
     return UA_Server_addDataSetWriter(server, writer_group_id, pds_id, &writer_config, NULL);
 }
 
+/* @note The four published fields deliberately span two different NodeId
+ * naming/namespace schemes: "Value" is addressed via
+ * model_build_channel_node_id() (the v0.4.2 generic per-channel NodeId,
+ * `Device.Channels.c_<hex id>.Value`, in `g_model_channel_namespace_index`),
+ * while "Status"/"SourceTimestamp"/"AlarmState" are addressed via
+ * model_build_legacy_channel_node_id() (`Device.Channels.<name>.<field>`,
+ * hardcoded to namespace 1) — both resolve per-channel NodeIds, just under
+ * different address-space paths/namespaces for historical reasons. */
 UA_StatusCode model_pubsub_add_telemetry_writer_for_channel(UA_Server *server,
                                                                    size_t channel_index,
                                                                    const telemetry_channel_t *channel)
@@ -563,6 +613,12 @@ UA_StatusCode model_configure_pubsub_publishers(UA_Server *server, UA_ServerConf
     fflush(stdout);
     return UA_STATUSCODE_GOOD;
 }
+
+/* Fixed-capacity ring buffer (`MODEL_AUDIT_QUEUE_CAPACITY` slots): when full,
+ * the oldest entry is overwritten (head advances, count stays at capacity)
+ * rather than rejecting the new one, so a burst of audit events can never
+ * block or fail the caller (which may be running on a non-`OpcUaTask`
+ * thread) — it can only silently lose the oldest unconsumed entries. */
 void model_queue_pending_audit_event(const char *event,
                                             const char *actor,
                                             const char *subject,

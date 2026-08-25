@@ -1,8 +1,27 @@
+/**
+ * @file
+ * @brief Implements the CRC32, record reset/finalize/validate, and
+ *        state/error-to-string helpers declared in `ota/ota_state.h`.
+ *
+ * Responsibilities:
+ * - Bit-reflected CRC-32 (IEEE 802.3 polynomial) used both for
+ *   `ota_state_record_t::record_crc32` self-checking and for firmware
+ *   image verification (`ota_flash_verify_bank_b()`).
+ * - Pure in-memory record manipulation; no Flash I/O in this file (see
+ *   `ota/src/ota_flash.c` for persistence).
+ *
+ * Ownership / Concurrency: stateless; see `ota/ota_state.h` for the shared
+ * record's ownership and concurrency notes.
+ */
+
 #include "ota/ota_state.h"
 
 #include <stddef.h>
 #include <string.h>
 
+/* Bitwise (non-table-driven) CRC-32 implementation: trades throughput for
+ * code/RAM footprint, acceptable given OTA images are only hashed a small
+ * number of times per update (staging + bootloader copy verification). */
 uint32_t ota_crc32_compute(const void *data, size_t size)
 {
     const uint8_t *bytes = (const uint8_t *)data;

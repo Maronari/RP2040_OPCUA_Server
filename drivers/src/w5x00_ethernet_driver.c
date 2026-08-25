@@ -1,3 +1,36 @@
+/**
+ * @file
+ * @brief W5500 MACRAW socket state machine: TX/RX framing, timeout-bounded
+ *        register polling, and socket-recovery FSM.
+ *
+ * Responsibilities:
+ * - Implement lwIP's low-level TX (w5x00_lwip_tx_begin/_end, send_lwip) and
+ *   RX (recv_lwip) hooks against the W5500's single MACRAW socket
+ *   (W5X00_MACRAW_SOCKET == 0).
+ * - Replace ioLibrary's unbounded retry loops (e.g. getSn_TX_FSR()) with
+ *   finite, counted polls so a stuck/unresponsive W5500 cannot hang a
+ *   FreeRTOS task indefinitely.
+ * - Detect and recover a MACRAW socket that has left MACRAW mode (closed,
+ *   errored) via a resumable close/reopen state machine
+ *   (w5x00_macraw_recovery_phase_t), rather than assuming the socket is
+ *   always healthy.
+ * - Rate-limit diagnostic printf output: each fault class is recorded once
+ *   under the MACRAW mutex and printed once after the mutex is released
+ *   (never while holding the SPI-serializing lock), and each condition is
+ *   latched so it is not reprinted every poll while it persists.
+ *
+ * Ownership: all mutable state lives in the caller-owned
+ * w5x00_ethernet_driver_t instance; this file has no static/global state
+ * of its own (aside from the FreeRTOS async-context stack when static
+ * allocation is configured).
+ *
+ * Concurrency: driver->macraw_mutex serializes every W5500 register/buffer
+ * access. lwIP's calling task acquires it via w5x00_lwip_tx_begin()/
+ * send_lwip(); NetworkTask acquires it via w5x00_ethernet_driver_poll() ->
+ * recv_lwip(). recv_lwip() releases the mutex before handing a decoded
+ * frame to `netif.input()`, so lwIP's own processing of a received frame
+ * never runs while the MACRAW mutex is held.
+ */
 #include "drivers/w5x00_ethernet_driver.h"
 
 #include <stdio.h>
@@ -52,6 +85,7 @@ static void w5x00_macraw_unlock_and_report(w5x00_ethernet_driver_t *driver);
 static bool w5x00_macraw_recover_locked(w5x00_ethernet_driver_t *driver);
 static void w5x00_counter_inc(uint32_t *counter);
 
+/** @brief Clear any in-progress short-record deferral bookkeeping (see w5x00_macraw_defer_short_record_locked()). */
 static void w5x00_macraw_reset_rx_short_deferral(w5x00_ethernet_driver_t *driver)
 {
     driver->rx_short_deferred = false;
@@ -59,7 +93,19 @@ static void w5x00_macraw_reset_rx_short_deferral(w5x00_ethernet_driver_t *driver
     driver->rx_short_deferred_pointer = 0u;
 }
 
-/* Called while the MACRAW mutex is held.  It never waits or issues RECV. */
+/**
+ * @brief Allow one extra poll for a MACRAW record whose header/length bytes
+ *        have not fully arrived yet, instead of treating it as malformed.
+ *
+ * Called while the MACRAW mutex is held. It never waits or issues RECV --
+ * it only decides whether the caller should return "no data yet" (0) one
+ * more time for the exact same `rx_read_pointer`, bounded to
+ * W5X00_MACRAW_RX_SHORT_DEFERRAL_LIMIT deferrals before giving up and
+ * falling through to the malformed-record path.
+ *
+ * @return true if the caller should defer (return 0, retry next poll);
+ *         false once the deferral budget for this pointer is exhausted.
+ */
 static bool w5x00_macraw_defer_short_record_locked(w5x00_ethernet_driver_t *driver,
                                                     uint16_t rx_read_pointer)
 {
@@ -81,6 +127,7 @@ static bool w5x00_macraw_defer_short_record_locked(w5x00_ethernet_driver_t *driv
     return true;
 }
 
+/** @brief One diagnostic event handed off from w5x00_take_pending_diagnostic_locked() to w5x00_emit_diagnostic() after the MACRAW mutex is released. */
 typedef struct
 {
     bool valid;
@@ -108,6 +155,7 @@ typedef struct
     uint8_t raw_second[W5X00_MACRAW_RX_SNAPSHOT_BYTES];
 } w5x00_macraw_rx_snapshot_t;
 
+/** @brief Translate a raw Sn_RX_RD offset into the W5500's internal RX buffer memory address. */
 static uint32_t w5x00_macraw_rx_buffer_address(uint16_t rx_read_pointer)
 {
     return ((uint32_t)rx_read_pointer << 8u) +
@@ -119,6 +167,7 @@ static uint32_t w5x00_macraw_rx_buffer_address(uint16_t rx_read_pointer)
  * wiz_recv_data() for a header followed by payload: it re-reads Sn_RX_RD for
  * each piece and therefore depends on immediate register-write visibility.
  */
+/** @brief Read @p length payload bytes (after the 2-byte length header) at @p rx_read_pointer into @p buffer. */
 static void w5x00_macraw_read_record_payload(uint16_t rx_read_pointer,
                                               uint8_t *buffer,
                                               uint16_t length)
@@ -129,6 +178,7 @@ static void w5x00_macraw_read_record_payload(uint16_t rx_read_pointer,
                      length);
 }
 
+/** @brief Advance Sn_RX_RD past one fully-consumed @p wire_length-byte MACRAW record. */
 static void w5x00_macraw_consume_record(uint16_t rx_read_pointer,
                                         uint16_t wire_length)
 {
@@ -136,6 +186,7 @@ static void w5x00_macraw_consume_record(uint16_t rx_read_pointer,
 }
 
 /* Diagnostic sampling must never inherit ioLibrary's unbounded stability loop. */
+/** @brief Read Sn_RX_RSR exactly once (no ioLibrary-style stability retry loop); for diagnostic snapshots only. */
 static uint16_t w5x00_read_rx_size_once(void)
 {
     return (uint16_t)(((uint16_t)WIZCHIP_READ(Sn_RX_RSR(W5X00_MACRAW_SOCKET)) << 8u) |
@@ -164,6 +215,7 @@ static void w5x00_capture_rx_snapshot_locked(w5x00_macraw_rx_snapshot_t *snapsho
     WIZCHIP_READ_BUF(address, snapshot->raw_second, sizeof(snapshot->raw_second));
 }
 
+/** @brief Print a captured RX register/buffer snapshot via W5X00_DIAGNOSTIC_PRINTF; no-op if the snapshot was never captured (snapshot->valid == false). Must be called after the MACRAW mutex is released. */
 static void w5x00_emit_rx_snapshot(const w5x00_macraw_rx_snapshot_t *snapshot)
 {
     if (!snapshot->valid)
@@ -208,7 +260,18 @@ static void w5x00_emit_rx_snapshot(const w5x00_macraw_rx_snapshot_t *snapshot)
                             snapshot->raw_second[14], snapshot->raw_second[15]);
 }
 
-/* All MACRAW diagnostics are recorded while serialized and printed after unlock. */
+/**
+ * @brief Latch one diagnostic event as pending, but only the first time
+ *        @p reported is false, to avoid re-recording (and later
+ *        re-printing) the same persistent condition every poll.
+ *
+ * All MACRAW diagnostics are recorded while serialized (MACRAW mutex held)
+ * and printed after unlock via w5x00_macraw_unlock_and_report(). Called
+ * with the mutex held.
+ *
+ * @param reported Caller-owned per-condition latch (e.g.
+ *        driver->rx_drop_diagnostic_reported); set true on first record.
+ */
 static void w5x00_record_diagnostic_once(w5x00_ethernet_driver_t *driver,
                                          bool *reported,
                                          w5x00_macraw_diagnostic_t diagnostic,
@@ -225,7 +288,13 @@ static void w5x00_record_diagnostic_once(w5x00_ethernet_driver_t *driver,
     }
 }
 
-/* Called while the MACRAW mutex is held; ownership transfers to caller. */
+/**
+ * @brief Take and clear the pending diagnostic (if any) for later printing.
+ *
+ * Called while the MACRAW mutex is held; ownership of the returned record
+ * transfers to the caller, which must print it only after releasing the
+ * mutex (see w5x00_macraw_unlock_and_report()).
+ */
 static w5x00_macraw_diagnostic_record_t w5x00_take_pending_diagnostic_locked(
     w5x00_ethernet_driver_t *driver)
 {
@@ -244,6 +313,13 @@ static w5x00_macraw_diagnostic_record_t w5x00_take_pending_diagnostic_locked(
     return record;
 }
 
+/**
+ * @brief Print one taken diagnostic record's fault-specific message.
+ *
+ * No-op if @p record->valid is false (nothing was pending). Must be called
+ * without the MACRAW mutex held (uses printf, which must not run under the
+ * SPI-serializing lock).
+ */
 static void w5x00_emit_diagnostic(w5x00_ethernet_driver_t *driver,
                                   const w5x00_macraw_diagnostic_record_t *record)
 {
@@ -290,6 +366,20 @@ static void w5x00_emit_diagnostic(w5x00_ethernet_driver_t *driver,
     }
 }
 
+/**
+ * @brief Register and bring up the lwIP netif, then quarantine and
+ *        immediately recover the MACRAW socket into a known-open state.
+ *
+ * Called once from w5x00_ethernet_driver_init(). netif_initialize()
+ * (port/lwip/w5x00_lwip.c) wires send_lwip/recv_lwip as the netif's
+ * low-level TX/RX hooks. Deliberately forces `macraw_quarantined = true`
+ * before the first lock so the very first send/receive always goes through
+ * the recovery FSM rather than assuming the socket happens to already be
+ * in MACRAW mode after chip reset.
+ *
+ * @return false if netif_add() or the initial MACRAW socket
+ *         acquisition/recovery fails; true otherwise.
+ */
 static bool configure_netif(w5x00_ethernet_driver_t *driver)
 {
     if (netif_add(&driver->netif, IP_ADDR_ANY, IP_ADDR_ANY, IP_ADDR_ANY, driver, netif_initialize, tcpip_input) == NULL)
@@ -318,16 +408,28 @@ static bool configure_netif(w5x00_ethernet_driver_t *driver)
     return true;
 }
 
+/** @brief Atomically increment a diagnostic counter; safe even without the MACRAW mutex held. */
 static void w5x00_counter_inc(uint32_t *counter)
 {
     (void)__atomic_fetch_add(counter, 1u, __ATOMIC_RELAXED);
 }
 
+/** @brief Mark the MACRAW socket as needing recovery before its next use (checked/cleared by w5x00_macraw_recover_locked()). */
 static void w5x00_macraw_quarantine(w5x00_ethernet_driver_t *driver)
 {
     driver->macraw_quarantined = true;
 }
 
+/**
+ * @brief Acquire the MACRAW mutex (bounded wait) and ensure the socket is
+ *        out of quarantine before returning success.
+ *
+ * @return false if @p driver/its mutex is NULL, the mutex could not be
+ *         taken within W5X00_MACRAW_MUTEX_WAIT_MS (counts
+ *         macraw_contention), or socket recovery fails after acquiring the
+ *         mutex (mutex is released again in that case). true only once the
+ *         mutex is held and the socket is confirmed in MACRAW mode.
+ */
 static bool w5x00_macraw_lock(w5x00_ethernet_driver_t *driver)
 {
     if (driver == NULL || driver->macraw_mutex == NULL ||
@@ -350,11 +452,13 @@ static bool w5x00_macraw_lock(w5x00_ethernet_driver_t *driver)
     return true;
 }
 
+/** @brief Release the MACRAW mutex without touching any pending diagnostic. */
 static void w5x00_macraw_unlock(w5x00_ethernet_driver_t *driver)
 {
     (void)xSemaphoreGive(driver->macraw_mutex);
 }
 
+/** @brief Take any pending diagnostic while still locked, release the mutex, then print it -- the standard unlock path used by every MACRAW operation. */
 static void w5x00_macraw_unlock_and_report(w5x00_ethernet_driver_t *driver)
 {
     const w5x00_macraw_diagnostic_record_t record = w5x00_take_pending_diagnostic_locked(driver);
@@ -363,6 +467,12 @@ static void w5x00_macraw_unlock_and_report(w5x00_ethernet_driver_t *driver)
     w5x00_emit_diagnostic(driver, &record);
 }
 
+/**
+ * @brief Poll Sn_CR until the W5500 clears it to 0 (command consumed), up
+ *        to W5X00_MACRAW_COMMAND_POLL_LIMIT times.
+ * @return true once Sn_CR reads 0; false on timeout (counts
+ *         macraw_timeouts and quarantines the socket for recovery).
+ */
 static bool w5x00_macraw_complete_command(w5x00_ethernet_driver_t *driver)
 {
     for (uint32_t poll = 0; poll < W5X00_MACRAW_COMMAND_POLL_LIMIT; ++poll)
@@ -378,6 +488,12 @@ static bool w5x00_macraw_complete_command(w5x00_ethernet_driver_t *driver)
     return false;
 }
 
+/**
+ * @brief Issue one Sn_CR command register write and wait for it to complete.
+ * @return false without writing the register if a previous command is
+ *         still in flight (Sn_CR != 0, quarantines the socket); otherwise
+ *         the result of w5x00_macraw_complete_command().
+ */
 static bool w5x00_macraw_issue_command(w5x00_ethernet_driver_t *driver, uint8_t command)
 {
     /* Never overwrite an in-flight command register. */
@@ -391,6 +507,12 @@ static bool w5x00_macraw_issue_command(w5x00_ethernet_driver_t *driver, uint8_t 
     return w5x00_macraw_complete_command(driver);
 }
 
+/**
+ * @brief Poll Sn_SR until it equals @p expected_status, up to
+ *        W5X00_MACRAW_STATUS_POLL_LIMIT times.
+ * @return true once matched; false on timeout (counts macraw_timeouts and
+ *         quarantines the socket).
+ */
 static bool w5x00_macraw_wait_status(w5x00_ethernet_driver_t *driver, uint8_t expected_status)
 {
     for (uint32_t poll = 0; poll < W5X00_MACRAW_STATUS_POLL_LIMIT; ++poll)
@@ -412,6 +534,14 @@ static bool w5x00_macraw_wait_status(w5x00_ethernet_driver_t *driver, uint8_t ex
  * finite number of times instead.  A zero value is valid and is returned once
  * stable; it is handled by TX admission below.
  */
+/**
+ * @brief Read Sn_TX_FSR twice and accept the value only if both reads
+ *        agree, retrying up to W5X00_MACRAW_TX_FSR_STABLE_POLL_LIMIT times.
+ * @param free_space Set to the stable free-space value on success.
+ * @return false if the two reads never agreed within the poll budget
+ *         (caller must not trust @p free_space in that case). A stable
+ *         value of 0 is a valid result (TX buffer momentarily full).
+ */
 static bool w5x00_macraw_read_tx_free_bounded(uint16_t *free_space)
 {
     for (uint32_t poll = 0; poll < W5X00_MACRAW_TX_FSR_STABLE_POLL_LIMIT; ++poll)
@@ -431,7 +561,22 @@ static bool w5x00_macraw_read_tx_free_bounded(uint16_t *free_space)
     return false;
 }
 
-/* Called with the driver-owned MACRAW mutex held. */
+/**
+ * @brief Wait for the MACRAW TX buffer to have at least @p len bytes free,
+ *        recovering the socket first if it has left MACRAW mode.
+ *
+ * Called with the driver-owned MACRAW mutex held. A non-MACRAW status is
+ * deliberately not treated as a hard failure on its own -- it triggers an
+ * inline recovery attempt so a transient state does not silently drop a
+ * time-sensitive frame (e.g. a DHCP Discover), only failing once recovery
+ * itself fails.
+ *
+ * @return (int32_t)len once admission is confirmed;
+ *         W5X00_LWIP_SEND_INTERFACE if the socket left MACRAW mode and
+ *         could not be recovered; W5X00_LWIP_SEND_BUFFER if free space
+ *         never reached @p len within W5X00_MACRAW_TX_ADMISSION_POLL_LIMIT
+ *         polls.
+ */
 static int32_t w5x00_macraw_wait_tx_admission_locked(w5x00_ethernet_driver_t *driver,
                                                       uint16_t len)
 {
@@ -473,7 +618,25 @@ static int32_t w5x00_macraw_wait_tx_admission_locked(w5x00_ethernet_driver_t *dr
     return W5X00_LWIP_SEND_BUFFER;
 }
 
-/* Called with the driver-owned MACRAW mutex held. */
+/**
+ * @brief Resumable close/reopen recovery for a quarantined MACRAW socket.
+ *
+ * Called with the driver-owned MACRAW mutex held. No-op (returns true
+ * immediately) if the socket is not currently quarantined. Otherwise walks
+ * `macraw_recovery_phase` (w5x00_macraw_recovery_phase_t) forward one step
+ * at a time: issue CLOSE and wait SOCK_CLOSED, then reprogram MACRAW mode
+ * and issue OPEN and wait SOCK_MACRAW. Each wait is bounded
+ * (w5x00_macraw_wait_status()'s poll limit); a timed-out wait leaves
+ * `macraw_recovery_phase` at its current step so the next call to this
+ * function resumes from there rather than restarting the whole sequence.
+ * Resets any in-progress short-record RX deferral first, since recovery
+ * invalidates any saved RX_RD observation.
+ *
+ * @return true once the socket is confirmed back in SOCK_MACRAW (quarantine
+ *         cleared); false if any step is still pending/timed out.
+ * @note Hardware side effect: up to 2 Sn_CR command issues plus register
+ *       writes (Sn_MR, Sn_PORT, Sn_IR) over SPI.
+ */
 static bool w5x00_macraw_recover_locked(w5x00_ethernet_driver_t *driver)
 {
     if (!driver->macraw_quarantined)
@@ -542,7 +705,23 @@ static bool w5x00_macraw_recover_locked(w5x00_ethernet_driver_t *driver)
     return true;
 }
 
-/* Called with the driver-owned MACRAW mutex held. */
+/**
+ * @brief Transmit one MACRAW frame: wait for TX admission, clear stale
+ *        completion interrupts, write the frame, issue SEND, and wait for
+ *        SENDOK.
+ *
+ * Called with the driver-owned MACRAW mutex held. This is send_lwip()'s
+ * core implementation.
+ *
+ * @return (int32_t)len on success; the admission failure code
+ *         (W5X00_LWIP_SEND_INTERFACE/W5X00_LWIP_SEND_BUFFER) if admission
+ *         fails; W5X00_LWIP_SEND_FAILURE if the SEND command does not
+ *         complete, or SENDOK is not observed before
+ *         W5X00_MACRAW_SEND_POLL_LIMIT polls or a TIMEOUT interrupt fires
+ *         first (quarantines the socket in both failure cases).
+ * @note Hardware side effect: one Sn_IR clear, one frame write via
+ *       `wiz_send_data()`, one Sn_CR_SEND command, and Sn_IR polling.
+ */
 static int32_t w5x00_macraw_send_locked(w5x00_ethernet_driver_t *driver,
                                         const uint8_t *buf,
                                         uint16_t len)
@@ -603,6 +782,25 @@ static int32_t w5x00_macraw_send_locked(w5x00_ethernet_driver_t *driver,
     return W5X00_LWIP_SEND_FAILURE;
 }
 
+/**
+ * @brief lwIP low-level TX hook (start of frame): lock the MACRAW socket
+ *        and hand back the driver's TX scratch buffer for lwIP to fill.
+ *
+ * Declared in the vendor/port header port/lwip/w5x00_lwip.h (not owned by
+ * this module) and wired as the netif's TX-begin hook by
+ * netif_initialize() in port/lwip/w5x00_lwip.c. Invoked by lwIP's own
+ * output path on whichever task is currently transmitting.
+ *
+ * @param netif The driver's netif; `netif->state` must be the owning
+ *        w5x00_ethernet_driver_t.
+ * @param frame Out: set to `driver->tx_frame` on success.
+ * @param capacity Out: set to `sizeof(driver->tx_frame)` on success.
+ * @return ERR_IF if arguments are invalid, the driver is not initialized,
+ *         or the MACRAW mutex could not be acquired (counts tx_failures);
+ *         ERR_OK otherwise.
+ * @post On ERR_OK, the MACRAW mutex is held until a matching
+ *       w5x00_lwip_tx_end() call.
+ */
 err_t w5x00_lwip_tx_begin(struct netif *netif, uint8_t **frame, uint16_t *capacity)
 {
     w5x00_ethernet_driver_t *driver = netif != NULL ? netif->state : NULL;
@@ -622,6 +820,17 @@ err_t w5x00_lwip_tx_begin(struct netif *netif, uint8_t **frame, uint16_t *capaci
     return ERR_OK;
 }
 
+/**
+ * @brief lwIP low-level TX hook (end of frame): release the MACRAW socket
+ *        lock acquired by w5x00_lwip_tx_begin().
+ *
+ * Declared in port/lwip/w5x00_lwip.h; must be called exactly once for every
+ * successful w5x00_lwip_tx_begin() call, regardless of @p success.
+ *
+ * @param success false if lwIP failed to fill the frame buffer (counted as
+ *        tx_failures); the frame is not sent by this call either way --
+ *        actual transmission happens via send_lwip().
+ */
 void w5x00_lwip_tx_end(struct netif *netif, bool success)
 {
     w5x00_ethernet_driver_t *driver = netif != NULL ? netif->state : NULL;
@@ -637,6 +846,20 @@ void w5x00_lwip_tx_end(struct netif *netif, bool success)
     w5x00_macraw_unlock_and_report(driver);
 }
 
+/**
+ * @brief lwIP low-level TX hook: transmit @p len bytes from @p buf (which
+ *        must be the buffer previously handed out by w5x00_lwip_tx_begin())
+ *        over the MACRAW socket.
+ *
+ * Declared in port/lwip/w5x00_lwip.h. Delegates to
+ * w5x00_macraw_send_locked() while the MACRAW mutex acquired by
+ * w5x00_lwip_tx_begin() is still held.
+ *
+ * @return W5X00_LWIP_SEND_BUFFER if arguments are invalid or @p len exceeds
+ *         the driver's TX frame capacity; otherwise the result of
+ *         w5x00_macraw_send_locked() (frame length on success, or a
+ *         negative W5X00_LWIP_SEND_* failure code).
+ */
 int32_t send_lwip(struct netif *netif, const uint8_t *buf, uint16_t len)
 {
     w5x00_ethernet_driver_t *driver = netif != NULL ? netif->state : NULL;
@@ -649,6 +872,42 @@ int32_t send_lwip(struct netif *netif, const uint8_t *buf, uint16_t len)
     return w5x00_macraw_send_locked(driver, buf, len);
 }
 
+/**
+ * @brief lwIP low-level RX hook: dequeue and validate one MACRAW record
+ *        from the W5500 into @p buf.
+ *
+ * Declared in port/lwip/w5x00_lwip.h; called by
+ * w5x00_ethernet_driver_poll() in a loop (NetworkTask). Acquires and
+ * releases the MACRAW mutex internally for the duration of one record's
+ * classification (never leaves it held across the return to the caller).
+ *
+ * Validation order, each stage consuming/dropping the record and
+ * quarantining the socket on failure except where noted:
+ * 1. If fewer than W5X00_MACRAW_RX_HEADER_LEN bytes are queued, defer once
+ *    (see w5x00_macraw_defer_short_record_locked()) before treating it as
+ *    malformed.
+ * 2. Read the 2-byte length prefix without advancing Sn_RX_RD. If the
+ *    declared record is shorter than the minimum legal Ethernet-frame
+ *    record, defer once; if a complete short record is nonetheless fully
+ *    queued once the deferral is exhausted, consume just that record as
+ *    malformed (bounded skip) rather than quarantining on an
+ *    unboundedly-sized unknown remainder.
+ * 3. Reject (and quarantine) if the declared wire_length is inconsistent
+ *    with queued bytes, or if the derived Ethernet frame length is below
+ *    the minimum legal frame size.
+ * 4. Reject as overflow (consuming the record, no quarantine) if the frame
+ *    is larger than @p capacity or the lwIP frame limit.
+ * 5. Otherwise, copy the payload, advance Sn_RX_RD past the whole record,
+ *    and issue RECV.
+ *
+ * @return >0: number of payload bytes copied into @p buf (a valid frame).
+ *          0: no complete record available yet (queue empty or a bounded
+ *             short-record deferral).
+ *         W5X00_LWIP_RX_MALFORMED / _OVERFLOW / _TIMEOUT / _CONTENTION on
+ *         the corresponding failure (see the `#define`s above).
+ * @note Hardware side effect: W5500 RX buffer/register reads and, on a
+ *       consumed record, an Sn_RX_RD update plus an Sn_CR_RECV command.
+ */
 int32_t recv_lwip(struct netif *netif, uint8_t *buf, uint16_t capacity)
 {
     w5x00_ethernet_driver_t *driver = netif != NULL ? netif->state : NULL;

@@ -1,3 +1,37 @@
+/**
+ * @file
+ * @brief Config-diff/reboot-required helpers, certificate/trust-list expiry
+ *        classification, fixed-NodeId accessor functions, and PubSub
+ *        topic/client-id string builders.
+ *
+ * Responsibilities:
+ * - Decide whether a config change requires a full server rebuild/reboot
+ *   (`model_config_requires_server_reboot`, `model_is_reboot_required`),
+ *   compared against services' `config_service_get()` /
+ *   `config_service_get_staged()` state only — this file owns no config
+ *   state itself.
+ * - Classify server-certificate and trust-list expiry into the
+ *   `model_certificate_expiry_state_t` buckets consumed by
+ *   `model_maintenance.c`'s runtime-event polling.
+ * - Provide the fixed (`"Device"`, `"Device.Network"`, ... ) NodeId accessor
+ *   functions consumed by `model_address_space.c` / `model_events.c` and the
+ *   PubSub topic/client-id string builders consumed by `model_pubsub.c`.
+ *
+ * Note on file naming (see `docs/code/modules/opcua_model.md`): despite the
+ * name, this file does not build channel nodes — that happens in
+ * `model_address_space.c`. It holds config-diff, expiry, NodeId-accessor,
+ * and PubSub string-building helpers instead.
+ *
+ * Ownership: all functions here are stateless helpers over caller-supplied
+ * data or service snapshots, except `model_pubsub_reset_runtime` /
+ * `model_store_last_event`, which mutate fields of the single
+ * `opcua_model_context_t` (`g_model_pubsub`, `g_model_pubsub_event_mirror`,
+ * `g_last_event_state`).
+ *
+ * Concurrency: every function here runs on `OpcUaTask` only (called from
+ * `model_core_task`'s poll loop, address-space construction, or PubSub
+ * setup); none is reentrant-safe from another task.
+ */
 #include "opcua_model_internal.h"
 
 bool model_byte_array_changed(const uint8_t *lhs, const uint8_t *rhs, size_t size)
@@ -10,6 +44,10 @@ bool model_byte_array_changed(const uint8_t *lhs, const uint8_t *rhs, size_t siz
     return memcmp(lhs, rhs, size) != 0;
 }
 
+/* Implementation note: after the scalar/string/byte-array field comparisons,
+ * this walks all PLATFORM_CHANNEL_LIMIT channel slots (not just populated
+ * ones) through model_channel_requires_server_rebuild, since an unpopulated
+ * slot becoming populated (or vice versa) also changes the address space. */
 bool model_config_requires_server_reboot(const device_profile_config_t *lhs,
                                                 const device_profile_config_t *rhs)
 {
@@ -110,6 +148,8 @@ model_certificate_expiry_state_t model_get_certificate_expiry_state(uint32_t *ou
         return MODEL_CERTIFICATE_EXPIRY_STATE_EXPIRED;
     }
 
+    /* Round up: any partial day remaining before expiry still counts as a
+     * whole day, so the notice does not read "0 days" while still valid. */
     remaining_days = (not_after_epoch_s - time_status.unix_time_s + 86399u) / 86400u;
 
     if (out_days_until_expiry != NULL)
@@ -211,6 +251,15 @@ bool model_format_certificate_expiry_notice(model_certificate_expiry_state_t sta
     return false;
 }
 
+/* Implementation note: does not call model_certificate_expiry_requires_attention
+ * explicitly. It relies on model_format_certificate_expiry_notice's switch
+ * being exhaustive over exactly the states requires_attention() considers
+ * attention-worthy (MISSING/UNKNOWN/EXPIRES_SOON_/EXPIRED) and falling
+ * through to `return false` for VALID (its only omitted state), so the two
+ * functions stay behaviorally equivalent without a duplicated attention
+ * check. If a new model_certificate_expiry_state_t value is ever added, both
+ * this switch and model_certificate_expiry_requires_attention must be kept
+ * in sync by hand. */
 bool model_build_certificate_expiry_notice(model_certificate_expiry_state_t state,
                                                   uint32_t days_until_expiry,
                                                   char *message,
@@ -584,6 +633,10 @@ const char *model_pubsub_state_to_string(UA_PubSubState state)
 #endif /* UA_ENABLE_PUBSUB */
 #endif /* UA_ENABLE_SUBSCRIPTIONS_EVENTS */
 
+/* Implementation note: string-identifier NodeIds are copied directly from
+ * their raw bytes (fast path, no allocation); numeric/GUID/opaque NodeIds
+ * fall back to UA_NodeId_print (heap-allocates `rendered`, always cleared
+ * via UA_String_clear before return) to get the `ns=<i>;i=<id>`-style text. */
 void model_node_id_to_text(const UA_NodeId *node_id, char *buffer, size_t buffer_size)
 {
     UA_String rendered = UA_STRING_NULL;

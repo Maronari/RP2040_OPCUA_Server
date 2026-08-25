@@ -9,8 +9,9 @@
 #include "services/service_types.h"
 #include "services/telemetry_channel.h"
 
-/*
- * v0.4.3 Flash-backed per-channel history ring.
+/**
+ * @file
+ * @brief v0.4.3 Flash-backed per-channel history ring.
  *
  * This is a CYCLIC BUFFER WITHOUT TRANSACTIONAL GUARANTEES, unlike
  * drivers/maintenance_journal_backend.  There is no commit-page, no
@@ -130,6 +131,7 @@
 #define HISTORY_FLASH_BACKEND_TOTAL_SIZE_BYTES \
     (HISTORY_FLASH_BACKEND_CHANNEL_REGION_SIZE_BYTES * HISTORY_FLASH_BACKEND_CHANNEL_COUNT)
 
+/** @brief Untagged raw sample payload; interpreted per history_flash_backend_record_t::value_type. */
 typedef union
 {
     float f32;
@@ -141,6 +143,7 @@ typedef union
     bool boolean;
 } history_flash_backend_value_t;
 
+/** @brief One decoded history sample as exchanged with the caller (services/history_service.c). */
 typedef struct
 {
     history_flash_backend_value_t value;
@@ -149,7 +152,7 @@ typedef struct
     uint64_t source_timestamp_unix_us;
 } history_flash_backend_record_t;
 
-/* history_flash_backend_restore()'s bounded working set for one channel
+/** @brief history_flash_backend_restore()'s bounded working set for one channel
  * (up to HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL entries). This is
  * deliberately NOT a static internal-SRAM buffer inside the driver: at
  * ~40 bytes/entry it would cost multiple KiB of scarce internal SRAM
@@ -165,12 +168,20 @@ typedef struct
     history_flash_backend_record_t record;
 } history_flash_backend_scan_entry_t;
 
+/** @brief Storage-callback signature: read @p size bytes at @p offset into @p destination. */
 typedef bool (*history_flash_backend_read_fn)(void *context, uint32_t offset,
                                               uint8_t *destination, size_t size);
+/** @brief Storage-callback signature: program one full HISTORY_FLASH_BACKEND_PAGE_SIZE page at @p offset. */
 typedef bool (*history_flash_backend_program_fn)(void *context, uint32_t offset,
                                                   const uint8_t page[HISTORY_FLASH_BACKEND_PAGE_SIZE]);
+/** @brief Storage-callback signature: erase one HISTORY_FLASH_BACKEND_SECTOR_SIZE sector at @p offset. */
 typedef bool (*history_flash_backend_erase_fn)(void *context, uint32_t offset);
 
+/**
+ * @brief Injected storage backend: RP2350 XIP+flash_operation_coordinator in
+ *        production (history_flash_backend_init_flash()), or host-test
+ *        fakes/memory buffers via history_flash_backend_init().
+ */
 typedef struct
 {
     void *context;
@@ -179,6 +190,13 @@ typedef struct
     history_flash_backend_erase_fn erase_sector;
 } history_flash_backend_storage_t;
 
+/**
+ * @brief Per-physical-slot write cursor and staging buffer.
+ *
+ * Owned by history_flash_backend_t::channels[slot]; reconstructed by
+ * history_flash_backend_bind_channel() (scanning Flash) and mutated only by
+ * history_flash_backend_append(). Not synchronized -- see history_flash_backend_t.
+ */
 typedef struct
 {
     bool bound;
@@ -190,6 +208,18 @@ typedef struct
     uint8_t staging_page[HISTORY_FLASH_BACKEND_PAGE_SIZE];
 } history_flash_backend_channel_state_t;
 
+/**
+ * @brief Top-level backend instance: one per running firmware image.
+ *
+ * Ownership: allocated and owned by services/history_service.c (typically a
+ * single static/global instance initialized once via
+ * history_flash_backend_init_flash()).
+ *
+ * Synchronization: this struct has no internal lock. All of
+ * history_flash_backend_bind_channel()/_restore()/_append() are expected to
+ * be called from a single task (the caller's history-service context); the
+ * driver performs no cross-task serialization of its own.
+ */
 typedef struct
 {
     history_flash_backend_storage_t storage;
@@ -197,41 +227,88 @@ typedef struct
     bool ready;
 } history_flash_backend_t;
 
+/** @brief Result codes for every history_flash_backend_* mutating/query call. */
 typedef enum
 {
     HISTORY_FLASH_BACKEND_OK = 0,
-    HISTORY_FLASH_BACKEND_INVALID_ARGUMENT,
-    HISTORY_FLASH_BACKEND_NOT_BOUND,
-    HISTORY_FLASH_BACKEND_IO
+    HISTORY_FLASH_BACKEND_INVALID_ARGUMENT, /**< NULL/out-of-range argument, or scratch_capacity too small. */
+    HISTORY_FLASH_BACKEND_NOT_BOUND,        /**< Slot was never bound via history_flash_backend_bind_channel(). */
+    HISTORY_FLASH_BACKEND_IO                /**< A storage read/program/erase callback returned false. */
 } history_flash_backend_result_t;
 
+/**
+ * @brief Zero-initialize @p backend and install @p storage.
+ *
+ * Sets `backend->ready` true only if all three storage callbacks
+ * (read/program_page/erase_sector) are non-NULL; every other call fails
+ * fast against a not-ready backend.
+ *
+ * @param backend Instance to initialize; must not be NULL (no-op if it is).
+ * @param storage Callback set to copy in; may be NULL, in which case
+ *        `ready` is left false (host builds without Flash pass NULL here).
+ */
 void history_flash_backend_init(history_flash_backend_t *backend,
                                 const history_flash_backend_storage_t *storage);
 
-/* Binds physical channel slot (0..HISTORY_FLASH_BACKEND_CHANNEL_COUNT-1) to
- * channel_id and reconstructs the write cursor by scanning that slot's two
- * sectors.  Must be called exactly once per slot before
- * history_flash_backend_restore() or history_flash_backend_append() use it.
- * Safe/idempotent to call with a NULL or empty channel_id: the slot becomes
- * bound to "no channel", and restore/append for it are no-ops. */
+/**
+ * @brief Bind physical channel slot to a logical channel_id and reset its
+ *        write cursor for a subsequent history_flash_backend_restore() scan.
+ *
+ * Must be called exactly once per slot before history_flash_backend_restore()
+ * or history_flash_backend_append() use it. Safe/idempotent to call with a
+ * NULL or empty @p channel_id: the slot becomes bound to "no channel", and
+ * restore/append for it become no-ops.
+ *
+ * @param slot Physical slot index, 0..HISTORY_FLASH_BACKEND_CHANNEL_COUNT-1.
+ * @param channel_id Stable channel id string whose FNV-1a hash is stored
+ *        and later checked against every record read back from this slot.
+ * @return HISTORY_FLASH_BACKEND_INVALID_ARGUMENT if @p backend is NULL or
+ *         @p slot is out of range; HISTORY_FLASH_BACKEND_OK otherwise.
+ */
 history_flash_backend_result_t history_flash_backend_bind_channel(history_flash_backend_t *backend,
                                                                    uint8_t slot,
                                                                    const char *channel_id);
 
-/* Replays every record recognized as valid and belonging to slot's bound
- * channel_id (matching CRC32, valid marker, and channel_id_hash), oldest to
- * newest, into callback.  Bounded to at most
- * HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL callback invocations. Must be
- * called after history_flash_backend_bind_channel() for the same slot and
- * before any history_flash_backend_append() call for it, and before the
- * OPC UA HistoryRead surface is exposed.
+/**
+ * @brief Callback invoked once per valid record replayed by
+ *        history_flash_backend_restore(), oldest to newest.
  *
- * scratch/scratch_capacity is the caller-owned bounded working set described
- * above; scratch_capacity must be >= HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL
- * or HISTORY_FLASH_BACKEND_INVALID_ARGUMENT is returned. The same scratch
- * buffer may be reused sequentially across every slot's restore() call. */
+ * @param user_context Caller-supplied opaque pointer, passed through unchanged.
+ * @param record The decoded sample; valid only for the duration of the call.
+ */
 typedef void (*history_flash_backend_restore_cb)(void *user_context,
                                                   const history_flash_backend_record_t *record);
+
+/**
+ * @brief Replay every record recognized as valid and belonging to @p slot's
+ *        bound channel_id, oldest to newest, into @p callback.
+ *
+ * Matches CRC32, valid marker, format version, and channel_id_hash for
+ * every physical record across both of the slot's sectors; anything that
+ * fails any check is treated as torn/foreign and silently skipped, never
+ * exposed to @p callback. Reconstructs the slot's active-sector write
+ * cursor as a side effect and may erase one stale sector left over from an
+ * interrupted sector swap. Bounded to at most
+ * HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL callback invocations.
+ *
+ * @param slot Physical slot index; must already be bound via
+ *        history_flash_backend_bind_channel().
+ * @param scratch Caller-owned bounded scratch array (see
+ *        history_flash_backend_scan_entry_t's doc comment for why it is not
+ *        driver-owned SRAM); reused sequentially across every slot's
+ *        restore() call is fine.
+ * @param scratch_capacity Must be >= HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL
+ *        or HISTORY_FLASH_BACKEND_INVALID_ARGUMENT is returned.
+ * @param callback Invoked once per valid record found, oldest to newest;
+ *        may be NULL to just reconstruct the write cursor without replay.
+ * @param user_context Passed through unchanged to @p callback.
+ * @return HISTORY_FLASH_BACKEND_NOT_BOUND if @p slot was never bound;
+ *         HISTORY_FLASH_BACKEND_IO if a storage read/erase call fails;
+ *         HISTORY_FLASH_BACKEND_OK otherwise.
+ * @pre Must be called after history_flash_backend_bind_channel() for the
+ *      same slot and before any history_flash_backend_append() call for it,
+ *      and before the OPC UA HistoryRead surface is exposed.
+ */
 history_flash_backend_result_t history_flash_backend_restore(history_flash_backend_t *backend,
                                                               uint8_t slot,
                                                               history_flash_backend_scan_entry_t *scratch,
@@ -239,17 +316,41 @@ history_flash_backend_result_t history_flash_backend_restore(history_flash_backe
                                                               history_flash_backend_restore_cb callback,
                                                               void *user_context);
 
-/* Accumulates record into slot's staging buffer; flushes (erase-if-needed
- * plus one page program) only when the buffer becomes full.  Never blocks
- * on more than one Flash program or one Flash erase call. */
+/**
+ * @brief Append one sample to @p slot's staging buffer, flushing to Flash
+ *        when the buffer fills.
+ *
+ * Accumulates into an internal-SRAM staging page; only every
+ * HISTORY_FLASH_BACKEND_RECORDS_PER_PAGE-th call actually triggers a Flash
+ * program (and, once per sector, an erase of the other sector). Never
+ * blocks on more than one Flash program call and one Flash erase call per
+ * invocation. On HISTORY_FLASH_BACKEND_IO from a stuck flush, the newest
+ * sample is accepted data loss for the Flash ring only -- the caller's
+ * PSRAM ring already retains it.
+ *
+ * @param slot Physical slot index; must already be bound.
+ * @param record Sample to append; copied synchronously, not retained by pointer.
+ * @return HISTORY_FLASH_BACKEND_NOT_BOUND if @p slot was never bound;
+ *         HISTORY_FLASH_BACKEND_IO if a Flash program/erase callback fails
+ *         (including a previously stuck sector swap not yet retried
+ *         successfully); HISTORY_FLASH_BACKEND_OK otherwise.
+ */
 history_flash_backend_result_t history_flash_backend_append(history_flash_backend_t *backend,
                                                              uint8_t slot,
                                                              const history_flash_backend_record_t *record);
 
-/* RP2350 application binding: reads are direct XIP reads at
- * OTA_LAYOUT_HISTORY_ORIGIN + offset; program/erase are routed through the
- * shared flash_operation_coordinator at OTA_LAYOUT_HISTORY_OFFSET_BYTES +
- * offset, exactly like drivers/maintenance_journal_backend.c. */
+/**
+ * @brief RP2350 application binding of history_flash_backend_init().
+ *
+ * Reads are direct XIP reads at OTA_LAYOUT_HISTORY_ORIGIN + offset;
+ * program/erase are routed through the shared flash_operation_coordinator
+ * at OTA_LAYOUT_HISTORY_OFFSET_BYTES + offset, exactly like
+ * drivers/maintenance_journal_backend.c. On non-device (host test) builds,
+ * this instead calls history_flash_backend_init(backend, NULL), leaving the
+ * backend not-ready.
+ *
+ * @param backend Instance to initialize; must not be NULL.
+ */
 void history_flash_backend_init_flash(history_flash_backend_t *backend);
 
 _Static_assert(HISTORY_FLASH_BACKEND_RECORD_SIZE * HISTORY_FLASH_BACKEND_RECORDS_PER_PAGE ==

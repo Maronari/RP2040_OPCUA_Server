@@ -1,3 +1,24 @@
+/**
+ * @file
+ * @brief Stateless device-health aggregator: combines diag_service,
+ *        firmware_update_service, config_import_service and PSRAM allocator
+ *        statistics into a single DeviceHealthEnumeration-compatible report.
+ *
+ * Responsibilities:
+ * - Applies fixed heap/PSRAM low-memory and fragmentation thresholds
+ *   (DEVICE_HEALTH_*_WARN_BYTES / *_DIVISOR below) to classify OFF_SPEC.
+ * - Surfaces an in-progress firmware update or config import as
+ *   CHECK_FUNCTION.
+ * - Surfaces diag_service's last recorded fault code as FAILURE.
+ *
+ * Ownership: none -- this module holds no state of its own; every report is
+ * recomputed from other services' current state on each call.
+ *
+ * Concurrency: no locking of its own; relies on the thread-safety of the
+ * services it queries (diag_service, firmware_update_service,
+ * config_import_service, ua_port_alloc).
+ */
+
 #include "services/device_health_service.h"
 
 #include <stdio.h>
@@ -14,6 +35,14 @@
 #define DEVICE_HEALTH_PSRAM_FREE_DIVISOR 16u
 #define DEVICE_HEALTH_PSRAM_LARGEST_BLOCK_DIVISOR 32u
 
+/**
+ * @brief Append "; reason" (or just "reason" if @p buffer is empty) to
+ *        @p buffer, truncating silently if it would not fit.
+ *
+ * @param buffer NUL-terminated accumulator buffer, mutated in place.
+ * @param buffer_size Size of @p buffer in bytes.
+ * @param reason Text to append.
+ */
 static void device_health_append_reason(char *buffer,
                                         size_t buffer_size,
                                         const char *reason)

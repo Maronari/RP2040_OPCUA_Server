@@ -1,5 +1,55 @@
+/**
+ * @file
+ * @brief Events/Conditions infrastructure (custom event types, custom
+ *        Condition types, AMB `MaintenanceRequired` condition value sources)
+ *        and the v0.4.3 per-channel alarm Condition engine.
+ *
+ * Responsibilities:
+ * - Generic helpers for declaring custom open62541 Event/Condition
+ *   ObjectTypes and writing their fields (`model_add_event_type`,
+ *   `model_add_condition_type`, `model_condition_set_*`).
+ * - The pending-audit-event queue consumed by `model_process_pending_audit_events`
+ *   (`model_common.c`) and fed by `security_service` via
+ *   `model_security_audit_callback`, which may run on a task other than
+ *   `OpcUaTask`.
+ * - Read-side plumbing for the AMB `MaintenanceRequired` condition's value
+ *   properties (`model_read_maintenance_value` and its installer helpers),
+ *   backed by `maintenance_service_get_snapshot`.
+ * - The v0.4.3 per-channel `ChannelAlarmConditionType` engine: creates one
+ *   Condition instance per alarm-eligible channel
+ *   (`model_build_channel_alarm_conditions`) and reconciles it each poll
+ *   iteration from `alarm_service`'s already-evaluated
+ *   `alarm_condition_status_t` (`model_process_channel_alarm_conditions`) —
+ *   no threshold evaluation happens in this file. See the large in-source
+ *   comment above `MODEL_CONDITION_TYPE_CHANNEL_ALARM` for the NodeId
+ *   grammar and design rationale, and
+ *   `docs/code/modules/opcua_model.md#alarms--conditions-and-historyread`.
+ * - Two one-time startup fixups for gaps in this firmware's compiled-in
+ *   namespace-0 data that would otherwise make the standard Condition
+ *   Refresh/Acknowledge/AddComment Methods uncallable
+ *   (`model_fix_condition_method_arguments`,
+ *   `model_fix_server_condition_refresh_reference`).
+ *
+ * Ownership:
+ * `g_model_channel_alarm_slots`/`g_model_channel_alarm_slot_count` (file-static
+ * here) are adapter-owned bookkeeping mapping a channel id to its Condition
+ * NodeId's edge-detection state; the authoritative alarm state itself is
+ * owned by `alarm_service`. The pending-audit-event ring
+ * (`opcua_model_context_t::pending_audit_events`) is declared in
+ * `opcua_model_internal.h` and defined in `opcua_model_context.c`.
+ *
+ * Concurrency:
+ * Condition-building/polling functions run on `OpcUaTask` only (open62541
+ * is not thread-safe). `model_security_audit_callback` /
+ * `model_queue_pending_audit_event` are the one exception: they may be
+ * invoked from whatever task performed an audited action and only touch the
+ * pending-audit-event ring under `taskENTER_CRITICAL`/`taskEXIT_CRITICAL`.
+ */
 #include "opcua_model_internal.h"
 
+/* Guarded by the same taskENTER_CRITICAL/EXIT_CRITICAL section as
+ * model_queue_pending_audit_event (declared in opcua_model_internal.h),
+ * since the queue may be written from a non-OpcUaTask task. */
 bool model_pop_pending_audit_event(model_pending_audit_event_t *out_event)
 {
     bool has_event = false;
@@ -298,6 +348,13 @@ UA_StatusCode model_add_amb_maintenance_property(
         UA_NODEID_NUMERIC(0, UA_NS0ID_PROPERTYTYPE), attr, NULL, NULL);
 }
 
+/* Builds the UA_DataTypeMember table by hand (member offsets computed via
+ * offsetof/sizeof rather than generated code) since this custom type has no
+ * .c-stub codegen. The new UA_DataTypeArray entry is prepended onto
+ * config->customDataTypes (singly-linked, cleanup = false: this struct has
+ * static storage duration and open62541 must not try to free it). Guarded
+ * by g_model_amb_custom_types_registered so repeated calls (e.g. address
+ * space rebuild retries) do not corrupt the list with duplicate entries. */
 UA_StatusCode model_register_amb_name_node_id_type(UA_Server *server)
 {
     UA_ServerConfig *config;
@@ -406,6 +463,10 @@ bool model_maintenance_condition_is_active(
            snapshot->state != MAINTENANCE_SERVICE_STATE_FINISHED;
 }
 
+/* Severity values follow the OPC UA Part 9 convention: 1-333 low,
+ * 334-666 medium, 667-1000 high. 100 (inactive) is below the low band by
+ * design so an inactive MaintenanceRequired condition never reads as an
+ * alarm; 500 (executing) and 350 (planned) both land in the medium band. */
 UA_UInt16 model_maintenance_condition_severity(
     const maintenance_service_snapshot_t *snapshot)
 {
@@ -417,6 +478,23 @@ UA_UInt16 model_maintenance_condition_severity(
     return snapshot->state == MAINTENANCE_SERVICE_STATE_EXECUTING ? 500u : 350u;
 }
 
+/**
+ * @brief Maps @p snapshot's maintenance state/result to the `Message` text
+ *        for the `MaintenanceRequired` AMB condition and its diagnostic
+ *        mirror.
+ *
+ * Prefers the recorded `activity.result` text when the last activity has
+ * finished and left one; otherwise falls back to a fixed per-state string.
+ *
+ * @param snapshot Current `maintenance_service` snapshot; NULL or
+ *        `has_activity == false` yields "Maintenance finished".
+ * @return Pointer into either a fixed string literal or
+ *         `snapshot->activity.result` — never NULL, always valid for the
+ *         lifetime of @p snapshot.
+ * @note External linkage but only called from within this translation unit
+ *       (`model_read_maintenance_value`); not declared in
+ *       `opcua_model_internal.h`.
+ */
 const char *model_maintenance_condition_message(
     const maintenance_service_snapshot_t *snapshot)
 {
@@ -444,6 +522,11 @@ UA_StatusCode model_maintenance_set_read_error(UA_DataValue *value,
     return UA_STATUSCODE_GOOD;
 }
 
+/* names[] is a MAINTENANCE_SERVICE_MAX_PARTS-sized stack buffer reused
+ * across cases; array-valued cases (PARTS_REPLACED/PARTS_SERVICED) fill it
+ * up to snapshot.activity.parts_*_count (already bounded by the service)
+ * before UA_Variant_setArrayCopy makes an independent copy, so no reference
+ * into this stack buffer escapes the function. */
 UA_StatusCode model_read_maintenance_value(
     UA_Server *server, const UA_NodeId *session_id, void *session_context,
     const UA_NodeId *node_id, void *node_context,
@@ -777,6 +860,10 @@ UA_StatusCode model_add_amb_name_node_id_property(
     }
 }
 
+/* Writes CurrentState (text) and CurrentState/Id (NodeId) as two separate
+ * browse+write round trips with no rollback: if the CurrentState/Id write
+ * fails after CurrentState succeeded, the condition is left with a text/Id
+ * pair that no longer agree until this is called again successfully. */
 UA_StatusCode model_set_amb_maintenance_state(
     UA_Server *server, const UA_NodeId condition_id, const char *state_name,
     UA_UInt32 state_node_id)
@@ -868,7 +955,10 @@ UA_StatusCode model_set_amb_maintenance_state(
 #define MODEL_CHANNEL_ALARM_CONDITION_FIELD_NAME "AlarmCondition"
 #define MODEL_CHANNEL_ALARM_SLOT_CAPACITY PLATFORM_CHANNEL_LIMIT
 
-/*
+/**
+ * @brief Per-channel edge-detection/enable-poll bookkeeping for one
+ *        `ChannelAlarmConditionType` instance, indexed by stable channel id.
+ *
  * Deliberately small: the condition/source NodeId strings are never cached
  * here.  They are cheap to rebuild on demand from channel_id via
  * channel_manager_copy_snapshot_by_id() + model_build_channel_node_id(), and
@@ -876,7 +966,8 @@ UA_StatusCode model_set_amb_maintenance_state(
  * (128 byte) buffers this struct used to carry per slot would have added
  * several KB of permanent internal SRAM .bss just to avoid a bounded, rare
  * (poll-cycle or Acknowledge-Method-frequency) registry lookup + string
- * build. */
+ * build.
+ */
 typedef struct
 {
     bool slot_used;
@@ -888,10 +979,26 @@ typedef struct
     bool last_acknowledged_seen;
 } model_channel_alarm_slot_t;
 
+/** @brief Fixed-capacity slot table for the v0.4.3 per-channel alarm
+ *         Condition engine (one entry per alarm-eligible channel, appended
+ *         once by `model_create_channel_alarm_condition` and never removed
+ *         since channels are fixed at startup). File-static, owned and
+ *         accessed only from `OpcUaTask`; no synchronization. */
 static model_channel_alarm_slot_t g_model_channel_alarm_slots[MODEL_CHANNEL_ALARM_SLOT_CAPACITY];
+/** @brief Number of populated entries in `g_model_channel_alarm_slots`
+ *         (monotonically increasing; slots are appended, never freed). */
 static size_t g_model_channel_alarm_slot_count;
+/** @brief True once `ChannelAlarmConditionType` has been declared in the
+ *         address space, guarding `model_build_channel_alarm_conditions`
+ *         against redeclaring the type on a retry. */
 static bool g_model_channel_alarm_condition_type_built;
 
+/**
+ * @brief Linear lookup of a channel's alarm-condition slot by channel id.
+ * @param channel_id Stable channel id; NULL or empty always misses.
+ * @return Pointer into `g_model_channel_alarm_slots`, or NULL if no slot
+ *         has been created for @p channel_id yet.
+ */
 static model_channel_alarm_slot_t *model_find_channel_alarm_slot(const char *channel_id)
 {
     if (channel_id == NULL || channel_id[0] == '\0')
@@ -909,10 +1016,21 @@ static model_channel_alarm_slot_t *model_find_channel_alarm_slot(const char *cha
     return NULL;
 }
 
-/* Rebuilds the condition instance NodeId (and optionally its ConditionSource
- * NodeId) for a channel from its stable id, mirroring the strings computed
- * once at creation time in model_create_channel_alarm_condition() without
- * caching them permanently. */
+/**
+ * @brief Rebuilds the condition instance NodeId (and optionally its
+ *        ConditionSource NodeId) for a channel from its stable id,
+ *        mirroring the strings computed once at creation time in
+ *        `model_create_channel_alarm_condition` without caching them
+ *        permanently.
+ * @param channel_id Stable channel id to resolve via
+ *        `channel_manager_copy_snapshot_by_id`.
+ * @param condition_buf Optional output buffer for the Condition NodeId
+ *        string; pass NULL to skip.
+ * @param source_buf Optional output buffer for the ConditionSource
+ *        (channel object) NodeId string; pass NULL to skip.
+ * @return false if the channel no longer exists in `channel_manager` or
+ *         either requested buffer is too small.
+ */
 static bool model_channel_alarm_node_ids(const char *channel_id,
                                          char *condition_buf,
                                          size_t condition_buf_size,
@@ -939,12 +1057,27 @@ static bool model_channel_alarm_node_ids(const char *channel_id,
     return true;
 }
 
-/* Called once when a client acknowledges a per-channel condition through the
- * standard OPC UA Acknowledge Method (open62541 invokes this internally on
- * the AckedState/Id transition to true).  Mirrors the acknowledgement back
+/**
+ * @brief `UA_TwoStateVariableChangeCallback` invoked by open62541 whenever
+ *        any Condition's `AckedState/Id` transitions to true — registered
+ *        per-instance for `UA_ENTERING_ACKEDSTATE` by
+ *        `model_create_channel_alarm_condition`.
+ *
+ * Called once when a client acknowledges a per-channel condition through the
+ * standard OPC UA Acknowledge Method. Mirrors the acknowledgement back
  * into the owning alarm_service condition so service-level acknowledgement
  * state stays authoritative and independent per channel, per the v0.4.3
- * requirement. */
+ * requirement.
+ *
+ * @param condition NodeId of the Condition instance whose AckedState
+ *        changed; matched by linear scan against every known channel-alarm
+ *        slot's (recomputed) Condition NodeId.
+ * @return Always `UA_STATUSCODE_GOOD`; a @p condition that matches no known
+ *         channel-alarm slot is silently ignored (e.g. it belongs to the
+ *         DeviceHealth/SecurityFault subsystem instead).
+ * @note Runs on `OpcUaTask` inside open62541's Method-call dispatch for
+ *       Acknowledge.
+ */
 static UA_StatusCode model_channel_alarm_acked_callback(UA_Server *server, const UA_NodeId *condition)
 {
     (void)server;
@@ -975,6 +1108,29 @@ static UA_StatusCode model_channel_alarm_acked_callback(UA_Server *server, const
     return UA_STATUSCODE_GOOD;
 }
 
+/**
+ * @brief Creates and initializes one `ChannelAlarmConditionType` Condition
+ *        instance for @p channel and appends its bookkeeping slot to
+ *        `g_model_channel_alarm_slots`.
+ *
+ * Idempotent per channel id (returns `UA_STATUSCODE_GOOD` immediately if a
+ * slot already exists for @p channel, so a retried
+ * `model_build_channel_alarm_conditions` call does not duplicate work).
+ * Every open62541 step after `UA_Server_createCondition` succeeds
+ * (HasComponent-to-Acknowledge patch, enabling, initializing inactive,
+ * registering the Acked callback) is best-effort torn down via
+ * `UA_Server_deleteCondition` on the first failure, so a failed creation
+ * never leaves an orphaned condition instance in the address space.
+ *
+ * @param channel Channel whose alarm condition to create; must have a
+ *        non-empty `metadata.id`.
+ * @param condition_type_id NodeId of the (already-declared)
+ *        `ChannelAlarmConditionType`.
+ * @return `UA_STATUSCODE_BADOUTOFMEMORY` if the slot table is full
+ *         (`MODEL_CHANNEL_ALARM_SLOT_CAPACITY`) or a NodeId string does not
+ *         fit its buffer; otherwise the first open62541 failure encountered,
+ *         or `UA_STATUSCODE_GOOD`.
+ */
 static UA_StatusCode model_create_channel_alarm_condition(UA_Server *server,
                                                            const telemetry_channel_t *channel,
                                                            const UA_NodeId condition_type_id)
@@ -1168,6 +1324,21 @@ UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server)
     return UA_STATUSCODE_GOOD;
 }
 
+/**
+ * @brief Packs @p condition's discrete/process alarm state and quality
+ *        fault into a single opaque "reason" word, the edge-detection key
+ *        `model_sync_condition` compares against a channel slot's
+ *        previously seen reason to decide whether anything changed.
+ *
+ * Low byte: discrete active flag (0/1) or `alarm_condition_status_t::process_state`
+ * numeric value, depending on `is_discrete`. Bits 8+: `quality_fault`. The
+ * encoding only needs to be a stable, comparable key — its bit layout is not
+ * otherwise interpreted.
+ *
+ * @return Combined reason word; 0 means "condition inactive, no quality
+ *         fault" only when both `process_state`/`discrete_active` are 0 and
+ *         `quality_fault` is `ALARM_QUALITY_FAULT_NONE`.
+ */
 static uint32_t model_channel_alarm_reason(const alarm_condition_status_t *condition)
 {
     uint32_t reason = condition->is_discrete ? (condition->discrete_active ? 1u : 0u)
@@ -1176,6 +1347,25 @@ static uint32_t model_channel_alarm_reason(const alarm_condition_status_t *condi
     return reason;
 }
 
+/**
+ * @brief Formats a channel alarm Condition's `Message` text and derives its
+ *        `Severity`/`Quality`, combining the process/discrete alarm state
+ *        with any quality fault.
+ *
+ * Severity bands follow OPC UA Part 9 convention (see
+ * `model_maintenance_condition_severity`): 100 inactive, 550/650 low/high,
+ * 800/850 low-low/high-high, raised to at least 500/800 respectively if a
+ * quality fault (UNCERTAIN/BAD) is also present — so a simultaneous process
+ * alarm and quality fault never under-reports severity. When both a process
+ * alarm and a quality fault are active, @p message names both explicitly
+ * rather than picking one.
+ *
+ * @param message Output buffer for the formatted message (`snprintf`-bounded
+ *        by @p message_size).
+ * @param out_severity Optional; receives the derived `UA_UInt16` severity.
+ * @param out_quality Optional; receives `UA_STATUSCODE_GOOD`,
+ *        `UA_STATUSCODE_UNCERTAIN`, or `UA_STATUSCODE_BADSENSORFAILURE`.
+ */
 static void model_format_channel_alarm_message(const alarm_condition_status_t *condition,
                                                char *message,
                                                size_t message_size,
@@ -1344,12 +1534,24 @@ void model_process_channel_alarm_conditions(UA_Server *server)
     }
 }
 
+/** @brief One `(name, dataType)` pair describing a single input Argument
+ *         for `model_write_method_input_arguments`. */
 typedef struct
 {
     const char *name;
     UA_NodeId data_type;
 } model_method_argument_spec_t;
 
+/**
+ * @brief Writes an `UA_Argument[]` array (name/dataType/valueRank/description,
+ *        all scalar) to a standard Method's `InputArguments` property, used
+ *        to patch namespace-0 Condition Methods whose compiled-in metadata
+ *        ships without it (see `model_fix_condition_method_arguments`).
+ * @param specs Argument specs in declaration order; capped at 2 entries by
+ *        the local `arguments[2]` buffer (matches every current caller).
+ * @return `UA_STATUSCODE_BADINVALIDARGUMENT` if @p spec_count is 0 or
+ *         exceeds that 2-entry capacity.
+ */
 static UA_StatusCode model_write_method_input_arguments(UA_Server *server,
                                                          UA_NodeId input_arguments_node,
                                                          const model_method_argument_spec_t *specs,

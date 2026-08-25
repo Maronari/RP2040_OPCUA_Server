@@ -1,3 +1,27 @@
+/**
+ * @file
+ * @brief Implementation of the prior-schema binary decoder declared in
+ * `services/config_compat.h`.
+ *
+ * Responsibilities: describe three frozen, byte-exact prior on-Flash
+ * `device_profile_config_t` layouts (v0.4.0 in two variants,
+ * v0.4.1/v0.4.2) as local struct types, and expand each into the current
+ * live layout by copying ABI-stable prefixes/suffixes and per-channel
+ * settings via `config_compat_expand_channel()`.
+ *
+ * Ownership: no persistent state; every function operates on caller-owned
+ * buffers.
+ *
+ * Concurrency: no internal synchronization; pure functions over
+ * caller-provided memory.
+ *
+ * Frozen-layout discipline: `config_compat_channel_settings_t`,
+ * `config_compat_channel_definition_t`, `config_compat_v040_profile_t`, and
+ * `config_compat_v042_profile_t` must never be edited to track the live
+ * struct — they exist specifically to describe historical on-Flash byte
+ * layouts. The `_Static_assert`s below pin the ABI assumptions this file
+ * relies on.
+ */
 #include "services/config_compat.h"
 
 #include <float.h>
@@ -6,13 +30,15 @@
 
 #define CONFIG_COMPAT_LEGACY_ASSET_ID_MAX_LEN 32u
 
-/*
- * Frozen pre-v0.4.3 telemetry_channel_settings_t layout.  v0.4.3 appends new
- * alarm-tuning fields (low/low-low thresholds, hysteresis, debounce) after
- * critical_threshold; every field up to and including critical_threshold
- * keeps the exact same offsets in the live struct, so this frozen shape is
- * only needed to describe the *old*, shorter on-flash record for migration -
- * it must never be changed to track the live struct.
+/**
+ * @brief Frozen pre-v0.4.3 `telemetry_channel_settings_t` layout.
+ *
+ * v0.4.3 appends new alarm-tuning fields (low/low-low thresholds,
+ * hysteresis, debounce) after `critical_threshold`; every field up to and
+ * including `critical_threshold` keeps the exact same offsets in the live
+ * struct, so this frozen shape is only needed to describe the *old*,
+ * shorter on-Flash record for migration — it must never be changed to
+ * track the live struct.
  */
 typedef struct
 {
@@ -26,11 +52,14 @@ typedef struct
     double critical_threshold;
 } config_compat_channel_settings_t;
 
-/*
- * Frozen pre-v0.4.3 config_channel_definition_t layout (same field list as
- * the live struct except for the trailing settings sub-struct above).  Used
- * to decode both the v0.4.0 legacy record and the v0.4.1/v0.4.2 record,
- * since telemetry_channel_settings_t was unchanged across those releases.
+/**
+ * @brief Frozen pre-v0.4.3 `config_channel_definition_t` layout (same field
+ * list as the live struct except for the trailing settings sub-struct
+ * above).
+ *
+ * Used to decode both the v0.4.0 legacy record and the v0.4.1/v0.4.2
+ * record, since `telemetry_channel_settings_t` was unchanged across those
+ * releases.
  */
 typedef struct
 {
@@ -52,9 +81,13 @@ typedef struct
     config_compat_channel_settings_t settings;
 } config_compat_channel_definition_t;
 
-/*
- * Frozen native payload written by v0.4.0 on the same ARM ABI.  This is a
- * compatibility decoder only; new records always use device_profile_config_t.
+/**
+ * @brief Frozen native payload written by v0.4.0 on the same ARM ABI.
+ *
+ * This is a compatibility decoder only; new records always use
+ * `device_profile_config_t`. Two distinct v0.4.0 on-Flash sizes exist (see
+ * `config_compat_decode_v040_legacy()`): this struct's exact size, and an
+ * older size with a shorter `asset_id`.
  */
 typedef struct
 {
@@ -95,12 +128,14 @@ typedef struct
     char operational_location_path[CONFIG_SERVICE_LOCATION_PATH_MAX_LEN];
 } config_compat_v040_profile_t;
 
-/*
- * Frozen v0.4.1/v0.4.2 device_profile_config_t layout: identical to the live
- * struct in every respect except that telemetry_channel_settings_t (nested
- * inside each channel) has not yet grown the v0.4.3 alarm-tuning fields.
- * PLATFORM_CHANNEL_LIMIT is shared with the live struct because the channel
- * capacity did not change between v0.4.1 and v0.4.3.
+/**
+ * @brief Frozen v0.4.1/v0.4.2 `device_profile_config_t` layout: identical to
+ * the live struct in every respect except that `telemetry_channel_settings_t`
+ * (nested inside each channel) has not yet grown the v0.4.3 alarm-tuning
+ * fields.
+ *
+ * `PLATFORM_CHANNEL_LIMIT` is shared with the live struct because the
+ * channel capacity did not change between v0.4.1 and v0.4.3.
  */
 typedef struct
 {
@@ -151,16 +186,27 @@ _Static_assert(offsetof(device_profile_config_t, channels) ==
                    offsetof(config_compat_v042_profile_t, channels),
                "frozen v0.4.2 profile prefix must remain ABI-compatible");
 
+/** @brief Rounds @p value up to the next multiple of @p alignment (returns @p value unchanged if @p alignment is 0). */
 static size_t config_compat_align_up(size_t value, size_t alignment)
 {
     return alignment == 0u ? value : ((value + alignment - 1u) / alignment) * alignment;
 }
 
-/* Copy one frozen channel definition (old, shorter settings) into a live
- * config_channel_definition_t.  The destination is assumed already
- * zero-initialized by the caller, so the new v0.4.3 settings fields land as
- * 0.0/0u, matching the v0.4.2 instantaneous no-hysteresis/no-debounce
- * behavior exactly for every migrated channel. */
+/**
+ * @brief Copies one frozen channel definition (old, shorter settings) into
+ * a live `config_channel_definition_t`.
+ *
+ * The destination is assumed already zero-initialized by the caller, so the
+ * new v0.4.3 settings fields land as 0.0/0u, matching the v0.4.2
+ * instantaneous no-hysteresis/no-debounce behavior exactly for every
+ * migrated channel — except the two lower-alarm thresholds, which are set
+ * explicitly below.
+ *
+ * @param old_channel Pointer into the raw payload buffer at this channel's
+ * frozen-layout offset; may be unaligned for `config_compat_channel_definition_t`,
+ * so this copies via `memcpy()` rather than casting.
+ * @param out_channel Live-layout destination to fill.
+ */
 static void config_compat_expand_channel(const uint8_t *old_channel,
                                          config_channel_definition_t *out_channel)
 {
@@ -182,6 +228,15 @@ static void config_compat_expand_channel(const uint8_t *old_channel,
      * v0.4.2-compatible defaults. */
 }
 
+/**
+ * @brief Checks that a v0.4.0 payload's channel slots beyond
+ * `PLATFORM_CHANNEL_LIMIT` (if the current build's limit is smaller than
+ * `CONFIG_COMPAT_V040_CHANNEL_LIMIT`) are all unused, so they can be safely
+ * dropped during migration.
+ * @return true if every such slot has `in_use == 0`, or if
+ * `PLATFORM_CHANNEL_LIMIT >= CONFIG_COMPAT_V040_CHANNEL_LIMIT` (nothing to
+ * check); false if a configured channel would be silently discarded.
+ */
 static bool config_compat_v040_channels_fit(const uint8_t *payload)
 {
     const size_t channels_offset = offsetof(config_compat_v040_profile_t, channels);
@@ -200,6 +255,15 @@ static bool config_compat_v040_channels_fit(const uint8_t *payload)
     return true;
 }
 
+/**
+ * @brief Expands a frozen v0.4.0-sized (`sizeof(config_compat_v040_profile_t)`)
+ * payload into @p out_config.
+ * @return false if `config_compat_v040_channels_fit()` rejects the channel
+ * array; true otherwise.
+ * @note @p out_config is fully zeroed first, then the ABI-stable prefix,
+ * each migrated channel, and the tail suffix (from `product_instance_uri`
+ * onward, whatever length @p payload_size provides) are copied in.
+ */
 static bool config_compat_expand_v040(const uint8_t *payload,
                                       size_t payload_size,
                                       device_profile_config_t *out_config)
@@ -233,10 +297,17 @@ static bool config_compat_expand_v040(const uint8_t *payload,
     return true;
 }
 
-/* v0.4.1/v0.4.2 records share PLATFORM_CHANNEL_LIMIT with the live struct, so
- * this migration is a straight per-channel expand plus a by-name copy of the
- * fields that follow the channel array (their absolute offsets differ from
- * the live struct only because of the settings size change). */
+/**
+ * @brief Expands a frozen v0.4.1/v0.4.2-sized payload into @p out_config.
+ *
+ * v0.4.1/v0.4.2 records share `PLATFORM_CHANNEL_LIMIT` with the live
+ * struct, so this migration is a straight per-channel expand plus a
+ * by-name copy of the fields that follow the channel array (their absolute
+ * offsets differ from the live struct only because of the settings size
+ * change).
+ * @return Always true (no channel-count mismatch is possible for this
+ * layout, unlike the v0.4.0 case).
+ */
 static bool config_compat_expand_v042(const uint8_t *payload,
                                       device_profile_config_t *out_config)
 {
@@ -259,6 +330,21 @@ static bool config_compat_expand_v042(const uint8_t *payload,
     return true;
 }
 
+/**
+ * @brief Decodes either v0.4.0 payload size variant: the "previous" size
+ * (delegated to `config_compat_expand_v040()`) or the oldest, shorter
+ * `asset_id` variant (decoded directly here).
+ *
+ * The oldest record shortened only `asset_id` (to
+ * `CONFIG_COMPAT_LEGACY_ASSET_ID_MAX_LEN` bytes); this function decodes its
+ * fixed prefix and channels directly, then maps its shifted-but-otherwise
+ * unchanged tail (from `manufacture_date_utc` onward) explicitly, since the
+ * shorter `asset_id` shifts every subsequent field's absolute offset.
+ *
+ * @return false if @p payload_size matches neither known v0.4.0 size, or if
+ * `config_compat_v040_channels_fit()` rejects the channel array for the
+ * legacy-size path; true on successful decode.
+ */
 static bool config_compat_decode_v040_legacy(const uint8_t *payload,
                                              size_t payload_size,
                                              device_profile_config_t *out_config)

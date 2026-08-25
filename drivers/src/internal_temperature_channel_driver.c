@@ -1,3 +1,19 @@
+/**
+ * @file
+ * @brief Native channel driver adapting temp_sensor_driver.c's on-die
+ *        temperature sensor to the telemetry_driver_vtbl_t contract.
+ *
+ * Responsibilities: implement the start/stop/read slots for the
+ * internal-temperature channel (see
+ * drivers/include/drivers/native_channel_driver.h for the shared vtable
+ * contract) by delegating the actual hardware access to
+ * drivers/temp_sensor_driver.c.
+ *
+ * Ownership: no persistent state of its own.
+ *
+ * Concurrency: none; per the header's file-level doc, all calls arrive
+ * serialized from SensorTask.
+ */
 #include "drivers/native_channel_driver.h"
 
 #include "drivers/temp_sensor_driver.h"

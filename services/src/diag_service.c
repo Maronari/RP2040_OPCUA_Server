@@ -1,9 +1,35 @@
+/**
+ * @file
+ * @brief Task registry, heap/system diagnostics, reset-cause reporting, and
+ *        watchdog-driven reboot.
+ *
+ * Responsibilities:
+ * - Owns a bounded (DIAG_SERVICE_MAX_TASKS) name->TaskHandle_t registry
+ *   populated by each task at startup (diag_service_register_task()).
+ * - Reports FreeRTOS heap and per-task diagnostics on demand.
+ * - Records the boot reset cause and any runtime fault code.
+ * - Drives a hardware watchdog reboot (diag_service_reboot()).
+ *
+ * Ownership: g_registered_tasks/g_registered_task_count, g_reset_cause,
+ * g_last_fault_code are exclusively owned by this file.
+ *
+ * Concurrency: mutating/reading g_registered_task_count,
+ * g_reset_cause, g_last_fault_code go through
+ * taskENTER_CRITICAL()/taskEXIT_CRITICAL(). This is one of the documented
+ * exceptions to the services-layer no-direct-hardware rule: it calls
+ * `hardware/watchdog.h`'s watchdog_caused_reboot()/watchdog_reboot()
+ * directly (see docs/code/architecture.md#confirmed-layering-observations).
+ */
+
 #include "services/diag_service.h"
 
 #include <string.h>
 
 #include "hardware/watchdog.h"
 
+/* Bounded task registry, reset-cause string, and last fault code; see the
+ * file-level @c Ownership/@c Concurrency notes above for lifetime and
+ * synchronization. */
 static struct
 {
     TaskHandle_t handle;
@@ -13,6 +39,17 @@ static size_t g_registered_task_count = 0;
 static char g_reset_cause[DIAG_SERVICE_RESET_CAUSE_MAX_LEN];
 static uint32_t g_last_fault_code = DIAG_FAULT_CODE_NONE;
 
+/**
+ * @brief Copy one registered task's handle and name out by index.
+ * @pre Caller must hold the diag_service critical section (all call sites
+ *      do) -- this helper does not lock itself.
+ * @param index Registration-order index.
+ * @param out_handle Receives the task handle.
+ * @param out_name Destination buffer for the name.
+ * @param out_name_size Size of @p out_name.
+ * @return true if @p index was in range and the copied handle is non-NULL;
+ *         false otherwise.
+ */
 static bool diag_service_copy_registered_task(size_t index, TaskHandle_t *out_handle, char *out_name, size_t out_name_size)
 {
     if (out_handle == NULL || out_name == NULL || out_name_size == 0u)
@@ -31,6 +68,18 @@ static bool diag_service_copy_registered_task(size_t index, TaskHandle_t *out_ha
     return *out_handle != NULL;
 }
 
+/**
+ * @brief Approximate CPU load as 100 minus the IDLE task's share of total
+ *        FreeRTOS runtime-counter ticks.
+ *
+ * Samples up to DIAG_SERVICE_MAX_SYSTEM_TASKS tasks via
+ * uxTaskGetSystemState() -- if more tasks exist than that, the excess are
+ * silently excluded from the sample (this is an approximation, not an exact
+ * measurement, as the name implies).
+ *
+ * @return Approximate load percentage in [0, 100]; 0 if no tasks, no
+ *         runtime accounted, or the IDLE task could not be found.
+ */
 static uint32_t diag_service_calculate_cpu_like_load(void)
 {
     TaskStatus_t task_status_array[DIAG_SERVICE_MAX_SYSTEM_TASKS];

@@ -1,3 +1,40 @@
+/**
+ * @file
+ * @brief `UA_AccessControl` plugin implementation: the login callback and
+ *        the six `model_*_wrapper` functions open62541 invokes per-session
+ *        for session activation/close, method executability, node access
+ *        level, and browse visibility; plus the session/role helper
+ *        functions and the centralized role-policy tables they build on.
+ *
+ * Responsibilities:
+ * - Wrap open62541's default `UA_AccessControl` callbacks (saved by
+ *   `model_configure_secure_access_control` / `model_core_task` into
+ *   `g_default_*`): call the saved default first, then layer role-based and
+ *   anonymous-session restrictions on top.
+ * - Own the per-session rejected-maintenance-call rate limiter
+ *   (`model_maintenance_rejected_audit_admit`) and the audit-log helpers
+ *   built on `security_service_audit_log`.
+ * - Provide the two centralized access-policy tables
+ *   (`model_required_role_for_method`, `model_required_role_for_write_kind`)
+ *   that every method callback and the generic write dispatch consult.
+ * - Provide channel-snapshot/NodeId-building helpers
+ *   (`model_copy_channel_by_id`, `model_build_channel_node_id`, ...) used
+ *   while constructing and reading the per-channel address-space nodes.
+ *
+ * Ownership: `model_session_context_t` instances are allocated by
+ * `model_activate_session_secure_wrapper` and freed by
+ * `model_close_session_secure_wrapper`; nothing else in this file owns
+ * long-lived state. The maintenance-reject rate limiter fields live inside
+ * that same per-session struct plus one global bucket in
+ * `opcua_model_context_t` (`g_model_maintenance_reject_*`).
+ *
+ * Concurrency: the `model_*_wrapper` functions and every method-callback
+ * helper run on `OpcUaTask` inside open62541's synchronous service
+ * dispatch. `model_maintenance_rejected_audit_admit` is the one exception —
+ * it is reachable indirectly from `security_service`'s audit callback,
+ * which is not guaranteed to run on `OpcUaTask`, so its counters are
+ * updated under `taskENTER_CRITICAL`/`taskEXIT_CRITICAL`.
+ */
 #include "opcua_model_internal.h"
 
 bool model_copy_session_username(const void *session_context, char *buffer, size_t buffer_size)
@@ -14,6 +51,16 @@ bool model_copy_session_username(const void *session_context, char *buffer, size
     return true;
 }
 
+/**
+ * @brief Heap-allocates a `UA_ByteString` copy of @p user_name, for storage
+ *        as a `model_session_context_t::base_context` after a successful
+ *        username/password login.
+ * @param user_name Login username as delivered by open62541; may be NULL.
+ * @return Newly allocated `UA_ByteString*` (caller/`model_free_session_username`
+ *         owns it), or NULL on invalid input or allocation failure.
+ * @note Not declared in `opcua_model_internal.h`; only called from
+ *       `model_login_callback` in this file. Runs on `OpcUaTask`.
+ */
 UA_ByteString *model_allocate_session_username(const UA_String *user_name)
 {
     UA_ByteString *stored_username = NULL;
@@ -132,7 +179,17 @@ void model_audit_session_event(void *session_context,
 /* Rejected maintenance calls are useful operational evidence but must not let
  * one client consume the fixed audit-event queue.  The limiter is intentionally
  * adapter-owned: it is volatile, bounded by the existing session table, and is
- * cleared when a session closes. */
+ * cleared when a session closes.
+ *
+ * Implementation note: two independent token buckets gate admission — a
+ * per-session bucket (refilled 1 token/interval, burst
+ * MODEL_MAINTENANCE_REJECT_SESSION_BURST) and one global bucket shared by
+ * all sessions (refilled 8 tokens/interval, burst
+ * MODEL_MAINTENANCE_REJECT_GLOBAL_BURST). A call is only admitted (and thus
+ * audited) if both buckets have a token; otherwise it increments the
+ * session's `maintenance_reject_suppressed` counter (saturating at
+ * MODEL_MAINTENANCE_REJECT_SUPPRESSION_MAX) so the next admitted audit entry
+ * can report how many rejections were coalesced. */
 bool model_maintenance_rejected_audit_admit(void *session_context,
                                                    UA_StatusCode reason,
                                                    uint16_t *out_suppressed,
@@ -307,6 +364,14 @@ UA_StatusCode model_require_admin_session(void *session_context,
                                       output);
 }
 
+/* Implementation note: order matters. This checks, in sequence, (1) the four
+ * specific maintenance-workflow method NodeIds (Service role), (2) the fixed
+ * admin-only set (model_is_admin_only_method), (3) any Device.Security
+ * method (Admin), (4) a small set of specific Admin-adjacent
+ * Device.Maintenance.* methods that are Operator-level, then (5) falls back
+ * to Service for any other Device.Maintenance method and Viewer otherwise.
+ * A method NodeId under Device.Maintenance therefore never reaches the
+ * final Viewer default unless it is also excluded by every earlier check. */
 security_user_role_t model_required_role_for_method(const UA_NodeId *method_id)
 {
     const UA_NodeId plan_maintenance =
@@ -802,6 +867,14 @@ UA_Boolean model_get_user_executable_on_object_wrapper(UA_Server *server,
     return model_session_has_role(session_context, model_required_role_for_method(method_id));
 }
 
+/* Implementation note: beyond the header's anonymous-session summary, this
+ * also strips write access from MODEL_NODE_CHANNEL_VALUE nodes for any
+ * session (including authenticated ones) that is not over a secure
+ * SecureChannel (model_session_is_secure) — writable channel values must
+ * not be settable over SecurityPolicy#None. Role sufficiency
+ * (model_required_role_for_write_kind) is re-checked here as defense in
+ * depth even though the generic write dispatch (model_write_value) checks
+ * it again before actually writing. */
 UA_Byte model_get_user_access_level_wrapper(UA_Server *server,
                                                    UA_AccessControl *ac,
                                                    const UA_NodeId *session_id,
@@ -977,6 +1050,11 @@ UA_NodeId model_channel_value_type_to_data_type(telemetry_channel_value_type_t v
     }
 }
 
+/* Implementation note: the channel id is hex-encoded (2 chars/byte) rather
+ * than embedded as raw text, so any channel id value is safe to use as an
+ * OPC UA NodeId path segment (no '.', '/', or non-ASCII bytes can break the
+ * "Device.Channels.c_<hex>[.<field>]" path or collide with a sibling
+ * literal), at the cost of an unreadable NodeId string. */
 bool model_build_channel_node_id(const telemetry_channel_t *channel,
                                         const char *field_name,
                                         char *buffer,

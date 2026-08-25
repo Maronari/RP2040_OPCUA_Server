@@ -1,3 +1,29 @@
+/**
+ * @file
+ * @brief Bounded, PSRAM-backed channel registry: lifecycle (register/reset),
+ *        snapshot reads, settings updates, and driver dispatch.
+ *
+ * Responsibilities:
+ * - Owns the fixed PLATFORM_CHANNEL_LIMIT-slot channel registry
+ *   (g_slots/g_host_slots) and all its string storage (id/name/description/
+ *   unit are copied in, never borrowed).
+ * - Implements the acquire/publish/release driver-operation lease pattern:
+ *   a generation+token snapshot is taken under a critical section, the
+ *   driver call happens outside any lock, and the result is published back
+ *   only if the generation/token still match -- concurrent reconfiguration
+ *   causes a silent, safe rejection rather than a torn write.
+ * - Drives channel_manager_poll_all() from sensor_manager_task() and
+ *   channel_manager_write_value() from OPC UA Write callbacks.
+ *
+ * Ownership: every string/struct in g_slots is exclusively owned here;
+ * callers only ever get an owned telemetry_channel_snapshot_t copy.
+ *
+ * Concurrency: taskENTER_CRITICAL()/taskEXIT_CRITICAL() (global critical
+ * section, not a mutex) around every registry access; drivers are never
+ * called while this lock is held. See docs/code/state-ownership.md for the
+ * full lease-pattern description.
+ */
+
 #include "services/channel_manager.h"
 
 #include <string.h>
@@ -10,6 +36,17 @@
 
 #include "psram_allocator.h"
 
+/**
+ * @brief Internal registry slot: owned string storage plus lease/generation
+ *        bookkeeping for one channel.
+ *
+ * @c generation increments on register and on channel_manager_update_settings();
+ * @c operation_active/@c operation_token implement the driver-operation
+ * lease (see channel_manager_acquire_driver_operation()). @c channel's
+ * metadata id/name/description/unit pointers always point back into this
+ * slot's own id/name/description/unit arrays (never external storage),
+ * fixed up by snapshot_from_slot() on every copy-out.
+ */
 typedef struct
 {
     bool in_use;
@@ -35,6 +72,18 @@ static bool strings_equal(const char *lhs, const char *rhs)
     return lhs != NULL && rhs != NULL && strcmp(lhs, rhs) == 0;
 }
 
+/**
+ * @brief Copy a required, non-empty NUL-terminated string into a
+ *        fixed-size buffer, rejecting anything that would truncate.
+ *
+ * @param destination Fixed-size destination buffer.
+ * @param destination_size Size of @p destination in bytes.
+ * @param source Source string; must be non-NULL and non-empty.
+ * @return true if the whole string (with terminator) fit; false on NULL/
+ *         empty/oversized input, in which case @p destination is left
+ *         unmodified by this function (callers must not rely on it being
+ *         zeroed).
+ */
 static bool copy_string(char *destination, size_t destination_size, const char *source)
 {
     size_t length = 0u;
@@ -56,6 +105,19 @@ static bool copy_string(char *destination, size_t destination_size, const char *
     return true;
 }
 
+/**
+ * @brief Copy an optional NUL-terminated string into a fixed-size buffer,
+ *        or write an empty string if @p source is NULL.
+ *
+ * Unlike copy_string(), an empty/NULL @p source is a valid input (used for
+ * optional metadata like description/unit) -- only an over-length @p source
+ * is rejected.
+ *
+ * @param destination Fixed-size destination buffer.
+ * @param destination_size Size of @p destination in bytes.
+ * @param source Source string, or NULL for "no value".
+ * @return true on success; false if @p source does not fit.
+ */
 static bool copy_optional_string(char *destination, size_t destination_size, const char *source)
 {
     size_t length = 0u;
@@ -77,6 +139,20 @@ static bool copy_optional_string(char *destination, size_t destination_size, con
     return true;
 }
 
+/**
+ * @brief Copy one registry slot out into a caller-owned, self-referential
+ *        snapshot.
+ *
+ * Copies the slot's channel struct and its four string buffers by value,
+ * then re-points @c snapshot->channel.metadata's id/name/description/unit
+ * pointers at the *snapshot's own* embedded arrays -- never at @p slot's
+ * storage -- so the returned snapshot remains valid after the registry
+ * slot is later mutated or recycled. Must be called while holding the
+ * registry critical section (all call sites do).
+ *
+ * @param slot Source registry slot; not retained.
+ * @param snapshot Destination; fully overwritten.
+ */
 static void snapshot_from_slot(const channel_manager_slot_t *slot,
                                telemetry_channel_snapshot_t *snapshot)
 {
@@ -92,6 +168,15 @@ static void snapshot_from_slot(const channel_manager_slot_t *slot,
     snapshot->channel.metadata.unit = snapshot->unit;
 }
 
+/* Implementation note: telemetry_channel_snapshot_t is self-referential
+ * (channel.metadata's id/name/description/unit point back into this same
+ * struct's embedded string arrays), so a plain struct-assignment/memcpy of
+ * one snapshot into another would leave the destination's metadata pointers
+ * dangling into the *source* object. This function copies the raw bytes and
+ * then re-points every metadata pointer at the destination's own arrays --
+ * always use this instead of `*dst = *src` when duplicating a snapshot.
+ * Declared in services/telemetry_channel.h (outside this file's assigned
+ * documentation scope). */
 void telemetry_channel_snapshot_clone(telemetry_channel_snapshot_t *destination,
                                       const telemetry_channel_snapshot_t *source)
 {
@@ -106,6 +191,16 @@ void telemetry_channel_snapshot_clone(telemetry_channel_snapshot_t *destination,
     destination->channel.metadata.unit = destination->unit;
 }
 
+/**
+ * @brief Linear-scan the registry for a slot bound to @p id.
+ *
+ * @pre Caller must already hold the registry critical section (name suffix
+ *      `_locked` marks this as a lock-held-only helper; it does not acquire
+ *      or release the lock itself).
+ * @param id Channel id to find.
+ * @param out_index Optional; receives the matching slot index on success.
+ * @return true if a matching in-use slot was found.
+ */
 static bool find_slot_by_id_locked(const char *id, size_t *out_index)
 {
     for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
@@ -122,6 +217,18 @@ static bool find_slot_by_id_locked(const char *id, size_t *out_index)
     return false;
 }
 
+/**
+ * @brief Validate a write value against its declared type before any driver
+ *        call.
+ *
+ * For TELEMETRY_CHANNEL_VALUE_STRING, additionally requires a NUL terminator
+ * within TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN bytes (rejects an unterminated
+ * buffer rather than reading out of bounds downstream).
+ *
+ * @param type Declared value type.
+ * @param value Value to validate; must be non-NULL.
+ * @return true if @p value is well-formed for @p type.
+ */
 static bool channel_manager_value_is_valid(telemetry_channel_value_type_t type,
                                            const telemetry_channel_value_t *value)
 {
@@ -130,6 +237,15 @@ static bool channel_manager_value_is_valid(telemetry_channel_value_type_t type,
             memchr(value->string, '\0', TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN) != NULL);
 }
 
+/**
+ * @brief Translate a driver-level telemetry_driver_result_t into the
+ *        service-level channel_manager_write_result_t exposed to callers.
+ *
+ * @param result Result returned by a driver's write() call.
+ * @return The corresponding channel_manager_write_result_t; an unrecognized
+ *         driver result conservatively maps to
+ *         CHANNEL_MANAGER_WRITE_RESULT_HARDWARE_FAILURE.
+ */
 static channel_manager_write_result_t channel_manager_map_driver_result(telemetry_driver_result_t result)
 {
     switch (result)
@@ -145,6 +261,13 @@ static channel_manager_write_result_t channel_manager_map_driver_result(telemetr
     }
 }
 
+/**
+ * @brief Current time in milliseconds, for stamping post-write runtime
+ *        state.
+ *
+ * On device, reads the FreeRTOS tick count (xTaskGetTickCount() *
+ * portTICK_PERIOD_MS); on host builds (no scheduler), always returns 0.
+ */
 static uint32_t channel_manager_current_time_ms(void)
 {
 #if defined(PICO_ON_DEVICE)

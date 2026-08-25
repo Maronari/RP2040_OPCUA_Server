@@ -1,8 +1,26 @@
+/**
+ * @file
+ * @brief Single-pin GPIO driver for the device status LED.
+ *
+ * Responsibilities:
+ * - Own one GPIO pin as a push-pull output for the status LED.
+ * - No debouncing, blink scheduling, or brightness control -- callers own
+ *   any blink pattern by calling led_driver_set()/led_driver_toggle()
+ *   repeatedly from their own timer/task.
+ *
+ * Ownership: g_led_initialized/g_led_pin are process-lifetime globals with
+ * no accessor beyond led_driver_is_initialized().
+ *
+ * Concurrency: none -- no locking. Callers must not call led_driver_init()
+ * concurrently with led_driver_set()/led_driver_toggle() from another task.
+ */
 #include "drivers/led_driver.h"
 
 #include "hardware/gpio.h"
 
+/** True once led_driver_init() has configured g_led_pin as an output. */
 static bool g_led_initialized = false;
+/** GPIO pin number owned by this driver; only meaningful when g_led_initialized. */
 static uint g_led_pin = 0;
 
 void led_driver_init(uint pin)

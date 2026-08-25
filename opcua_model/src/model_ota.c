@@ -1,3 +1,43 @@
+/**
+ * @file
+ * @brief `Device.Maintenance*` method callbacks for the staged
+ *        chunked-upload workflows (trust list, full configuration, firmware/
+ *        OTA image, device identity is in `model_security.c`) plus a handful
+ *        of unrelated maintenance methods (channel config, self-test,
+ *        diagnostics, one-shot trust-list set, commissioning mode, user
+ *        management). Despite the file name, firmware-update (OTA) methods
+ *        are a minority of this file; see `docs/code/modules/opcua_model.md`
+ *        for the naming caveat.
+ *
+ * Responsibilities:
+ * - Bridges `services/firmware_update_service` (backed by `ota/`/
+ *   `drivers/flash_operation_coordinator`), `services/config_import_service`,
+ *   `services/security_trust_import_service`, and `services/config_service`
+ *   into open62541 `UA_MethodCallback`s.
+ * - Every chunked-upload family (trust-list import, config import,
+ *   firmware update) follows the same Begin/Write*Chunk/Abort/Validate/
+ *   Apply-or-Finalize state machine, fully described per-family in
+ *   `opcua_model_internal.h`.
+ *
+ * Ownership:
+ * No Flash/session state is owned here — each service owns its own staging
+ * buffer and state machine; these callbacks only validate method arguments,
+ * translate service result codes to `UA_StatusCode`/boolean method outputs,
+ * and emit audit/event records.
+ *
+ * Concurrency:
+ * All callbacks run synchronously on `OpcUaTask` inside
+ * `UA_Server_run_iterate`; Flash writes performed by the underlying
+ * services happen synchronously within the call, not on a separate task.
+ *
+ * Error-translation pattern (common to nearly every method below): argument
+ * validation failures return `UA_STATUSCODE_BADINVALIDARGUMENT`/
+ * `UA_STATUSCODE_BADOUTOFRANGE` directly from the callback, but a failed
+ * *service* operation (bad chunk, staging full, validation failure, etc.)
+ * is reported by returning `UA_STATUSCODE_GOOD` with a `false` boolean
+ * method output — callers must check the output value, not just the
+ * `UA_StatusCode`, to detect a rejected operation.
+ */
 #include "opcua_model_internal.h"
 
 UA_StatusCode model_write_trust_list_chunk(UA_Server *server,
@@ -124,6 +164,12 @@ UA_StatusCode model_validate_imported_trust_list(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* Applying the staged trust list and refreshing the live UA_ServerConfig PKI
+ * store are treated as separate failure domains: a refresh failure after a
+ * successful apply still reports `result == UA_TRUE` (the trust list *is*
+ * persisted) but with a distinct "runtime PKI refresh failed" detail/event
+ * message and a higher event severity (600 vs. 300), since the new trust
+ * list will only take full effect after a reboot in that case. */
 UA_StatusCode model_apply_imported_trust_list(UA_Server *server,
                                                      const UA_NodeId *session_id,
                                                      void *session_context,
@@ -392,6 +438,14 @@ UA_StatusCode model_validate_imported_config(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* Four-stage chain, each stage attributing a distinct `details` message on
+ * failure: (1) re-validate the staged import into a fresh candidate
+ * `device_profile_config_t` (`config_validate_service_validate_imported`),
+ * (2) persist it via `config_service_replace_and_save` (Flash write), (3)
+ * refresh the AMB location model to match, (4) discard the now-applied
+ * import session. Only success at all four stages clears the import session
+ * and reports `result == UA_TRUE`; any earlier failure leaves the staged
+ * import session intact so the caller can inspect/retry it. */
 UA_StatusCode model_apply_imported_config(UA_Server *server,
                                                  const UA_NodeId *session_id,
                                                  void *session_context,
@@ -474,6 +528,14 @@ UA_StatusCode model_apply_imported_config(UA_Server *server,
     model_set_boolean_method_output(output_size, output, result);
     return UA_STATUSCODE_GOOD;
 }
+
+/* Emits one of two JSON shapes depending on `status.ota_state_valid`: a
+ * short form (session/chunk counters only) when the underlying `ota/`
+ * state machine has no valid persisted state yet, or the short form plus
+ * nested OTA state fields (state name, image size/CRC, staged bank
+ * offset/size, boot attempts, last error) once it does. Callers must not
+ * assume the `otaState*`/`otaBootAttempts`/`otaLastError` fields are present
+ * unless `otaStateValid` is true. */
 void model_format_firmware_update_status_json(char *buffer, size_t buffer_size)
 {
     firmware_update_service_status_t status = {0};
@@ -779,6 +841,13 @@ UA_StatusCode model_clear_channel_config(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* The method's input list has no `kind`/`value_type` arguments; a
+ * newly-`in_use` channel inherits both from whatever
+ * config_service_stage_copy_channel() returns for the slot (i.e. its prior
+ * staged definition), except that `kind`/`value_type` are force-reset to 0
+ * when the copied entry's own `flags` field is unset, so a slot with no
+ * prior driver-catalog metadata cannot end up with a stale nonzero
+ * kind/value_type. */
 UA_StatusCode model_set_channel_config(UA_Server *server,
                                               const UA_NodeId *session_id,
                                               void *session_context,
@@ -1017,6 +1086,10 @@ UA_StatusCode model_clear_diagnostics(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* Same degraded-success pattern as model_apply_imported_trust_list(): a
+ * runtime PKI refresh failure after a successful `security_service_set_trust_list`
+ * write is only logged, not reflected in the boolean method output (`result`
+ * stays true), since the trust list itself was persisted successfully. */
 UA_StatusCode model_set_trust_list(UA_Server *server,
                                           const UA_NodeId *session_id,
                                           void *session_context,
@@ -1121,6 +1194,12 @@ UA_StatusCode model_enter_commissioning_mode(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* Unlike security_service_set_commissioning_mode()'s other callers, this
+ * callback itself checks that a non-empty trust list exists before allowing
+ * strict mode to be re-armed (a dedicated audit event + rejection, not a
+ * generic UA_STATUSCODE_BAD*, is used when that precondition fails), since
+ * exiting commissioning with an empty trust list would lock out every
+ * client. */
 UA_StatusCode model_exit_commissioning_mode(UA_Server *server,
                                                    const UA_NodeId *session_id,
                                                    void *session_context,
