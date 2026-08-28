@@ -2,11 +2,11 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.4.2`, commit `568dfd4e2a77c2db6fca4cd9a65e6279624928d6`.
+> **Current baseline:** `v0.4.3`, merge commit `dec08ba22e835e8037f9fd5342dcc63ddc03f5ac`.
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 
-This file defines the implementation order from the `v0.4.2` baseline to
+This file defines the implementation order from the `v0.4.3` baseline to
 `v1.0.0`. Codex must follow the versions sequentially and must not pull work
 from a later version into the current one unless this file is deliberately
 updated first.
@@ -184,6 +184,44 @@ This policy is mandatory through `v1.0.0` and must be treated as an architectura
   - `development`: all drivers intentionally enabled for integration and test builds.
 - A firmware profile change is a firmware update, not a configuration transaction. Before signed OTA is complete it is installed through the normal development/release flashing process; after `v0.6.0` it may be installed as a compatible signed OTA image.
 - Dynamic native-driver loading is explicitly deferred beyond `v1.0.0`. Any future reconsideration requires a documented ABI, signature verification, compatibility model, resource isolation and fault-containment design.
+
+### 5.2 Industrial hardware qualification policy
+
+`RP2350_INDUSTRIAL_MVP_V1` is being designed in parallel with firmware and is not physically available during the first implementation of its drivers. The project therefore distinguishes two independent states for industrial-board support:
+
+```text
+compile/mock validated
+hardware qualified
+```
+
+`compile/mock validated` means the driver builds for the industrial profile, passes static/host/mock tests, has datasheet-checked register framing and deterministic error handling, and integrates with configuration/resource/capability machinery. It does **not** imply that real voltage/current ranges, timing, protection, calibration, bus integrity or fault behavior have been measured.
+
+`hardware qualified` means the corresponding driver and board function have been exercised on an assembled `RP2350_INDUSTRIAL_MVP_V1` board using the stored bring-up/qualification checklist and measured acceptance criteria.
+
+The hardware qualification work is a **cross-version gate, not a numbered release**. Lack of the custom PCB must not block software work in `v0.6.x`, `v0.7.x` or `v0.8.x`, provided those releases can be validated on the reference RP2350 + W5500 board and/or host/mock transports. However:
+
+- the industrial board must be qualified before the public driver API is finally frozen in `v0.9.0`;
+- real-I/O performance evidence must be collected before completion of the production release candidate;
+- all firmware-visible functions required by `HARDWARE_MVP.md` must be hardware qualified before `v1.0.0` can be declared.
+
+If real bring-up reveals that the pre-1.0 driver API lacks a required operation or lifecycle semantic, the API must be corrected before `v0.9.0`; mock compatibility is not a reason to preserve an inadequate abstraction.
+
+At minimum the qualification gate covers:
+
+- board power-up, reset and brownout behavior;
+- Flash/PSRAM and board-specific W5500/USB operation;
+- `ADS8688` AI ranges, accuracy, protection behavior and calibration;
+- `AD5422` voltage/current output, diagnostics and hardware-safe state;
+- `MAX22190` DI thresholds/filtering/diagnostics;
+- `IPS2050` DO command/fault/protection behavior;
+- UIC digital/counter/frequency/period/encoder operation and analog mode if the final schematic implements it;
+- `TCAL9539`, `TPS2553` per-port power control/faults and `TCA4307` stuck-bus recovery;
+- raw isolated RS-485 transport through `ISOW1432`, including direction timing and bus faults;
+- `TPS3851` external watchdog/supervisor behavior in combination with the RP2350 internal watchdog;
+- internal rail-monitor scaling/thresholds and board-level PGOOD/fault diagnostics;
+- factory/calibration data required by the final hardware profile.
+
+Qualification results must identify board revision, firmware revision, test setup and measured results. A failure discovered during qualification is a normal pre-1.0 integration defect and may change board bindings, driver internals or the pre-1.0 driver API as necessary.
 
 ## 6. Version roadmap
 
@@ -583,7 +621,7 @@ At minimum, later hardware qualification must cover:
 - external watchdog/supervisor reset behavior;
 - monitored supply-rail scaling and thresholds.
 
-These tests may be scheduled by a later roadmap revision once board delivery timing is known; they must not be silently claimed as complete from mocks or datasheet review alone.
+These tests are governed by the cross-version industrial hardware qualification gate in section 5.2. They must not be silently claimed as complete from mocks or datasheet review alone.
 
 ### Result after release
 
@@ -636,7 +674,7 @@ Upgrade the existing CRC-checked OTA prototype to a production-oriented update c
 
 ### Required implementation
 
-- [ ] Add a signed firmware manifest containing hardware compatibility, firmware-profile ID, included driver-pack/version information, image version, size, hash and signature.
+- [ ] Add a signed firmware manifest containing explicit hardware-profile compatibility, supported board revision/revision range, firmware-profile ID, included driver-pack/version information, image version, size, hash and signature.
 - [ ] Use SHA-256 plus ECDSA P-256 verification through the existing mbedTLS stack unless a documented evaluation selects another supported algorithm.
 - [ ] Verify the manifest and image before marking an update bootable.
 - [ ] Add anti-rollback policy with an explicit development override.
@@ -645,17 +683,19 @@ Upgrade the existing CRC-checked OTA prototype to a production-oriented update c
 - [ ] Preserve or provide a bootable fallback image so failure can actually roll back, not merely mark the copied image failed.
 - [ ] Make bootloader state transitions power-loss safe.
 - [ ] Expose update progress, verification result, boot attempt and rollback reason through OPC UA diagnostics/events.
+- [ ] Keep OTA compatibility validation board-profile-aware so an image built for `RP2350_INDUSTRIAL_MVP_V1` cannot be accepted by an incompatible reference or industrial board revision merely because the MCU family matches.
 
 ### Tests and acceptance
 
-- [ ] Reject modified image, modified manifest, wrong hardware target and older forbidden version.
+- [ ] Reject modified image, modified manifest, wrong hardware profile, incompatible board revision and older forbidden version.
 - [ ] Interrupt power during every erase/copy/state-write phase.
 - [ ] Force a new image to fail health confirmation and verify rollback.
 - [ ] Confirm the previous known-good firmware remains bootable.
+- [ ] If `RP2350_INDUSTRIAL_MVP_V1` hardware is not yet available, complete the release on the reference board and record industrial-board OTA/boot verification as an item in the hardware qualification gate rather than fabricating a hardware pass.
 
 ### Result after release
 
-Remote update becomes cryptographically authenticated and recoverable from interrupted or unhealthy deployments.
+Remote update becomes cryptographically authenticated, recoverable from interrupted or unhealthy deployments, and constrained to compatible hardware profiles/revisions.
 
 ---
 
@@ -696,28 +736,34 @@ The device has a consistent access-control, provisioning and audit model rather 
 
 ### Goal
 
-Make failure detection depend on subsystem health rather than a blindly kicked watchdog.
+Make failure detection depend on subsystem health rather than a blindly kicked watchdog, while keeping the supervision policy independent of the concrete watchdog backend.
 
 ### Required implementation
 
 - [ ] Add heartbeat/deadline supervision for network, acquisition, time, alarm/history, storage and OPC UA tasks.
-- [ ] Kick the hardware watchdog only when required subsystems meet health policy.
+- [ ] Define one health policy that decides whether watchdog servicing is permitted; watchdog backends must consume that decision rather than implement independent health logic.
+- [ ] On the reference RP2350 + W5500 profile, use the RP2350 internal watchdog for runnable supervision/fault-injection tests.
+- [ ] On `RP2350_INDUSTRIAL_MVP_V1`, integrate the same health policy with both the RP2350 internal watchdog and the external `TPS3851` path (`WD_ENABLE`, `WD_KICK`, reset semantics) without allowing an independent task to kick either watchdog blindly.
 - [ ] Record reset reason, failing subsystem, last fault and boot counter persistently.
 - [ ] Add controlled degradation when PSRAM, history storage, MQTT or time synchronization is unavailable.
 - [ ] Add recovery policies for Ethernet link loss, DHCP loss, broker disconnect and OPC UA client abuse.
 - [ ] Add fault injection hooks for allocation failure, Flash error, corrupted config, driver timeout and network flap.
+- [ ] Add board-health aggregation capable of consuming `PWR_IN_FAULT_N`, `PWR_3V3_PGOOD_N`, `PWR_5V_PGOOD_N`, `BOARD_FAULT_N`, DO faults, `BOARD_IO_INT_N`, per-port sensor-power faults, `TCA4307 READY` state and internal rail-monitor channels when the industrial profile is built.
+- [ ] Keep board-health diagnostics observable and degradable; an optional diagnostic failure must not automatically become a reboot loop unless the documented health policy classifies it as safety/availability critical.
 - [ ] Add brownout/power-loss campaigns for configuration, maintenance journal and OTA.
 
 ### Tests and acceptance
 
-- [ ] A deadlocked supervised task causes watchdog recovery.
+- [ ] A deadlocked supervised task causes recovery through the available watchdog backend on the reference board.
 - [ ] A failed optional subsystem does not unnecessarily reboot the device.
 - [ ] 72-hour and 7-day soak profiles complete without memory growth or unhandled error.
 - [ ] Repeated secure handshakes and malformed requests remain within resource limits.
+- [ ] Host/mock tests cover external-watchdog enable/kick policy and board-health state aggregation even before the industrial PCB exists.
+- [ ] Once `RP2350_INDUSTRIAL_MVP_V1` is available, the hardware qualification gate verifies that a deliberately missed health deadline stops `WD_KICK` and produces the expected `TPS3851`/system reset behavior, while the RP2350 internal watchdog remains a separately understood layer.
 
 ### Result after release
 
-The device detects, records and recovers from realistic embedded and network faults predictably.
+The device has a backend-independent supervision policy and predictable software fault recovery. External `TPS3851` electrical/reset qualification remains part of the industrial hardware gate until real hardware exists.
 
 ---
 
@@ -725,27 +771,31 @@ The device detects, records and recovers from realistic embedded and network fau
 
 ### Goal
 
-Support retrofit acquisition from existing serial industrial equipment.
+Support retrofit acquisition from existing serial industrial equipment by implementing Modbus RTU above the raw half-duplex RS-485 transport introduced for the industrial board in `v0.5.1`.
 
 ### Required implementation
 
 - [ ] Add a Modbus RTU master under the driver/field-protocol layer.
-- [ ] Configure UART, baud, parity, stop bits, slave ID, function code, address, width, data type, byte/word order, scale and polling period.
+- [ ] Consume a bounded raw serial/RS-485 transport interface; do not duplicate board-specific UART pin setup, `RS485_DE_RE` timing ownership or `ISOW1432` binding inside the Modbus protocol implementation.
+- [ ] Configure baud, parity, stop bits, slave ID, function code, address, width, data type, byte/word order, scale and polling period through the protocol/channel configuration.
 - [ ] Map each configured Modbus value to a normal telemetry channel.
 - [ ] Add grouped reads and a bounded polling scheduler.
 - [ ] Isolate slow/offline slaves from unrelated channels.
 - [ ] Propagate timeout, exception and stale-data state into channel quality and diagnostics.
 - [ ] Add per-slave counters and Device Health contribution.
+- [ ] Keep transport/protocol separation testable so Modbus RTU can be fully exercised with a host/mock transport when the custom isolated RS-485 hardware is unavailable.
 
 ### Tests and acceptance
 
-- [ ] Test normal response, timeout, CRC error, exception response and reconnect.
+- [ ] Test normal response, timeout, CRC error, exception response and reconnect through a deterministic mock/loopback transport.
 - [ ] Verify signed/unsigned 16/32-bit and float mappings with byte/word order variants.
+- [ ] Verify grouped-read scheduling and per-slave timeout isolation without requiring the industrial PCB.
 - [ ] Existing OPC UA channel, history and alarm code requires no Modbus-specific branch.
+- [ ] Once the industrial board is available, the hardware qualification gate verifies real `ISOW1432` direction turnaround, isolated-bus operation, termination/bus-fault behavior and Modbus operation without changing the Modbus channel abstraction.
 
 ### Result after release
 
-The platform becomes an OPC UA retrofit node for Modbus RTU devices.
+The platform has a transport-independent Modbus RTU channel adapter. Real isolated RS-485 electrical qualification is tracked separately by the industrial hardware gate rather than blocking protocol development.
 
 ---
 
@@ -890,11 +940,13 @@ Existing OPC UA PubSub/MQTT support becomes a reliable optional northbound trans
 
 ### Goal
 
-Freeze the contracts that will be guaranteed by `v1.0.0`.
+Freeze the contracts that will be guaranteed by `v1.0.0` only after the industrial driver abstractions have been exercised on real `RP2350_INDUSTRIAL_MVP_V1` hardware.
 
 ### Required implementation
 
-- [ ] Freeze public driver API, channel API and service error model.
+- [ ] Treat closure of the industrial hardware qualification gate as a prerequisite for final public driver-API freeze. At minimum, every industrial driver/API path that can force a public lifecycle/capability/configuration change must have been exercised on the assembled board.
+- [ ] Review hardware-qualification findings before freeze. If real `ADS8688`, `AD5422`, `MAX22190`, `IPS2050`, UIC, `TCAL9539`/`TPS2553`/`TCA4307`, RS-485 or watchdog behavior requires an additional lifecycle, asynchronous-event, calibration, diagnostic or shared-resource semantic, fix the pre-1.0 API before freezing it.
+- [ ] Freeze public driver API, channel API and service error model only after that review.
 - [ ] Freeze configuration schema version `1` and migration policy.
 - [ ] Freeze vendor namespace URI and public NodeIds.
 - [ ] Document compatibility and deprecation policy.
@@ -905,13 +957,15 @@ Freeze the contracts that will be guaranteed by `v1.0.0`.
 
 ### Tests and acceptance
 
+- [ ] Industrial hardware qualification report identifies no unresolved driver-API deficiency that would require a post-freeze breaking change.
 - [ ] A clean-room developer can build firmware and add a mock/custom driver using documentation only.
 - [ ] Configuration generated by `v0.9.0` round-trips without loss.
 - [ ] Public API/NodeId inventory is machine-checked in CI.
+- [ ] The final driver lifecycle/capability model is exercised by both mock/reference drivers and representative real industrial-board drivers.
 
 ### Result after release
 
-The platform contract is frozen; later release candidates focus on defects and optimization only.
+The platform contract is frozen after both software-only and real-hardware driver experience; later release candidates focus on defects and optimization rather than repairing an abstraction that was frozen before board bring-up.
 
 ---
 
@@ -919,7 +973,7 @@ The platform contract is frozen; later release candidates focus on defects and o
 
 ### Goal
 
-Optimize the frozen platform and publish its real operating envelope.
+Optimize the frozen platform and publish both its reproducible synthetic operating envelope and the measured real-I/O envelope of `RP2350_INDUSTRIAL_MVP_V1`.
 
 ### Required implementation
 
@@ -927,9 +981,12 @@ Optimize the frozen platform and publish its real operating envelope.
 - [ ] Define PSRAM placement policy for NodeSet/model objects, history and temporary buffers.
 - [ ] Reduce long critical sections and lock contention.
 - [ ] Tune lwIP/WIZnet buffers, open62541 limits and task priorities using measured data.
-- [ ] Run complete benchmark profiles and compare with `v0.5.2`.
+- [ ] Run complete synthetic benchmark profiles and compare with `v0.5.2`; synthetic sources remain the canonical cross-version reproducibility baseline.
+- [ ] Add an `industrial_board_real_io` benchmark profile after hardware qualification and measure representative simultaneous AI/AO/DI/DO/UIC/sensor/RS-485 workloads.
+- [ ] For the real-I/O profile, record at least ADS8688 acquisition/sampling jitter, AO write/update latency, DI event latency, UIC counter/frequency/encoder limits, RS-485 turnaround, TCAL9539 interrupt/service latency, I²C recovery behavior, CPU load, task stack margins and memory use with the industrial driver pack active.
 - [ ] Run 7-day soak with security, subscriptions, history, alarms and selected field protocol enabled.
-- [ ] Publish tested maximums and recommended operating limits.
+- [ ] Run a corresponding industrial-board soak profile when the hardware qualification gate is closed and the board is stable enough for long-run testing.
+- [ ] Publish tested maximums and recommended operating limits, clearly separating synthetic/reference-board limits from industrial real-I/O limits.
 
 ### Tests and acceptance
 
@@ -937,10 +994,11 @@ Optimize the frozen platform and publish its real operating envelope.
 - [ ] No stack watermark below the documented safety margin.
 - [ ] All benchmark regressions are either fixed or explicitly justified.
 - [ ] Maximum supported channel/client/subscription limits are enforced, not merely documented.
+- [ ] The release report contains both the reproducible synthetic benchmark set and measured industrial-board results; no synthetic result is presented as proof of analog accuracy, field-bus timing or real I/O performance.
 
 ### Result after release
 
-The project has a measured, stable performance envelope suitable for deployment guidance and scientific comparison.
+The project has a measured, stable software envelope plus real industrial-board timing/resource evidence suitable for deployment guidance and scientific comparison.
 
 ---
 
@@ -948,27 +1006,33 @@ The project has a measured, stable performance envelope suitable for deployment 
 
 ### Goal
 
-Complete manufacturing, provisioning and release reproducibility.
+Complete hardware qualification, manufacturing, calibration, provisioning and release reproducibility for the actual industrial board.
 
 ### Required implementation
 
+- [ ] Require the `RP2350_INDUSTRIAL_MVP_V1` hardware qualification gate to be closed for the board revision targeted by the production candidate, with all required firmware-visible functions from `HARDWARE_MVP.md` either passed or explicitly removed/deferred by a deliberate hardware-scope revision.
+- [ ] Publish the hardware qualification report with board revision, firmware revision, equipment/setup, calibration conditions, measured limits and known errata/workarounds.
 - [ ] Define unique serial, MAC, product-instance URI, asset ID and certificate provisioning flow.
-- [ ] Add factory-test profile and test-jig protocol/results format.
+- [ ] Add factory-test profile and test-jig protocol/results format for the production board rather than only the generic reference board.
+- [ ] Define production calibration/storage flow for AI/AO and any internal monitor channels whose accuracy is part of the product diagnostics contract.
+- [ ] Include factory checks for power tree/PGOOD/faults, Flash/PSRAM, Ethernet, USB, isolated RS-485, AI/AO/DI/DO/UIC, external I²C recovery, sensor-power switching/faults, external watchdog/safe-state and status indication.
 - [ ] Produce reproducible signed release artifacts: bootloader, application, factory image, manifest, default config, NodeSet/public-node inventory, SBOM and size/benchmark reports.
-- [ ] Add release automation that verifies tag, runtime version and artifact manifest consistency.
+- [ ] Add release automation that verifies tag, runtime version and artifact manifest consistency, including hardware-profile and supported-board-revision metadata.
 - [ ] Document flash layout, recovery procedure, factory reset and decommissioning.
 - [ ] Audit third-party licenses and pinned dependency revisions.
-- [ ] Close all known data-corruption, authentication-bypass, unsafe-OTA and unbounded-allocation defects.
+- [ ] Close all known data-corruption, authentication-bypass, unsafe-OTA, unsafe-output-state and unbounded-allocation defects.
 
 ### Tests and acceptance
 
-- [ ] A blank reference board can be provisioned, factory-tested, updated and recovered using documented tooling.
+- [ ] A blank `RP2350_INDUSTRIAL_MVP_V1` board of the production-candidate revision can be provisioned, calibrated, factory-tested, updated and recovered using documented tooling.
+- [ ] All industrial drivers required by the production profile are marked `hardware qualified`; no `compile/mock validated only` driver is silently shipped as a production-supported board function.
+- [ ] Hardware safe-state behavior for AO/DO and external/internal watchdog interaction is verified on real hardware.
 - [ ] Release artifacts can be rebuilt reproducibly from the tag.
-- [ ] A complete upgrade test from the last supported pre-1.0 version passes.
+- [ ] A complete upgrade test from the last supported pre-1.0 version passes on the target industrial board.
 
 ### Result after release
 
-The system is feature-complete and operationally ready for the `v1.0.0` declaration.
+The actual industrial board, firmware and manufacturing/provisioning flow are jointly feature-complete and operationally ready for the `v1.0.0` declaration.
 
 ---
 
@@ -982,14 +1046,15 @@ Declare the first stable platform contract. No major feature is introduced in th
 
 - [ ] All `v0.9.2` acceptance criteria remain green.
 - [ ] Public driver/channel APIs, configuration schema and NodeIds are stable.
+- [ ] Every firmware-visible `RP2350_INDUSTRIAL_MVP_V1` function claimed by the production profile is hardware qualified on the supported production board revision.
 - [ ] Security, OTA, maintenance, history, alarms, Modbus and PubSub limits are documented and enforced.
-- [ ] Interoperability matrix and benchmark report are published.
-- [ ] Upgrade, rollback, factory reset and recovery procedures are validated.
-- [ ] No critical or high-severity unresolved defect remains.
+- [ ] Interoperability matrix plus synthetic and industrial real-I/O benchmark reports are published.
+- [ ] Upgrade, rollback, factory reset, calibration, factory-test and recovery procedures are validated on the target board.
+- [ ] No critical or high-severity unresolved software or hardware-integration defect remains.
 
 ### Final product state
 
-`v1.0.0` is a configurable RP2350 IIoT node that can acquire local and Modbus data, expose a deterministic OPC UA model, maintain DI/AMB asset and maintenance semantics, buffer bounded history/events, enforce role-based security, update safely and provide measured resource/performance limits.
+`v1.0.0` is a configurable and hardware-qualified RP2350 industrial IIoT node that can acquire local and Modbus data, expose a deterministic OPC UA model, maintain DI/AMB asset and maintenance semantics, buffer bounded history/events, enforce role-based security, update safely and provide measured resource/performance limits for the actual production board profile.
 
 ## 7. Explicitly deferred beyond `v1.0.0`
 
@@ -1008,15 +1073,14 @@ Codex must not implement the following before a roadmap revision assigns an exac
 ## 8. Immediate next action
 
 The next implementation target is
-**`v0.4.3 — Multi-Channel History and Alarm Engine`**.
+**`v0.5.0 — Transactional Runtime Configuration`**.
 
 Before coding, Codex must:
 
-1. use tag `v0.4.2` as the immutable implementation and compatibility baseline;
-2. follow the file-level execution plan in `docs/releases/v0.4.3.md`;
-3. preserve unrelated v0.4.2 public contracts and configuration fields;
-4. freeze the per-channel history record, Flash layout, continuation-point and
-   alarm-condition contracts before changing implementation code;
-5. verify mixed-type history, bounded continuation points, independent alarms,
-   persistence and the affected public OPC UA contract;
-6. only then start implementation limited to `v0.4.3`.
+1. use merged `v0.4.3` (`dec08ba22e835e8037f9fd5342dcc63ddc03f5ac`) as the implementation and compatibility baseline;
+2. inspect the current configuration service, channel manager, driver catalog/capability API, persistence layout and OPC UA configuration methods before changing code;
+3. create and then follow a file-level execution plan in `docs/releases/v0.5.0.md`;
+4. freeze the configuration transaction states, staged/running/last-known-good persistence contract, resource-conflict model and rollback semantics before implementation;
+5. verify valid apply, unavailable-driver rejection, resource conflicts, driver-start failure, namespace/model rebuild failure and power loss at every transaction phase;
+6. keep industrial-board driver implementation out of `v0.5.0`; those drivers are scheduled for `v0.5.1` and consume the configuration/resource machinery built here;
+7. only then start implementation limited to `v0.5.0`.
