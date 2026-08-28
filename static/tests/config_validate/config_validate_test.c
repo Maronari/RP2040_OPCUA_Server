@@ -787,7 +787,7 @@ static void test_validation_results_and_no_output_mutation(void)
     expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_INVALID_NETWORK);
     candidate = valid_candidate();
     candidate.channels[0].driver_id = 99u;
-    expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_INVALID_CHANNEL);
+    expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER);
     candidate = valid_candidate();
     candidate.channels[0].source_index = 1u;
     expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_INVALID_CHANNEL);
@@ -823,10 +823,115 @@ static void test_validation_results_and_no_output_mutation(void)
     expect_rejected(&candidate, CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH);
 }
 
+static void test_collect_missing_drivers(void)
+{
+    device_profile_config_t candidate;
+    config_validate_service_missing_driver_report_t report;
+    config_validate_service_result_t result;
+    char message[CONFIG_VALIDATE_SERVICE_MESSAGE_MAX_LEN];
+
+    /* A single missing driver_id gets the new dedicated result code, not
+     * the generic CONFIG_VALIDATE_RESULT_INVALID_CHANNEL it used to share
+     * with source/kind/value_type failures. */
+    candidate = valid_candidate();
+    candidate.channels[0].driver_id = 99u;
+    memset(&report, 0xa5, sizeof(report));
+    result = config_validate_service_validate_candidate_collect_missing_drivers(
+        &candidate, message, sizeof(message), &report);
+    assert(result == CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER);
+    assert(report.count == 1u);
+    assert(report.entries[0].channel_index == 0u);
+    assert(report.entries[0].driver_id == 99u);
+    assert(!report.resource_conflict);
+    assert(strstr(message, "channel 0 driver_id 99") != NULL);
+
+    /* message/out_missing_drivers stay optional. */
+    assert(config_validate_service_validate_candidate_collect_missing_drivers(
+               &candidate, NULL, 0u, NULL) == CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER);
+
+    /* Adding the collecting sibling must not change
+     * config_validate_service_validate_candidate()'s own signature/behavior:
+     * it still reports only the first failure, now with the new code. */
+    assert(config_validate_service_validate_candidate(&candidate, NULL, 0u) ==
+           CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER);
+
+    /* Multiple missing driver_ids across the whole candidate are ALL
+     * reported in one call, in ascending channel-slot order -- this is
+     * exactly what config_validate_service_validate_candidate() cannot do,
+     * since it still stops at the first failure of any kind. */
+    memset(&candidate, 0, sizeof(candidate));
+    candidate.opcua_port = 4840u;
+    candidate.network_mode = NETWORK_MODE_DHCP;
+    candidate.channels[0].in_use = 1u;
+    candidate.channels[0].driver_id = 50u;
+    candidate.channels[0].kind = TELEMETRY_CHANNEL_KIND_ANALOG;
+    candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    strcpy(candidate.channels[0].id, "missing.0");
+    candidate.channels[1].in_use = 1u;
+    candidate.channels[1].driver_id = 51u;
+    candidate.channels[1].kind = TELEMETRY_CHANNEL_KIND_ANALOG;
+    candidate.channels[1].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    strcpy(candidate.channels[1].id, "missing.1");
+    candidate.channels[2].in_use = 1u;
+    candidate.channels[2].driver_id = 52u;
+    candidate.channels[2].kind = TELEMETRY_CHANNEL_KIND_ANALOG;
+    candidate.channels[2].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    strcpy(candidate.channels[2].id, "missing.2");
+    memset(&report, 0xa5, sizeof(report));
+    result = config_validate_service_validate_candidate_collect_missing_drivers(
+        &candidate, message, sizeof(message), &report);
+    assert(result == CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER);
+    assert(report.count == 3u);
+    assert(report.entries[0].channel_index == 0u && report.entries[0].driver_id == 50u);
+    assert(report.entries[1].channel_index == 1u && report.entries[1].driver_id == 51u);
+    assert(report.entries[2].channel_index == 2u && report.entries[2].driver_id == 52u);
+    assert(!report.resource_conflict);
+    assert(strstr(message, "channel 0 driver_id 50") != NULL);
+    assert(strstr(message, "channel 1 driver_id 51") != NULL);
+    assert(strstr(message, "channel 2 driver_id 52") != NULL);
+
+    /* A candidate with BOTH a missing driver AND a resource conflict must
+     * produce both diagnostics deterministically in one call: the missing
+     * driver via the result code/report, the conflict via
+     * report.resource_conflict (computed from the channels whose driver DID
+     * resolve). */
+    memset(&candidate, 0, sizeof(candidate));
+    candidate.opcua_port = 4840u;
+    candidate.network_mode = NETWORK_MODE_DHCP;
+    candidate.channels[0].in_use = 1u;
+    candidate.channels[0].driver_id = CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP;
+    candidate.channels[0].kind = TELEMETRY_CHANNEL_KIND_ANALOG;
+    candidate.channels[0].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    strcpy(candidate.channels[0].id, "a");
+    candidate.channels[1] = candidate.channels[0];
+    strcpy(candidate.channels[1].id, "b");
+    candidate.channels[2].in_use = 1u;
+    candidate.channels[2].driver_id = 77u;
+    candidate.channels[2].kind = TELEMETRY_CHANNEL_KIND_ANALOG;
+    candidate.channels[2].value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    strcpy(candidate.channels[2].id, "c");
+    memset(&report, 0xa5, sizeof(report));
+    result = config_validate_service_validate_candidate_collect_missing_drivers(
+        &candidate, message, sizeof(message), &report);
+    assert(result == CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER);
+    assert(report.count == 1u);
+    assert(report.entries[0].channel_index == 2u && report.entries[0].driver_id == 77u);
+    assert(report.resource_conflict);
+    assert(strstr(message, "channel 2 driver_id 77") != NULL);
+    assert(strstr(message, "resource claims also conflict") != NULL);
+
+    /* Confirm the same two channels alone (no missing driver) still hit the
+     * pre-existing, untouched resource-conflict path/code. */
+    candidate.channels[2].in_use = 0u;
+    assert(config_validate_service_validate_candidate(&candidate, NULL, 0u) ==
+           CONFIG_VALIDATE_RESULT_RESOURCE_CONFLICT);
+}
+
 int main(void)
 {
     test_import_bounds_and_staging();
     test_validation_results_and_no_output_mutation();
+    test_collect_missing_drivers();
     test_json_numeric_and_network_parsing();
     test_v040_json_channel_array_migration();
     test_json_alarm_tuning_round_trip();

@@ -47,6 +47,10 @@
  * by `config_validate_service_validate_imported()` (import-session
  * preconditions); the rest can also be produced by
  * `config_validate_service_validate_candidate()` directly.
+ * `CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER` is a channel referencing a
+ * `driver_id` absent from the compiled driver catalog; it is distinct from
+ * `CONFIG_VALIDATE_RESULT_INVALID_CHANNEL`, which still covers source/kind/
+ * value_type failures on a channel whose driver *does* exist.
  */
 typedef enum
 {
@@ -69,6 +73,7 @@ typedef enum
     CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH = 16,
     CONFIG_VALIDATE_RESULT_RESOURCE_CONFLICT = 17,
     CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE = 18,
+    CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER = 19,
 } config_validate_service_result_t;
 
 /**
@@ -122,7 +127,9 @@ config_validate_service_result_t config_validate_service_validate_imported(confi
  * NULL.
  * @return `CONFIG_VALIDATE_RESULT_OK` if every check passes; otherwise the
  * first rejection reason encountered (checks are short-circuiting, in a
- * fixed order — this is not an exhaustive "list every problem" validator).
+ * fixed order — this is not an exhaustive "list every problem" validator;
+ * for exhaustive missing-`driver_id` reporting see
+ * `config_validate_service_validate_candidate_collect_missing_drivers()`).
  * @note Calls into `driver_catalog` (channel/driver/resource-claim checks)
  * but never touches Flash or hardware itself.
  */
@@ -130,6 +137,70 @@ config_validate_service_result_t config_validate_service_validate_candidate(
     const device_profile_config_t *candidate,
     char *message,
     size_t message_size);
+
+/**
+ * @brief One channel slot whose configured `driver_id` has no match in the
+ * compiled driver catalog, as collected by
+ * `config_validate_service_validate_candidate_collect_missing_drivers()`.
+ */
+typedef struct
+{
+    uint8_t channel_index;
+    uint8_t driver_id;
+} config_validate_service_missing_driver_t;
+
+/**
+ * @brief Exhaustive report of every channel slot with an unknown
+ * `driver_id`, filled by
+ * `config_validate_service_validate_candidate_collect_missing_drivers()`.
+ */
+typedef struct
+{
+    /** Entries in ascending channel-slot order; only the first
+     * `PLATFORM_CHANNEL_LIMIT` missing channels can ever exist, so this
+     * never overflows. */
+    config_validate_service_missing_driver_t entries[PLATFORM_CHANNEL_LIMIT];
+    size_t count;
+    /** True if the channels that DO have a known driver also fail the
+     * cross-channel hardware resource-claim compatibility check — lets a
+     * candidate with both problems surface both, deterministically, in one
+     * call instead of only the first one found. */
+    bool resource_conflict;
+} config_validate_service_missing_driver_report_t;
+
+/**
+ * @brief Like `config_validate_service_validate_candidate()`, but collects
+ * every channel slot with an unknown `driver_id` instead of stopping at the
+ * first one. Additive sibling of `config_validate_service_validate_candidate()`
+ * — that function's signature/behavior is unchanged; this is a distinct
+ * function existing callers do not need to adopt.
+ *
+ * Conditions unrelated to missing drivers (source validation, out-of-range
+ * `kind`/`value_type`, writable-capability backing, resource-claim decode,
+ * duplicate channel IDs) are unchanged from
+ * `config_validate_service_validate_candidate()` and still short-circuit on
+ * the first one encountered, with their existing result codes.
+ *
+ * @param candidate Configuration to validate; must not be NULL.
+ * @param message Optional buffer to receive a human-readable explanation of
+ * the result; may be NULL. When the result is
+ * `CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER`, enumerates every missing channel
+ * (best-effort, may truncate for a very large @p message_size-constrained
+ * buffer — use @p out_missing_drivers for a complete, structured list).
+ * @param message_size Capacity of @p message; ignored if @p message is
+ * NULL.
+ * @param out_missing_drivers Optional; filled with every channel slot whose
+ * `driver_id` is unknown to the catalog, and whether the channels that DO
+ * have a known driver also produce a resource conflict; may be NULL.
+ * @return `CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER` if any channel had an
+ * unknown `driver_id` (see @p out_missing_drivers for the full list);
+ * otherwise identical to `config_validate_service_validate_candidate()`.
+ */
+config_validate_service_result_t config_validate_service_validate_candidate_collect_missing_drivers(
+    const device_profile_config_t *candidate,
+    char *message,
+    size_t message_size,
+    config_validate_service_missing_driver_report_t *out_missing_drivers);
 
 /**
  * @brief Serializes @p report as a single-line JSON object.
