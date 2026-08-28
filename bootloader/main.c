@@ -9,8 +9,8 @@
  * Responsibilities:
  * - Own the bootloader-side implementation of the `ota_flash_backend.h`
  *   interface, driving Flash erase/program directly through
- *   `pico/flash.h`'s `flash_safe_execute()` (no RTOS, no
- *   `flash_operation_coordinator`).
+ *   `pico/flash.h`'s `flash_safe_execute()` (no RTOS, no shared
+ *   FreeRTOS-mutex flash-serialization layer).
  * - Apply any OTA update staged in Bank B: validate it, copy it into
  *   Bank A page-by-page, and re-verify the copy before marking it
  *   `READY_TO_BOOT`.
@@ -357,8 +357,8 @@ static void __not_in_flash_func(bootloader_flash_program_range)(void *param)
  *
  * This is the bootloader's half of the `ota_flash_backend.h` contract for
  * erase (see `ota_flash_backend_erase()` below); unlike the application-side
- * backend (`ota_flash_backend_application.c`), there is no
- * `flash_operation_coordinator` mutex here — the bootloader is
+ * backend (`ota_flash_backend_application.c`), there is no shared
+ * FreeRTOS-mutex flash-serialization layer here — the bootloader is
  * single-threaded, so `flash_safe_execute()`'s own critical-section handling
  * is sufficient.
  *
@@ -435,7 +435,7 @@ static ota_flash_status_t bootloader_execute_program(uint32_t flash_offset,
 /* Bootloader's implementation of the ota_flash_backend.h contract (see that
  * header for @param/@return semantics); delegates directly to
  * bootloader_execute_erase(), which uses flash_safe_execute() rather than
- * the application's flash_operation_coordinator mutex. */
+ * the application's shared FreeRTOS-mutex flash-serialization layer. */
 ota_flash_status_t ota_flash_backend_erase(uint32_t flash_offset, size_t byte_count)
 {
     return bootloader_execute_erase(flash_offset, byte_count);

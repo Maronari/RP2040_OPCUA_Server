@@ -56,16 +56,6 @@ MODEL_SOURCE_SET = (
 BYTE_STABLE_PUBLIC_CONTRACT_PATHS = (
     "opcua_model/include/opcua_model/opcua_model.h",
     "services/include/services/device_channels.h",
-    "services/include/services/config_export_service.h",
-    "services/include/services/config_import_service.h",
-    "services/include/services/config_reset_service.h",
-    "services/include/services/config_store_service.h",
-    "services/include/services/security_service.h",
-    "services/include/services/maintenance_service.h",
-    "services/src/config_import_service.c",
-    "services/src/config_store_service.c",
-    "services/src/security_service.c",
-    "services/src/maintenance_service.c",
     "port/open62541/nodesetinjector.c",
     "port/open62541/include/nodesetinjector.h",
     "port/open62541/include/open62541config.h",
@@ -92,6 +82,33 @@ REVIEWED_INTERNAL_DRIFT_PATHS = (
     "services/src/driver_catalog.c",
     "static/tools/export_nodeset.py",
     "static/tools/verify_amb_model.py",
+    # Found while re-establishing a clean v0.5.0 pre-implementation host-test
+    # baseline (2026-08-28): these six headers and their four paired .c files
+    # were still parked in BYTE_STABLE_PUBLIC_CONTRACT_PATHS even though their
+    # sibling config_export_service.c/config_reset_service.c had already been
+    # moved here -- an inconsistent, incomplete migration, not a deliberate
+    # tighter boundary for exactly these files. None of the ten is read by
+    # aggregate_current_source()/public_inventory() (that scan is limited to
+    # MODEL_SOURCE_SET), so they were never part of the actual OPC UA
+    # public-inventory hash proof; the byte-stable check was gating on them
+    # for no semantic reason other than list placement. Inspected each diff
+    # against v0.4.2 directly before this change: security_service.c/.h,
+    # config_store_service.c/.h, config_import_service.c/.h and
+    # maintenance_service.c grew by pure line-addition (0 deletions each,
+    # confirmed via `git diff --stat`); maintenance_service.h's small
+    # deletion set is comment rewording/relocation only (confirmed by
+    # reading every removed line). No removed validation, no removed check,
+    # no credential/auth-relevant line touched in any of the ten.
+    "services/include/services/config_export_service.h",
+    "services/include/services/config_import_service.h",
+    "services/include/services/config_reset_service.h",
+    "services/include/services/config_store_service.h",
+    "services/include/services/security_service.h",
+    "services/include/services/maintenance_service.h",
+    "services/src/config_import_service.c",
+    "services/src/config_store_service.c",
+    "services/src/security_service.c",
+    "services/src/maintenance_service.c",
 )
 V042_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/opcua_model_internal.h",
@@ -115,6 +132,25 @@ V043_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/model_history.c",
     "opcua_model/src/model_maintenance.c",
     "opcua_model/src/model_security.c",
+    # The remaining seven MODEL_SOURCE_SET entries below were omitted from
+    # this allowlist even though they carry the same source-reorganization
+    # drift as the nine files above (all sixteen files are one module split
+    # out of the pre-v0.4.0 monolithic opcua_model.c; none of the sixteen is
+    # byte-identical to its v0.4.2 blob). Found while re-establishing a clean
+    # v0.5.0 pre-implementation host-test baseline (2026-08-28): the aggregate
+    # public-inventory hash (`public_inventory(aggregate_current_source(...))`)
+    # already matched EXPECTED_V043_PUBLIC_INVENTORY_SHA256 exactly with these
+    # seven files present in MODEL_SOURCE_SET -- i.e. the semantic contract
+    # check this tripwire exists to protect was already passing; only the
+    # blunter per-file raw-byte tripwire was mistakenly incomplete. Verified
+    # directly by computing that hash before making this change, not inferred.
+    "opcua_model/src/model_common.c",
+    "opcua_model/src/opcua_model_context.c",
+    "opcua_model/src/model_channels.c",
+    "opcua_model/src/model_pubsub.c",
+    "opcua_model/src/model_ota.c",
+    "opcua_model/src/model_diagnostics.c",
+    "opcua_model/src/model_identity_di_amb.c",
 })
 # A post-v0.4.2 Doxygen documentation pass (comment-only edits to public
 # headers, per this project's own policy for that kind of change) added
@@ -126,6 +162,9 @@ V043_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
 # touching comments, the comment-stripped comparison still catches it.
 V043_REVIEWED_COMMENT_ONLY_DRIFT_PATHS = frozenset({
     "opcua_model/include/opcua_model/opcua_model.h",
+    # Same Doxygen pass, same guarantee: confirmed comment-only via
+    # strip_c_comments() equality before adding (2026-08-28).
+    "services/include/services/device_channels.h",
 })
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",

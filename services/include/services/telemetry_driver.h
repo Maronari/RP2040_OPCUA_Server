@@ -4,8 +4,8 @@
  *        each native telemetry channel driver.
  *
  * This is a services-layer *contract*, not hardware code: it defines the
- * function-pointer shape that `drivers/src/*_channel_driver.c`
- * implementations must fill in and that `sensor_manager`/`channel_manager`
+ * function-pointer shape that the `*_channel_driver.c` sources under
+ * `drivers/src` implement and that `sensor_manager`/`channel_manager`
  * dispatch through (see docs/code/hardware.md, "Driver operation table").
  * Only `start`/`stop`/`read` currently have real implementations across the
  * shipped native drivers; `write`/`configure`/`self_test` are dispatched
