@@ -21,6 +21,7 @@ SUITES = (
     "test_history_flash_backend.py",
     "test_sensor_manager_rollback.py",
     "test_config_transaction.py",
+    "test_config_transaction_backend.py",
     "test_config_compat.py",
     "test_config_service_identity.py",
     "test_config_validate.py",
