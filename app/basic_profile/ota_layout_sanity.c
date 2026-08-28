@@ -1,3 +1,22 @@
+/**
+ * @file
+ * @brief Compile-time-only `_Static_assert` battery validating the
+ *        generated OTA Flash-layout geometry (`ota_layout.h`, produced by
+ *        `ota/cmake/ota_layout.cmake` from `PICO_FLASH_SIZE_BYTES`).
+ *
+ * Checks, for the concrete build configuration: every region's size is
+ * Flash-erase-block aligned; every region's offset is erase-block aligned;
+ * every region's computed XIP origin matches `FLASH_XIP_BASE + offset`;
+ * regions do not overlap and appear in the expected order (bootloader,
+ * Bank A, Bank B, maintenance journal, history, config slots x2, security
+ * identity slots x2, security trust slots x2, security state, OTA state);
+ * the reference target's geometry constants have not silently drifted; the
+ * layout exactly covers the configured Flash size with no gap or overrun;
+ * and `ota_state_record_t` fits within its reserved region. Produces no
+ * runtime code — a build failure here means the generated layout is
+ * internally inconsistent before any firmware image is even linked.
+ */
+
 #include "ota_layout.h"
 #include "ota/ota_state.h"
 

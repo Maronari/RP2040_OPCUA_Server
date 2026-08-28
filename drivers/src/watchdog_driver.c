@@ -1,3 +1,21 @@
+/**
+ * @file
+ * @brief Thin wrapper around the RP2350 hardware watchdog (safety-critical).
+ *
+ * Responsibilities:
+ * - Enable the hardware watchdog with a clamped, bounded timeout.
+ * - Feed it (watchdog_driver_kick()) so callers control exactly when the
+ *   MCU is allowed to reset for missed liveness.
+ *
+ * Ownership: g_watchdog_enabled/g_watchdog_timeout_ms are process-lifetime
+ * globals mirroring hardware state; there is no way to disable the watchdog
+ * once enabled (matches the RP2350 hardware, which cannot be soft-disabled).
+ *
+ * Concurrency: no internal locking. watchdog_driver_kick() is expected to be
+ * called from WatchdogTask (see docs/code/freertos.md); reads
+ * (is_enabled/get_timeout_ms) are safe from any task since they are simple
+ * word-sized loads of values written once at init.
+ */
 #include "drivers/watchdog_driver.h"
 
 #include "hardware/watchdog.h"

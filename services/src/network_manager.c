@@ -1,3 +1,27 @@
+/**
+ * @file
+ * @brief Ethernet/network bring-up and status polling; see
+ *        services/include/services/network_manager.h for the public API
+ *        contract.
+ *
+ * Responsibilities:
+ * - Drive `drivers/w5x00_ethernet_driver` init/poll and reflect its state
+ *   plus lwIP DHCP state into a published `network_manager_status_t`.
+ * - Own DHCP-state-change/IPv4-assignment console logging.
+ *
+ * Ownership:
+ * `g_driver` (the W5500 driver instance) and `g_status` (the published
+ * status snapshot) are both owned exclusively by this module.
+ *
+ * Concurrency:
+ * `g_status` is written by `network_manager_update_status()` (called only
+ * from "NetworkTask" via network_manager_task(), and once synchronously
+ * from network_manager_init()) and read by network_manager_get_status()
+ * from any task; both sides use `taskENTER_CRITICAL`/`taskEXIT_CRITICAL`.
+ * `g_driver` and the remaining link-tracking statics are touched only from
+ * "NetworkTask" and from network_manager_init() before the task starts, so
+ * they need no separate lock.
+ */
 #include "services/network_manager.h"
 
 #include <stdio.h>
@@ -21,6 +45,7 @@ static bool g_link_state_initialized = false;
 static uint32_t g_link_state_changes = 0;
 static uint32_t g_reconnect_count = 0;
 
+/** @brief Maps an lwIP `DHCP_STATE_*` value to a human-readable string for status reporting/logging. */
 static const char *network_manager_dhcp_state_to_string(uint8_t state)
 {
     switch (state)
@@ -56,6 +81,12 @@ static const char *network_manager_dhcp_state_to_string(uint8_t state)
     }
 }
 
+/**
+ * @brief Formats a 6-byte MAC address as "XX:XX:XX:XX:XX:XX" into @p out_buffer.
+ * @param out_buffer Destination buffer; no-op if NULL.
+ * @param out_buffer_size Size of @p out_buffer; no-op if 0.
+ * @param mac 6-byte MAC address; no-op if NULL.
+ */
 static void network_manager_format_mac(char *out_buffer, size_t out_buffer_size, const uint8_t mac[6])
 {
     if (out_buffer == NULL || out_buffer_size == 0u || mac == NULL)
@@ -74,6 +105,21 @@ static void network_manager_format_mac(char *out_buffer, size_t out_buffer_size,
              mac[5]);
 }
 
+/**
+ * @brief Rebuilds the network status snapshot from driver/lwIP state and
+ *        publishes it to `g_status`, logging DHCP state/IPv4 transitions.
+ *
+ * Builds a local `status` from `g_driver`/lwIP (unlocked - only ever called
+ * from "NetworkTask" or synchronously from network_manager_init(), before
+ * the task starts), tracks link up/down transitions to update
+ * `g_link_state_changes`/`g_reconnect_count`, then publishes atomically to
+ * `g_status` under `taskENTER_CRITICAL`/`taskEXIT_CRITICAL`. Logs to stdout
+ * on DHCP state change or new DHCP IPv4 assignment (comparison against the
+ * previous `g_status`, read outside the lock after publish).
+ *
+ * @note Not safe to call concurrently with itself; relies on being the only
+ *       writer of `g_status` and the link-tracking statics.
+ */
 static void network_manager_update_status(void)
 {
     const device_profile_config_t *config = config_service_get();

@@ -1,3 +1,29 @@
+/**
+ * @file
+ * @brief User-management method callbacks (`SetRole`/`DisableUser`/
+ *        `DeleteUser`) and generic low-level address-space node builders
+ *        (Object/Folder/AMB-folder/static-variable) shared across the model.
+ *
+ * Responsibilities:
+ * - Admin-gated `Device.Maintenance.*` user-management methods, delegating
+ *   to `security_service` for the actual user table mutation.
+ * - Thin, allocation-free wrappers over `UA_Server_add{Object,Variable}Node`
+ *   reused by `model_address_space.c` / `model_identity_di_amb.c` and others.
+ * - `model_build_amb_capabilities_and_requirements`, which builds the fixed
+ *   AMB `Capabilities`/`Requirements` static subtree.
+ *
+ * Ownership:
+ * No state owned here; every method delegates to `security_service` for the
+ * user table and to open62541 for node storage. See
+ * `opcua_model_internal.h` for the full contract of each function.
+ *
+ * Concurrency:
+ * All functions run on `OpcUaTask`: the user-management methods as
+ * open62541 `UA_MethodCallback`s invoked synchronously during
+ * `UA_Server_run_iterate`, the node builders during
+ * `model_build_address_space` at server startup. No synchronization is
+ * performed in this file.
+ */
 #include "opcua_model_internal.h"
 
 UA_StatusCode model_set_role(UA_Server *server,
@@ -192,6 +218,9 @@ UA_StatusCode model_add_folder(UA_Server *server,
                             UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE));
 }
 
+/* Unlike model_add_folder/model_add_object (namespace 1 QualifiedName), the
+ * BrowseName here is qualified with g_model_amb_namespace_index so the node
+ * is discoverable under the AMB companion-spec namespace. */
 UA_StatusCode model_add_amb_folder(UA_Server *server,
                                          const char *node_id,
                                          const char *browse_name,
@@ -214,6 +243,9 @@ UA_StatusCode model_add_amb_folder(UA_Server *server,
         NULL);
 }
 
+/* attributes.value is a scalar copy of *value (UA_Variant_setScalarCopy);
+ * it is always released via UA_Variant_clear before returning, whether or
+ * not UA_Server_addVariableNode succeeded, so no variant is ever leaked. */
 UA_StatusCode model_add_static_organized_variable(UA_Server *server,
                                                          const char *node_id,
                                                          const char *browse_name,
@@ -256,6 +288,11 @@ UA_StatusCode model_add_static_organized_variable(UA_Server *server,
     return status;
 }
 
+/* The capabilities/requirements tables are compiled conditionally on the
+ * matching UA_ENABLE_* feature macros (Subscriptions, Historizing,
+ * Alarms&Conditions, PubSub, MQTT), so the set of advertised
+ * Device.Capabilities.* nodes tracks the actual build configuration rather
+ * than being a static list. */
 UA_StatusCode model_build_amb_capabilities_and_requirements(UA_Server *server,
                                                                    UA_NodeId device_id)
 {

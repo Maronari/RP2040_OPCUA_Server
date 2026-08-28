@@ -1,3 +1,25 @@
+/**
+ * @file
+ * @brief RTC driver backed by the RP2350 Always-On (AON) timer.
+ *
+ * Responsibilities:
+ * - Track whether the AON timer currently holds a validly-set time
+ *   (g_rtc_valid), independent of the SDK's own running/not-running state.
+ * - On RP2040, bridge between Unix epoch seconds and the SDK's
+ *   `struct tm` calendar API with a self-contained Gregorian calendar
+ *   calculation (the RP2040 aon_timer API has no epoch-seconds entry
+ *   point); on other platforms (including RP2350) use the SDK's
+ *   `struct timespec`-based API directly.
+ *
+ * Ownership: g_rtc_initialized/g_rtc_valid are process-lifetime globals
+ * mirroring AON timer state; the AON timer hardware itself is the
+ * authoritative time source.
+ *
+ * Concurrency: no internal locking. Per docs/code/hardware.md, calls are
+ * expected from TimeTask; callers must not call rtc_driver_set_unix_time()
+ * concurrently with a read from another task without external
+ * synchronization.
+ */
 #include "drivers/rtc_driver.h"
 
 #include <limits.h>
@@ -8,6 +30,7 @@
 static bool g_rtc_initialized = false;
 static bool g_rtc_valid = false;
 
+/** @brief Gregorian leap-year test (divisible by 4, not by 100 unless also by 400). */
 static bool is_leap_year(int year)
 {
     if ((year % 4) != 0)
@@ -23,6 +46,7 @@ static bool is_leap_year(int year)
     return (year % 400) == 0;
 }
 
+/** @brief Days in the given 1-based @p month of @p year, accounting for leap February. */
 static uint8_t days_in_month(int year, int month)
 {
     static const uint8_t days_per_month[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -36,6 +60,7 @@ static uint8_t days_in_month(int year, int month)
 }
 
 #if PICO_RP2040
+/** @brief Decompose a Unix epoch-seconds value into a `struct tm` (UTC, no DST/yday). */
 static void unix_to_calendar_tm(uint32_t seconds, struct tm *calendar_time)
 {
     uint32_t days = seconds / 86400u;
@@ -67,6 +92,7 @@ static void unix_to_calendar_tm(uint32_t seconds, struct tm *calendar_time)
     calendar_time->tm_isdst = 0;
 }
 
+/** @brief Inverse of unix_to_calendar_tm(): `struct tm` (UTC) back to Unix epoch seconds. */
 static uint32_t calendar_tm_to_unix(const struct tm *calendar_time)
 {
     const int year = calendar_time->tm_year + 1900;
@@ -91,6 +117,7 @@ static uint32_t calendar_tm_to_unix(const struct tm *calendar_time)
            (uint32_t)calendar_time->tm_sec;
 }
 
+/** @brief Start or update the AON timer (calendar API) from Unix seconds; hardware side effect. */
 static bool rtc_driver_apply_unix_time(uint32_t seconds)
 {
     struct tm calendar_time = {0};
@@ -105,6 +132,7 @@ static bool rtc_driver_apply_unix_time(uint32_t seconds)
     return aon_timer_start_calendar(&calendar_time);
 }
 
+/** @brief Read the AON timer via the calendar API and convert to Unix seconds; 0 on read failure. */
 static uint32_t rtc_driver_read_unix_time(void)
 {
     struct tm calendar_time = {0};
@@ -117,11 +145,13 @@ static uint32_t rtc_driver_read_unix_time(void)
     return calendar_tm_to_unix(&calendar_time);
 }
 
+/** @brief RP2040 has no sub-second AON read; scales the whole-second value to microseconds. */
 static uint64_t rtc_driver_read_unix_time_us(void)
 {
     return (uint64_t)rtc_driver_read_unix_time() * 1000000ull;
 }
 #else
+/** @brief Start or update the AON timer (timespec API) from Unix seconds; hardware side effect. */
 static bool rtc_driver_apply_unix_time(uint32_t seconds)
 {
     struct timespec current_time = {
@@ -136,6 +166,7 @@ static bool rtc_driver_apply_unix_time(uint32_t seconds)
     return aon_timer_start(&current_time);
 }
 
+/** @brief Read the AON timer (timespec API); clamps to UINT32_MAX, 0 on failure/negative time. */
 static uint32_t rtc_driver_read_unix_time(void)
 {
     struct timespec current_time = {0};
@@ -153,6 +184,7 @@ static uint32_t rtc_driver_read_unix_time(void)
     return (uint32_t)current_time.tv_sec;
 }
 
+/** @brief Read the AON timer (timespec API) with native sub-second (ns) resolution. */
 static uint64_t rtc_driver_read_unix_time_us(void)
 {
     struct timespec current_time = {0};

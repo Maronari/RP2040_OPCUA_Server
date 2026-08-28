@@ -1,3 +1,30 @@
+/**
+ * @file
+ * @brief Compile-time static table mapping config_channel_driver_id_t values
+ *        to their driver_catalog_entry_t (default metadata, supported value
+ *        types, source validator, and telemetry_driver_vtbl_t).
+ *
+ * Responsibilities:
+ * - Builds g_driver_catalog once at compile time from the
+ *   FIRMWARE_ENABLE_NATIVE_*_DRIVER switches (drivers/CMakeLists.txt
+ *   options) -- a disabled driver is entirely absent from the compiled ELF,
+ *   not merely hidden at runtime.
+ * - Wires each catalog entry's driver_catalog_validate_source_fn to the
+ *   corresponding native driver's *_source_is_valid() function
+ *   (drivers/include/drivers/native_channel_driver.h) and its
+ *   telemetry_driver_vtbl_t to that driver's start/stop/read operations.
+ * - Computes/validates physical resource claims (ADC input, shared ADC
+ *   peripheral, GPIO) to catch configuration-time resource conflicts before
+ *   channel registration.
+ *
+ * Ownership: g_driver_catalog and the per-driver vtbl globals below have
+ * static storage duration for the process lifetime; entries are read-only
+ * after program startup.
+ *
+ * Concurrency: none needed -- every symbol here is immutable after start-up
+ * initialization (no runtime mutation of the catalog).
+ */
+
 #include "services/driver_catalog.h"
 
 #include <string.h>
@@ -15,6 +42,7 @@
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP; delegates to the native driver's own source validation (drivers/native_channel_driver.h). */
 static bool validate_internal_temp(uint8_t source_index, uint8_t source_flags)
 {
     return native_internal_temperature_source_is_valid(source_index, source_flags);
@@ -22,6 +50,7 @@ static bool validate_internal_temp(uint8_t source_index, uint8_t source_flags)
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE; delegates to the native driver's own source validation. */
 static bool validate_adc(uint8_t source_index, uint8_t source_flags)
 {
     return native_adc_voltage_source_is_valid(source_index, source_flags);
@@ -29,12 +58,18 @@ static bool validate_adc(uint8_t source_index, uint8_t source_flags)
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_GPIO_INPUT; delegates to the native driver's own source validation. */
 static bool validate_gpio(uint8_t source_index, uint8_t source_flags)
 {
     return native_gpio_input_source_is_valid(source_index, source_flags);
 }
 #endif
 
+/* Vtable dispatch tables: bind each native driver's start/stop/read
+ * operation functions (drivers/include/drivers/native_channel_driver.h)
+ * into the telemetry_driver_vtbl_t shape channel_manager.c calls through.
+ * No native driver defines .write -- none of these three drivers are
+ * writable. */
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
 static const telemetry_driver_vtbl_t g_internal_temp_driver = {
     .start = native_internal_temperature_start,
@@ -57,6 +92,10 @@ static const telemetry_driver_vtbl_t g_gpio_input_driver = {
 };
 #endif
 
+/* The compiled-in driver catalog. Order matches compile-time enablement of
+ * FIRMWARE_ENABLE_NATIVE_*_DRIVER; driver_catalog_count()/_get_by_index()
+ * index into this array directly, so it must never be reordered based on
+ * runtime state. */
 static const driver_catalog_entry_t g_driver_catalog[] = {
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
     {

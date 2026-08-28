@@ -1,3 +1,21 @@
+/**
+ * @file
+ * @brief RTC/SNTP time service; see
+ *        services/include/services/time_service.h for the public API
+ *        contract.
+ *
+ * Ownership:
+ * `g_status` (published time/sync status) and `g_initialized` are owned
+ * exclusively by this module.
+ *
+ * Concurrency:
+ * `g_status` is written only via `time_service_set_status()` and read only
+ * via `time_service_get_status()`, both under `taskENTER_CRITICAL`/
+ * `taskEXIT_CRITICAL`, so it is safe to call from any task. `g_initialized`
+ * is set once by time_service_init() before "TimeTask" starts and read
+ * afterward without synchronization (benign - written once before any
+ * reader task runs).
+ */
 #include "services/time_service.h"
 
 #include <string.h>
@@ -13,6 +31,7 @@
 static time_service_status_t g_status;
 static bool g_initialized = false;
 
+/** @brief Publishes @p status to `g_status` under a critical section. Sole writer of `g_status`. */
 static void time_service_set_status(const time_service_status_t *status)
 {
     taskENTER_CRITICAL();

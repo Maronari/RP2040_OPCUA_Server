@@ -1,3 +1,28 @@
+/**
+ * @file
+ * @brief Application-side implementation of the OTA Flash backend
+ *        (`ota_flash_backend.h`), used by the scheduled FreeRTOS
+ *        application (never the bootloader).
+ *
+ * Responsibilities:
+ * - Translate `ota_flash_backend_erase()`/`ota_flash_backend_program()`
+ *   calls into sector-erase / page-program requests against
+ *   `drivers/flash_operation_coordinator`, the shared serialization point
+ *   for all Flash access on the application side.
+ *
+ * Ownership:
+ * Stateless; holds no data of its own.
+ *
+ * Concurrency:
+ * Safe to call from any FreeRTOS task context: `flash_operation_coordinator`
+ * (see `drivers/include/drivers/flash_operation_coordinator.h`) serializes
+ * every erase/program call across the whole application via a mutex and
+ * blocks the calling task while Flash is busy. This is compiled only when
+ * `OTA_FLASH_BACKEND_APPLICATION` is linked; the bootloader links its own
+ * bare-metal implementation in `bootloader/main.c` instead (see
+ * `ota_flash_backend.h`).
+ */
+
 #include "ota_flash_backend.h"
 
 #include "drivers/flash_operation_coordinator.h"

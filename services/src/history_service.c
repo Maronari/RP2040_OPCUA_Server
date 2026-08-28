@@ -1,3 +1,30 @@
+/**
+ * @file
+ * @brief Per-channel PSRAM history ring implementation, mirrored to
+ *        `drivers/history_flash_backend.h`; see
+ *        services/include/services/history_service.h for the public API
+ *        contract.
+ *
+ * Ownership:
+ * `g_store` (PSRAM-allocated array of per-channel rings) and, on device,
+ * `g_flash_backend` are owned exclusively by this module. Off-device
+ * (host tests), `g_store` points at the static `g_host_store` instead of a
+ * PSRAM allocation.
+ *
+ * Concurrency:
+ * `g_history_mutex` (a static FreeRTOS mutex, 10 ms timeout -
+ * HISTORY_SERVICE_LOCK_TIMEOUT_MS) bounds every lock hold to O(1) (write/
+ * claim/lookup) or to one bounded chunk of a single channel's ring (read,
+ * HISTORY_SERVICE_READ_CHUNK_SAMPLES entries). The lock is never held
+ * across a whole channel scan, let alone across more than one channel -
+ * see history_service_read_channel_samples() for the generation-based
+ * consistency check this enables. The Flash append in
+ * history_service_record_channel_sample() happens strictly after the PSRAM
+ * write and its lock are released, so a slow Flash program/erase can never
+ * block other channels' PSRAM reads/writes. See
+ * docs/code/state-ownership.md ("История") for the authoritative
+ * description of this locking discipline.
+ */
 #include "services/history_service.h"
 
 #include <string.h>
@@ -13,6 +40,15 @@
 #include "drivers/history_flash_backend.h"
 #endif
 
+/**
+ * @brief One channel's fixed-capacity PSRAM sample ring plus its Flash
+ *        persistence status.
+ *
+ * An empty `channel_id[0] == '\0'` marks an unclaimed slot. `generation` is
+ * bumped whenever a write evicts the current oldest sample (i.e. the ring
+ * is full and wraps); readers use it to detect a stale continuation point
+ * or a mid-scan eviction (see history_service_read_channel_samples()).
+ */
 typedef struct
 {
     char channel_id[HISTORY_SERVICE_CHANNEL_ID_MAX_LEN]; /* empty string => unclaimed slot */
@@ -25,6 +61,7 @@ typedef struct
     history_service_channel_sample_t samples[HISTORY_SERVICE_CHANNEL_CAPACITY];
 } history_service_channel_ring_t;
 
+/** @brief Fixed array of HISTORY_SERVICE_MAX_CHANNELS independent channel rings; the service's entire PSRAM-resident state. */
 typedef struct
 {
     history_service_channel_ring_t channels[HISTORY_SERVICE_MAX_CHANNELS];
@@ -48,17 +85,20 @@ static history_flash_backend_t g_flash_backend;
 static bool g_flash_ready = false;
 #endif
 
+/** @brief Acquires `g_history_mutex` with a 10 ms timeout. @return true if acquired; false on timeout or if the mutex was never created. */
 static bool history_service_lock(void)
 {
     return g_history_mutex != NULL &&
            xSemaphoreTake(g_history_mutex, pdMS_TO_TICKS(HISTORY_SERVICE_LOCK_TIMEOUT_MS)) == pdTRUE;
 }
 
+/** @brief Releases `g_history_mutex`. @note Must only be called after a successful history_service_lock(). */
 static void history_service_unlock(void)
 {
     (void)xSemaphoreGive(g_history_mutex);
 }
 
+/** @brief Checks that @p channel_id is non-NULL, non-empty, and NUL-terminated within HISTORY_SERVICE_CHANNEL_ID_MAX_LEN. */
 static bool history_service_channel_id_is_bounded(const char *channel_id)
 {
     size_t length = 0u;
@@ -74,12 +114,17 @@ static bool history_service_channel_id_is_bounded(const char *channel_id)
     return length > 0u && length < HISTORY_SERVICE_CHANNEL_ID_MAX_LEN;
 }
 
+/** @brief NULL-safe string equality check for channel ids. */
 static bool history_service_ids_equal(const char *lhs, const char *rhs)
 {
     return lhs != NULL && rhs != NULL && strcmp(lhs, rhs) == 0;
 }
 
-/* Caller must hold the lock. Bounded to HISTORY_SERVICE_MAX_CHANNELS. */
+/**
+ * @brief Finds the ring slot bound to @p channel_id.
+ * @return Slot index, or HISTORY_SERVICE_MAX_CHANNELS if no ring is bound to this id.
+ * @note Caller must hold the lock. Bounded to HISTORY_SERVICE_MAX_CHANNELS.
+ */
 static size_t history_service_find_ring_locked(const char *channel_id)
 {
     for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
@@ -93,7 +138,13 @@ static size_t history_service_find_ring_locked(const char *channel_id)
     return HISTORY_SERVICE_MAX_CHANNELS;
 }
 
-/* Caller must hold the lock. Bounded to HISTORY_SERVICE_MAX_CHANNELS. */
+/**
+ * @brief Claims the first free ring slot for @p channel_id/@p value_type,
+ *        initializing it to an empty ring in READY restore status.
+ * @return Newly claimed slot index, or HISTORY_SERVICE_MAX_CHANNELS if no
+ *         free slot remains.
+ * @note Caller must hold the lock. Bounded to HISTORY_SERVICE_MAX_CHANNELS.
+ */
 static size_t history_service_claim_ring_locked(const char *channel_id,
                                                  telemetry_channel_value_type_t value_type)
 {
@@ -117,7 +168,15 @@ static size_t history_service_claim_ring_locked(const char *channel_id,
     return HISTORY_SERVICE_MAX_CHANNELS;
 }
 
-/* Caller must hold the lock. O(1). */
+/**
+ * @brief Appends @p sample to @p ring's write position, advancing (wrapping)
+ *        the write index and bumping `count`/`generation` as appropriate.
+ *
+ * Once `count` reaches HISTORY_SERVICE_CHANNEL_CAPACITY, every further push
+ * overwrites the oldest retained sample and bumps `generation` - this is
+ * the ring's wraparound point, and the sole place generation changes.
+ * @note Caller must hold the lock. O(1).
+ */
 static void history_service_push_locked(history_service_channel_ring_t *ring,
                                         const history_service_channel_sample_t *sample)
 {
@@ -133,6 +192,7 @@ static void history_service_push_locked(history_service_channel_ring_t *ring,
     }
 }
 
+/** @brief Checks whether a channel snapshot is eligible for historization: `HISTORIZED` flag set, non-STRING value type, and a bounded id. */
 static bool history_service_channel_is_historizable(const telemetry_channel_snapshot_t *snapshot)
 {
     const telemetry_channel_t *channel = &snapshot->channel;
@@ -143,11 +203,36 @@ static bool history_service_channel_is_historizable(const telemetry_channel_snap
 }
 
 #if defined(PICO_ON_DEVICE)
+/** @brief Closure passed to history_flash_backend_restore()'s callback, identifying which PSRAM ring to restore into. */
 typedef struct
 {
     history_service_channel_ring_t *ring;
 } history_service_restore_context_t;
 
+/**
+ * @brief Flash-backend restore callback: pushes one recovered Flash record
+ *        into the corresponding PSRAM ring.
+ *
+ * Invoked by `history_flash_backend_restore()` (from history_service_init(),
+ * on-device only) once per recovered record, in the backend's chosen order.
+ * Defensively drops a record whose encoded value type does not match the
+ * currently configured channel type, even though the record already passed
+ * the backend's own CRC/validity check - a type mismatch means the channel
+ * was reconfigured to a different type since the record was written.
+ * `recorded_at_ms` is set to 0 because the local monotonic clock is not
+ * reconstructible across reboot; debounce for restored channels effectively
+ * keys off the next live write only.
+ *
+ * @param user_context A `history_service_restore_context_t*`; ignored (no-op) if NULL or its `ring` is NULL.
+ * @param record Decoded Flash record; ignored (no-op) if NULL.
+ * @note Calls history_service_push_locked() (normally lock-required)
+ *       *without* holding `g_history_mutex`: history_service_init() runs
+ *       the whole Flash bind/restore pass outside the mutex (backend I/O
+ *       may be slow) and before setting `g_initialized = true`, so no
+ *       concurrent reader/writer can observe the ring mid-restore - see
+ *       the comment above the `#if defined(PICO_ON_DEVICE)` restore block
+ *       in history_service_init().
+ */
 static void history_service_restore_sample(void *user_context, const history_flash_backend_record_t *record)
 {
     history_service_restore_context_t *context = (history_service_restore_context_t *)user_context;
@@ -172,6 +257,16 @@ static void history_service_restore_sample(void *user_context, const history_fla
 }
 #endif
 
+/**
+ * @brief Claims a ring for every currently-configured, historization-eligible
+ *        channel that does not already have one.
+ *
+ * Iterates the full channel registry (via `channel_manager_copy_snapshot_by_index()`)
+ * up to HISTORY_SERVICE_MAX_CHANNELS, claiming a PSRAM ring for each
+ * eligible channel (history_service_channel_is_historizable()) not already
+ * bound. Called once from history_service_init(); does not itself touch Flash.
+ * @note Caller must hold the lock.
+ */
 static void history_service_bind_configured_channels_locked(void)
 {
     for (size_t index = 0u; index < HISTORY_SERVICE_MAX_CHANNELS; ++index)
@@ -453,6 +548,16 @@ bool history_service_get_channel_generation(const char *channel_id, uint32_t *ou
     return found;
 }
 
+/**
+ * @brief Checks whether a sample's source timestamp (converted to Unix
+ *        seconds) falls within [@p start_epoch_s, @p end_epoch_s].
+ *
+ * Both bounds 0 means unbounded (always matches). A single zero bound means
+ * "open" on that side only. If both are nonzero but out of order, the
+ * smaller/larger are used as the effective lower/upper bound (order-
+ * tolerant), so a caller-swapped range still produces a sane inclusive
+ * window rather than always failing to match.
+ */
 static bool history_service_sample_in_range(uint64_t sample_timestamp_unix_us,
                                             uint32_t start_epoch_s,
                                             uint32_t end_epoch_s)

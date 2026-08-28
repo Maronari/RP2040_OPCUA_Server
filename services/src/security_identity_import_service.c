@@ -1,3 +1,8 @@
+/**
+ * @file
+ * @brief Chunked device-identity (certificate + private key) import
+ * pipeline. See header for module-level docs.
+ */
 #include "services/security_identity_import_service.h"
 
 #include <string.h>
@@ -16,6 +21,7 @@
 
 #define SECURITY_IDENTITY_IMPORT_SERVICE_PACKAGE_MAGIC 0x31444953u /* "SID1" little-endian */
 
+/** Single in-flight import session; see `security_identity_import_service.h` file header for lifetime/ownership. */
 typedef struct
 {
     bool session_active;
@@ -27,6 +33,14 @@ typedef struct
     security_identity_import_service_result_t last_result;
 } security_identity_import_runtime_t;
 
+/**
+ * @brief Non-owning view of the certificate/private-key sub-slices inside a
+ * parsed "SID1" package buffer. Layout (20-byte header, little-endian):
+ * `uint32 magic | uint32 schema_version | uint32 certificate_size |
+ * uint32 private_key_size | uint32 reserved`, followed by
+ * `certificate_size` bytes of certificate then `private_key_size` bytes of
+ * private key.
+ */
 typedef struct
 {
     uint32_t schema_version;
@@ -36,8 +50,10 @@ typedef struct
     uint32_t private_key_size;
 } security_identity_import_package_view_t;
 
+/** The sole identity import session; owned by this module, one at a time. */
 static security_identity_import_runtime_t g_security_identity_import_runtime = {0};
 
+/** @brief Frees the staging buffer (if any) and resets the session fields to idle, preserving `last_result`. */
 static void security_identity_import_service_clear_session(void)
 {
     if (g_security_identity_import_runtime.payload_buffer != NULL)
@@ -60,6 +76,11 @@ static bool security_identity_import_service_payload_complete(void)
            g_security_identity_import_runtime.bytes_written == g_security_identity_import_runtime.expected_payload_size;
 }
 
+/**
+ * @brief Validates the staged package's CRC32 against the caller-declared
+ * `expected_payload_crc32`. Only meaningful once the payload is fully
+ * written; returns false for an incomplete or absent session.
+ */
 static bool security_identity_import_service_payload_crc32_matches(void)
 {
     if (!security_identity_import_service_payload_complete() ||
@@ -73,6 +94,7 @@ static bool security_identity_import_service_payload_crc32_matches(void)
            g_security_identity_import_runtime.expected_payload_crc32;
 }
 
+/** @brief Sniffs whether a certificate/key sub-blob is PEM-encoded ("-----BEGIN" prefix) vs. raw DER, to size the mbedTLS parse length. */
 static bool security_identity_import_service_payload_is_pem(const uint8_t *payload, size_t payload_size)
 {
     static const char pem_prefix[] = "-----BEGIN";
@@ -82,6 +104,7 @@ static bool security_identity_import_service_payload_is_pem(const uint8_t *paylo
            memcmp(payload, pem_prefix, sizeof(pem_prefix) - 1u) == 0;
 }
 
+/** @brief Reads a 4-byte little-endian `uint32_t` from @p data (package header field decode). */
 static uint32_t security_identity_import_service_read_u32_le(const uint8_t *data)
 {
     return ((uint32_t)data[0]) |
@@ -90,6 +113,14 @@ static uint32_t security_identity_import_service_read_u32_le(const uint8_t *data
            ((uint32_t)data[3] << 24u);
 }
 
+/**
+ * @brief Converts an mbedTLS X.509 time field to a Unix epoch second.
+ * @note Same algorithm and duplication as
+ * `security_trust_expiry_service_x509_time_to_epoch()` /
+ * `security_service_x509_time_to_epoch()` — each module inlines its own copy.
+ * @return false if any field is out of range or the resulting epoch second
+ * would not fit in a `uint32_t`.
+ */
 static bool security_identity_import_service_x509_time_to_epoch(const mbedtls_x509_time *time,
                                                                 uint32_t *out_epoch_s)
 {
@@ -139,6 +170,15 @@ static bool security_identity_import_service_x509_time_to_epoch(const mbedtls_x5
     return true;
 }
 
+/**
+ * @brief Copies @p source into a freshly heap-allocated, NUL-terminated
+ * buffer for mbedTLS parsing (unlike the trust-list/trust-expiry variants,
+ * this one always allocates and copies, even for DER input).
+ * @param out_size Set to `source_size + 1` for PEM input (mbedTLS wants the
+ * NUL included in the length) or `source_size` for DER input.
+ * @return false on invalid arguments or allocation failure. Caller must
+ * `vPortFree(*out_buffer)` on success.
+ */
 static bool security_identity_import_service_make_parse_buffer(const uint8_t *source,
                                                                size_t source_size,
                                                                uint8_t **out_buffer,
@@ -165,6 +205,23 @@ static bool security_identity_import_service_make_parse_buffer(const uint8_t *so
     return true;
 }
 
+/**
+ * @brief Decodes the staged buffer's 20-byte "SID1" package header and
+ * carves out non-owning certificate/private-key views (see
+ * `security_identity_import_package_view_t`).
+ *
+ * Validates: magic, schema version (must equal both the session's declared
+ * schema version and `SECURITY_IDENTITY_IMPORT_SERVICE_SCHEMA_VERSION`),
+ * certificate/key sizes are non-zero and within
+ * `SECURITY_SERVICE_CERT_MAX_LEN`/`SECURITY_SERVICE_KEY_MAX_LEN`, and that
+ * `header + certificate_size + private_key_size` exactly equals the staged
+ * payload size (no trailing/missing bytes).
+ *
+ * @param out_view Optional; zeroed first, populated only on
+ * `SECURITY_IDENTITY_IMPORT_RESULT_OK`.
+ * @return `SECURITY_IDENTITY_IMPORT_RESULT_OK`, `_PACKAGE_INVALID` (bad
+ * magic/sizes/length mismatch), or `_SCHEMA_MISMATCH`.
+ */
 static security_identity_import_service_result_t security_identity_import_service_parse_package(
     security_identity_import_package_view_t *out_view)
 {
@@ -229,6 +286,11 @@ static security_identity_import_service_result_t security_identity_import_servic
     return SECURITY_IDENTITY_IMPORT_RESULT_OK;
 }
 
+/**
+ * @brief Computes the next identity-generation counter value: one more than
+ * the larger of the snapshot's current active/pending identity generations.
+ * @return 1 if @p snapshot is NULL (treated as generation 0 baseline).
+ */
 static uint32_t security_identity_import_service_next_generation(const security_state_service_snapshot_t *snapshot)
 {
     uint32_t current = 0u;
@@ -245,6 +307,26 @@ static uint32_t security_identity_import_service_next_generation(const security_
     return current + 1u;
 }
 
+/**
+ * @brief Full validation pipeline for a staged identity package, in order:
+ * session/completeness -> CRC32 -> schema version -> package header parse
+ * -> certificate parse -> private key parse -> key-pair match
+ * (`UA_CertificateUtils_checkKeyPair`) -> application-URI match against
+ * `config_service_get()->product_instance_uri`
+ * (`UA_CertificateUtils_verifyApplicationUri`) -> (only if `time_service`
+ * reports a non-bad-quality time) certificate validity window check.
+ *
+ * @param out_report Optional; incrementally filled with whichever fields
+ * (certificate/key sizes, not-before/not-after, `time_check_performed`)
+ * were successfully determined before the first failure.
+ * @return `SECURITY_IDENTITY_IMPORT_RESULT_OK` if every check passes;
+ * otherwise the first failing check's result code (see
+ * `security_identity_import_service_result_t`).
+ * @note Allocates and frees temporary heap buffers for certificate/key
+ * parsing (`security_identity_import_service_make_parse_buffer()`) and
+ * mbedTLS contexts (`mbedtls_x509_crt`/`mbedtls_pk_context`) local to this
+ * call; nothing is retained afterward.
+ */
 static security_identity_import_service_result_t security_identity_import_service_validate_payload(
     security_identity_import_service_report_t *out_report)
 {
@@ -584,6 +666,15 @@ security_identity_import_service_result_t security_identity_import_service_valid
     return result;
 }
 
+/**
+ * @note Implementation detail not visible from the header contract: if
+ * `security_service_set_device_identity()` succeeds but the subsequent
+ * `security_state_service_get_snapshot()`/`_set_identity_generations()` call
+ * fails, that failure is swallowed (`(void)`-discarded) — the function still
+ * reports `SECURITY_IDENTITY_IMPORT_RESULT_OK`/`reboot_required = true`. The
+ * new certificate/key are committed either way; only the generation-counter
+ * bookkeeping in `security_state_service` may be left stale.
+ */
 security_identity_import_service_result_t security_identity_import_service_apply_staged(
     security_identity_import_service_report_t *out_report)
 {

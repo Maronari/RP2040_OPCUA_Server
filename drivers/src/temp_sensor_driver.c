@@ -1,3 +1,18 @@
+/**
+ * @file
+ * @brief On-die RP2350 temperature sensor driver (ADC input backed).
+ *
+ * Responsibilities:
+ * - Enable the ADC peripheral's internal temperature-sensor input.
+ * - Read and convert one raw ADC sample to degrees Celsius using the
+ *   datasheet reference curve.
+ *
+ * Ownership: no persistent state of its own -- the ADC peripheral itself is
+ * the only owned hardware resource, shared with adc_voltage_channel_driver.c.
+ *
+ * Concurrency: none; see temp_sensor_driver_read_celsius()'s header doc for
+ * the ADC-sharing caveat.
+ */
 #include "drivers/temp_sensor_driver.h"
 
 #include <stddef.h>

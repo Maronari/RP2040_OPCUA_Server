@@ -1,3 +1,53 @@
+/**
+ * @file
+ * @brief FreeRTOS application entry point for the `basic_profile` device
+ *        profile: bare-metal startup, `InitTask` service/task bootstrap
+ *        sequencing, and FreeRTOS hook implementations (fault/OOM/stack
+ *        overflow handling).
+ *
+ * Responsibilities:
+ * - `main()`: minimal pre-scheduler bring-up (clocks, LED, stdio/USB
+ *   console wait, PSRAM allocator, lwIP PSRAM heap, exception handlers),
+ *   then creates `InitTask` and starts the FreeRTOS scheduler. Deliberately
+ *   does almost nothing else directly — see `app_init_task()`.
+ * - `app_init_task()`: the actual bootstrap task. Initializes every
+ *   service (config, diagnostics, channels, network, sensors, history,
+ *   security, time, alarms), arms the watchdog, initializes the OPC UA
+ *   model configuration, creates the remaining worker tasks
+ *   (`NetworkTask`/`SensorTask`/`TimeTask`/`AlarmTask`/`OpcUaTask`/
+ *   `WatchdogTask`), acknowledges a pending OTA boot, then deletes itself.
+ * - Static device profile configuration (`g_basic_profile`): the
+ *   compile-time default configuration seeded into `config_service_init()`.
+ * - FreeRTOS hook implementations required by `FreeRTOSConfig.h`
+ *   (`vApplicationMallocFailedHook`, `vApplicationGetIdleTaskMemory`,
+ *   `vApplicationGetTimerTaskMemory`, `vApplicationStackOverflowHook`) and
+ *   the project's `configASSERT` handler (`app_assert_handler`).
+ *
+ * Ownership:
+ * Owns the six FreeRTOS worker tasks created here (`InitTask` transiently,
+ * then `NetworkTask`, `SensorTask` (if any channel is configured),
+ * `TimeTask`, `AlarmTask`, `OpcUaTask`, `WatchdogTask`) and the watchdog
+ * kick/enable state (`g_watchdog_kick_enabled`,
+ * `g_watchdog_timeout_ms_resolved`). Does not own any service's internal
+ * state — this file only sequences service `_init()` calls.
+ *
+ * Concurrency:
+ * `main()` runs pre-scheduler, single-threaded. `app_init_task()` runs as
+ * FreeRTOS task `"InitTask"` at the highest application priority
+ * (`INIT_TASK_PRIORITY`) but only briefly — it deletes itself
+ * (`vTaskDelete(NULL)`) once all services/tasks are created. All service
+ * `_init()` calls happen sequentially inside `InitTask`, before any worker
+ * task runs, so there is no cross-task race during this phase. Fault/hook
+ * handlers (`app_hardfault_handler` and friends, `vApplicationStackOverflowHook`,
+ * `vApplicationMallocFailedHook`) may run from arbitrary task or exception
+ * context and never return — see `docs/code/startup-flow.md` and
+ * `docs/code/freertos.md` for the full task table and ordering notes,
+ * including the documented gap that the watchdog is armed
+ * (`watchdog_driver_init()`) before any worker task exists to feed it, and
+ * that OTA boot acknowledgement is not a health check (see
+ * `docs/code/ota-bootloader.md#health-confirmation-and-rollback--current-gap`).
+ */
+
 #include <stdio.h>
 #include <string.h>
 
@@ -87,6 +137,11 @@
 #define DEVICE_PROFILE_LED_PIN 25
 #endif
 
+/** Compile-time default device profile configuration for this device
+ * target, passed to `config_service_init()` as the seed configuration used
+ * when no persisted configuration is found (see `services/config_service.h`
+ * for `device_profile_config_t` field semantics). Single channel: internal
+ * RP2350 temperature sensor. Immutable at runtime. */
 static const device_profile_config_t g_basic_profile = {
     .manufacturer = "RP2 OPC UA",
     .model = "BasicFirmwareProfile",
@@ -140,11 +195,30 @@ static const device_profile_config_t g_basic_profile = {
         },
     }};
 
+/** Effective watchdog timeout in milliseconds, resolved once in
+ * `app_init_task()` (`app_resolve_watchdog_timeout_ms()`) and read by
+ * `watchdog_task` to compute its kick interval. Written once during
+ * startup, read-only afterward — no synchronization needed. */
 static uint32_t g_watchdog_timeout_ms_resolved = 0u;
+/** Gate for `watchdog_task`'s periodic `watchdog_driver_kick()` calls.
+ * Set false by `app_stop_watchdog_kicks()` from any fault path (HardFault,
+ * assert, malloc failure, stack overflow) so the hardware watchdog is
+ * deliberately left un-kicked, forcing a watchdog reset as the recovery
+ * mechanism. `volatile` because it is written from fault/exception context
+ * and read from `watchdog_task`. */
 static volatile bool g_watchdog_kick_enabled = true;
 
 static void app_stop_watchdog_kicks(const char *reason);
 
+/**
+ * @brief Blocks (up to 15s) for a USB CDC console to connect before
+ *        continuing boot, so early boot log lines are not lost.
+ *
+ * If a console does connect, waits an additional 500ms to let the host
+ * terminal finish attaching before the first real log output. Always
+ * returns eventually (never blocks forever) so a device with no attached
+ * console still boots normally after the timeout.
+ */
 static void app_wait_for_usb_console(void)
 {
     const absolute_time_t deadline = make_timeout_time_ms(15000);
@@ -160,6 +234,13 @@ static void app_wait_for_usb_console(void)
     }
 }
 
+/**
+ * @brief Initializes the PSRAM heap allocator used by open62541 and logs the
+ *        result.
+ *
+ * @note Not fatal on failure: open62541 falls back to SRAM allocation if
+ *       PSRAM is unavailable; boot continues either way.
+ */
 static void app_init_psram_allocator(void)
 {
     if (psram_allocator_init())
@@ -176,6 +257,21 @@ static void app_init_psram_allocator(void)
     fflush(stdout);
 }
 
+/**
+ * @brief Terminal, non-returning fault loop: either blinks the onboard LED
+ *        at @p blink_period_ms or busy-spins forever.
+ *
+ * The watchdog is expected to already be stopped by the caller (see
+ * `app_stop_watchdog_kicks()`) so this loop is deliberately never fed,
+ * making a watchdog reset the actual recovery mechanism rather than
+ * anything this function does itself.
+ *
+ * @param blink_led If true and the LED driver is initialized, blink the LED
+ *        as a visible fault indicator; otherwise spin with
+ *        `tight_loop_contents()`.
+ * @param blink_period_ms Delay between LED toggles, in milliseconds.
+ * @note Never returns.
+ */
 static void app_fault_loop(bool blink_led, uint32_t blink_period_ms)
 {
     while (1)
@@ -192,6 +288,21 @@ static void app_fault_loop(bool blink_led, uint32_t blink_period_ms)
     }
 }
 
+/**
+ * @brief Common fatal-error entry point: stops watchdog kicks, logs @p tag,
+ *        then blinks the LED forever.
+ *
+ * Shared by every fault path in this file (hardfault/bus/usage/mem/secure
+ * fault handlers, `app_assert_handler()`, PSRAM/heap init failures,
+ * `vApplicationMallocFailedHook()`, `vApplicationStackOverflowHook()`).
+ *
+ * @param tag Short identifier logged as `[<tag>] fatal trap`; NULL is
+ *        logged as `"FAULT"`.
+ * @param blink_period_ms LED blink period passed through to
+ *        `app_fault_loop()`.
+ * @note Never returns. May be called from exception/interrupt context (a
+ *       hard-fault handler) as well as task context.
+ */
 static void app_fault_trap(const char *tag, uint32_t blink_period_ms)
 {
     app_stop_watchdog_kicks(tag);
@@ -200,33 +311,65 @@ static void app_fault_trap(const char *tag, uint32_t blink_period_ms)
     app_fault_loop(true, blink_period_ms);
 }
 
+/**
+ * @brief RP2040-target HardFault exception handler, installed via
+ *        `exception_set_exclusive_handler()` by
+ *        `app_install_exception_handlers()`.
+ *
+ * @note Runs in exception (fault) context, not a FreeRTOS task; never
+ *       returns.
+ */
 static void app_hardfault_handler(void)
 {
     app_fault_trap("HardFault", 50u);
 }
 
 #if PICO_RP2350
+/**
+ * @brief RP2350 MemManage fault handler. Currently unused: on RP2350
+ *        `app_install_exception_handlers()` intentionally leaves the
+ *        SDK-installed vectors in place, so this function is never wired
+ *        up (see that function's comment). Kept for future use.
+ */
 static void app_memmanage_handler(void)
 {
     app_fault_trap("MemManage", 75u);
 }
 
+/** @brief RP2350 BusFault handler; currently unused, see
+ * `app_memmanage_handler()`. */
 static void app_busfault_handler(void)
 {
     app_fault_trap("BusFault", 75u);
 }
 
+/** @brief RP2350 UsageFault handler; currently unused, see
+ * `app_memmanage_handler()`. */
 static void app_usagefault_handler(void)
 {
     app_fault_trap("UsageFault", 75u);
 }
 
+/** @brief RP2350 SecureFault handler; currently unused, see
+ * `app_memmanage_handler()`. */
 static void app_securefault_handler(void)
 {
     app_fault_trap("SecureFault", 75u);
 }
 #endif
 
+/**
+ * @brief Installs `app_hardfault_handler()` as the exclusive HardFault
+ *        handler, on non-RP2350 targets only.
+ *
+ * @note On `PICO_RP2350`, this is a deliberate no-op: the RP2350
+ *       Non-Secure-build SDK-installed exception vectors are left in place
+ *       to avoid interfering with USB bring-up while debugging early boot.
+ *       This means `app_memmanage_handler()`/`app_busfault_handler()`/
+ *       `app_usagefault_handler()`/`app_securefault_handler()` and even
+ *       `app_hardfault_handler()` are **not installed** on RP2350 builds
+ *       despite being defined above.
+ */
 static void app_install_exception_handlers(void)
 {
 #if PICO_RP2350
@@ -238,6 +381,13 @@ static void app_install_exception_handlers(void)
 #endif
 }
 
+/**
+ * @brief Logs current and historical-minimum FreeRTOS heap free bytes,
+ *        tagged with @p stage.
+ *
+ * @param stage Label identifying the calling point (e.g. "After services
+ *        init"), logged verbatim.
+ */
 static void print_heap_usage(const char *stage)
 {
     printf("[APP]\t\t%s, free heap=%u, min ever free=%u\n",
@@ -247,6 +397,13 @@ static void print_heap_usage(const char *stage)
     fflush(stdout);
 }
 
+/**
+ * @brief Reads and logs the current OTA state record for diagnostics, once
+ *        early in `main()`.
+ *
+ * Read-only: does not modify or acknowledge the OTA state (see
+ * `app_acknowledge_ota_boot_if_needed()` for that).
+ */
 static void app_log_ota_state(void)
 {
     ota_state_record_t record;
@@ -271,6 +428,25 @@ static void app_log_ota_state(void)
     fflush(stdout);
 }
 
+/**
+ * @brief If the OTA state record is `READY_TO_BOOT`, unconditionally resets
+ *        it to `IDLE`, marking the just-applied update as successfully
+ *        booted.
+ *
+ * Called once from `app_init_task()`, after every worker task has already
+ * been created and is running concurrently, immediately before `InitTask`
+ * deletes itself. **This is not a health check**: it does not verify that
+ * networking, OPC UA, or any other subsystem is actually functional — it
+ * only records that boot reached this point in `InitTask` without a
+ * watchdog reset having occurred first. See
+ * `docs/code/ota-bootloader.md#health-confirmation-and-rollback--current-gap`
+ * for the documented gap this represents relative to the `v0.6.0` roadmap
+ * goal.
+ *
+ * @note Silently no-ops if the record cannot be read, is not
+ *       `READY_TO_BOOT`, or the Flash write fails; no error is surfaced to
+ *       the caller in any case.
+ */
 static void app_acknowledge_ota_boot_if_needed(void)
 {
     ota_state_record_t record;
@@ -288,6 +464,26 @@ static void app_acknowledge_ota_boot_if_needed(void)
     }
 }
 
+/**
+ * @brief Creates a FreeRTOS task and registers it with the diagnostics
+ *        service, logging success or failure.
+ *
+ * Wraps `xTaskCreate()` with no task parameter (`pvParameters = NULL`) and
+ * registers the resulting handle via `diag_service_register_task()` so it
+ * shows up in task diagnostics (stack high-watermark, etc.). Used for every
+ * worker task created by `app_init_task()` except `WatchdogTask`, which is
+ * created directly with a parameter.
+ *
+ * @param entry_point Task entry function.
+ * @param name Task name; also used as the diagnostics registration key.
+ * @param stack_size Stack depth, in `StackType_t` words (see
+ *        `STACK_DEPTH_BYTES()`).
+ * @param priority FreeRTOS task priority.
+ * @param out_handle Receives the created task handle on success. Must not
+ *        be NULL (dereferenced via `*out_handle` on success).
+ * @return true if the task was created; false if `xTaskCreate()` failed
+ *         (typically heap exhaustion) — logged but not fatal to the caller.
+ */
 static bool create_task(TaskFunction_t entry_point,
                         const char *name,
                         configSTACK_DEPTH_TYPE stack_size,
@@ -313,6 +509,14 @@ static bool create_task(TaskFunction_t entry_point,
     return true;
 }
 
+/**
+ * @brief Resolves the effective watchdog timeout: the configured value if
+ *        non-zero, otherwise `APP_DEFAULT_WATCHDOG_TIMEOUT_MS`.
+ *
+ * @param config Active device profile configuration; may be NULL (falls
+ *        back to the default).
+ * @return Watchdog timeout in milliseconds, always non-zero.
+ */
 static uint32_t app_resolve_watchdog_timeout_ms(const device_profile_config_t *config)
 {
     if (config != NULL && config->watchdog_timeout_ms > 0u)
@@ -323,6 +527,22 @@ static uint32_t app_resolve_watchdog_timeout_ms(const device_profile_config_t *c
     return APP_DEFAULT_WATCHDOG_TIMEOUT_MS;
 }
 
+/**
+ * @brief Permanently disables `watchdog_task`'s periodic kicks, so the
+ *        hardware watchdog will reset the device instead of the current
+ *        fault being silently survived.
+ *
+ * Called from every fault path (`app_fault_trap()`, `app_assert_handler()`,
+ * `vApplicationMallocFailedHook()`, `vApplicationStackOverflowHook()`)
+ * before entering a terminal loop. Idempotent; safe to call multiple times
+ * or from exception context.
+ *
+ * @param reason Short description logged alongside the "watchdog armed for
+ *        recovery" message; may be NULL.
+ * @note Sets `g_watchdog_kick_enabled = false`, which `watchdog_task`
+ *       polls; there is no explicit synchronization beyond the `volatile`
+ *       qualifier on that flag.
+ */
 static void app_stop_watchdog_kicks(const char *reason)
 {
     g_watchdog_kick_enabled = false;
@@ -337,6 +557,28 @@ static void app_stop_watchdog_kicks(const char *reason)
 }
 
 #ifndef W5X00_DIAGNOSTIC_NO_OPCUA
+/**
+ * @brief If build-time device identity assets are compiled in
+ *        (`DEVICE_IDENTITY_PROVISIONING_ENABLED`), ensures the security
+ *        service's persisted certificate/private key match them, writing
+ *        them only if they differ.
+ *
+ * Compares the currently persisted device certificate and private key
+ * (`security_service_get_device_certificate()`/
+ * `..._get_device_private_key()`) byte-for-byte against the build-embedded
+ * `g_provisioned_device_certificate`/`g_provisioned_device_private_key`; if
+ * either differs (or is absent), overwrites persisted Flash storage via
+ * `security_service_set_device_identity()`. When
+ * `DEVICE_IDENTITY_PROVISIONING_ENABLED` is not defined, this compiles to a
+ * no-op that always returns true.
+ *
+ * @return true if the identity already matched or was successfully
+ *         (re)provisioned; false only if `security_service_set_device_identity()`
+ *         failed. Called from `app_init_task()`, logged but non-fatal on
+ *         failure.
+ * @note Involves a Flash write on mismatch (via `security_service`), only
+ *       once per boot when provisioning is enabled and assets changed.
+ */
 static bool provision_device_identity_if_configured(void)
 {
 #if DEVICE_IDENTITY_PROVISIONING_ENABLED
@@ -379,6 +621,18 @@ static bool provision_device_identity_if_configured(void)
     return true;
 }
 
+/**
+ * @brief If a build-time trust list is compiled in
+ *        (`DEVICE_TRUST_LIST_PROVISIONING_ENABLED`), ensures the security
+ *        service's persisted trust list matches it, writing it only if it
+ *        differs. Mirrors `provision_device_identity_if_configured()` but
+ *        for `g_provisioned_trust_list` /
+ *        `security_service_set_trust_list()`.
+ *
+ * @return true if the trust list already matched or was successfully
+ *         (re)provisioned; false only on a `security_service_set_trust_list()`
+ *         failure. No-op (returns true) when provisioning is not enabled.
+ */
 static bool provision_trust_list_if_configured(void)
 {
 #if DEVICE_TRUST_LIST_PROVISIONING_ENABLED
@@ -413,6 +667,22 @@ static bool provision_trust_list_if_configured(void)
 }
 #endif
 
+/**
+ * @brief FreeRTOS task entry point `"WatchdogTask"`: periodically kicks the
+ *        hardware watchdog to keep the device from resetting.
+ *
+ * Runs at `WATCHDOG_TASK_PRIORITY`, kick interval `min(1000ms,
+ * timeout_ms/2)` (so the watchdog is fed at least twice per timeout
+ * window). Created only if `watchdog_driver_is_enabled()` — see
+ * `app_init_task()`. Every fault path in this file sets
+ * `g_watchdog_kick_enabled = false` (via `app_stop_watchdog_kicks()`),
+ * which this loop checks each iteration to stop kicking and let the
+ * watchdog reset the device.
+ *
+ * @param argument Unused (task created with `pvParameters = NULL`).
+ * @note Runs for the lifetime of the application; never returns under
+ *       normal operation.
+ */
 static void watchdog_task(void *argument)
 {
     (void)argument;
@@ -429,6 +699,51 @@ static void watchdog_task(void *argument)
     }
 }
 
+/**
+ * @brief FreeRTOS task entry point `"InitTask"`: the actual application
+ *        bootstrap sequence, running after the scheduler has started.
+ *
+ * Runs once, at `INIT_TASK_PRIORITY` (the highest application priority),
+ * then self-deletes (`vTaskDelete(NULL)`). Sequence (fatal steps call
+ * `app_fault_loop()` and never return; others only log on failure and
+ * continue — see `docs/code/startup-flow.md` for the authoritative
+ * step-by-step table):
+ * 1. `flash_operation_coordinator_init()` — **fatal**.
+ * 2. `config_service_init(&g_basic_profile)` — **fatal**; resolves
+ *    `config_service_get()` for later use.
+ * 3. `diag_service_init()`, `config_import_service_init()`,
+ *    `firmware_update_service_init()`,
+ *    `security_identity_import_service_init()`/
+ *    `security_trust_import_service_init()` (OPC UA builds only).
+ * 4. `channel_manager_init()` — **fatal**.
+ * 5. `network_manager_init()`, `sensor_manager_init()` — log-only.
+ * 6. `history_service_init()` — **fatal**.
+ * 7. `security_service_init()` + build-time identity/trust provisioning
+ *    (`provision_device_identity_if_configured()`/
+ *    `provision_trust_list_if_configured()`) — log-only (OPC UA builds
+ *    only).
+ * 8. `time_service_init()`, `alarm_service_init()` — log-only.
+ * 9. Resolve and arm the hardware watchdog
+ *    (`watchdog_driver_init()`) — **armed here, before any worker task
+ *    exists to kick it** until `WatchdogTask` is created in step 11.
+ * 10. `opcua_model_init(&model_config)` — builds the in-memory OPC UA
+ *     server configuration only; the actual `UA_Server` instance is created
+ *     later inside `OpcUaTask` (OPC UA builds only).
+ * 11. Create worker tasks via `create_task()`: `NetworkTask` always;
+ *     `SensorTask` only if `channel_manager_count() > 0`; `TimeTask`,
+ *     `AlarmTask` always; `OpcUaTask` (OPC UA builds only); `WatchdogTask`
+ *     directly via `xTaskCreate()` if `watchdog_driver_is_enabled()`.
+ * 12. `app_acknowledge_ota_boot_if_needed()` — runs **after** every worker
+ *     task above is already created and running concurrently; not a health
+ *     check (see that function's documentation).
+ * 13. `vTaskDelete(NULL)` — this task ceases to exist.
+ *
+ * @param argument Unused (task created with `pvParameters = NULL`).
+ * @note Runs entirely in `InitTask` context; every service `_init()` call
+ *       here executes sequentially before any worker task starts, so there
+ *       is no cross-task race during this phase. Never returns (task
+ *       deletes itself).
+ */
 static void app_init_task(void *argument)
 {
     TaskHandle_t task_handle = NULL;
@@ -579,6 +894,27 @@ static void app_init_task(void *argument)
     vTaskDelete(NULL);
 }
 
+/**
+ * @brief Application entry point. Performs the minimal pre-scheduler
+ *        bring-up, then hands off almost all initialization to `InitTask`.
+ *
+ * Sequence: `platform_clock_init()` -> `led_driver_init()` ->
+ * `stdio_init_all()` -> `app_wait_for_usb_console()` (<=15s) ->
+ * `app_init_psram_allocator()` -> `app_install_exception_handlers()` ->
+ * `lwip_psram_heap_init()` (**fatal** via `app_fault_trap()` on failure) ->
+ * log boot banner + `app_log_ota_state()` -> create `"InitTask"`
+ * (**fatal** via `app_fault_loop()` if task creation fails) ->
+ * `vTaskStartScheduler()`.
+ *
+ * All storage, network, service, and OPC UA initialization happens inside
+ * `InitTask` *after* the scheduler starts — `main()` does not perform any
+ * of it directly. See `docs/code/startup-flow.md` for the full flowchart.
+ *
+ * @return Never returns under normal operation: `vTaskStartScheduler()`
+ *         does not return once the scheduler is running; the trailing
+ *         `tight_loop_contents()` loop is a defensive catch-all for the
+ *         (should-be-impossible) case that it does.
+ */
 int main(void)
 {
     TaskHandle_t init_task_handle = NULL;
@@ -630,6 +966,21 @@ int main(void)
     }
 }
 
+/**
+ * @brief Project-wide assertion failure handler (wired up as the
+ *        `configASSERT`/project assert target in `FreeRTOSConfig.h`).
+ *
+ * Stops watchdog kicks, logs the failing file/line, then enters the
+ * terminal fault loop. Not declared `static` because it is referenced from
+ * `FreeRTOSConfig.h` (outside this translation unit); no header in this
+ * file's assigned scope declares it.
+ *
+ * @param file Source file of the failed assertion; NULL logged as
+ *        `"unknown"`.
+ * @param line Source line of the failed assertion.
+ * @note Never returns. May be invoked from any task or interrupt context
+ *       depending on where the assertion fired.
+ */
 void app_assert_handler(const char *file, unsigned line)
 {
     app_stop_watchdog_kicks("assert");
@@ -638,6 +989,20 @@ void app_assert_handler(const char *file, unsigned line)
     app_fault_loop(true, 100u);
 }
 
+/**
+ * @brief FreeRTOS heap-allocation-failure hook, invoked automatically by
+ *        the FreeRTOS heap implementation whenever `pvPortMalloc()` cannot
+ *        satisfy a request (requires `configUSE_MALLOC_FAILED_HOOK` in
+ *        `FreeRTOSConfig.h`).
+ *
+ * Records `DIAG_FAULT_CODE_MALLOC_FAILED` via `diag_service_set_last_fault_code()`
+ * (surfaced through diagnostics for post-mortem inspection), stops watchdog
+ * kicks, logs detailed heap statistics, then enters the terminal fault
+ * loop.
+ *
+ * @note Called directly from within the FreeRTOS allocator, which may be in
+ *       an arbitrary task's context; never returns.
+ */
 void vApplicationMallocFailedHook(void)
 {
     HeapStats_t heap_stats = {0};
@@ -657,6 +1022,20 @@ void vApplicationMallocFailedHook(void)
     app_fault_loop(true, 250u);
 }
 
+/**
+ * @brief FreeRTOS static-allocation callback supplying memory for the Idle
+ *        task, required when `configSUPPORT_STATIC_ALLOCATION` is enabled.
+ *
+ * Provides statically-allocated (`.bss`, not heap) backing storage so the
+ * Idle task's creation cannot itself fail due to heap exhaustion.
+ *
+ * @param task_buffer Receives a pointer to a static `StaticTask_t` TCB.
+ * @param stack_buffer Receives a pointer to a static stack array of
+ *        `configMINIMAL_STACK_SIZE` words.
+ * @param stack_size Receives `configMINIMAL_STACK_SIZE`.
+ * @note Called once by the FreeRTOS kernel during `vTaskStartScheduler()`,
+ *       before any application task runs.
+ */
 void vApplicationGetIdleTaskMemory(StaticTask_t **task_buffer,
                                    StackType_t **stack_buffer,
                                    configSTACK_DEPTH_TYPE *stack_size)
@@ -668,6 +1047,16 @@ void vApplicationGetIdleTaskMemory(StaticTask_t **task_buffer,
     *stack_size = configMINIMAL_STACK_SIZE;
 }
 
+/**
+ * @brief FreeRTOS static-allocation callback supplying memory for the Timer
+ *        Service task; see `vApplicationGetIdleTaskMemory()` for the
+ *        equivalent Idle-task callback and its rationale.
+ *
+ * @param task_buffer Receives a pointer to a static `StaticTask_t` TCB.
+ * @param stack_buffer Receives a pointer to a static stack array of
+ *        `configTIMER_TASK_STACK_DEPTH` words.
+ * @param stack_size Receives `configTIMER_TASK_STACK_DEPTH`.
+ */
 void vApplicationGetTimerTaskMemory(StaticTask_t **task_buffer,
                                     StackType_t **stack_buffer,
                                     configSTACK_DEPTH_TYPE *stack_size)
@@ -679,6 +1068,20 @@ void vApplicationGetTimerTaskMemory(StaticTask_t **task_buffer,
     *stack_size = configTIMER_TASK_STACK_DEPTH;
 }
 
+/**
+ * @brief FreeRTOS stack-overflow hook, invoked automatically by the kernel
+ *        when it detects that a task's stack has overflowed (requires
+ *        `configCHECK_FOR_STACK_OVERFLOW` in `FreeRTOSConfig.h`).
+ *
+ * Records `DIAG_FAULT_CODE_STACK_OVERFLOW`, stops watchdog kicks, logs the
+ * offending task's name, then enters the terminal fault loop.
+ *
+ * @param task Handle of the overflowing task (unused beyond the `(void)`
+ *        cast — @p task_name is used for logging instead).
+ * @param task_name Name of the overflowing task.
+ * @note Called from kernel context at the point of detection, which may be
+ *       well after the actual overflow occurred; never returns.
+ */
 void vApplicationStackOverflowHook(TaskHandle_t task, char *task_name)
 {
     (void)task;

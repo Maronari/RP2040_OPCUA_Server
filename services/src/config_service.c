@@ -1,3 +1,33 @@
+/**
+ * @file
+ * @brief Implementation of the device configuration service: running/staged
+ * `device_profile_config_t` state, field normalization, revision counters,
+ * and the transactional apply/replace-and-save paths declared in
+ * `services/config_service.h`.
+ *
+ * Responsibilities:
+ * - Own the single PSRAM (or static fallback) block holding
+ *   `g_running_config`/`g_staged_config`/`g_default_config` plus a scratch
+ *   decode buffer for the persisted payload.
+ * - Normalize every candidate configuration (text NUL-termination, channel
+ *   defaulting/clamping, network/location defaults) before it can be staged
+ *   as running.
+ * - Load persisted configuration at boot via `config_store_service`/
+ *   `config_compat`, including one-shot migration from the legacy read-only
+ *   Flash importer.
+ *
+ * Ownership: all `device_profile_config_t` instances referenced here belong
+ * to `config_service`; see `services/config_service.h` for the pointer
+ * lifetime contract of `config_service_get()`/`config_service_get_staged()`.
+ *
+ * Concurrency: every read/write of `g_running_config`, `g_staged_config`,
+ * `g_running_revision`, `g_staged_revision`, and `g_runtime_apply_callback`
+ * is wrapped in `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`. Apply-style
+ * operations additionally take `g_transaction_active` via
+ * `config_service_begin_transaction()`/`config_service_end_transaction()` so
+ * only one such operation runs at a time; the runtime-apply callback and any
+ * Flash write always happen outside the critical section.
+ */
 #include "services/config_service.h"
 
 #include <stdio.h>
@@ -20,12 +50,28 @@
 _Static_assert(sizeof(device_profile_config_t) <= CONFIG_STORE_MAX_PAYLOAD_SIZE_BYTES,
                "device_profile_config_t must fit in one config storage slot");
 
+/**
+ * @brief Scratch decode buffer for the raw persisted payload read back from
+ * `config_store_load_active()`/`flash_storage_driver_load_partial()`, sized
+ * to the current (largest) `device_profile_config_t` layout so any frozen
+ * `config_compat` layout also fits.
+ */
 typedef union
 {
     uint8_t payload[sizeof(device_profile_config_t)];
     device_profile_config_t config;
 } config_service_persisted_scratch_t;
 
+/**
+ * @brief Single allocation holding all configuration-service runtime state.
+ *
+ * Owner: `config_service`, lifetime from `config_service_init()` until
+ * reboot. Allocated from PSRAM on `WAVESHARE_CORE2350B_16MB_PSRAM8MB`
+ * builds (`g_config_state`), or a static fallback instance otherwise
+ * (`g_config_state_fallback`) — kept out of the default `.bss`/stack budget
+ * on the PSRAM target because `device_profile_config_t` (three copies, plus
+ * scratch) is large. Synchronization: see file-level comment.
+ */
 typedef struct
 {
     device_profile_config_t running_config;
@@ -49,6 +95,12 @@ static uint32_t g_staged_revision = 0u;
 static config_service_runtime_apply_fn g_runtime_apply_callback;
 static bool g_transaction_active;
 
+/**
+ * @brief Attempts to acquire the single-flight apply-transaction lock.
+ * @return true if `g_transaction_active` was false and is now claimed by the
+ * caller; false if another apply-style transaction is already in progress.
+ * @note Synchronized with `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
+ */
 static bool config_service_begin_transaction(void)
 {
     bool acquired = false;
@@ -62,6 +114,10 @@ static bool config_service_begin_transaction(void)
     return acquired;
 }
 
+/**
+ * @brief Releases the single-flight apply-transaction lock.
+ * @note Synchronized with `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`.
+ */
 static void config_service_end_transaction(void)
 {
     taskENTER_CRITICAL();
@@ -74,6 +130,13 @@ static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
     return value >= -720 && value <= 840;
 }
 
+/**
+ * @brief Forces the last byte of a fixed-size text buffer to NUL.
+ * @param text Buffer to terminate; no-op if NULL.
+ * @param size Buffer capacity in bytes; no-op if 0.
+ * @note Does not scan for or reject embedded NULs — only guarantees the
+ * buffer is not read out-of-bounds by later string operations.
+ */
 static void config_service_force_terminated(char *text, size_t size)
 {
     if (text == NULL || size == 0u)
@@ -84,11 +147,17 @@ static void config_service_force_terminated(char *text, size_t size)
     text[size - 1u] = '\0';
 }
 
-/*
+/**
+ * @brief Overwrites `fw_revision`/`build_time`/`git_hash` in @p config with
+ * the values from the compiled default profile.
+ *
  * Firmware provenance belongs to the running image, not to the persisted
- * device configuration.  A configuration slot may have been written by an
- * older firmware image, so retain its configurable fields but always expose
- * the identity embedded in the current compiled profile.
+ * device configuration. A configuration slot may have been written by an
+ * older firmware image, so this retains its other configurable fields but
+ * always exposes the identity embedded in the current compiled profile.
+ * Called from `config_service_normalize()`, i.e. on every normalize pass.
+ * @param config Configuration to patch in place; no-op if NULL or if
+ * `config_service_init()` was never given a valid `defaults` argument.
  */
 static void config_service_apply_runtime_identity(device_profile_config_t *config)
 {
@@ -161,6 +230,12 @@ static bool config_service_ipv4_is_zero(const uint8_t address[4])
            (address[0] == 0u && address[1] == 0u && address[2] == 0u && address[3] == 0u);
 }
 
+/**
+ * @brief Forces NUL-termination on every fixed-size text field of @p config.
+ * @param config Configuration to patch in place; no-op if NULL.
+ * @note Does not validate content, only bounds; called at the start of
+ * `config_service_normalize()`.
+ */
 static void config_service_normalize_text_fields(device_profile_config_t *config)
 {
     if (config == NULL)
@@ -190,6 +265,35 @@ static void config_service_normalize_text_fields(device_profile_config_t *config
                                     sizeof(config->operational_location_path));
 }
 
+/**
+ * @brief Normalizes and defaults a single channel slot in place.
+ *
+ * Behavior:
+ * - `in_use == 0` zeroes the entire slot and returns.
+ * - Unknown `driver_id` (not found in `driver_catalog`), or a driver-refused
+ *   `source_index`/`source_flags` combination, leaves the slot otherwise
+ *   untouched (aside from text termination) so downstream validation can
+ *   reject it explicitly.
+ * - `flags == 0` (a never-configured slot) adopts the driver's default
+ *   kind/value-type/flags; a non-zero `flags` is left as-is so an explicit
+ *   invalid/unsupported value set by a caller is never silently coerced —
+ *   validation must reject it instead.
+ * - Empty id/name/description/unit are filled with generated defaults
+ *   (`channel.<n>`, `Channel<n>`, etc.) or the driver's default unit.
+ * - Zero sample/publish/history periods default to 1000 ms (publish/history
+ *   further default to the sample period).
+ * - Non-analog sources force `scale = 1.0`, `offset = 0.0`, and clear
+ *   `has_minimum`/`has_maximum`.
+ * - `critical_threshold` is clamped up to at least `warning_threshold`;
+ *   symmetrically, `low_low_threshold` is clamped down to at most
+ *   `low_threshold`. `alarm_hysteresis` is clamped to `>= 0.0`.
+ * - `settings.enabled == false` clears `TELEMETRY_CHANNEL_FLAG_ENABLED` in
+ *   `flags`.
+ *
+ * @param channel Channel slot to normalize in place; no-op if NULL.
+ * @param index Zero-based slot index, used only to generate default
+ * id/name/description text.
+ */
 static void config_service_normalize_channel(config_channel_definition_t *channel, size_t index)
 {
     const driver_catalog_entry_t *driver = NULL;
@@ -307,6 +411,13 @@ static void config_service_normalize_channel(config_channel_definition_t *channe
     }
 }
 
+/**
+ * @brief Fills an empty `serial_number` from the RP2350's factory-programmed
+ * unique board ID, hex-encoded.
+ * @param config Configuration to patch in place; no-op if NULL or if
+ * `serial_number` is already non-empty.
+ * @note Reads hardware identity via `pico_get_unique_board_id()`.
+ */
 static void config_service_populate_serial_number(device_profile_config_t *config)
 {
     pico_unique_board_id_t board_id;
@@ -333,6 +444,14 @@ static void config_service_populate_serial_number(device_profile_config_t *confi
     }
 }
 
+/**
+ * @brief Fills an empty `product_instance_uri` as `urn:rp2-opcua:<serial>`
+ * (or `...:device` if no serial number is set).
+ * @param config Configuration to patch in place; no-op if NULL or if
+ * `product_instance_uri` is already non-empty.
+ * @note Must run after `config_service_populate_serial_number()` in the same
+ * normalize pass to pick up a freshly generated serial number.
+ */
 static void config_service_populate_product_instance_uri(device_profile_config_t *config)
 {
     if (config == NULL || config->product_instance_uri[0] != '\0')
@@ -347,6 +466,25 @@ static void config_service_populate_product_instance_uri(device_profile_config_t
     config->product_instance_uri[sizeof(config->product_instance_uri) - 1u] = '\0';
 }
 
+/**
+ * @brief Full normalization pass applied to every configuration candidate
+ * before it can be validated/activated/persisted.
+ *
+ * Order: NUL-terminate text fields -> clamp timezone/port/network-mode to
+ * valid defaults -> default static netmask/DNS if zero -> mirror
+ * device_name/opcua_hostname when only one is set -> default NTP/MQTT
+ * broker/topic -> normalize every channel slot
+ * (`config_service_normalize_channel()`) -> populate serial number and
+ * product instance URI -> validate/mirror the two location-path fields
+ * against the legacy `location` field -> reapply runtime firmware identity
+ * (`config_service_apply_runtime_identity()`, always last so nothing above
+ * can override it).
+ *
+ * @param config Configuration to normalize in place; no-op if NULL.
+ * @note Pure in-memory transform — never touches Flash or hardware other
+ * than reading the unique board ID via
+ * `config_service_populate_serial_number()`.
+ */
 static void config_service_normalize(device_profile_config_t *config)
 {
     if (config == NULL)
@@ -454,6 +592,11 @@ static void config_service_normalize(device_profile_config_t *config)
     config_service_apply_runtime_identity(config);
 }
 
+/* Two independent recovery layers: the current-schema config-store slot
+ * pair (preferred), then a one-shot read-only legacy importer whose result
+ * is immediately re-persisted through the normal config-store path so this
+ * fallback is only ever exercised on the very first boot after upgrading
+ * from a pre-config-store layout. */
 bool config_service_init(const device_profile_config_t *defaults)
 {
     bool persisted_requires_migration = false;

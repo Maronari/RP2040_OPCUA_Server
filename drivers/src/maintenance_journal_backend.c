@@ -1,3 +1,37 @@
+/**
+ * @file
+ * @brief Implementation of the transactional maintenance-journal Flash
+ *        backend (see drivers/include/drivers/maintenance_journal_backend.h
+ *        for the public contract and docs/maintenance_journal.md for the
+ *        full schema/recovery specification).
+ *
+ * Responsibilities:
+ * - Encode/decode 256-byte sector headers (epoch/generation/predecessor
+ *   chain) and 1024-byte record slots (3 body pages + 1 commit page).
+ * - Recover the single authoritative "active" record by scanning all 8
+ *   sectors, validating the header hash-chain, detecting ambiguous/forked
+ *   generations, and replaying the record state-machine transition rules
+ *   (record_follows()) to distinguish a genuine journal from corrupted or
+ *   foreign Flash contents.
+ * - Append new records with a strict phase order (program body pages, read
+ *   back and verify, program the commit page exactly once, classify the
+ *   result) so a power loss at any point leaves physical Flash in a state
+ *   recovery can unambiguously classify.
+ * - Reclaim (erase) whole sectors once retained-record count exceeds
+ *   MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS, never touching a sector that
+ *   holds the active record, an unknown-schema record, or a still-retained
+ *   record.
+ *
+ * Ownership: all large scratch buffers (g_journal_header_page,
+ * g_journal_slot_page, g_journal_verify_page, g_journal_headers,
+ * g_journal_records, g_journal_decoded_record) are static internal SRAM,
+ * deliberately never placed on a FreeRTOS task stack.
+ *
+ * Concurrency: none -- see maintenance_journal_backend_t's doc comment in
+ * the header for the single-task-caller assumption. The static scratch
+ * buffers above make concurrent calls into this file from two tasks unsafe
+ * even beyond the backend struct itself.
+ */
 #include "drivers/maintenance_journal_backend.h"
 
 #include <limits.h>
@@ -8,6 +42,7 @@
 #include "ota_layout.h"
 #endif
 
+/** @brief Byte offsets of fields within one 256-byte sector header page. */
 enum
 {
     HEADER_OFFSET_MAGIC = 0u,
@@ -22,14 +57,18 @@ enum
     HEADER_OFFSET_CRC = 252u
 };
 
+/** @brief Byte offsets used by classify_commit() to peek a record's schema before full decode. */
 enum { RECORD_OFFSET_MAGIC = 0u, RECORD_OFFSET_SCHEMA = 4u };
 
+/** @brief Decoded classification of one sector header page. */
 typedef enum { HEADER_ERASED, HEADER_VALID, HEADER_INVALID, HEADER_UNKNOWN } header_state_t;
+/** @brief Decoded sector header: generation-chain identity used by recovery to build the sector graph. */
 typedef struct
 {
     header_state_t state;
     uint64_t epoch, generation, predecessor_epoch, predecessor_generation;
 } sector_header_t;
+/** @brief Physical location + logical identity of one scanned record slot, used during recovery/reclamation. */
 typedef struct
 {
     uint8_t sector;
@@ -39,8 +78,21 @@ typedef struct
     uint64_t sequence;
 } scan_record_t;
 
-/* Production uses these, so neither codec nor Flash-operation temporary pages
- * consume a task stack.  They are intentionally in normal .bss/internal SRAM. */
+/*
+ * Production uses these, so neither codec nor Flash-operation temporary pages
+ * consume a task stack.  They are intentionally in normal .bss/internal SRAM.
+ *
+ * g_journal_header_page/g_journal_slot_page/g_journal_verify_page: one-page
+ * (256/1024/1024-byte) scratch reused across every read/encode/verify call.
+ * g_journal_headers: decoded state of all 8 sector headers, refreshed each
+ * maintenance_journal_backend_recover() call.
+ * g_journal_records: the bounded (<=24) physical scan-record set built by
+ * recover() and mutated in place by append()/reclamation.
+ * g_journal_decoded_record: single-record decode scratch, overwritten by
+ * every codec decode call in this file -- never retained across calls.
+ *
+ * None of these are reentrant-safe; see the file-level concurrency note.
+ */
 static uint8_t g_journal_header_page[MAINTENANCE_JOURNAL_HEADER_SIZE];
 static uint8_t g_journal_slot_page[MAINTENANCE_JOURNAL_RECORD_SLOT_SIZE];
 static uint8_t g_journal_verify_page[MAINTENANCE_JOURNAL_RECORD_SLOT_SIZE];
@@ -57,8 +109,15 @@ static void write_u64(uint8_t *p, uint64_t v) { for (size_t i = 0; i < 8u; ++i) 
 static bool erased(const uint8_t *p, size_t n) { for (size_t i = 0; i < n; ++i) if (p[i] != 0xffu) return false; return true; }
 static uint32_t sector_offset(uint8_t s) { return (uint32_t)s * MAINTENANCE_JOURNAL_SECTOR_SIZE; }
 static uint32_t slot_offset(uint8_t s, uint8_t slot) { return sector_offset(s) + MAINTENANCE_JOURNAL_HEADER_SIZE + (uint32_t)slot * MAINTENANCE_JOURNAL_RECORD_SLOT_SIZE; }
+/** @brief Serial-number ("RFC 1982"-style) comparison: true if @p a is strictly newer than @p b, tolerating wraparound. */
 static bool serial_newer(uint64_t a, uint64_t b) { const uint64_t d = a - b; return d != 0u && d < (UINT64_C(1) << 63u); }
+/** @brief True if @p a and @p b are equal or exactly antipodal (2^63 apart) under serial-number comparison -- an ambiguous ordering that must be treated as corruption. */
 static bool serial_unordered(uint64_t a, uint64_t b) { return a == b || (a - b) == (UINT64_C(1) << 63u); }
+/**
+ * @brief Track the highest (epoch, sequence) pair observed anywhere on
+ *        Flash, including non-exact/uncommitted candidates, so append()
+ *        never reissues a sequence number that was ever attempted.
+ */
 static void note_allocated(maintenance_journal_backend_t *b, uint64_t epoch, uint64_t sequence)
 {
     if (b->allocated_epoch != epoch || b->allocated_sequence == 0u ||
@@ -68,6 +127,7 @@ static void note_allocated(maintenance_journal_backend_t *b, uint64_t epoch, uin
         b->allocated_sequence = sequence;
     }
 }
+/** @brief Order two scan_record_t by (epoch, sequence) using serial-number comparison; sets *unordered if the comparison is ambiguous (see serial_unordered()). */
 static bool tuple_newer(const scan_record_t *a, const scan_record_t *b, bool *unordered)
 {
     if (a->epoch != b->epoch) { *unordered = serial_unordered(a->epoch, b->epoch); return serial_newer(a->epoch, b->epoch); }
@@ -75,6 +135,16 @@ static bool tuple_newer(const scan_record_t *a, const scan_record_t *b, bool *un
     return serial_newer(a->sequence, b->sequence);
 }
 
+/**
+ * @brief Decode and validate one 256-byte sector header page.
+ * @param index Physical sector index this header is expected to self-report
+ *        (checked against the stored HEADER_OFFSET_SECTOR byte).
+ * @return HEADER_ERASED if fully 0xFF; HEADER_UNKNOWN if the magic matches
+ *         but format/version is unrecognized; HEADER_INVALID if magic,
+ *         length, sector-index, padding, or CRC fail, or epoch/generation
+ *         are reserved (0 or UINT64_MAX); HEADER_VALID otherwise (fields
+ *         copied into @p out).
+ */
 static header_state_t decode_header(const uint8_t page[256], uint8_t index, sector_header_t *out)
 {
     if (erased(page, MAINTENANCE_JOURNAL_HEADER_SIZE)) return HEADER_ERASED;
@@ -91,6 +161,7 @@ static header_state_t decode_header(const uint8_t page[256], uint8_t index, sect
     return HEADER_VALID;
 }
 
+/** @brief Encode one 256-byte sector header page (magic/format/version/length/epoch/generation/predecessor chain/CRC), inverse of decode_header(). */
 static void encode_header(uint8_t page[256], uint8_t index, uint64_t epoch, uint64_t generation, uint64_t pe, uint64_t pg)
 {
     memset(page, 0xff, MAINTENANCE_JOURNAL_HEADER_SIZE);
@@ -112,6 +183,18 @@ maintenance_journal_commit_state_t maintenance_journal_backend_classify_commit(c
     return maintenance_journal_codec_decode(scratch, 1024u, &decoded) == MAINTENANCE_JOURNAL_CODEC_OK ? MAINTENANCE_JOURNAL_COMMIT_COMMITTED : MAINTENANCE_JOURNAL_COMMIT_CORRUPT;
 }
 
+/**
+ * @brief Common exit path for every mutating/recovering entry point:
+ *        record last_error, mirror retained_record_count, and recompute
+ *        capacity_state from mutations_blocked/erased_sector_count.
+ *
+ * Called at the return of every public backend function so `b`'s
+ * diagnostic fields (last_error, capacity_state, retained_record_count)
+ * are always self-consistent with the result being returned, regardless of
+ * which internal path produced it.
+ *
+ * @return @p result, unchanged (pass-through, for `return finish(b, X);`).
+ */
 static maintenance_journal_backend_result_t finish(maintenance_journal_backend_t *b,
                                                     maintenance_journal_backend_result_t result)
 {
@@ -142,8 +225,16 @@ void maintenance_journal_backend_init(maintenance_journal_backend_t *b, const ma
     b->logical_generation = 1u;
 }
 
+/** @brief Read and decode sector @p sector's header page via the backend's read callback. @return false only on a storage read failure (any decoded header_state_t, including HEADER_INVALID, is still true). */
 static bool read_header(const maintenance_journal_backend_t *b, uint8_t sector, sector_header_t *h)
 { return b->storage.read(b->storage.context, sector_offset(sector), g_journal_header_page, 256u) && (h->state = decode_header(g_journal_header_page, sector, h), true); }
+/**
+ * @brief Program a new sector header and read-verify it decodes to exactly
+ *        the requested epoch/generation/predecessor chain.
+ * @return false if the program call fails, the read-back fails, or the
+ *         decoded header does not exactly match what was requested
+ *         (defense against a torn/partial header program).
+ */
 static bool write_header(maintenance_journal_backend_t *b, uint8_t s, uint64_t e, uint64_t g, uint64_t pe, uint64_t pg)
 {
     sector_header_t h; encode_header(g_journal_header_page, s, e, g, pe, pg);
@@ -151,6 +242,7 @@ static bool write_header(maintenance_journal_backend_t *b, uint8_t s, uint64_t e
     return h.state == HEADER_VALID && h.epoch == e && h.generation == g && h.predecessor_epoch == pe && h.predecessor_generation == pg;
 }
 
+/** @brief Read and codec-decode the full 1024-byte record slot @p scan identifies. @return false on a storage read or codec decode failure. */
 static bool read_scan_record(const maintenance_journal_backend_t *b,
                              const scan_record_t *scan,
                              maintenance_journal_record_t *out)
@@ -162,12 +254,14 @@ static bool read_scan_record(const maintenance_journal_backend_t *b,
                                             out) == MAINTENANCE_JOURNAL_CODEC_OK;
 }
 
+/** @brief Byte-exact comparison of two maintenance_service_snapshot_t values. */
 static bool snapshot_equal(const maintenance_service_snapshot_t *left,
                            const maintenance_service_snapshot_t *right)
 {
     return memcmp(left, right, sizeof(*left)) == 0;
 }
 
+/** @brief The implicit epoch-1/sequence-1 predecessor of every fresh journal, used as record_follows()'s anchor when no prior record exists (empty Flash). */
 static const maintenance_journal_record_t g_immutable_initial_record = {
     .epoch = 1u,
     .snapshot = {
@@ -177,12 +271,14 @@ static const maintenance_journal_record_t g_immutable_initial_record = {
     }
 };
 
+/** @brief True if two activities share the same operation_id (identity, not content). */
 static bool activity_identity_equal(const maintenance_activity_t *left,
                                     const maintenance_activity_t *right)
 {
     return memcmp(left->operation_id, right->operation_id, sizeof(left->operation_id)) == 0;
 }
 
+/** @brief True if two activities' planning fields (date/downtime/method/supplier/personnel) are identical -- used to verify a PLAN->START transition did not silently alter the plan. */
 static bool activity_planning_equal(const maintenance_activity_t *left,
                                     const maintenance_activity_t *right)
 {
@@ -193,6 +289,7 @@ static bool activity_planning_equal(const maintenance_activity_t *left,
            memcmp(left->personnel, right->personnel, sizeof(left->personnel)) == 0;
 }
 
+/** @brief True if two activities' completion fields (configuration_changed/parts/result) are identical -- used to verify a state transition that should not touch completion data left it untouched. */
 static bool activity_completion_equal(const maintenance_activity_t *left,
                                       const maintenance_activity_t *right)
 {
@@ -206,6 +303,7 @@ static bool activity_completion_equal(const maintenance_activity_t *left,
            memcmp(left->result, right->result, sizeof(left->result)) == 0;
 }
 
+/** @brief True if @p activity is exactly the empty/default state a freshly service_created PLAN transition must produce (no parts, no completion result, configuration_changed false). */
 static bool plan_activity_is_service_created(const maintenance_activity_t *activity)
 {
     static const maintenance_activity_t empty_activity = {0};
@@ -219,9 +317,20 @@ static bool plan_activity_is_service_created(const maintenance_activity_t *activ
            memcmp(activity->result, empty_activity.result, sizeof(activity->result)) == 0;
 }
 
-/* Codec validation establishes canonical bytes.  Recovery additionally
- * establishes that those bytes describe a state-machine transition which the
- * service could have committed. */
+/**
+ * @brief Verify a decoded record's operation/type/state combination is one
+ *        the service state machine could actually have committed.
+ *
+ * Codec validation (maintenance_journal_codec_decode()) establishes
+ * canonical bytes; this additionally establishes that those bytes describe
+ * a legal result state for the claimed operation (e.g. a PLAN/RESCHEDULE
+ * operation must land in state PLANNED). Command time must equal the
+ * snapshot's committed timestamp and the snapshot must carry activity data.
+ *
+ * @return false if command/committed timestamps disagree, has_activity is
+ *         false, or the operation/type/state combination is not one of the
+ *         four recognized legal outcomes; true otherwise.
+ */
 static bool record_has_valid_result_state(const maintenance_journal_record_t *record)
 {
     if (record->command_time_utc_100ns != record->snapshot.committed_at_utc_100ns ||
@@ -249,6 +358,21 @@ static bool record_has_valid_result_state(const maintenance_journal_record_t *re
     }
 }
 
+/**
+ * @brief Verify @p record is a legal state-machine successor of @p previous.
+ *
+ * This is the core recovery-chain validation: it both accepts a same-epoch
+ * revision+1 SNAPSHOT record whose operation performs a legal transition
+ * (PLAN/RESCHEDULE/START/FINISH, each with its own precondition on
+ * `previous`'s state and activity-field invariants), and accepts a
+ * cross-epoch RESET record (epoch+1, sequence 1, same revision/snapshot
+ * content as `previous`, opening a new epoch without changing workflow
+ * state). Any other combination is rejected.
+ *
+ * @return false if record_has_valid_result_state(record) fails, or the
+ *         epoch/revision/operation-specific transition rules do not hold
+ *         against @p previous; true otherwise.
+ */
 static bool record_follows(const maintenance_journal_record_t *previous,
                            const maintenance_journal_record_t *record)
 {
@@ -306,6 +430,20 @@ static bool record_follows(const maintenance_journal_record_t *previous,
     }
 }
 
+/**
+ * @brief Validate the earliest-surviving record in the recovered chain,
+ *        which has no @c previous record still on Flash to check against.
+ *
+ * For a true first-generation sector (no predecessor recorded), the record
+ * must be sequence 1 and a legal record_follows() successor of the
+ * synthetic g_immutable_initial_record. For a first-generation sector that
+ * *does* have a predecessor (i.e. this is a RESET epoch whose predecessor
+ * sector was already reclaimed), only its RESET shape is checked, since the
+ * predecessor's actual content is gone. For a later generation within the
+ * same epoch (predecessor sectors may have been reclaimed), only the record
+ * type is checked -- record_follows() validates its successor fully once a
+ * newer record exists to check against.
+ */
 static bool first_retained_record_is_valid(const sector_header_t *header,
                                            const maintenance_journal_record_t *record)
 {
@@ -320,6 +458,25 @@ static bool first_retained_record_is_valid(const sector_header_t *header,
     return record->type == MAINTENANCE_JOURNAL_RECORD_SNAPSHOT;
 }
 
+/*
+ * Implementation notes (see header for the full public contract):
+ * Pass 1 classifies every sector header (erased/invalid/unknown/valid),
+ * accumulating erased_sector_count and flagging degraded/unsupported.
+ * Pass 2 classifies every commit slot in every HEADER_VALID sector via
+ * classify_commit(), decoding the first genuinely committed slot per sector
+ * (subsequent slots in the same sector are duplicates/corrupt by
+ * construction of the append protocol) and cross-checking exact-duplicate
+ * decodes across sectors for byte-identical mirroring vs. a genuine
+ * conflicting fork (fatal). Pass 3 walks the sector header graph checking
+ * for branching/forked generations and predecessor-chain consistency
+ * (fatal on any violation). Pass 4 sorts the bounded scan set into logical
+ * (epoch, sequence) order and replays it through record_follows(), marking
+ * the point where the state-machine chain first breaks (degraded) and
+ * selecting the newest fully-proven record as `active`. The four outcome
+ * flags (indeterminate/fatal/unsupported/degraded) are then combined into
+ * the single maintenance_journal_recovery_state_t, in that strict priority
+ * order.
+ */
 maintenance_journal_backend_result_t maintenance_journal_backend_recover(maintenance_journal_backend_t *b)
 {
     uint8_t count = 0u, ambiguous_sector_mask = 0u; bool any_non_erased = false, degraded = false, unsupported = false, indeterminate = false, fatal = false; int newest = -1;
@@ -508,8 +665,16 @@ maintenance_journal_backend_result_t maintenance_journal_backend_recover(mainten
     b->recovery = MAINTENANCE_JOURNAL_RECOVERY_OK; return finish(b, MAINTENANCE_JOURNAL_BACKEND_OK);
 }
 
+/** @brief True if the current active (newest, authoritative) record lives in sector @p s -- such a sector must never be erased. */
 static bool sector_has_active(const maintenance_journal_backend_t *b, uint8_t s) { return b->has_active && b->active.sector == s; }
+/** @brief True if sector @p s holds an unknown-schema record (MAINTENANCE_JOURNAL_COMMIT_UNKNOWN) -- must be preserved, never erased, so a future firmware can still read it. */
 static bool sector_has_unknown(const maintenance_journal_backend_t *b, uint8_t s) { return (b->unknown_sector_mask & (uint8_t)(1u << s)) != 0u; }
+/**
+ * @brief True if @p sector holds any record that must survive retention
+ *        (i.e. is among the newest MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS,
+ *        adjusted down by one sector's worth when over the limit, to avoid
+ *        reclaiming a sector this same pass would otherwise need to keep).
+ */
 static bool sector_has_retained_record(const maintenance_journal_backend_t *b, uint8_t sector)
 {
     const uint8_t keep_count = b->valid_record_count > MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS ?
@@ -537,6 +702,19 @@ static bool sector_has_retained_record(const maintenance_journal_backend_t *b, u
     }
     return false;
 }
+/**
+ * @brief Ensure at least MAINTENANCE_JOURNAL_MIN_ERASED_SECTORS (2) erased
+ *        sectors exist, reclaiming (erasing) at most one non-essential
+ *        sector if not.
+ *
+ * Only ever erases a sector that holds neither the active record, an
+ * unknown-schema record, nor a still-retained record; erasure is
+ * read-verified before counting toward erased_sector_count.
+ *
+ * @return true once erased_sector_count reaches 2; false if no reclaimable
+ *         sector was found or the erase/read-verify failed.
+ * @note Hardware side effect: at most one Flash sector erase.
+ */
 static bool ensure_spares(maintenance_journal_backend_t *b)
 {
     if (b->erased_sector_count >= 2u) return true;
@@ -549,6 +727,20 @@ static bool ensure_spares(maintenance_journal_backend_t *b)
     }
     return false;
 }
+/**
+ * @brief Best-effort loop: erase non-essential sectors until
+ *        valid_record_count is back within MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS.
+ *
+ * Called after a successful append() to keep long-term retention bounded.
+ * Silently stops (returns without error) if no further sector can be
+ * reclaimed or an erase/read-verify fails -- this is deliberately
+ * best-effort and never turns a successful append into a reported failure.
+ * Each successful reclamation advances logical_generation (skipping the
+ * reserved value 0), invalidating any export cursor still referencing the
+ * prior generation.
+ *
+ * @note Hardware side effect: zero or more Flash sector erases.
+ */
 static void reclaim_retention_best_effort(maintenance_journal_backend_t *b)
 {
     while (b->valid_record_count > MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS)
@@ -595,8 +787,31 @@ static void reclaim_retention_best_effort(maintenance_journal_backend_t *b)
         }
     }
 }
+/** @brief Find the index of any HEADER_ERASED sector, or -1 if none exists. */
 static int find_erased_sector(maintenance_journal_backend_t *b) { for (uint8_t s=0u;s<8u;++s) { sector_header_t h; if (read_header(b,s,&h) && h.state==HEADER_ERASED) return s; } return -1; }
+/** @brief Find the index of the first fully-erased (unwritten) record slot within @p sector, or -1 if all 3 slots are occupied. */
 static int find_erased_slot(maintenance_journal_backend_t *b, uint8_t sector) { for(uint8_t slot=0u;slot<3u;++slot) if (b->storage.read(b->storage.context,slot_offset(sector,slot),g_journal_verify_page,1024u) && erased(g_journal_verify_page,1024u)) return slot; return -1; }
+/**
+ * @brief Program one record into slot (@p s, @p slot) with strict phase
+ *        ordering: encode, program the 3 body pages, read back and byte-
+ *        verify the body, program the commit page exactly once, then
+ *        classify the physical result -- and update @p b's active-record
+ *        bookkeeping only if classification confirms COMMITTED.
+ *
+ * The commit page is programmed at most once per call regardless of its
+ * outcome (never reprogrammed on a NOT_COMMITTED/CORRUPT classification)
+ * per the "commit page is never reprogrammed" invariant
+ * (docs/maintenance_journal.md).
+ *
+ * @return MAINTENANCE_JOURNAL_BACKEND_INVALID_ARGUMENT if @p r fails codec
+ *         encoding; MAINTENANCE_JOURNAL_BACKEND_IO on a body program/verify
+ *         failure or a non-exact commit classification;
+ *         MAINTENANCE_JOURNAL_BACKEND_INDETERMINATE if the commit page
+ *         cannot be classified at all (also sets b->mutations_blocked and
+ *         b->recovery); MAINTENANCE_JOURNAL_BACKEND_OK once COMMITTED is
+ *         confirmed.
+ * @note Hardware side effect: up to 4 Flash page programs.
+ */
 static maintenance_journal_backend_result_t program_record(maintenance_journal_backend_t *b, uint8_t s, uint8_t slot, maintenance_journal_record_t *r, uint64_t generation, maintenance_journal_record_location_t *out)
 {
     maintenance_journal_commit_state_t cs;
@@ -620,6 +835,16 @@ static maintenance_journal_backend_result_t program_record(maintenance_journal_b
     return finish(b, MAINTENANCE_JOURNAL_BACKEND_OK);
 }
 
+/*
+ * Implementation notes (see header for the full public contract): the empty
+ * (!b->has_active) path opens sector epoch 1/generation 1 from scratch. The
+ * normal path allocates sequence = max(observed allocated_sequence, active
+ * sequence) + 1 (never trusting b->active.record.sequence alone, since
+ * note_allocated() may have observed a higher non-exact candidate on
+ * Flash), reuses the active sector's next erased slot if one exists, or
+ * opens a new sector (generation + 1, chained to the current sector as
+ * predecessor) otherwise.
+ */
 maintenance_journal_backend_result_t maintenance_journal_backend_append(maintenance_journal_backend_t *b, const maintenance_journal_record_t *candidate, maintenance_journal_record_location_t *out)
 {
     maintenance_journal_record_t r; uint8_t s; uint64_t gen, pe=0u, pg=0u; int slot, erased_sector;
@@ -723,8 +948,11 @@ maintenance_journal_backend_result_t maintenance_journal_backend_export_page(
 }
 
 #if defined(PICO_ON_DEVICE)
+/** @brief Storage read callback: bounds-checked direct XIP read at OTA_LAYOUT_MAINTENANCE_JOURNAL_ORIGIN + offset. */
 static bool flash_read(void *unused, uint32_t offset, uint8_t *dst, size_t n) { (void)unused; if (offset > OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES || n > OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES-offset) return false; memcpy(dst,(const void *)(uintptr_t)(OTA_LAYOUT_MAINTENANCE_JOURNAL_ORIGIN+offset),n); return true; }
+/** @brief Storage program callback: bounds-checked, copies through g_journal_verify_page and routes through the shared flash_operation_coordinator. */
 static bool flash_program(void *unused, uint32_t offset, const uint8_t page[256]) { (void)unused; if (offset > OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES-256u) return false; memcpy(g_journal_verify_page,page,256u); return flash_operation_program_page(OTA_LAYOUT_MAINTENANCE_JOURNAL_OFFSET_BYTES+offset,g_journal_verify_page)==FLASH_OPERATION_OK; }
+/** @brief Storage erase callback: bounds-checked, routed through the shared flash_operation_coordinator. */
 static bool flash_erase(void *unused, uint32_t offset) { (void)unused; return offset <= OTA_LAYOUT_MAINTENANCE_JOURNAL_SIZE_BYTES-4096u && flash_operation_erase_sector(OTA_LAYOUT_MAINTENANCE_JOURNAL_OFFSET_BYTES+offset)==FLASH_OPERATION_OK; }
 void maintenance_journal_backend_init_flash(maintenance_journal_backend_t *b) { const maintenance_journal_storage_t s={.context=NULL,.read=flash_read,.program_page=flash_program,.erase_sector=flash_erase}; maintenance_journal_backend_init(b,&s); }
 #else

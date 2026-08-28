@@ -1,3 +1,19 @@
+/**
+ * @file
+ * @brief Early-boot system/peripheral clock configuration (RP2040 only).
+ *
+ * Responsibilities:
+ * - On RP2040, set the system clock and re-derive the peripheral clock from
+ *   the system PLL before any clock-dependent peripheral initializes.
+ * - On RP2350, do nothing: leave the SDK-managed default clock tree in
+ *   place so USB enumeration during early boot is not disturbed.
+ *
+ * Ownership: no persistent state -- this file only issues one-shot SDK
+ * clock-tree calls.
+ *
+ * Concurrency: none; must run once from the boot/init task before any other
+ * task touches clock-dependent peripherals.
+ */
 #include "drivers/platform_clock.h"
 
 #include "hardware/clocks.h"

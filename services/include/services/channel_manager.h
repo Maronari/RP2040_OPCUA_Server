@@ -9,12 +9,34 @@
 #include "services/platform_limits.h"
 #include "services/telemetry_driver.h"
 
+/**
+ * @brief Stable reference to one registry slot: index + generation.
+ *
+ * @c generation increments every time the slot's identity/settings change
+ * (register, channel_manager_update_settings()), so a handle captured before
+ * a reconfiguration can be detected as stale by comparing generations --
+ * this is the basis of the acquire/publish/release driver-operation lease
+ * pattern (see channel_manager_acquire_driver_operation()). Never persisted
+ * across a channel_manager_reset().
+ */
 typedef struct
 {
     uint8_t index;
     uint32_t generation;
 } channel_manager_handle_t;
 
+/**
+ * @brief Typed result of channel_manager_write_value().
+ *
+ * CHANNEL_MANAGER_WRITE_RESULT_STALE specifically means a concurrent
+ * reconfiguration (generation bump) invalidated the write's lease before it
+ * could publish -- the write was neither applied nor corrupted, just
+ * discarded; callers should treat it as "retry against current state" if a
+ * retry is desired. The other RESULT_* values map from
+ * telemetry_driver_result_t (see channel_manager_map_driver_result() in
+ * channel_manager.c) or from channel_manager's own pre-driver-call
+ * validation (NOT_FOUND, DISABLED, READ_ONLY, TYPE_MISMATCH).
+ */
 typedef enum
 {
     CHANNEL_MANAGER_WRITE_RESULT_OK = 0,
@@ -30,6 +52,20 @@ typedef enum
     CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE
 } channel_manager_write_result_t;
 
+/**
+ * @brief A leased driver operation: the slot handle, a one-shot token, and a
+ *        detached channel snapshot the driver call may read/mutate.
+ *
+ * Returned by channel_manager_acquire_driver_operation() while the registry
+ * critical section is *not* held, so the caller may invoke a driver's
+ * read()/write() against @c snapshot for an arbitrary (potentially blocking)
+ * duration. @c operation_token is bumped on every acquire and must match the
+ * slot's current token at publish/release time; combined with @c
+ * handle.generation, this rejects a publish against a slot that was reset,
+ * reconfigured, or re-leased since this operation was acquired
+ * (channel_manager.c:463-501). Never share one instance across concurrent
+ * operations.
+ */
 typedef struct
 {
     channel_manager_handle_t handle;

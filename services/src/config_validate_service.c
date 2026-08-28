@@ -1,4 +1,34 @@
-﻿#include <services/config_validate_service.h>
+﻿/**
+ * @file
+ * @brief Implementation of configuration validation: semantic candidate
+ * validation, plus a hand-rolled recursive-descent JSON reader
+ * (`config_json_reader_t` and the `config_json_*` family below) that
+ * decodes the public configuration export/import JSON schema.
+ *
+ * Responsibilities:
+ * - `config_validate_service_validate_candidate()` — semantic gate for any
+ *   `device_profile_config_t` (timezone, ports, network, per-channel driver/
+ *   resource-claim checks). See `services/config_validate_service.h`.
+ * - JSON parsing: a minimal, allocation-free, single-pass reader over a
+ *   caller-owned byte range (`config_json_reader_t::cursor`/`end`). Every
+ *   `config_json_reader_*`/`config_json_expect_*`/`config_json_parse_*`
+ *   function returns a `config_validate_service_result_t` and advances
+ *   `cursor` only on success; on the first error the whole parse aborts and
+ *   propagates that result up to
+ *   `config_validate_service_parse_json_payload()`.
+ * - Binary payload validation: decodes via `config_compat_decode_binary()`
+ *   (schema/version migration) then re-uses the same semantic gate.
+ *
+ * Ownership: no persistent state; the JSON reader borrows the caller's
+ * payload buffer and never copies it except into caller-supplied
+ * `device_profile_config_t`/string-field output buffers.
+ *
+ * Concurrency: no internal synchronization; pure functions over
+ * caller-provided memory (with the caveat noted on
+ * `config_validate_service_validate_imported()` regarding the shared
+ * `config_import_service` session).
+ */
+#include <services/config_validate_service.h>
 
 #include <ctype.h>
 #include <float.h>
@@ -18,6 +48,15 @@
 
 #define CONFIG_VALIDATE_MIN_WATCHDOG_TIMEOUT_MS 1000u
 
+/**
+ * @brief Cursor-based state for the single-pass JSON reader.
+ *
+ * `cursor`/`end` bound the remaining unparsed input (never reallocated,
+ * never copied). `message`/`message_size` are an optional caller-provided
+ * sink that `config_json_reader_fail()` writes a human-readable parse-error
+ * description into. Owned entirely by the calling parse function; not
+ * shared across threads.
+ */
 typedef struct
 {
     const char *cursor;
@@ -26,6 +65,13 @@ typedef struct
     size_t message_size;
 } config_json_reader_t;
 
+/**
+ * @brief Fills @p report from the given validation outcome.
+ * @param report Destination; no-op if NULL. Zeroed first, then populated
+ * (`valid` is derived as `result == CONFIG_VALIDATE_RESULT_OK`).
+ * @param message Optional human-readable message, truncated to fit
+ * `report->message`.
+ */
 static void config_validate_service_set_report(config_validate_service_report_t *report,
                                                config_validate_service_result_t result,
                                                uint32_t schema_version,
@@ -51,6 +97,13 @@ static void config_validate_service_set_report(config_validate_service_report_t 
     }
 }
 
+/**
+ * @brief `vsnprintf`-based formatter that always leaves @p buffer
+ * NUL-terminated, used to build `config_validate_service_validate_candidate()`
+ * rejection messages.
+ * @note No-op if @p buffer is NULL, @p buffer_size is 0, or @p format is
+ * NULL.
+ */
 static void config_validate_service_set_message(char *buffer, size_t buffer_size, const char *format, ...)
 {
     va_list args;
@@ -66,6 +119,14 @@ static void config_validate_service_set_message(char *buffer, size_t buffer_size
     buffer[buffer_size - 1u] = '\0';
 }
 
+/**
+ * @brief Records a formatted parse-error message on @p reader (if it has a
+ * message sink) and returns @p result, so callers can write
+ * `return config_json_reader_fail(reader, RESULT, "...", ...);` as a single
+ * error-path expression.
+ * @return @p result, unconditionally.
+ * @note Does not advance `reader->cursor`; purely an error-reporting helper.
+ */
 static config_validate_service_result_t config_json_reader_fail(config_json_reader_t *reader,
                                                                 config_validate_service_result_t result,
                                                                 const char *format,
@@ -97,6 +158,15 @@ static bool config_validate_service_channel_ids_equal(const config_channel_defin
            strncmp(lhs->id, rhs->id, sizeof(lhs->id)) == 0;
 }
 
+/**
+ * @brief Sniffs whether an import payload is the public JSON schema (vs.
+ * the opaque binary schema) by checking the first non-whitespace byte.
+ * @return true if the first non-whitespace byte is `'{'`; false for an
+ * all-whitespace/empty payload, a binary payload, or NULL @p payload.
+ * @note This is the sole format-detection mechanism used by
+ * `config_validate_service_validate_imported()` — there is no explicit
+ * format tag on the import payload itself.
+ */
 static bool config_validate_service_detect_json_payload(const uint8_t *payload, size_t payload_size)
 {
     size_t index = 0u;
@@ -118,6 +188,7 @@ static bool config_validate_service_detect_json_payload(const uint8_t *payload, 
     return false;
 }
 
+/** @brief Advances `reader->cursor` past any run of whitespace (isspace). No-op if @p reader is NULL. */
 static void config_json_reader_skip_whitespace(config_json_reader_t *reader)
 {
     if (reader == NULL)
@@ -131,6 +202,12 @@ static void config_json_reader_skip_whitespace(config_json_reader_t *reader)
     }
 }
 
+/**
+ * @brief Skips leading whitespace, then consumes @p expected if it is the
+ * next character.
+ * @return true and advances `reader->cursor` past @p expected if matched;
+ * false (cursor unchanged past the whitespace skip) otherwise.
+ */
 static bool config_json_reader_consume_char(config_json_reader_t *reader, char expected)
 {
     config_json_reader_skip_whitespace(reader);
@@ -143,6 +220,13 @@ static bool config_json_reader_consume_char(config_json_reader_t *reader, char e
     return true;
 }
 
+/**
+ * @brief Like `config_json_reader_consume_char()`, but returns a
+ * `config_validate_service_result_t` and records a parse-error message
+ * naming @p context on mismatch.
+ * @return `CONFIG_VALIDATE_RESULT_OK` on match;
+ * `CONFIG_VALIDATE_RESULT_INVALID_JSON` otherwise.
+ */
 static config_validate_service_result_t config_json_reader_expect_char(config_json_reader_t *reader,
                                                                        char expected,
                                                                        const char *context)
@@ -164,6 +248,22 @@ static bool config_json_reader_is_value_delimiter(char ch)
     return ch == '\0' || ch == ',' || ch == '}' || ch == ']' || isspace((unsigned char)ch);
 }
 
+/**
+ * @brief Parses one JSON string literal (with `\"\\/bfnrt` escapes; no
+ * `\uXXXX` escape support) starting at the next non-whitespace character.
+ *
+ * @param buffer Destination for the decoded string, NUL-terminated;
+ * optional (may be NULL to only advance the cursor / validate syntax).
+ * @param buffer_size Capacity of @p buffer; ignored if @p buffer is NULL.
+ * @param out_overflow Set to true if the decoded string was longer than
+ * @p buffer_size - 1 (in which case @p buffer holds a truncated,
+ * NUL-terminated prefix); optional (may be NULL).
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a syntactically valid string
+ * (regardless of overflow — the caller decides whether overflow is fatal,
+ * see `config_json_reader_parse_string_field()`); an error result for a
+ * missing opening quote, unterminated string, unterminated escape, or
+ * unsupported escape character (`\uXXXX` is rejected, not decoded).
+ */
 static config_validate_service_result_t config_json_reader_parse_string(config_json_reader_t *reader,
                                                                         char *buffer,
                                                                         size_t buffer_size,
@@ -251,6 +351,13 @@ static config_validate_service_result_t config_json_reader_parse_string(config_j
     return config_json_reader_fail(reader, CONFIG_VALIDATE_RESULT_INVALID_JSON, "unterminated string value");
 }
 
+/**
+ * @brief Like `config_json_reader_parse_string()`, but treats overflow as a
+ * hard error naming @p field_path (used everywhere a fixed-size
+ * `device_profile_config_t` string field is being populated).
+ * @return `CONFIG_VALIDATE_RESULT_OK` on success; the parse error, or
+ * `CONFIG_VALIDATE_RESULT_INVALID_JSON` on overflow.
+ */
 static config_validate_service_result_t config_json_reader_parse_string_field(config_json_reader_t *reader,
                                                                               const char *field_path,
                                                                               char *buffer,
@@ -275,6 +382,11 @@ static config_validate_service_result_t config_json_reader_parse_string_field(co
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Parses the literal JSON tokens `true`/`false`.
+ * @return `CONFIG_VALIDATE_RESULT_OK` and advances the cursor past the
+ * matched literal; `CONFIG_VALIDATE_RESULT_INVALID_JSON` otherwise.
+ */
 static config_validate_service_result_t config_json_reader_parse_bool(config_json_reader_t *reader, bool *out_value)
 {
     config_json_reader_skip_whitespace(reader);
@@ -299,6 +411,13 @@ static config_validate_service_result_t config_json_reader_parse_bool(config_jso
     return config_json_reader_fail(reader, CONFIG_VALIDATE_RESULT_INVALID_JSON, "expected boolean value");
 }
 
+/**
+ * @brief Parses a non-negative decimal integer via `strtoull()`, rejecting a
+ * leading `-`, a non-numeric token, or a value exceeding `UINT32_MAX`.
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a well-formed value immediately
+ * followed by a value delimiter (`,`/`}`/`]`/whitespace/end);
+ * `CONFIG_VALIDATE_RESULT_INVALID_JSON` otherwise.
+ */
 static config_validate_service_result_t config_json_reader_parse_u32(config_json_reader_t *reader, uint32_t *out_value)
 {
     char *end_ptr = NULL;
@@ -322,6 +441,13 @@ static config_validate_service_result_t config_json_reader_parse_u32(config_json
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Parses a signed decimal integer via `strtol()`, bounded to
+ * `INT16_MIN..INT16_MAX`.
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a well-formed, in-range value
+ * followed by a value delimiter; `CONFIG_VALIDATE_RESULT_INVALID_JSON`
+ * otherwise.
+ */
 static config_validate_service_result_t config_json_reader_parse_i16(config_json_reader_t *reader, int16_t *out_value)
 {
     char *end_ptr = NULL;
@@ -345,6 +471,12 @@ static config_validate_service_result_t config_json_reader_parse_i16(config_json
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Parses a signed decimal integer via `strtoll()` (used for
+ * `manufactureDateUtc`/`calibrationDateUtc`, epoch seconds).
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a well-formed value followed by a
+ * value delimiter; `CONFIG_VALIDATE_RESULT_INVALID_JSON` otherwise.
+ */
 static config_validate_service_result_t config_json_reader_parse_i64(config_json_reader_t *reader, int64_t *out_value)
 {
     char *end_ptr = NULL;
@@ -368,6 +500,12 @@ static config_validate_service_result_t config_json_reader_parse_i64(config_json
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Parses a numeric literal via `strtod()`, rejecting non-finite
+ * results (NaN/Inf).
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a well-formed finite value followed
+ * by a value delimiter; `CONFIG_VALIDATE_RESULT_INVALID_JSON` otherwise.
+ */
 static config_validate_service_result_t config_json_reader_parse_double(config_json_reader_t *reader, double *out_value)
 {
     char *end_ptr = NULL;
@@ -391,6 +529,17 @@ static config_validate_service_result_t config_json_reader_parse_double(config_j
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Parses a JSON string key and the following `:`, requiring it to
+ * exactly match @p expected_key.
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a matching key+colon;
+ * `CONFIG_VALIDATE_RESULT_MISSING_FIELD` if the key text doesn't match (or
+ * overflowed the internal 32-byte key buffer); the string/char parse error
+ * otherwise.
+ * @note This parser requires object keys in each JSON object to appear in
+ * exactly the order the corresponding `config_json_parse_*_object()`
+ * function expects — it is not a general unordered-object parser.
+ */
 static config_validate_service_result_t config_json_reader_expect_key(config_json_reader_t *reader,
                                                                       const char *expected_key,
                                                                       const char *context)
@@ -415,6 +564,12 @@ static config_validate_service_result_t config_json_reader_expect_key(config_jso
     return config_json_reader_expect_char(reader, ':', context);
 }
 
+/**
+ * @brief Consumes a leading `,` (unless @p first) then the named key+colon.
+ * @param first true for the first field of an object (no leading comma
+ * expected); false for every subsequent field.
+ * @return As `config_json_reader_expect_key()`, or the comma-parse error.
+ */
 static config_validate_service_result_t config_json_expect_separator_and_key(config_json_reader_t *reader,
                                                                              bool first,
                                                                              const char *key,
@@ -434,6 +589,16 @@ static config_validate_service_result_t config_json_expect_separator_and_key(con
     return config_json_reader_expect_key(reader, key, context);
 }
 
+/*
+ * The config_json_expect_named_*() family below is a thin, uniform
+ * composition: consume separator+key (config_json_expect_separator_and_key)
+ * then parse the named value with the matching config_json_reader_parse_*()
+ * function. `first` suppresses the leading comma for an object's first
+ * field; `field_path` is used only for error messages (e.g. "device.model")
+ * and, for the string variant, to name the field on overflow.
+ */
+
+/** @brief Named-field variant of `config_json_reader_parse_string_field()`. */
 static config_validate_service_result_t config_json_expect_named_string(config_json_reader_t *reader,
                                                                         bool first,
                                                                         const char *key,
@@ -452,6 +617,7 @@ static config_validate_service_result_t config_json_expect_named_string(config_j
     return config_json_reader_parse_string_field(reader, field_path, buffer, buffer_size);
 }
 
+/** @brief Named-field variant of `config_json_reader_parse_bool()`. */
 static config_validate_service_result_t config_json_expect_named_bool(config_json_reader_t *reader,
                                                                       bool first,
                                                                       const char *key,
@@ -469,6 +635,7 @@ static config_validate_service_result_t config_json_expect_named_bool(config_jso
     return config_json_reader_parse_bool(reader, out_value);
 }
 
+/** @brief Named-field variant of `config_json_reader_parse_u32()`. */
 static config_validate_service_result_t config_json_expect_named_u32(config_json_reader_t *reader,
                                                                      bool first,
                                                                      const char *key,
@@ -486,6 +653,7 @@ static config_validate_service_result_t config_json_expect_named_u32(config_json
     return config_json_reader_parse_u32(reader, out_value);
 }
 
+/** @brief Named-field variant of `config_json_reader_parse_i16()`. */
 static config_validate_service_result_t config_json_expect_named_i16(config_json_reader_t *reader,
                                                                      bool first,
                                                                      const char *key,
@@ -503,6 +671,7 @@ static config_validate_service_result_t config_json_expect_named_i16(config_json
     return config_json_reader_parse_i16(reader, out_value);
 }
 
+/** @brief Named-field variant of `config_json_reader_parse_i64()`. */
 static config_validate_service_result_t config_json_expect_named_i64(config_json_reader_t *reader,
                                                                      bool first,
                                                                      const char *key,
@@ -520,6 +689,7 @@ static config_validate_service_result_t config_json_expect_named_i64(config_json
     return config_json_reader_parse_i64(reader, out_value);
 }
 
+/** @brief Named-field variant of `config_json_reader_parse_double()`. */
 static config_validate_service_result_t config_json_expect_named_double(config_json_reader_t *reader,
                                                                         bool first,
                                                                         const char *key,
@@ -537,6 +707,13 @@ static config_validate_service_result_t config_json_expect_named_double(config_j
     return config_json_reader_parse_double(reader, out_value);
 }
 
+/**
+ * @brief Parses a named JSON string field as a dotted-quad IPv4 address
+ * (`"a.b.c.d"`, each octet 0-255) into @p address.
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a well-formed address;
+ * `CONFIG_VALIDATE_RESULT_INVALID_JSON` on wrong format or an out-of-range
+ * octet; propagates the underlying string-field parse error otherwise.
+ */
 static config_validate_service_result_t config_json_parse_ipv4_field(config_json_reader_t *reader,
                                                                      bool first,
                                                                      const char *key,
@@ -576,6 +753,13 @@ static config_validate_service_result_t config_json_parse_ipv4_field(config_json
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Parses a named JSON string field as a colon-separated MAC address
+ * (`"XX:XX:XX:XX:XX:XX"`, hex octets) into @p mac.
+ * @return `CONFIG_VALIDATE_RESULT_OK` on a well-formed address;
+ * `CONFIG_VALIDATE_RESULT_INVALID_JSON` on wrong format or an out-of-range
+ * byte; propagates the underlying string-field parse error otherwise.
+ */
 static config_validate_service_result_t config_json_parse_mac_field(config_json_reader_t *reader,
                                                                     bool first,
                                                                     const char *key,
@@ -622,6 +806,19 @@ static config_validate_service_result_t config_json_parse_mac_field(config_json_
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Parses the `"device": { ... }` object into @p candidate's identity
+ * fields, in the fixed key order the public JSON schema requires
+ * (manufacturer, model, deviceName, opcuaHostname, serialNumber,
+ * productInstanceUri, assetId, hwRevision, fwRevision, buildTime, gitHash,
+ * location, assetClass, manufactureDateUtc, calibrationDateUtc, then an
+ * optional trailing `hierarchicalLocationPath`/`operationalLocationPath`
+ * pair for schemas that include the v0.4.3 location-path fields).
+ * @return `CONFIG_VALIDATE_RESULT_OK` on success; the first field's parse
+ * error otherwise. `fw_revision`/`build_time`/`git_hash` are decoded here
+ * but are later overwritten by `config_service_apply_runtime_identity()`
+ * during normalization.
+ */
 static config_validate_service_result_t config_json_parse_device_object(config_json_reader_t *reader,
                                                                         device_profile_config_t *candidate)
 {
@@ -683,6 +880,14 @@ static config_validate_service_result_t config_json_parse_device_object(config_j
     return config_json_reader_expect_char(reader, '}', "device object");
 }
 
+/**
+ * @brief Parses the `"network": { ... }` object: `mode` (`"dhcp"`/
+ * `"static"` only), `mac`, `staticIp`, `staticNetmask`, `staticGateway`,
+ * `staticDns`, in that fixed key order.
+ * @return `CONFIG_VALIDATE_RESULT_OK` on success;
+ * `CONFIG_VALIDATE_RESULT_INVALID_JSON` for an unrecognized `mode` string;
+ * the first field's parse error otherwise.
+ */
 static config_validate_service_result_t config_json_parse_network_object(config_json_reader_t *reader,
                                                                          device_profile_config_t *candidate)
 {
@@ -718,6 +923,7 @@ static config_validate_service_result_t config_json_parse_network_object(config_
     return config_json_reader_expect_char(reader, '}', "network object");
 }
 
+/** @brief Parses the `"time": { ntpServer, timezoneOffsetMinutes }` object. */
 static config_validate_service_result_t config_json_parse_time_object(config_json_reader_t *reader,
                                                                       device_profile_config_t *candidate)
 {
@@ -732,6 +938,7 @@ static config_validate_service_result_t config_json_parse_time_object(config_jso
     return config_json_reader_expect_char(reader, '}', "time object");
 }
 
+/** @brief Parses the `"mqtt": { enabled, useJson, brokerUrl, topicRoot }` object. */
 static config_validate_service_result_t config_json_parse_mqtt_object(config_json_reader_t *reader,
                                                                       device_profile_config_t *candidate)
 {
@@ -750,6 +957,7 @@ static config_validate_service_result_t config_json_parse_mqtt_object(config_jso
     return config_json_reader_expect_char(reader, '}', "mqtt object");
 }
 
+/** @brief Parses the `"diagnostics": { enableHeapDiagnostics, enableTaskDiagnostics, watchdogTimeoutMs }` object. */
 static config_validate_service_result_t config_json_parse_diagnostics_object(config_json_reader_t *reader,
                                                                              device_profile_config_t *candidate)
 {
@@ -766,6 +974,11 @@ static config_validate_service_result_t config_json_parse_diagnostics_object(con
     return config_json_reader_expect_char(reader, '}', "diagnostics object");
 }
 
+/**
+ * @brief Parses the `"opcua": { port, enableAlarmAckMethod }` object.
+ * @return `CONFIG_VALIDATE_RESULT_INVALID_JSON` if `port` exceeds
+ * `UINT16_MAX`; otherwise as the field parses.
+ */
 static config_validate_service_result_t config_json_parse_opcua_object(config_json_reader_t *reader,
                                                                        device_profile_config_t *candidate)
 {
@@ -786,6 +999,36 @@ static config_validate_service_result_t config_json_parse_opcua_object(config_js
     return config_json_reader_expect_char(reader, '}', "opcua object");
 }
 
+/**
+ * @brief Parses one element of the `"channels": [ ... ]` array into
+ * @p out_channel.
+ *
+ * Field order: `slot` (must equal @p expected_slot — the array must be
+ * densely, sequentially indexed, not sparse/reordered), `inUse`, `kind`,
+ * `valueType`, `driverId`, `sourceIndex`, `sourceFlags`, `id`, `name`,
+ * `description`, `unit`, `flags`, `minimum`, `maximum`, `hasMinimum`,
+ * `hasMaximum`, `enabled`, `samplePeriodMs`, `publishPeriodMs`,
+ * `historyIntervalMs`, `scale`, `offset`, `warningThreshold`,
+ * `criticalThreshold`, then optionally `lowThreshold`, `lowLowThreshold`,
+ * `alarmHysteresis`, `alarmDebounceMs` as a group.
+ *
+ * The v0.4.3 lower-alarm fields are backward-compatible: if the object ends
+ * (next non-whitespace char is `}`) right after `criticalThreshold`, this
+ * is a pre-v0.4.3 export and `low_threshold`/`low_low_threshold` are set to
+ * the `DBL_MAX` "disabled" sentinel (matching `config_compat`'s binary
+ * migration behavior); otherwise all four trailing fields are mandatory.
+ *
+ * @param expected_slot Zero-based slot index this element must declare via
+ * its own `"slot"` field.
+ * @param out_channel Filled with the parsed channel definition only on
+ * success (a local scratch copy is built first, so a failed parse never
+ * partially overwrites the caller's storage).
+ * @return `CONFIG_VALIDATE_RESULT_OK` on success;
+ * `CONFIG_VALIDATE_RESULT_INVALID_CHANNEL` if `slot` doesn't match
+ * @p expected_slot; `CONFIG_VALIDATE_RESULT_INVALID_JSON` for an
+ * out-of-range `kind`/`valueType`/`driverId`/`sourceIndex`/`sourceFlags`;
+ * the first field's parse error otherwise.
+ */
 static config_validate_service_result_t config_json_parse_channel_object(config_json_reader_t *reader,
                                                                          size_t expected_slot,
                                                                          config_channel_definition_t *out_channel)
@@ -896,6 +1139,40 @@ static config_validate_service_result_t config_json_parse_channel_object(config_
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Top-level JSON payload parser: decodes the public configuration
+ * export/import JSON schema into a `device_profile_config_t`.
+ *
+ * Root object key order (fixed, all mandatory):
+ * `schemaVersion`, `device`, `network`, `time`, `mqtt`, `diagnostics`,
+ * `opcua`, `channels`. `channels` must contain exactly
+ * `PLATFORM_CHANNEL_LIMIT` (current) or `CONFIG_COMPAT_V040_CHANNEL_LIMIT`
+ * (legacy 4-channel export) elements, each validated against its own
+ * `"slot"` index; a legacy import with more elements than
+ * `PLATFORM_CHANNEL_LIMIT` is only accepted if every slot beyond the
+ * current capacity has `"inUse": false`. No trailing bytes are permitted
+ * after the closing `}`.
+ *
+ * @param payload Raw JSON bytes; not required to be NUL-terminated
+ * (`end = payload + payload_size` bounds every read).
+ * @param import_schema_version Expected schema version from the import
+ * session metadata; if non-zero, must match the JSON document's own
+ * `schemaVersion` field or this fails with
+ * `CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA`. Pass 0 to skip this
+ * cross-check.
+ * @param out_candidate Filled with the decoded configuration only on
+ * success; optional (may be NULL).
+ * @param out_payload_schema_version Filled with the document's own
+ * `schemaVersion` on success; optional (may be NULL).
+ * @param message Optional buffer for a human-readable parse-error
+ * description; may be NULL.
+ * @return `CONFIG_VALIDATE_RESULT_OK` if the entire document parses and
+ * matches the schema/channel-count invariants; otherwise the specific
+ * `config_validate_service_result_t` for the first problem encountered.
+ * @note This only checks *syntactic* schema conformance — semantic
+ * validation (ranges, driver/resource conflicts) is a separate call to
+ * `config_validate_service_validate_candidate()` by the caller.
+ */
 static config_validate_service_result_t config_validate_service_parse_json_payload(const uint8_t *payload,
                                                                                    size_t payload_size,
                                                                                    uint32_t import_schema_version,
@@ -1045,6 +1322,12 @@ static config_validate_service_result_t config_validate_service_parse_json_paylo
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/* Checks run in a fixed order and short-circuit on the first failure:
+ * timezone -> location paths -> port -> watchdog -> network mode/static
+ * completeness -> per-channel driver/kind/value-type/writable-capability/
+ * resource-claim validity plus pairwise duplicate-ID check -> aggregate
+ * cross-channel hardware resource-claim compatibility
+ * (`driver_catalog_claims_are_compatible()`). */
 config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate,
                                                                              char *message,
                                                                              size_t message_size)
@@ -1202,6 +1485,20 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+/**
+ * @brief Decodes an opaque-binary config-import payload
+ * (`config_compat_decode_binary()`, which also handles frozen prior-version
+ * layouts) and runs it through
+ * `config_validate_service_validate_candidate()`.
+ * @param schema_version Must equal `CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY`;
+ * any other value is rejected without attempting to decode.
+ * @param out_candidate Filled with the decoded configuration only on
+ * success; optional (may be NULL).
+ * @return `CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA` for a wrong
+ * @p schema_version; `CONFIG_VALIDATE_RESULT_INVALID_SIZE` if @p payload_size
+ * doesn't match any known layout (current or frozen v0.4.0/v0.4.1/v0.4.2);
+ * otherwise the semantic validation result.
+ */
 static config_validate_service_result_t config_validate_service_validate_binary_payload(const uint8_t *payload,
                                                                                         size_t payload_size,
                                                                                         uint32_t schema_version,

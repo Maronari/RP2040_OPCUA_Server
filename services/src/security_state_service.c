@@ -1,3 +1,14 @@
+/**
+ * @file
+ * @brief Flash-backed runtime/commissioning state snapshot for the security
+ * subsystem. See header for module-level docs.
+ *
+ * Implementation note: every mutator here follows the same
+ * read-current/copy-to-local-image/patch-field/commit pattern as
+ * `security_service.c`, but always erases and reprograms the *entire*
+ * `OTA_LAYOUT_SECURITY_STATE_SIZE_BYTES` region (no partial writes) via
+ * `flash_operation_coordinator`.
+ */
 #include "services/security_state_service.h"
 
 #include <stddef.h>
@@ -13,6 +24,12 @@
 #define SECURITY_STATE_SERVICE_STORE_VERSION 1u
 #define SECURITY_STATE_SERVICE_FLAG_COMMISSIONING_MODE (1u << 0u)
 
+/**
+ * @brief On-Flash layout of the security-state store, at
+ * `OTA_LAYOUT_SECURITY_STATE_ORIGIN`. Validated by magic/version/CRC32
+ * before use; `reserved` pads for future fields without breaking the
+ * `_Static_assert` size bound below.
+ */
 typedef struct
 {
     uint32_t magic;
@@ -30,11 +47,13 @@ typedef struct
     uint32_t crc32;
 } security_state_store_t;
 
+/** True once a valid store has been loaded/seeded by `security_state_service_init()`; gates every other accessor. */
 static bool g_security_state_ready = false;
 
 _Static_assert(sizeof(security_state_store_t) <= OTA_LAYOUT_SECURITY_STATE_SIZE_BYTES,
                "Security state store does not fit into the reserved security state region");
 
+/** @brief Standard CRC-32 (poly 0xEDB88320, reflected) over @p size bytes of @p data. */
 static uint32_t security_state_service_crc32(const uint8_t *data, size_t size)
 {
     uint32_t crc = 0xFFFFFFFFu;
@@ -52,11 +71,13 @@ static uint32_t security_state_service_crc32(const uint8_t *data, size_t size)
     return ~crc;
 }
 
+/** @brief Raw pointer to the XIP-mapped Flash store; does not check validity or readiness. */
 static const security_state_store_t *security_state_service_flash_store(void)
 {
     return (const security_state_store_t *)OTA_LAYOUT_SECURITY_STATE_ORIGIN;
 }
 
+/** @brief Returns the Flash store only if `security_state_service_init()` has succeeded; NULL otherwise. */
 static const security_state_store_t *security_state_service_store(void)
 {
     if (!g_security_state_ready)
@@ -73,12 +94,20 @@ static bool security_state_service_get_commissioning_flag(const security_state_s
            (store->flags & SECURITY_STATE_SERVICE_FLAG_COMMISSIONING_MODE) != 0u;
 }
 
+/** @brief Rounds @p image_size up to a whole number of Flash program-page units. */
 static size_t security_state_service_get_program_size(size_t image_size)
 {
     return ((image_size + OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES - 1u) /
             OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES) * OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES;
 }
 
+/**
+ * @brief Sets/clears the commissioning-mode flag in a local store image and,
+ * on transition, resets `commissioning_entered_epoch_s`
+ * (to the current system time when entering, to 0 when leaving) and
+ * `commissioning_deadline_epoch_s` (always cleared to 0 — no deadline
+ * enforcement is currently implemented).
+ */
 static void security_state_service_set_commissioning_flag(security_state_store_t *store, bool enabled)
 {
     if (store == NULL)
@@ -100,6 +129,7 @@ static void security_state_service_set_commissioning_flag(security_state_store_t
     }
 }
 
+/** @brief Fills @p store with a zeroed, freshly-initialized state record (magic/version/counters all reset). */
 static void security_state_service_reset_defaults(security_state_store_t *store,
                                                   bool commissioning_mode,
                                                   uint32_t trust_list_version)
@@ -111,6 +141,7 @@ static void security_state_service_reset_defaults(security_state_store_t *store,
     security_state_service_set_commissioning_flag(store, commissioning_mode);
 }
 
+/** @brief Checks magic, version, and CRC32 of a candidate store; the sole gate for trusting Flash contents. */
 static bool security_state_service_store_is_valid(const security_state_store_t *store)
 {
     if (store == NULL)
@@ -128,6 +159,18 @@ static bool security_state_service_store_is_valid(const security_state_store_t *
                                         offsetof(security_state_store_t, crc32)) == store->crc32;
 }
 
+/**
+ * @brief Stamps magic/version/CRC32 onto @p store, then erases and
+ * reprograms the entire `OTA_LAYOUT_SECURITY_STATE_SIZE_BYTES` Flash region
+ * with it via `flash_operation_coordinator`.
+ *
+ * @note Two-phase: erase all sectors first, then program all pages; a
+ * failure partway through either phase leaves the region in an
+ * indeterminate state (some sectors erased/programmed, others not) — no
+ * rollback is attempted. On success, sets `g_security_state_ready = true`.
+ * @return false on NULL input, allocation failure of the scratch program
+ * buffer, or any individual erase/program operation failure.
+ */
 static bool security_state_service_commit_store(security_state_store_t *store)
 {
     uint8_t *program_image = NULL;

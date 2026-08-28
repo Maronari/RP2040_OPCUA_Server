@@ -1,3 +1,35 @@
+/**
+ * @file
+ * @brief Sensor channel activation/polling; see
+ *        services/include/services/sensor_manager.h for the public API
+ *        contract.
+ *
+ * Responsibilities:
+ * - Validate a candidate `device_profile_config_t` (bounded strings, driver
+ *   compatibility, resource-claim conflicts) before touching any driver.
+ * - Drive channel driver `start`/`stop`/`configure`/`self_test` lifecycle
+ *   calls through the double-buffered candidate/active bank scheme.
+ * - Publish the resulting channel set to `channel_manager`.
+ * - Poll channels each "SensorTask" iteration and forward eligible samples
+ *   to `history_service`.
+ *
+ * Ownership:
+ * `g_runtime_storage` (PSRAM-allocated) holds both configuration banks'
+ * `channel_config_t` and driver-context arrays; `g_active_bank` selects
+ * which bank is currently published/active. `g_initialized`,
+ * `g_applied_config_revision`, `g_active_count` are all owned by this
+ * module.
+ *
+ * Concurrency:
+ * All state here is touched only from "SensorTask"
+ * (sensor_manager_task()) and from synchronous calls into
+ * sensor_manager_activate_config() (either from sensor_manager_init() at
+ * boot, or as `config_service`'s runtime apply callback during a config
+ * transaction, which itself runs on the caller's task without holding
+ * `config_service`'s lock - see docs/code/state-ownership.md). No FreeRTOS
+ * lock is taken in this file; correctness instead relies on
+ * sensor_manager_activate_config() never running concurrently with itself.
+ */
 #include "services/sensor_manager.h"
 
 #include <string.h>
@@ -17,12 +49,21 @@
 
 #define SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS 1000u
 
+/** @brief Per-channel driver-private context: bound source descriptor plus a pointer back to its catalog entry. */
 typedef struct
 {
     native_channel_source_t source;
     const driver_catalog_entry_t *driver_entry;
 } sensor_manager_channel_context_t;
 
+/**
+ * @brief PSRAM-allocated double-buffered storage for both configuration
+ *        banks (index 0/1), indexed by `g_active_bank`/candidate bank.
+ *
+ * The active registry borrows only the active bank's driver contexts. A
+ * candidate is built in the other bank, so a failed activation cannot alter
+ * active source bindings or metadata.
+ */
 typedef struct
 {
     channel_config_t configs[2u][PLATFORM_CHANNEL_LIMIT];
@@ -40,11 +81,32 @@ static sensor_manager_runtime_storage_t *g_runtime_storage;
 #define g_channel_contexts (g_runtime_storage->contexts)
 static uint8_t g_active_bank;
 
+/** @brief Checks that @p text is NUL-terminated within @p capacity bytes, and non-empty if @p required. */
 static bool sensor_manager_text_is_bounded(const char *text, size_t capacity, bool required)
 {
     return text != NULL && memchr(text, '\0', capacity) != NULL && (!required || text[0] != '\0');
 }
 
+/**
+ * @brief Validates and builds a candidate channel bank from @p config
+ *        without touching any driver/hardware.
+ *
+ * Validates each in-use channel's string bounds, driver/source
+ * compatibility (`driver_catalog_get_by_id`/`validate_source`), value-type
+ * support, the v0.4.2 explicit-writable-flag rule (retaining v0.4.1's
+ * opaque reserved-bit compatibility), and duplicate channel IDs. Collects
+ * every channel's resource claims and rejects the whole candidate if any
+ * two conflict (`driver_catalog_claims_are_compatible()`). This entire pass
+ * is pure service validation: no peripheral is touched.
+ *
+ * @param config Source configuration to validate/prepare from.
+ * @param candidate_bank Which of the two runtime-storage banks (0 or 1) to
+ *        populate; the other bank (the active one) is left untouched.
+ * @param out_count Receives the number of prepared channels on success.
+ * @return true if the candidate is fully valid and resource-conflict-free;
+ *         false on any validation failure (candidate bank contents are
+ *         then not meaningful to the caller).
+ */
 static bool sensor_manager_prepare_candidate(const device_profile_config_t *config,
                                              uint8_t candidate_bank,
                                              size_t *out_count)
@@ -138,6 +200,15 @@ static bool sensor_manager_prepare_candidate(const device_profile_config_t *conf
     return prepared != 0u && driver_catalog_claims_are_compatible(claims, claim_count);
 }
 
+/**
+ * @brief Stops (in reverse order) the first @p count channel drivers in
+ *        candidate bank @p bank, e.g. to unwind a partially-started candidate.
+ *
+ * @param bank Candidate bank index (0 or 1).
+ * @param count Number of leading channels in that bank to stop, in reverse.
+ * @note Calls each channel driver's `stop` vtable entry where present;
+ *       touches hardware indirectly through those drivers.
+ */
 static void sensor_manager_stop_candidates(uint8_t bank, size_t count)
 {
     while (count > 0u)
@@ -156,6 +227,23 @@ static void sensor_manager_stop_candidates(uint8_t bank, size_t count)
     }
 }
 
+/**
+ * @brief Starts, configures, and self-tests each enabled channel driver in
+ *        candidate bank @p bank, in order.
+ *
+ * On the first failing channel (start/configure/self_test all treated as
+ * fatal), rolls back by calling sensor_manager_stop_candidates() for every
+ * channel started so far (including the failing one, since a failed start
+ * may already have claimed or reconfigured shared hardware).
+ *
+ * @param bank Candidate bank index (0 or 1).
+ * @param count Number of channels in that bank to attempt to start.
+ * @return true if every enabled channel started/configured/self-tested
+ *         successfully; false on first failure (candidate bank is left
+ *         stopped).
+ * @note Touches hardware indirectly through the channel drivers' `start`/
+ *       `configure`/`self_test` vtable entries.
+ */
 static bool sensor_manager_start_candidates(uint8_t bank, size_t count)
 {
     for (size_t index = 0u; index < count; ++index)
@@ -195,6 +283,16 @@ static bool sensor_manager_start_candidates(uint8_t bank, size_t count)
     return true;
 }
 
+/**
+ * @brief Stops every currently-active channel's driver, via `channel_manager`'s
+ *        acquire/release driver-operation lease pattern.
+ *
+ * Iterates all channel slots, acquiring each one's driver-operation lease
+ * (`channel_manager_acquire_driver_operation()`) so the stop call runs
+ * outside any channel_manager critical section, then releases the lease.
+ * @note Touches hardware indirectly through each channel driver's `stop`
+ *       vtable entry.
+ */
 static void sensor_manager_stop_active(void)
 {
     for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
@@ -213,6 +311,23 @@ static void sensor_manager_stop_active(void)
     }
 }
 
+/**
+ * @brief Reapplies start/configure/self_test to every enabled active
+ *        channel, used to restore known-good hardware after a failed
+ *        candidate activation.
+ *
+ * Candidate startup can reconfigure a peripheral before its later
+ * lifecycle step fails. Reapplying the entire known-good configuration
+ * covers that case; the active registry alone is not sufficient to restore
+ * hardware settings. Failures for individual channels are accumulated but
+ * do not stop the loop from attempting the remaining channels.
+ *
+ * @return true if every enabled active channel's start/configure/self_test
+ *         succeeded; false if any failed (caller marks the manager
+ *         uninitialized in that case).
+ * @note Touches hardware indirectly through the channel drivers' `start`/
+ *       `configure`/`self_test` vtable entries.
+ */
 static bool sensor_manager_restart_active(void)
 {
     bool all_restored = true;
@@ -310,12 +425,18 @@ bool sensor_manager_activate_config(const device_profile_config_t *config,
     return true;
 }
 
+/** @brief Activates the currently-running config-service configuration/revision via sensor_manager_activate_config(). */
 static bool sensor_manager_activate_running_config(void)
 {
     return sensor_manager_activate_config(config_service_get(),
                                           config_service_get_running_revision());
 }
 
+/**
+ * @brief Computes the "SensorTask" poll interval as the minimum
+ *        `sample_period_ms` across enabled channels (0 excluded), or the
+ *        1000 ms default if none set a period.
+ */
 static uint32_t sensor_manager_resolve_poll_period_ms(void)
 {
     uint32_t period = SENSOR_MANAGER_DEFAULT_POLL_PERIOD_MS;
@@ -337,6 +458,17 @@ static uint32_t sensor_manager_resolve_poll_period_ms(void)
     return period;
 }
 
+/**
+ * @brief Forwards each eligible channel's current runtime value to
+ *        `history_service_record_channel_sample()`.
+ *
+ * A channel is eligible only if `TELEMETRY_CHANNEL_FLAG_HISTORIZED` is set,
+ * its value type is not `TELEMETRY_CHANNEL_VALUE_STRING` (v0.4.3: string
+ * channels are never historized regardless of the flag, matching
+ * `history_service`'s own rejection of string writes), quality is GOOD, and
+ * the source timestamp is valid. Called once per "SensorTask" iteration
+ * after polling.
+ */
 static void sensor_manager_record_channel_history(void)
 {
     for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)

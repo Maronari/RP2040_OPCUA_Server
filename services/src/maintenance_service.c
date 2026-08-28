@@ -1,3 +1,30 @@
+/**
+ * @file
+ * @brief Maintenance workflow state machine implementation; see
+ *        services/include/services/maintenance_service.h for the public
+ *        API contract.
+ *
+ * Ownership:
+ * `g_maintenance_service_runtime` (double-buffered active/inactive
+ * snapshots, pending transaction, event-publication fault, and the
+ * embedded `maintenance_journal_backend_t`) and
+ * `g_maintenance_service_export_records` are both owned exclusively by
+ * this module.
+ *
+ * Concurrency:
+ * Uses `portENTER_CRITICAL`/`portEXIT_CRITICAL` (explicitly documented as
+ * working across both RP2350 cores without a FreeRTOS mutex - see
+ * maintenance_service_lock()), not `taskENTER_CRITICAL`. Two-phase apply/
+ * commit: `prepare_*` stages a candidate under the lock; `apply` copies it,
+ * releases the lock, appends to the Flash journal **without** holding the
+ * lock, then re-locks only to record the result in the *inactive* snapshot
+ * slot; `commit` is the only function that flips `active_index`, publishing
+ * the result atomically. The `pending_transaction`'s token plus base/
+ * candidate revision numbers guard every step against a stale caller (see
+ * maintenance_service_transaction_matches()). See
+ * docs/code/state-ownership.md ("Обслуживание") for the authoritative
+ * description of this pattern.
+ */
 #include "services/maintenance_service.h"
 
 #include <math.h>
@@ -8,6 +35,7 @@
 
 #include "drivers/maintenance_journal_backend.h"
 
+/** @brief Lifecycle phase of the single pending transaction, gating which operation may run next. */
 typedef enum
 {
     MAINTENANCE_PENDING_NONE = 0,
@@ -16,6 +44,15 @@ typedef enum
     MAINTENANCE_PENDING_APPLIED = 3
 } maintenance_service_pending_phase_t;
 
+/**
+ * @brief All service-owned runtime state: double-buffered snapshots, the
+ *        one pending transaction, event-publication fault latch, and the
+ *        embedded journal backend.
+ *
+ * `snapshots[active_index]` is the published/committed state;
+ * `snapshots[active_index ^ 1]` is the inactive slot used to stage an
+ * applied-but-not-yet-committed candidate.
+ */
 typedef struct
 {
     maintenance_service_snapshot_t snapshots[2];
@@ -40,6 +77,7 @@ static maintenance_service_runtime_t g_maintenance_service_runtime;
 static maintenance_journal_record_t
     g_maintenance_service_export_records[MAINTENANCE_JOURNAL_EXPORT_PAGE_MAX];
 
+/** @brief Maps a `maintenance_journal_backend_result_t` to the coarser `maintenance_service_result_t` vocabulary (DEGRADED still reports OK to callers). */
 static maintenance_service_result_t maintenance_service_backend_result(
     maintenance_journal_backend_result_t result)
 {
@@ -55,12 +93,14 @@ static maintenance_service_result_t maintenance_service_backend_result(
                       : MAINTENANCE_SERVICE_RESULT_INTERNAL_ERROR);
 }
 
+/** @brief Converts a `maintenance_service_operation_t` to its `maintenance_journal_operation_t` counterpart (values are defined to match 1:1). */
 static maintenance_journal_operation_t maintenance_service_journal_operation(
     maintenance_service_operation_t operation)
 {
     return (maintenance_journal_operation_t)operation;
 }
 
+/** @brief Builds a `maintenance_journal_record_t` (SNAPSHOT type) from a candidate snapshot and its transaction, for journal append. */
 static maintenance_journal_record_t maintenance_service_make_record(
     const maintenance_service_snapshot_t *snapshot,
     const maintenance_service_transaction_t *transaction)
@@ -74,18 +114,21 @@ static maintenance_journal_record_t maintenance_service_make_record(
     return record;
 }
 
+/** @brief Checks that @p text is NUL-terminated within @p capacity bytes (may be empty). */
 static bool maintenance_service_has_terminated_string(const char *text,
                                                        size_t capacity)
 {
     return text != NULL && capacity > 0u && memchr(text, '\0', capacity) != NULL;
 }
 
+/** @brief Checks that @p text is NUL-terminated within @p capacity bytes and non-empty. */
 static bool maintenance_service_has_nonempty_string(const char *text,
                                                      size_t capacity)
 {
     return maintenance_service_has_terminated_string(text, capacity) && text[0] != '\0';
 }
 
+/** @brief Copies @p source into @p destination, zero-padding the remaining @p capacity bytes (bounded, always NUL-terminated within capacity). */
 static void maintenance_service_copy_string(char *destination,
                                             const char *source,
                                             size_t capacity)
@@ -101,6 +144,7 @@ static void maintenance_service_copy_string(char *destination,
     memcpy(destination, source, length);
 }
 
+/** @brief Copies @p count part-name strings from @p source into @p destination, zero-padding both the unused strings and any beyond @p count. */
 static void maintenance_service_copy_parts(
     char destination[MAINTENANCE_SERVICE_MAX_PARTS]
                     [MAINTENANCE_SERVICE_PART_TEXT_CAPACITY],
@@ -119,12 +163,14 @@ static void maintenance_service_copy_parts(
     }
 }
 
+/** @brief Range-checks a `maintenance_service_method_t` value. */
 static bool maintenance_service_method_is_valid(maintenance_service_method_t method)
 {
     return method == MAINTENANCE_SERVICE_METHOD_LOCAL ||
            method == MAINTENANCE_SERVICE_METHOD_REMOTE;
 }
 
+/** @brief Range-checks a `maintenance_service_operation_t` value (excludes the journal-only RESET operation). */
 static bool maintenance_service_operation_is_valid(maintenance_service_operation_t operation)
 {
     return operation == MAINTENANCE_SERVICE_OPERATION_PLAN ||
@@ -133,6 +179,7 @@ static bool maintenance_service_operation_is_valid(maintenance_service_operation
            operation == MAINTENANCE_SERVICE_OPERATION_FINISH;
 }
 
+/** @brief Validates a planned-date/estimated-downtime pair: positive future date, finite downtime strictly within `(0, MAINTENANCE_SERVICE_MAX_DOWNTIME_MS]`. */
 static bool maintenance_service_schedule_is_valid(int64_t planned_date_utc_100ns,
                                                   double estimated_downtime_ms)
 {
@@ -141,6 +188,7 @@ static bool maintenance_service_schedule_is_valid(int64_t planned_date_utc_100ns
            estimated_downtime_ms <= MAINTENANCE_SERVICE_MAX_DOWNTIME_MS;
 }
 
+/** @brief Validates a parts list: @p count within bounds and every used entry a non-empty terminated string. */
 static bool maintenance_service_parts_are_valid(
     uint8_t count,
     const char parts[MAINTENANCE_SERVICE_MAX_PARTS]
@@ -165,6 +213,20 @@ static bool maintenance_service_parts_are_valid(
     return true;
 }
 
+/**
+ * @brief Checks initialization and enters the cross-core critical section
+ *        guarding all `g_maintenance_service_runtime` fields.
+ *
+ * The public API is task-only. The bounded snapshot copies are protected
+ * on both RP2350 cores without allocating a FreeRTOS mutex
+ * (`portENTER_CRITICAL`/`portEXIT_CRITICAL`, not `taskENTER_CRITICAL`).
+ * Callers must pair a successful return with maintenance_service_unlock();
+ * on MAINTENANCE_SERVICE_RESULT_NOT_INITIALIZED, no lock is held.
+ *
+ * @return MAINTENANCE_SERVICE_RESULT_OK if the lock was entered;
+ *         MAINTENANCE_SERVICE_RESULT_NOT_INITIALIZED if the service has
+ *         not been initialized (no lock taken).
+ */
 static maintenance_service_result_t maintenance_service_lock(void)
 {
     if (!g_maintenance_service_runtime.initialized)
@@ -178,11 +240,24 @@ static maintenance_service_result_t maintenance_service_lock(void)
     return MAINTENANCE_SERVICE_RESULT_OK;
 }
 
+/** @brief Exits the critical section entered by a successful maintenance_service_lock(). */
 static void maintenance_service_unlock(void)
 {
     portEXIT_CRITICAL();
 }
 
+/**
+ * @brief Checks whether @p transaction is byte-for-byte the single pending
+ *        transaction (token, revisions, operation, transition all match).
+ *
+ * The core anti-staleness guard for every transaction-scoped API
+ * (`_get_prepared_snapshot`/`_apply`/`_commit`/`_abort`): a caller with an
+ * outdated or foreign token cannot advance or observe another caller's
+ * in-flight transaction.
+ *
+ * @note Must be called with the runtime lock held (reads
+ *       `g_maintenance_service_runtime` without its own synchronization).
+ */
 static bool maintenance_service_transaction_matches(
     const maintenance_service_transaction_t *transaction)
 {
@@ -199,6 +274,10 @@ static bool maintenance_service_transaction_matches(
            transaction->transition == pending->transition;
 }
 
+/**
+ * @brief Allocates the next transaction token, skipping the reserved value 0.
+ * @note Must be called with the runtime lock held.
+ */
 static uint32_t maintenance_service_next_token(void)
 {
     ++g_maintenance_service_runtime.next_token;
@@ -209,6 +288,7 @@ static uint32_t maintenance_service_next_token(void)
     return g_maintenance_service_runtime.next_token;
 }
 
+/** @brief Validates a plan request's string fields (INVALID_ARGUMENT) then its schedule/method/command time (OUT_OF_RANGE). */
 static maintenance_service_result_t maintenance_service_validate_plan(
     const maintenance_service_plan_request_t *request)
 {
@@ -236,6 +316,7 @@ static maintenance_service_result_t maintenance_service_validate_plan(
     return MAINTENANCE_SERVICE_RESULT_OK;
 }
 
+/** @brief Validates a reschedule request's string fields (INVALID_ARGUMENT) then its schedule/method/command time (OUT_OF_RANGE). */
 static maintenance_service_result_t maintenance_service_validate_reschedule(
     const maintenance_service_reschedule_request_t *request)
 {
@@ -259,6 +340,7 @@ static maintenance_service_result_t maintenance_service_validate_reschedule(
     return MAINTENANCE_SERVICE_RESULT_OK;
 }
 
+/** @brief Validates a start request: non-NULL, positive command time (OUT_OF_RANGE), non-empty actor (INVALID_ARGUMENT). */
 static maintenance_service_result_t maintenance_service_validate_start(
     const maintenance_service_start_request_t *request)
 {
@@ -278,6 +360,7 @@ static maintenance_service_result_t maintenance_service_validate_start(
                : MAINTENANCE_SERVICE_RESULT_INVALID_ARGUMENT;
 }
 
+/** @brief Validates a finish request's actor/result/parts fields (INVALID_ARGUMENT) then its command time (OUT_OF_RANGE). */
 static maintenance_service_result_t maintenance_service_validate_finish(
     const maintenance_service_finish_request_t *request)
 {
@@ -302,6 +385,33 @@ static maintenance_service_result_t maintenance_service_validate_finish(
     return MAINTENANCE_SERVICE_RESULT_OK;
 }
 
+/**
+ * @brief Shared "stage a new transaction" tail for every `prepare_*` call:
+ *        allocates a token, sets the candidate revision, and publishes it
+ *        as the single pending transaction/snapshot.
+ *
+ * Refuses to start a new transaction if an event-publication fault is
+ * latched, journal mutations are blocked, another transaction is already
+ * pending, or @p before's revision does not match the currently-active
+ * snapshot (stale caller). @p candidate's revision field is overwritten
+ * with `before->revision + 1`, regardless of what the caller passed in.
+ *
+ * @param before Snapshot the candidate was derived from (must match the
+ *        current active snapshot's revision).
+ * @param candidate Candidate snapshot to stage; its `revision` field is
+ *        overwritten by this call.
+ * @param operation Workflow operation this transaction represents.
+ * @param transition State transition this transaction represents.
+ * @param out_transaction Receives the new transaction token; must be
+ *        non-NULL.
+ * @return MAINTENANCE_SERVICE_RESULT_OK on success;
+ *         MAINTENANCE_SERVICE_RESULT_INVALID_ARGUMENT for a NULL
+ *         parameter; MAINTENANCE_SERVICE_RESULT_RESOURCE_UNAVAILABLE if an
+ *         event fault is latched or mutations are blocked;
+ *         MAINTENANCE_SERVICE_RESULT_BUSY if another transaction is
+ *         pending; MAINTENANCE_SERVICE_RESULT_INTERNAL_ERROR if @p before
+ *         is stale relative to the active snapshot.
+ */
 static maintenance_service_result_t maintenance_service_store_prepared(
     const maintenance_service_snapshot_t *before,
     maintenance_service_snapshot_t *candidate,

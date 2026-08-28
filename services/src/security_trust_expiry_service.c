@@ -1,3 +1,7 @@
+/**
+ * @file
+ * @brief Trust-list expiry diagnostic. See header for module-level docs.
+ */
 #include "services/security_trust_expiry_service.h"
 
 #include <stdio.h>
@@ -9,6 +13,14 @@
 #include "services/security_service.h"
 #include "services/time_service.h"
 
+/**
+ * @brief Days since the civil epoch (1970-01-01) for a given Gregorian
+ * calendar date, using Howard Hinnant's `days_from_civil` algorithm.
+ * @note Duplicated verbatim in `security_service.c` and
+ * `security_identity_import_service.c` (each module computes X.509 time
+ * conversions independently rather than sharing a helper).
+ * @return Negative for dates before 1970-01-01 (caller treats this as invalid).
+ */
 static int64_t security_trust_expiry_service_days_from_civil(int32_t year,
                                                              uint32_t month,
                                                              uint32_t day)
@@ -23,6 +35,12 @@ static int64_t security_trust_expiry_service_days_from_civil(int32_t year,
     return (int64_t)era * 146097 + (int64_t)day_of_era - 719468;
 }
 
+/**
+ * @brief Converts an mbedTLS X.509 time field to a Unix epoch second.
+ * @return false if any field is out of range or the resulting epoch second
+ * would not fit in a `uint32_t` (i.e. year >= 1970 required; no upper bound
+ * check beyond the `uint32_t` overflow check, so this fails around year 2106).
+ */
 static bool security_trust_expiry_service_x509_time_to_epoch(const mbedtls_x509_time *time,
                                                              uint32_t *out_epoch_s)
 {
@@ -61,6 +79,11 @@ static bool security_trust_expiry_service_x509_time_to_epoch(const mbedtls_x509_
     return true;
 }
 
+/**
+ * @brief Sniffs whether a trust-list payload is PEM-encoded (starts with
+ * "-----BEGIN") as opposed to raw DER, to decide whether mbedTLS needs a
+ * NUL-terminated buffer.
+ */
 static bool security_trust_expiry_service_payload_is_pem(const uint8_t *payload,
                                                          size_t payload_size)
 {
@@ -71,6 +94,14 @@ static bool security_trust_expiry_service_payload_is_pem(const uint8_t *payload,
            memcmp(payload, pem_prefix, sizeof(pem_prefix) - 1u) == 0;
 }
 
+/**
+ * @brief Produces a buffer suitable for `mbedtls_x509_crt_parse()`: for
+ * PEM input, allocates a NUL-terminated heap copy (mbedTLS requires this
+ * for PEM parsing); for DER input, returns @p source unchanged (no copy).
+ * @param out_needs_free Set true only when a heap buffer was allocated;
+ * caller must free it (`vPortFree`) exactly when this is true.
+ * @return false on invalid arguments or allocation failure.
+ */
 static bool security_trust_expiry_service_make_parse_buffer(const uint8_t *source,
                                                             size_t source_size,
                                                             const uint8_t **out_buffer,
@@ -109,6 +140,7 @@ static bool security_trust_expiry_service_make_parse_buffer(const uint8_t *sourc
     return true;
 }
 
+/** @brief Zeroes @p report and sets its state to `SECURITY_TRUST_EXPIRY_STATE_NONE`; no-op if NULL. */
 static void security_trust_expiry_service_init_report(security_trust_expiry_service_report_t *report)
 {
     if (report == NULL)
@@ -120,6 +152,16 @@ static void security_trust_expiry_service_init_report(security_trust_expiry_serv
     report->state = SECURITY_TRUST_EXPIRY_STATE_NONE;
 }
 
+/**
+ * @brief Derives the single worst-case `security_trust_expiry_service_state_t`
+ * from an already-populated report's counters.
+ *
+ * Precedence (highest severity wins): expired > expires-soon-high >
+ * expires-soon > valid; falls back to `_EMPTY`/`_PARSE_FAILED`/`_UNKNOWN`/
+ * `_INTERNAL_ERROR` per the report's `have_trust_list`/`parse_ok`/
+ * `time_check_performed` flags. See `security_trust_expiry_service_state_t`
+ * for what each state means.
+ */
 static security_trust_expiry_service_state_t security_trust_expiry_service_finalize_state(
     const security_trust_expiry_service_report_t *report)
 {

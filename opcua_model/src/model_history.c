@@ -1,3 +1,54 @@
+/**
+ * @file
+ * @brief Generic `UA_DataSource.read` dispatch (`model_read_value`) and the
+ *        `UA_HistoryDatabase.readRaw` backend (`model_history_read_raw`),
+ *        including the HistoryRead continuation-point table.
+ *
+ * Responsibilities:
+ * - `UA_DataValue` typed-setter helpers shared by both the read dispatch and
+ *   the history backend (`model_set_*_value`, `model_fill_history_data_value`).
+ * - `model_read_value`: the single `UA_DataSource.read` callback installed on
+ *   nearly every variable node this model creates, dispatching on
+ *   `model_node_context_t::kind` to the owning service's current snapshot.
+ *   Read-only — never mutates service state.
+ * - `model_history_read_raw`: the `UA_HistoryDatabase.readRaw` plugin
+ *   implementation. Resolves each requested NodeId to a channel id
+ *   (`model_find_history_channel_id`), manages a fixed-size, TTL'd
+ *   continuation-point table for paging (`MODEL_HISTORY_CONTINUATION_CAPACITY`
+ *   slots, `MODEL_HISTORY_CONTINUATION_EXPIRY_MS` TTL), and delegates the
+ *   actual sample lookup to `history_service_read_channel_samples` — this
+ *   file never touches the channel history ring buffer directly.
+ *
+ * Continuation-point design (see the block comment above
+ * `MODEL_HISTORY_CONTINUATION_MAGIC` below): the 12-byte wire-visible
+ * continuation point is an opaque, tamper-evident token (magic + token +
+ * XOR checksum) into a server-side-only table; the table itself carries the
+ * owning session, resolved channel/NodeId, requested range/direction, and a
+ * generation counter tying a resume to the exact retained-window state that
+ * produced it. A continuation point can never be replayed by another
+ * session (`session_context` is compared, never dereferenced), cannot grow
+ * without bound (fixed `MODEL_HISTORY_CONTINUATION_CAPACITY` table, oldest
+ * slot is not evicted — allocation simply fails with
+ * `BADNOCONTINUATIONPOINTS` when full), and is invalidated rather than
+ * silently returning skewed data if the channel's retained window changed
+ * (ring buffer wraparound) since it was issued.
+ *
+ * Ownership:
+ * The continuation table (`opcua_model_context_t::history_continuations`)
+ * and the single-shot HistoryRead sample scratch buffer
+ * (`history_read_sample_buffer`, PSRAM-backed, sized
+ * `HISTORY_SERVICE_MAX_RETURN_COUNT`) live in `opcua_model_context_t`; see
+ * `opcua_model_internal.h` for both. Sample data itself is owned by
+ * `history_service`'s Flash-backed ring buffer, never cached here beyond
+ * one read call.
+ *
+ * Concurrency:
+ * `model_read_value` and `model_history_read_raw` both run on `OpcUaTask`
+ * inside open62541's synchronous Read/HistoryRead service dispatch; the
+ * continuation table is therefore only ever touched from that one task and
+ * needs no locking of its own (unlike `history_service`'s ring buffer,
+ * which has its own internal synchronization for cross-task writers).
+ */
 #include "opcua_model_internal.h"
 
 UA_StatusCode model_set_localized_text_value(UA_DataValue *value,
@@ -128,6 +179,21 @@ UA_StatusCode model_set_channel_runtime_value(UA_DataValue *value,
 }
 
 #ifdef UA_ENABLE_HISTORIZING
+/**
+ * @brief Resolves a HistoryRead-requested NodeId to its stable channel id by
+ *        linearly scanning every historized channel's `Value` NodeId (both
+ *        the v0.4.2 generic channel-namespace form and the legacy ns=1
+ *        form) for a match.
+ *
+ * @param node_id NodeId as supplied in the `UA_HistoryReadValueId`.
+ * @param out_channel_id Output buffer for the matched channel id.
+ * @return false if @p node_id does not resolve to any channel currently
+ *         flagged `TELEMETRY_CHANNEL_FLAG_HISTORIZED`, or a buffer is too
+ *         small; callers map this to `UA_STATUSCODE_BADHISTORYOPERATIONUNSUPPORTED`.
+ * @note External linkage but only called from within this translation unit
+ *       (`model_history_read_raw`); not declared in
+ *       `opcua_model_internal.h`.
+ */
 bool model_find_history_channel_id(const UA_NodeId *node_id,
                                    char *out_channel_id,
                                    size_t out_channel_id_size)
@@ -256,6 +322,8 @@ void model_history_database_clear(UA_HistoryDatabase *history_database)
  */
 #define MODEL_HISTORY_CONTINUATION_MAGIC 0x48524350u /* "PCRH", little-endian */
 
+/** @brief Writes @p value to @p out as 4 little-endian bytes; wire-format
+ *         primitive for the continuation-point encoding below. */
 static void model_history_write_u32(uint8_t *out, uint32_t value)
 {
     for (size_t i = 0u; i < 4u; ++i)
@@ -264,6 +332,8 @@ static void model_history_write_u32(uint8_t *out, uint32_t value)
     }
 }
 
+/** @brief Reads 4 little-endian bytes from @p in as a `uint32_t`; inverse of
+ *         `model_history_write_u32`. */
 static uint32_t model_history_read_u32(const uint8_t *in)
 {
     uint32_t value = 0u;
@@ -274,6 +344,19 @@ static uint32_t model_history_read_u32(const uint8_t *in)
     return value;
 }
 
+/**
+ * @brief Encodes @p token into the 12-byte wire continuation-point format:
+ *        magic (4 bytes) + token (4 bytes) + XOR checksum of both against a
+ *        fixed constant (4 bytes). Allocates @p out via
+ *        `UA_ByteString_allocBuffer`.
+ *
+ * The checksum exists only to reject a client-mutated/garbage continuation
+ * point cheaply (`model_history_decode_continuation_point`) before doing a
+ * table lookup; it is not a security boundary — the actual authority check
+ * is the server-side table's `session_context`/query-match comparison.
+ *
+ * @return false if @p out is NULL or the buffer allocation fails.
+ */
 static bool model_history_encode_continuation_point(uint32_t token, UA_ByteString *out)
 {
     uint8_t bytes[MODEL_HISTORY_CONTINUATION_POINT_SIZE];
@@ -293,6 +376,16 @@ static bool model_history_encode_continuation_point(uint32_t token, UA_ByteStrin
     return true;
 }
 
+/**
+ * @brief Validates and decodes a client-supplied continuation-point
+ *        `UA_ByteString` (magic + checksum), the inverse of
+ *        `model_history_encode_continuation_point`.
+ * @param out_token Set to the decoded token only on success.
+ * @return false for a wrong-length buffer, wrong magic, mismatched
+ *         checksum, or a decoded token of 0 (never issued, so treated as
+ *         invalid). Callers map a false return to
+ *         `UA_STATUSCODE_BADCONTINUATIONPOINTINVALID`.
+ */
 static bool model_history_decode_continuation_point(const UA_ByteString *in, uint32_t *out_token)
 {
     uint32_t token;
@@ -313,11 +406,19 @@ static bool model_history_decode_continuation_point(const UA_ByteString *in, uin
     return true;
 }
 
+/** @brief Wraparound-safe `now >= deadline` check for `TickType_t`
+ *         (unsigned) tick counters, using the standard signed-difference
+ *         trick so a `xTaskGetTickCount()` rollover does not cause an
+ *         already-expired continuation point to look freshly valid. */
 static bool model_history_tick_reached(TickType_t now, TickType_t deadline)
 {
     return (TickType_t)(now - deadline) < (TickType_t)(~(TickType_t)0u / 2u);
 }
 
+/** @brief Zeroes (deactivates) every continuation-point slot whose
+ *         `expires_at` has passed as of @p now; called once per
+ *         `model_history_read_raw` invocation before any lookup/reservation
+ *         so expired slots are never matched or hold up the table. */
 static void model_history_expire_continuations(TickType_t now)
 {
     for (size_t index = 0u; index < MODEL_HISTORY_CONTINUATION_CAPACITY; ++index)
@@ -330,6 +431,16 @@ static void model_history_expire_continuations(TickType_t now)
     }
 }
 
+/**
+ * @brief Extracts the namespace index and string identifier from a
+ *        string-form `UA_NodeId`, the normalized key
+ *        `model_history_continuation_query_matches`/
+ *        `model_history_reserve_continuation` use to identify which node a
+ *        continuation point belongs to (channel Value NodeIds are always
+ *        string NodeIds in this model).
+ * @return false for a non-string `node_id`, a NULL identifier buffer, or an
+ *         identifier that does not fit @p out_identifier_size.
+ */
 static bool model_history_capture_node(const UA_NodeId *node_id,
                                        UA_UInt16 *out_namespace_index,
                                        char *out_identifier,
@@ -348,6 +459,17 @@ static bool model_history_capture_node(const UA_NodeId *node_id,
     return true;
 }
 
+/**
+ * @brief True if @p continuation is active and every field of the *current*
+ *        HistoryRead request (session, requested NodeId, resolved channel,
+ *        time range, direction) matches what was recorded when the
+ *        continuation point was reserved.
+ *
+ * This is the authority check behind resuming a page: a decoded token alone
+ * is not sufficient — the request must also still match, so a token cannot
+ * be reused across sessions or replayed against a different node/range even
+ * if somehow guessed.
+ */
 static bool model_history_continuation_query_matches(const model_history_continuation_t *continuation,
                                                       const void *session_context,
                                                       const UA_NodeId *node_id,
@@ -370,6 +492,13 @@ static bool model_history_continuation_query_matches(const model_history_continu
            strcmp(continuation->node_identifier, node_identifier) == 0;
 }
 
+/**
+ * @brief Linear lookup of the active continuation-point slot matching
+ *        @p token whose recorded query also matches the current request
+ *        (`model_history_continuation_query_matches`).
+ * @return NULL if no slot matches token+query, mapped by the caller to
+ *         `UA_STATUSCODE_BADCONTINUATIONPOINTINVALID`.
+ */
 static model_history_continuation_t *model_history_find_continuation(
     uint32_t token,
     const void *session_context,
@@ -392,6 +521,22 @@ static model_history_continuation_t *model_history_find_continuation(
     return NULL;
 }
 
+/**
+ * @brief Allocates a free continuation-point slot for a `HistoryReadRaw`
+ *        page that has more data remaining, recording the query/skip-cursor
+ *        state needed to resume it.
+ *
+ * Scans linearly for the first inactive slot (no LRU/eviction — a full
+ * table simply fails allocation); the returned slot's `token` is a
+ * monotonically incrementing counter (`g_model_history_continuation_next_token`,
+ * skipping 0 since 0 is reserved to mean "no valid token" by
+ * `model_history_decode_continuation_point`), unique across all currently
+ * active continuation points regardless of session.
+ *
+ * @return NULL if @p node_id/@p channel_id are invalid, or the table is
+ *         full (`MODEL_HISTORY_CONTINUATION_CAPACITY` slots all active);
+ *         mapped by the caller to `UA_STATUSCODE_BADNOCONTINUATIONPOINTS`.
+ */
 static model_history_continuation_t *model_history_reserve_continuation(
     const void *session_context,
     const UA_NodeId *node_id,

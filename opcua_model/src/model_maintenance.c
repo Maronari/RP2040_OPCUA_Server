@@ -1,7 +1,68 @@
+/**
+ * @file
+ * @brief DeviceHealth/SecurityFault Condition subsystem (the pre-v0.4.3,
+ *        non-per-channel Alarms & Conditions surface), generic Event
+ *        emission infrastructure, client-certificate expiry polling, and
+ *        the `maintenance_service` prepare/apply/commit/abort workflow
+ *        Method callbacks (`Plan`/`Start`/`Reschedule`/`Finish`/`Reset`/
+ *        `ExportMaintenanceJournal`).
+ *
+ * Responsibilities:
+ * - AMB `MaintenanceRequired` Condition build/sync
+ *   (`model_initialize_amb_maintenance_condition`,
+ *   `model_sync_maintenance_condition`) and the shared
+ *   activate/update/deactivate Condition state-machine primitives
+ *   (`model_condition_activate`, `model_condition_update_active`,
+ *   `model_condition_deactivate`, `model_sync_condition`) reused by both
+ *   DeviceHealth/SecurityFault here and the v0.4.3 per-channel engine in
+ *   `model_events.c`.
+ * - Generic custom-Event emission (`model_emit_event_ex` and its typed
+ *   wrappers) shared by every event source in the model (config/network/
+ *   sensor-fault/maintenance/firmware/audit).
+ * - Client X.509 certificate expiry computation
+ *   (`model_get_remote_certificate_expiry_info`) and periodic server/trust
+ *   expiry polling (`model_process_certificate_expiry_runtime`,
+ *   `model_process_trust_expiry_runtime`, `model_process_runtime_events`,
+ *   the top-level per-poll-iteration entry point called from
+ *   `model_core_task`).
+ * - Typed `UA_DataValue` setters shared across the whole model
+ *   (`model_set_*_value`) and source-timestamp helpers.
+ * - The `maintenance_service` transaction workflow bridge: maps
+ *   `maintenance_service_result_t` to `UA_StatusCode`
+ *   (`model_maintenance_result_status`), commits a prepared transaction
+ *   with audit/event side effects (`model_commit_maintenance_transaction`),
+ *   and implements the `Plan`/`Start`/`Reschedule`/`Finish`/`Reset`/
+ *   `ExportMaintenanceJournal` Method callbacks that drive it through
+ *   `maintenance_service`'s prepare/apply/commit/abort transaction model.
+ *
+ * Ownership:
+ * `g_model_channel_alarm_conditions_built`/`_retry_at`/`_last_failure` are
+ * adapter-owned bookkeeping for retrying the v0.4.3 channel-alarm condition
+ * build after channel nodes exist (see `model_process_runtime_events`); the
+ * maintenance export continuation table
+ * (`opcua_model_context_t::maintenance_export_continuations`) is declared
+ * in `opcua_model_internal.h`. All Condition/event/transaction state itself
+ * is owned by `maintenance_service`/`device_health_service`/`security_service`
+ * — this file only translates it into open62541 Condition fields and events.
+ *
+ * Concurrency:
+ * Every function runs on `OpcUaTask` except where the header notes
+ * otherwise (`model_commit_maintenance_transaction`,
+ * `model_export_maintenance_journal` mutate their respective continuation
+ * tables under `taskENTER_CRITICAL`/`taskEXIT_CRITICAL` since a session
+ * close on another task can race a continuation lookup).
+ */
 #include "opcua_model_internal.h"
 
 #if defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
 
+/* Sequential build with early-return-on-failure and no rollback of nodes
+ * already added on a mid-sequence failure (address-space build is aborted
+ * by the caller in that case, so a partial subtree does not linger).
+ * g_model_maintenance_condition_available is only set true after every
+ * step, including the first model_sync_maintenance_condition call,
+ * succeeds -- so model_sync_maintenance_condition (called from later poll
+ * iterations) never touches this Condition unless it was fully built. */
 UA_StatusCode model_initialize_amb_maintenance_condition(
     UA_Server *server, const UA_NodeId condition_id)
 {
@@ -189,6 +250,11 @@ UA_StatusCode model_condition_initialize_inactive(UA_Server *server,
     return status;
 }
 
+/* Relies on open62541 triggering the standard Condition event itself as a
+ * side effect of the ActiveState false->true transition below
+ * (model_condition_set_two_state_id); unlike model_condition_update_active,
+ * this never calls UA_Server_triggerConditionEvent explicitly because
+ * ActiveState is actually changing here. */
 UA_StatusCode model_condition_activate(UA_Server *server,
                                               const UA_NodeId condition_id,
                                               UA_UInt16 severity,
@@ -224,6 +290,11 @@ UA_StatusCode model_condition_activate(UA_Server *server,
     return status;
 }
 
+/* ActiveState is already true here (the condition stays active but its
+ * reason/severity/message changed), so no TwoStateVariable transition
+ * happens to trigger a Condition event automatically -- this explicitly
+ * calls UA_Server_triggerConditionEvent to notify subscribers of the
+ * updated fields, unlike model_condition_activate. */
 UA_StatusCode model_condition_update_active(UA_Server *server,
                                                    const UA_NodeId condition_id,
                                                    const UA_NodeId source_id,
@@ -407,6 +478,12 @@ UA_StatusCode model_create_device_health_condition(UA_Server *server,
                                   true);
 }
 
+/* Graceful degradation: a missing namespace-0/DI Condition type (e.g. a
+ * MINIMAL NS0 build without A&C types compiled in) sets
+ * g_model_alarm_conditions_available = false and returns GOOD rather than
+ * failing the whole address-space build, since A&C is an optional
+ * capability. Once past those probes, any real failure while creating the
+ * Condition instances themselves *is* propagated as an error. */
 UA_StatusCode model_build_alarm_conditions(UA_Server *server)
 {
     UA_NodeClass condition_type_class = UA_NODECLASS_UNSPECIFIED;
@@ -537,6 +614,11 @@ UA_StatusCode model_build_alarm_conditions(UA_Server *server)
     return status;
 }
 
+/* First-match-wins priority cascade (most urgent first): expired cert >
+ * cert expiring soon (high) > cert expiring soon (medium) > empty trust
+ * list while not commissioning > recent auth failures > commissioning mode
+ * itself > normal. Only one reason/severity/quality is ever reported even
+ * if multiple conditions are simultaneously true. */
 model_security_condition_reason_t model_evaluate_security_condition(char *message,
                                                                           size_t message_size,
                                                                           UA_UInt16 *out_severity,
@@ -1120,6 +1202,11 @@ UA_StatusCode model_write_audit_security_emit_fields(UA_KeyValueMap *event_field
     return status;
 }
 
+/* Uses UA_Server_createEvent (creates and triggers the event node in one
+ * call in this open62541 version), not a separate create+trigger pair.
+ * event_fields/event_id are always cleared before returning regardless of
+ * outcome, so a failure partway through never leaks the KeyValueMap or the
+ * generated event id byte string. */
 UA_StatusCode model_emit_event_ex(UA_Server *server,
                                          const UA_NodeId event_type_id,
                                          const UA_NodeId source_node_id,
@@ -1528,6 +1615,15 @@ void model_emit_firmware_event(UA_Server *server,
                               MODEL_EVENT_LAST_KIND_GENERIC);
 }
 
+/* Dispatches each pending.event string (set by whichever service called
+ * model_queue_pending_audit_event/model_security_audit_callback) to its own
+ * event type/source/message formatting; "login" and every other event
+ * share the generic Security-audit path below, "config-save" and
+ * everything else fall into their own explicit model_emit_event_ex calls
+ * (via `continue`) so their fields_writer/source_node_id can differ.
+ * Severity is uniformly 250 (info) on success / 700 (warning) on failure
+ * regardless of which audit category fired. Drains the whole queue in one
+ * call (bounded by MODEL_AUDIT_QUEUE_CAPACITY), not just one entry. */
 void model_process_pending_audit_events(UA_Server *server)
 {
     model_pending_audit_event_t pending = {{0}};
@@ -1647,6 +1743,15 @@ void model_event_runtime_state_init(model_event_runtime_state_t *state)
     state->initialized = true;
 }
 
+/* Three outcomes per poll: (1) first observation ever - emits a notice only
+ * if the current state already needs attention, no "recovered" notice is
+ * possible yet; (2) state changed and still needs attention - emits the
+ * severity-scaled notice built by model_build_certificate_expiry_notice;
+ * (3) state changed and no longer needs attention but previously did -
+ * emits a fixed low-severity (200) "recovered" notice reusing the plain
+ * state-name string as the message. No event at all when the state is
+ * unchanged or was never a concern. model_process_trust_expiry_runtime
+ * below follows the same three-outcome shape for trust-list expiry. */
 void model_process_certificate_expiry_runtime(UA_Server *server,
                                                      model_event_runtime_state_t *state,
                                                      char *message,
@@ -1830,8 +1935,17 @@ void model_process_trust_expiry_runtime(UA_Server *server,
  * cannot guarantee -- so it is deferred to the first runtime-event poll,
  * which model_core_lifecycle.c only reaches after address-space build
  * (including channel nodes) has fully completed. */
+/** @brief True once `model_build_channel_alarm_conditions` has succeeded
+ *         for every alarm-eligible channel; gates further retry attempts
+ *         from `model_process_runtime_events`. File-static, `OpcUaTask`-only. */
 static bool g_model_channel_alarm_conditions_built;
+/** @brief Tick count at which the next channel-alarm-condition build retry
+ *         is due (0 = retry immediately); advanced by a fixed ~1s backoff
+ *         on each failed attempt. */
 static TickType_t g_model_channel_alarm_conditions_retry_at;
+/** @brief Most recent failure status from `model_build_channel_alarm_conditions`,
+ *         retained only to avoid redundant diagnostic output on repeated
+ *         identical failures across retries. */
 static UA_StatusCode g_model_channel_alarm_conditions_last_failure;
 
 void model_process_runtime_events(UA_Server *server, model_event_runtime_state_t *state)
@@ -2114,6 +2228,22 @@ UA_StatusCode model_set_string_value(UA_DataValue *value, const char *data, UA_S
     return UA_STATUSCODE_GOOD;
 }
 
+/*
+ * Full mapping table (the single point of truth for
+ * maintenance_service_result_t -> UA_StatusCode across every maintenance
+ * method callback in this file):
+ *   OK                    -> GOOD
+ *   NOT_INITIALIZED       -> BADRESOURCEUNAVAILABLE (service not ready yet)
+ *   BUSY                  -> BADRESOURCEUNAVAILABLE (another transaction in flight)
+ *   RESOURCE_UNAVAILABLE  -> BADRESOURCEUNAVAILABLE (e.g. journal/Flash unavailable)
+ *   INVALID_STATE         -> BADSTATENOTACTIVE (requested transition not legal
+ *                            from the current maintenance_service_state_t)
+ *   OUT_OF_RANGE          -> BADOUTOFRANGE
+ *   INVALID_ARGUMENT      -> BADINVALIDARGUMENT
+ *   (any other/future value) -> BADINTERNALERROR (fail-safe default so a new
+ *                            maintenance_service_result_t added later never
+ *                            silently maps to GOOD)
+ */
 UA_StatusCode model_maintenance_result_status(maintenance_service_result_t result)
 {
     switch (result) {
@@ -2183,6 +2313,8 @@ UA_StatusCode model_prepare_maintenance_event(
     return status;
 }
 
+/* Uses UA_Server_createEvent (create+trigger in one call), same as
+ * model_emit_event_ex; see the note there. */
 UA_StatusCode model_publish_prepared_maintenance_event(
     UA_Server *server, model_prepared_maintenance_event_t *event)
 {
@@ -2228,6 +2360,32 @@ UA_StatusCode model_maintenance_mutations_available(void)
     return UA_STATUSCODE_GOOD;
 }
 
+/*
+ * Ordering and failure-mode notes not captured by the header brief:
+ *
+ * 1. maintenance_service_apply()/commit() failing aborts the transaction
+ *    (maintenance_service_abort) and returns the mapped status; nothing
+ *    durable has changed yet at that point, so this is a clean failure.
+ *
+ * 2. Once maintenance_service_commit() succeeds, the durable/service-side
+ *    state change is final and CANNOT be rolled back by this function.
+ *    Every failure path after that point (model_sync_maintenance_condition
+ *    failing, or model_publish_prepared_maintenance_event failing) therefore
+ *    fails *closed*: it calls maintenance_service_mark_event_publication_fault()
+ *    to record the desync durably, and — only if that itself fails — sets
+ *    the file-static g_model_maintenance_faulted latch (consumed by
+ *    model_maintenance_mutations_available(), which then rejects every
+ *    subsequent maintenance-workflow method call with
+ *    BADRESOURCEUNAVAILABLE until the fault is cleared out-of-band). This
+ *    guarantees a client is never told an operation succeeded while the
+ *    OPC UA-visible Condition/event state has silently drifted from the
+ *    committed service state.
+ *
+ * 3. The prepared UA_KeyValueMap event fields (`event.fields`) are built
+ *    before maintenance_service_apply() runs but only ever published (or
+ *    torn down via UA_KeyValueMap_clear) after commit succeeds; every early
+ *    return path clears them explicitly to avoid a leak.
+ */
 UA_StatusCode model_commit_maintenance_transaction(UA_Server *server,
                                                             const maintenance_service_transaction_t *transaction,
                                                             const char *operation,
@@ -2341,6 +2499,25 @@ bool model_copy_maintenance_parts(const UA_Variant *value,
     return true;
 }
 
+/*
+ * Shared shape of every maintenance workflow method callback (Plan/Start/
+ * Reschedule/Finish) below:
+ *   1. model_maintenance_mutations_available() - reject if the adapter/
+ *      service is already in a fault state (see model_commit_maintenance_transaction).
+ *   2. Validate input argument count/types/ranges -> BADINVALIDARGUMENT /
+ *      BADOUTOFRANGE on failure.
+ *   3. model_require_method_role() - Service-role RBAC gate.
+ *   4. model_copy_session_username() to capture the acting user (Plan/Start/
+ *      Finish only - RescheduleMaintenance does not record an actor on its
+ *      request, unlike the others; see the note above it).
+ *   5. maintenance_service_prepare_<verb>() builds the transaction, mapped
+ *      through model_maintenance_result_status().
+ *   6. model_commit_maintenance_transaction() applies+commits it and
+ *      handles the Condition sync / event / audit side effects.
+ * Any failure at any step calls model_audit_maintenance_rejection() before
+ * returning so a rejected call is always audited, matching
+ * model_maintenance_rejected_audit_admit's per-session rate limiting.
+ */
 UA_StatusCode model_plan_maintenance(UA_Server *server, const UA_NodeId *sid, void *ctx,
  const UA_NodeId *mid, void *mc, const UA_NodeId *oid, void *oc, size_t n, const UA_Variant *in, size_t no, UA_Variant *out)
 {
@@ -2431,6 +2608,10 @@ UA_StatusCode model_start_maintenance(UA_Server *server, const UA_NodeId *sid, v
     return UA_STATUSCODE_GOOD;
 }
 
+/* Unlike model_plan_maintenance/model_start_maintenance/model_finish_maintenance,
+ * this does not call model_copy_session_username() and leaves
+ * request.actor unset (zero-initialized), so a rescheduled activity's
+ * actor field is not updated to the rescheduling user. */
 UA_StatusCode model_reschedule_maintenance(UA_Server *server,const UA_NodeId *sid,void *ctx,const UA_NodeId *mid,void *mc,const UA_NodeId *oid,void *oc,size_t n,const UA_Variant *in,size_t no,UA_Variant *out) {
     maintenance_service_reschedule_request_t request = {0};
     maintenance_service_transaction_t tx = {0};

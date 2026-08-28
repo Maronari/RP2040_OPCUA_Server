@@ -15,9 +15,19 @@
  * registered channels. */
 #define ALARM_SERVICE_MAX_CONDITIONS PLATFORM_CHANNEL_LIMIT
 
-/*
- * Per-channel alarm condition instance, keyed by the channel's stable
- * config-assigned id (never registry index or memory address).
+/**
+ * @brief Per-channel alarm condition instance, keyed by the channel's stable
+ *        config-assigned id (never registry index or memory address).
+ *
+ * Owned by alarm_service.c's g_conditions array (one slot per alarm-eligible
+ * channel, bound for life once assigned -- see alarm_service_init()).
+ * Written by alarm_service_task()'s evaluation pass and by any task calling
+ * alarm_service_acknowledge_channel()/alarm_service_acknowledge_all()
+ * (typically an OpcUaTask Method callback); every access to the live copy in
+ * g_conditions goes through taskENTER_CRITICAL()/taskEXIT_CRITICAL() (see
+ * alarm_service.c:301-385 for the evaluate-then-commit sequence). Callers
+ * only ever see a copy returned by alarm_service_get_condition_by_index()/
+ * alarm_service_get_condition_by_channel_id(), never a live pointer.
  *
  * Quality-fault design: quality_fault is tracked independently of
  * process_state/discrete_active and never overwrites them.  A channel that
@@ -90,27 +100,76 @@ bool alarm_service_init(void);
  */
 void alarm_service_task(void *argument);
 
-/* One bounded evaluation pass over every alarm-eligible channel.  Exposed
- * separately from alarm_service_task's infinite FreeRTOS loop so it can be
- * driven deterministically (with an explicit now_ms) from host tests. */
+/**
+ * @brief Run one bounded evaluation pass over every alarm-eligible channel.
+ *
+ * For each channel reported by channel_manager_count()/
+ * channel_manager_copy_snapshot_by_index(), classifies the value against its
+ * configured thresholds, applies hysteresis/debounce, and commits the result
+ * under a brief critical section (see alarm_service.c:301-385). Reads
+ * channel snapshots directly from channel_manager -- never through
+ * history_service. Exposed separately from alarm_service_task()'s infinite
+ * FreeRTOS loop so it can be driven deterministically (with an explicit
+ * @p now_ms) from host tests.
+ *
+ * @param now_ms Current time in milliseconds, used for debounce-deadline
+ *        arithmetic; must be monotonically non-decreasing across calls for
+ *        debounce timing to behave correctly.
+ * @note Not safe to call concurrently with itself (single evaluator
+ *       assumption); safe to call concurrently with acknowledge/read APIs.
+ */
 void alarm_service_evaluate_all(uint32_t now_ms);
 
+/** @brief Number of bound alarm condition slots (channels observed since the
+ *         last alarm_service_init()). Thread-safe (critical-section read). */
 size_t alarm_service_get_condition_count(void);
+/**
+ * @brief Copy one alarm condition by its bind-order slot index.
+ * @param index Slot index in [0, alarm_service_get_condition_count()).
+ * @param out_status Receives an owned copy of the condition; never a live
+ *        pointer into the internal array.
+ * @return true if @p index named a bound slot; false otherwise.
+ */
 bool alarm_service_get_condition_by_index(size_t index, alarm_condition_status_t *out_status);
+/**
+ * @brief Copy one alarm condition by the channel's stable string id.
+ * @param channel_id Channel id to look up; never registry index.
+ * @param out_status Receives an owned copy of the condition.
+ * @return true if @p channel_id was bound to a condition; false otherwise.
+ */
 bool alarm_service_get_condition_by_channel_id(const char *channel_id, alarm_condition_status_t *out_status);
 
-/* Preserved v0.4.2 public contract (wired to the
- * "Device.Maintenance.AcknowledgeAllAlarms" Method): acknowledges every
- * condition instance. */
+/**
+ * @brief Acknowledge every alarm condition instance.
+ *
+ * Preserved v0.4.2 public contract, wired to the
+ * "Device.Maintenance.AcknowledgeAllAlarms" OPC UA Method. Increments each
+ * condition's acknowledgement_revision so a concurrent evaluation merges
+ * rather than overwrites the acknowledgement.
+ */
 void alarm_service_acknowledge_all(void);
-/* v0.4.3 additive per-condition acknowledgement, backing the standard
- * per-condition OPC UA Acknowledge Method. */
+/**
+ * @brief Acknowledge the single alarm condition bound to @p channel_id.
+ *
+ * v0.4.3 additive per-condition acknowledgement, backing the standard
+ * per-condition OPC UA Acknowledge Method. See alarm_service_acknowledge_all()
+ * for the revision-merge behavior.
+ *
+ * @param channel_id Channel id to acknowledge.
+ * @return true if @p channel_id named a bound condition; false otherwise.
+ */
 bool alarm_service_acknowledge_channel(const char *channel_id);
 
-/* Alarm eligibility rule (T5 scope decision): every numeric or Boolean
- * channel value type is eligible; String is not.  Exposed so the OPC UA
- * adapter builds exactly the same condition-instance set without
- * duplicating the rule. */
+/**
+ * @brief Alarm eligibility rule (T5 scope decision): every numeric or
+ *        Boolean channel value type is eligible; String is not.
+ *
+ * Exposed so the OPC UA adapter builds exactly the same condition-instance
+ * set as alarm_service without duplicating the rule.
+ *
+ * @param value_type Channel value type to test.
+ * @return true if a channel of this value type gets an alarm condition.
+ */
 bool alarm_service_value_type_is_eligible(telemetry_channel_value_type_t value_type);
 
 /* ---- Legacy v0.4.2 singleton compatibility shim ----
@@ -122,6 +181,17 @@ bool alarm_service_value_type_is_eligible(telemetry_channel_value_type_t value_t
  * report for the exact required change.  No new v0.4.3 code should use this
  * shim; it exists purely for source compatibility with a file outside this
  * task's boundary.
+ */
+/**
+ * @brief Lossy v0.4.2-shaped projection of one alarm condition (the legacy
+ *        singleton temperature-channel alarm view).
+ *
+ * @p channel_id/@p channel_name point at static storage owned by
+ * alarm_service.c (g_legacy_channel_id/g_legacy_channel_name) and are valid
+ * only until the next alarm_service_get_status() call -- not safe to retain
+ * across calls or across tasks. @p state collapses HIGH/LOW into WARNING and
+ * HIGH_HIGH/LOW_LOW into CRITICAL, and any quality_fault into INVALID,
+ * discarding the distinction the v0.4.3 alarm_condition_status_t preserves.
  */
 typedef struct
 {
@@ -138,6 +208,19 @@ typedef struct
     uint32_t trip_count;
 } alarm_service_status_t;
 
+/**
+ * @brief Fill @p out_status with the legacy singleton view of the
+ *        DEVICE_CHANNEL_ID_TEMPERATURE_1 alarm condition.
+ *
+ * Looks up the condition via alarm_service_get_condition_by_channel_id() and
+ * projects it into the lossy v0.4.2 shape (see alarm_service_status_t). If
+ * no condition is bound yet, returns a default INVALID/acknowledged status
+ * naming DEVICE_CHANNEL_ID_TEMPERATURE_1 without failing.
+ *
+ * @param out_status Must not be NULL; fully overwritten on every call.
+ * @note Legacy compatibility shim only -- see the comment above
+ *       alarm_service_status_t. No new v0.4.3 code should call this.
+ */
 void alarm_service_get_status(alarm_service_status_t *out_status);
 
 #endif

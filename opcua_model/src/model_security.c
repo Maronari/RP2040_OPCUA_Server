@@ -1,5 +1,48 @@
+/**
+ * @file
+ * @brief `Device.Maintenance.Security.*` method callbacks and JSON-status
+ *        formatters bridging `services/security_service`,
+ *        `services/security_identity_import_service`,
+ *        `services/security_trust_import_service`,
+ *        `services/security_state_service`, and
+ *        `services/security_certificate_group_service` into open62541.
+ *
+ * Responsibilities:
+ * - Device-identity rotation (certificate/private key) staged chunked
+ *   upload: Begin/Write/Abort/ValidateStaged/ApplyStaged, delegating to
+ *   `security_identity_import_service`.
+ * - Trust-list staged chunked import (Begin/Write/Abort/Validate/Apply,
+ *   delegating to `security_trust_import_service`) plus one-shot export
+ *   and state/metadata JSON reporting.
+ * - `model_refresh_runtime_trust_backends()`: re-points the live
+ *   `UA_ServerConfig` PKI stores at whatever
+ *   `security_certificate_group_service` currently manages, called after
+ *   any trust-list mutation so it takes effect without a reboot.
+ *
+ * Ownership:
+ * No certificate/key/trust-list bytes are held here; each service owns its
+ * own staging buffer. This file only validates method arguments, formats
+ * JSON status reports, and translates service result codes to
+ * `UA_StatusCode`/boolean method outputs — see the Begin/Write/Abort/
+ * Validate/Apply pattern documented per-family in `opcua_model_internal.h`.
+ *
+ * Concurrency:
+ * All callbacks run synchronously on `OpcUaTask` inside
+ * `UA_Server_run_iterate`.
+ *
+ * @note This adapter never invents certificate/crypto semantics: expiry
+ *       classification, key matching, and trust validation are entirely
+ *       `security_*` service responsibilities; this file only formats their
+ *       results.
+ */
 #include "opcua_model_internal.h"
 
+/* MaxNodesPerMethodCall is one (see `OPCUA_MAX_METHODS_PER_CALL`), so the
+ * shared `g_model_maintenance_export_payload` scratch buffer written here is
+ * guaranteed to be fully encoded into the response before another method
+ * callback (on this or any other method) can reuse it; there is no
+ * synchronization on the buffer itself because of that single-call
+ * guarantee, not because it is otherwise safe to share across calls. */
 UA_StatusCode model_export_config(UA_Server *server,
                                          const UA_NodeId *session_id,
                                          void *session_context,
@@ -504,6 +547,11 @@ UA_StatusCode model_validate_staged_identity(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* @note Unlike model_enter_commissioning_mode()/model_exit_commissioning_mode()
+ * in `model_ota.c`, a successful apply here does not itself call
+ * model_schedule_reboot() even though the new identity only takes effect
+ * after a reboot ("reboot required" is reported in the audit/event text and
+ * left for the operator/client to act on). */
 UA_StatusCode model_apply_staged_identity(UA_Server *server,
                                                  const UA_NodeId *session_id,
                                                  void *session_context,
@@ -596,6 +644,12 @@ void model_write_trust_import_report_json(char *buffer,
              security_trust_import_service_result_to_string(report->result));
 }
 
+/* @pre @p buffer must already hold a complete JSON object (its last
+ * non-NUL character must be '}'); otherwise this is a silent no-op.
+ * @note Splices the new field in by overwriting the trailing '}' and
+ * re-appending it after the new field via `snprintf`; if the composed
+ * result would not fit in @p buffer_size, @p buffer is NUL-terminated at
+ * its last byte (truncated) rather than overflowed. */
 void model_append_json_object_field(char *buffer,
                                            size_t buffer_size,
                                            const char *field_name,
@@ -723,6 +777,11 @@ UA_StatusCode model_get_trust_state(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/* @note `payload` aliases `security_service`'s own trust-list buffer
+ * (const-cast away) rather than copying it; this is safe only because
+ * model_set_bytestring_method_output() deep-copies the bytes
+ * (`UA_Variant_setScalarCopy`) synchronously before returning, so the alias
+ * never outlives this call. */
 UA_StatusCode model_export_trust_list(UA_Server *server,
                                              const UA_NodeId *session_id,
                                              void *session_context,

@@ -1,5 +1,42 @@
+/**
+ * @file
+ * @brief Generic `UA_DataSource.write` dispatch (`model_write_value`) plus
+ *        the configuration/identity/reboot/diagnostics `UA_MethodCallback`
+ *        implementations registered under `Device.Maintenance`.
+ *
+ * Responsibilities:
+ * - `model_write_value` is installed as the `write` callback on every
+ *   writable variable node; it re-checks role/security-mode, then delegates
+ *   each node kind to exactly one service call
+ *   (`channel_manager_write_value`, `config_service_set_asset_id`,
+ *   `channel_manager_update_settings`,
+ *   `config_service_set_timezone_offset_minutes`) — it never mutates
+ *   service-owned state directly.
+ * - The `Device.Maintenance.*` method callbacks in this file cover the
+ *   deferred-action group (Reboot, BlinkIdentify, FactoryReset,
+ *   AcknowledgeAllAlarms, SyncTimeNow) and the staged-configuration group
+ *   (ApplyConfig, SaveConfig, SetDeviceIdentity, SetLocationPaths,
+ *   SetNetworkConfig, SetMqttPubSubEnabled, GetChannelConfig, ListDrivers,
+ *   GetConfigState).
+ *
+ * Ownership: this file owns no persistent state; `model_schedule_reboot` /
+ * `model_schedule_identify_blink` write into the single
+ * `opcua_model_context_t::pending_actions` (`g_pending_actions`), consumed
+ * by `model_core_task`'s poll loop. `model_get_config_state` borrows the
+ * one shared PSRAM scratch buffer (`g_model_maintenance_export_payload`).
+ *
+ * Concurrency: every function here runs on `OpcUaTask` inside open62541's
+ * synchronous Write/Call service dispatch; none is reentrant across tasks.
+ */
 #include "opcua_model_internal.h"
 
+/**
+ * @brief Maps a `channel_manager_write_result_t` to the matching
+ *        `UA_StatusCode`, used by `model_write_value`'s
+ *        `MODEL_NODE_CHANNEL_VALUE` case to translate the channel-manager
+ *        write outcome into an OPC UA status.
+ * @note File-local; not declared in `opcua_model_internal.h`.
+ */
 static UA_StatusCode model_channel_write_result_to_status(channel_manager_write_result_t result)
 {
     switch (result)
@@ -19,6 +56,22 @@ static UA_StatusCode model_channel_write_result_to_status(channel_manager_write_
     }
 }
 
+/**
+ * @brief Converts an incoming `UA_Variant` scalar into a
+ *        `telemetry_channel_value_t` of exactly @p type, for writes to
+ *        `MODEL_NODE_CHANNEL_VALUE` nodes.
+ * @param variant Write value from open62541; must hold a scalar exactly
+ *        matching @p type's expected `UA_TYPES` entry (no implicit numeric
+ *        conversion between e.g. Int32 and Float).
+ * @param type Channel's declared `telemetry_channel_value_type_t`, from the
+ *        channel snapshot (`model_write_value` looks this up first).
+ * @param out_value Zeroed and populated on success.
+ * @return `UA_STATUSCODE_GOOD` on success; `UA_STATUSCODE_BADTYPEMISMATCH`
+ *         if @p variant's type does not match; `UA_STATUSCODE_BADOUTOFRANGE`
+ *         if a string value does not fit `TELEMETRY_CHANNEL_STRING_VALUE_MAX_LEN`;
+ *         `UA_STATUSCODE_BADNODATA` for a NULL/empty @p variant.
+ * @note File-local; not declared in `opcua_model_internal.h`.
+ */
 static UA_StatusCode model_copy_channel_write_variant(const UA_Variant *variant,
                                                        telemetry_channel_value_type_t type,
                                                        telemetry_channel_value_t *out_value)
@@ -114,6 +167,11 @@ UA_StatusCode model_write_value(UA_Server *server,
         return UA_STATUSCODE_BADUSERACCESSDENIED;
     }
 
+    /* Implementation note: the legacy fixed Device.Configuration.* nodes
+     * (Sampling/Publish period, TempOffset/Scale, High/HighHigh alarm) carry
+     * no channel_id of their own — they always resolve to the single legacy
+     * temperature channel (DEVICE_CHANNEL_ID_TEMPERATURE_1), matching the
+     * pre-v0.4.2 single-channel model these nodes predate. */
     if (context->channel_id != NULL)
     {
         settings_channel_id = context->channel_id;
@@ -883,6 +941,13 @@ UA_StatusCode model_set_network_config(UA_Server *server,
                                               size_t output_size,
                                               UA_Variant *output)
 {
+    /* Implementation note: the 9 input arguments are strictly positional
+     * (useDhcp, mac, hostname, opcuaPort, ntpServer, ipv4, netmask, gateway,
+     * dns) with no argument names checked here — the UA_Argument list that
+     * defines this contract to clients is built where this method node is
+     * registered in model_address_space.c. Reordering the checks below
+     * without also updating that argument list would silently desync the
+     * two. */
     static const size_t expected_input_size = 9u;
     UA_StatusCode status;
     UA_Boolean result = false;

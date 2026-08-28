@@ -1,3 +1,32 @@
+/**
+ * @file
+ * @brief Cross-cutting `opcua_model` utilities with no dependency on a
+ *        specific subsystem: the open62541 logger adapter, compact NodeId
+ *        printing, session/username helpers, and access-control predicate
+ *        primitives (anonymous-session / hidden-subtree checks).
+ *
+ * Responsibilities:
+ * - Bridge open62541's `UA_Logger` callback into the Pico SDK stdio backend
+ *   (`model_ua_logger_log`), rate-limited by log level to stay off the
+ *   `OpcUaTask` hot path.
+ * - Provide the session-context accessors (`model_session_is_secure`,
+ *   `model_session_is_anonymous`, `model_session_get_username_bytes`) that
+ *   `model_access.c` and the generic Read/Write dispatch build role checks
+ *   on top of.
+ * - Provide the NodeId-prefix predicates
+ *   (`model_nodeid_string_has_prefix`, `model_node_is_anonymous_hidden`,
+ *   `model_node_is_maintenance_method`) used to gate anonymous browse/read
+ *   and to distinguish maintenance methods from other admin-only methods.
+ *
+ * Ownership: stateless — every function here only reads its arguments (the
+ * session context, a NodeId, a log level) and never touches
+ * `opcua_model_context_t` or any service state.
+ *
+ * Concurrency: all functions are pure/read-only helpers; `model_ua_logger_log`
+ * is only ever invoked by open62541 on `OpcUaTask` (see its doc comment in
+ * `opcua_model_internal.h`). None of the functions in this file need
+ * synchronization.
+ */
 #include "opcua_model_internal.h"
 
 const char *model_log_level_name(UA_LogLevel level)
@@ -20,6 +49,12 @@ void model_ua_logger_log(void *context,
                          const char *msg,
                          va_list args)
 {
+    /* Implementation note: formats into a fixed 768-byte stack buffer via
+     * UA_String_vformat and truncates rather than growing it, since this
+     * runs on OpcUaTask and must not allocate. UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED
+     * from UA_String_vformat is treated as a successful (truncated) format,
+     * not an error, so long open62541 log lines still print instead of being
+     * dropped. */
     /*
      * This logger runs in the single OPC UA task.  USB CDC can apply its
      * configured write timeout when the host is absent, so formatting and
@@ -120,6 +155,18 @@ void model_monitored_item_register_callback(UA_Server *server,
      * perform synchronous console I/O or allocation diagnostics. */
 }
 
+/**
+ * @brief Maps a `UA_ApplicationNotificationType` to a short kebab-case name
+ *        (e.g. `"session-activated"`) for log/diagnostic text.
+ * @param type Notification type as delivered to
+ *        `UA_ServerConfig.applicationCallback`.
+ * @return Static string literal; `"unknown"` for any value not in the
+ *         enumerated set.
+ * @note Not declared in `opcua_model_internal.h` and has no caller elsewhere
+ *       in this codebase as of this pass (`model_server_notification_callback`
+ *       below is a no-op and does not call it); kept as a ready-to-use
+ *       formatter should notification logging be re-enabled.
+ */
 const char *model_notification_type_name(UA_ApplicationNotificationType type)
 {
     switch (type)

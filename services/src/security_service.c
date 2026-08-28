@@ -1,3 +1,17 @@
+/**
+ * @file
+ * @brief Central security coordinator implementation: device identity,
+ * trust list, local user accounts, commissioning mode. See header for
+ * module-level docs.
+ *
+ * Implementation note: every mutator follows the same pattern —
+ * `security_service_store()` for a read-only view of the current Flash
+ * image, `security_service_allocate_image()` to heap-copy it, patch the
+ * copy, `security_service_commit_store()` to erase+reprogram the entire
+ * reserved region, then free the heap copy. There is no partial/incremental
+ * Flash write and no rollback if a commit fails partway through erase vs.
+ * program phases.
+ */
 #include "services/security_service.h"
 
 #include <inttypes.h>
@@ -28,6 +42,11 @@
 
 #define fflush(_stream) stdio_flush()
 
+/**
+ * @brief On-Flash record for a single local user account.
+ * `in_use` distinguishes an allocated slot from an empty one (independent
+ * of `enabled`, which gates login without freeing the slot).
+ */
 typedef struct
 {
     uint8_t in_use;
@@ -39,6 +58,13 @@ typedef struct
     uint8_t password_hash[SECURITY_SERVICE_PASSWORD_HASH_LEN];
 } security_service_user_record_t;
 
+/**
+ * @brief On-Flash layout of the security store, at
+ * `OTA_LAYOUT_SECURITY_STORE_ORIGIN`. Validated by magic/version/length
+ * bounds/CRC32 before use (`security_service_store_is_valid()`).
+ * `reserved0` doubles as the commissioning-mode flag bitfield (see
+ * `SECURITY_SERVICE_FLAG_COMMISSIONING_MODE`).
+ */
 typedef struct
 {
     uint32_t magic;
@@ -55,23 +81,32 @@ typedef struct
     uint32_t crc32;
 } security_service_store_t;
 
+/** Per-user (or per-unknown-username) login-backoff bookkeeping; runtime-only, not persisted. */
 typedef struct
 {
     uint32_t failed_attempts;
     uint64_t blocked_until_us;
 } security_service_auth_runtime_t;
 
+/** True once `security_service_init()` has established a valid Flash store; gates every other accessor. */
 static bool g_security_store_ready = false;
+/** Login-backoff state indexed by user-record slot index (parallel array to `security_service_store_t::users`). */
 static security_service_auth_runtime_t g_user_auth_runtime[SECURITY_SERVICE_MAX_USERS];
+/** Shared login-backoff bucket for unknown usernames, so timing does not reveal whether a username exists. */
 static security_service_auth_runtime_t g_unknown_auth_runtime = {0u, 0u};
+/** Total authentication failures since boot; not persisted, exposed via `security_service_get_failed_login_count()`. */
 static uint32_t g_failed_login_count = 0u;
+/** Epoch second of the most recent authentication failure since boot; 0 means none recorded. */
 static uint32_t g_last_auth_failure_epoch_s = 0u;
+/** Registered audit-event sink, or NULL; see `security_service_set_audit_callback()`. */
 static security_service_audit_callback_t g_audit_callback = NULL;
+/** Opaque context pointer passed through to `g_audit_callback`. */
 static void *g_audit_callback_context = NULL;
 
 _Static_assert(sizeof(security_service_store_t) <= OTA_LAYOUT_SECURITY_STORE_SIZE_BYTES,
                "Security store does not fit into the reserved flash region");
 
+/** @brief Standard CRC-32 (poly 0xEDB88320, reflected) over @p size bytes of @p data. */
 static uint32_t security_service_crc32(const uint8_t *data, size_t size)
 {
     uint32_t crc = 0xFFFFFFFFu;
@@ -89,11 +124,13 @@ static uint32_t security_service_crc32(const uint8_t *data, size_t size)
     return ~crc;
 }
 
+/** @brief Raw pointer to the XIP-mapped Flash store; does not check validity or readiness. */
 static const security_service_store_t *security_service_flash_store(void)
 {
     return (const security_service_store_t *)OTA_LAYOUT_SECURITY_STORE_ORIGIN;
 }
 
+/** @brief Returns the Flash store only if `security_service_init()` has succeeded; NULL otherwise. */
 static const security_service_store_t *security_service_store(void)
 {
     if (!g_security_store_ready)
@@ -104,12 +141,14 @@ static const security_service_store_t *security_service_store(void)
     return security_service_flash_store();
 }
 
+/** @brief Reads the commissioning-mode bit out of the store's `reserved0` flags field. */
 static bool security_service_get_commissioning_flag(const security_service_store_t *store)
 {
     return store != NULL &&
            (store->reserved0 & SECURITY_SERVICE_FLAG_COMMISSIONING_MODE) != 0u;
 }
 
+/** @brief Sets/clears the commissioning-mode bit in a local store image (no Flash write performed here). */
 static void security_service_set_commissioning_flag(security_service_store_t *store, bool enabled)
 {
     if (store == NULL)
@@ -127,16 +166,19 @@ static void security_service_set_commissioning_flag(security_service_store_t *st
     }
 }
 
+/** @brief Current Unix epoch second, per `time_service`'s underlying `get_system_time()`. */
 static uint32_t security_service_now_epoch_s(void)
 {
     return get_system_time();
 }
 
+/** @brief Current monotonic microsecond timestamp used for login-backoff arithmetic. */
 static uint64_t security_service_now_us(void)
 {
     return get_system_time_us();
 }
 
+/** @brief Clears a login-backoff record's failure count and lockout deadline; no-op if NULL. */
 static void security_service_reset_auth_runtime(security_service_auth_runtime_t *runtime)
 {
     if (runtime == NULL)
@@ -148,6 +190,12 @@ static void security_service_reset_auth_runtime(security_service_auth_runtime_t 
     runtime->blocked_until_us = 0u;
 }
 
+/**
+ * @brief Computes the exponential login-backoff duration for a given
+ * consecutive-failure count: doubles from
+ * `SECURITY_SERVICE_AUTH_BASE_BACKOFF_MS` per additional failure, capped at
+ * `SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS`.
+ */
 static uint32_t security_service_compute_backoff_ms(uint32_t failed_attempts)
 {
     uint32_t backoff_ms = SECURITY_SERVICE_AUTH_BASE_BACKOFF_MS;
@@ -167,6 +215,7 @@ static uint32_t security_service_compute_backoff_ms(uint32_t failed_attempts)
     return backoff_ms;
 }
 
+/** @brief Milliseconds remaining until @p runtime's lockout expires (rounded up); 0 if not locked out or NULL. */
 static uint32_t security_service_remaining_backoff_ms(const security_service_auth_runtime_t *runtime,
                                                       uint64_t now_us)
 {
@@ -181,12 +230,14 @@ static uint32_t security_service_remaining_backoff_ms(const security_service_aut
     return (uint32_t)((remaining_us + 999u) / 1000u);
 }
 
+/** @brief Bumps the global failed-login counter and records the current time as the last failure. */
 static void security_service_note_auth_failure(void)
 {
     ++g_failed_login_count;
     g_last_auth_failure_epoch_s = security_service_now_epoch_s();
 }
 
+/** @brief Clears login-backoff state for a user slot index; silently ignores an out-of-range index. */
 static void security_service_reset_user_runtime_by_index(int index)
 {
     if (index < 0 || index >= (int)SECURITY_SERVICE_MAX_USERS)
@@ -197,6 +248,7 @@ static void security_service_reset_user_runtime_by_index(int index)
     security_service_reset_auth_runtime(&g_user_auth_runtime[index]);
 }
 
+/** @brief Resets all per-user and unknown-username login-backoff state and failure counters; called from `security_service_init()`. */
 static void security_service_reset_all_runtime_state(void)
 {
     memset(g_user_auth_runtime, 0, sizeof(g_user_auth_runtime));
@@ -238,6 +290,13 @@ void security_service_set_audit_callback(security_service_audit_callback_t callb
     g_audit_callback_context = context;
 }
 
+/**
+ * @brief Days since the civil epoch (1970-01-01) for a given Gregorian
+ * calendar date, using Howard Hinnant's `days_from_civil` algorithm.
+ * @note Duplicated verbatim in `security_trust_expiry_service.c` and
+ * `security_identity_import_service.c`.
+ * @return Negative for dates before 1970-01-01 (caller treats this as invalid).
+ */
 static int64_t security_service_days_from_civil(int32_t year, uint32_t month, uint32_t day)
 {
     const int32_t adjusted_year = year - (month <= 2u ? 1 : 0);
@@ -250,6 +309,11 @@ static int64_t security_service_days_from_civil(int32_t year, uint32_t month, ui
     return (int64_t)era * 146097 + (int64_t)day_of_era - 719468;
 }
 
+/**
+ * @brief Converts an mbedTLS X.509 time field to a Unix epoch second.
+ * @return false if any field is out of range or the resulting epoch second
+ * would not fit in a `uint32_t`.
+ */
 static bool security_service_x509_time_to_epoch(const mbedtls_x509_time *time, uint32_t *out_epoch_s)
 {
     int64_t days;
@@ -285,6 +349,13 @@ static bool security_service_x509_time_to_epoch(const mbedtls_x509_time *time, u
     return true;
 }
 
+/**
+ * @brief Reads the stored device certificate and parses it into @p certificate.
+ * @param certificate Initialized by this function (`mbedtls_x509_crt_init`);
+ * caller must `mbedtls_x509_crt_free()` it only when this returns true.
+ * @return false if no device certificate is stored or it fails to parse as
+ * X.509 (in which case the mbedTLS context is freed before returning).
+ */
 static bool security_service_parse_device_certificate(mbedtls_x509_crt *certificate)
 {
     security_service_blob_view_t view = {0};
@@ -306,6 +377,16 @@ static bool security_service_parse_device_certificate(mbedtls_x509_crt *certific
     return true;
 }
 
+/**
+ * @brief Computes `SHA-256(salt || password)` using the RP2350 hardware
+ * SHA-256 peripheral (`pico_sha256_*`, blocking).
+ * @param salt Fixed `SECURITY_SERVICE_SALT_LEN`-byte salt, hashed first.
+ * @param password May be NULL/zero-length (hashes the salt alone).
+ * @param out_hash Receives the `SECURITY_SERVICE_PASSWORD_HASH_LEN`-byte digest.
+ * @return false if @p salt or @p out_hash is NULL, or the hardware engine
+ * failed to start.
+ * @note Blocks the calling task while the hardware SHA-256 engine runs.
+ */
 static bool security_service_hash_password(const uint8_t salt[SECURITY_SERVICE_SALT_LEN],
                                            const uint8_t *password,
                                            size_t password_length,
@@ -335,6 +416,10 @@ static bool security_service_hash_password(const uint8_t salt[SECURITY_SERVICE_S
     return true;
 }
 
+/**
+ * @brief Fills @p buffer with hardware TRNG output (RP2350's `get_rand_32()`),
+ * used to generate a fresh per-user password salt.
+ */
 static void security_service_fill_random(uint8_t *buffer, size_t size)
 {
     size_t offset = 0u;
@@ -350,6 +435,7 @@ static void security_service_fill_random(uint8_t *buffer, size_t size)
     }
 }
 
+/** @brief Fills @p store with a zeroed, freshly-initialized security store (no users, no identity, commissioning mode on). */
 static void security_service_reset_defaults(security_service_store_t *store)
 {
     memset(store, 0, sizeof(*store));
@@ -358,6 +444,7 @@ static void security_service_reset_defaults(security_service_store_t *store)
     security_service_set_commissioning_flag(store, true);
 }
 
+/** @return Slot index of the user record matching @p username (case-sensitive, exact), or -1 if not found/invalid input. */
 static int security_service_find_user_index(const security_service_store_t *store, const char *username)
 {
     if (store == NULL || username == NULL || username[0] == '\0')
@@ -376,6 +463,7 @@ static int security_service_find_user_index(const security_service_store_t *stor
     return -1;
 }
 
+/** @return Index of the first unused (`in_use == 0`) user slot, or -1 if the table is full/NULL. */
 static int security_service_find_free_user_index(const security_service_store_t *store)
 {
     if (store == NULL)
@@ -394,6 +482,11 @@ static int security_service_find_free_user_index(const security_service_store_t 
     return -1;
 }
 
+/**
+ * @brief Counts in-use, enabled user records with role `SECURITY_ROLE_ADMIN`.
+ * Used to enforce the "at least one enabled admin must remain" rule in
+ * `set_role`/`disable_user`/`delete_user`.
+ */
 static size_t security_service_count_enabled_admins(const security_service_store_t *store)
 {
     size_t count = 0u;
@@ -416,6 +509,7 @@ static size_t security_service_count_enabled_admins(const security_service_store
     return count;
 }
 
+/** @return false if @p username is NULL, empty, or not shorter than `SECURITY_SERVICE_USERNAME_MAX_LEN`. */
 static bool security_service_username_is_valid(const char *username)
 {
     size_t length;
@@ -434,11 +528,18 @@ static bool security_service_username_is_valid(const char *username)
     return true;
 }
 
+/** @return false if @p password is NULL, empty, or longer than 128 bytes. */
 static bool security_service_password_is_valid(const uint8_t *password, size_t password_length)
 {
     return password != NULL && password_length > 0u && password_length <= 128u;
 }
 
+/**
+ * @brief Generates a fresh random salt and stores the salted SHA-256 hash
+ * of @p password into @p record, overwriting any prior salt/hash.
+ * @return false if @p record is NULL or @p password is invalid (see
+ * `security_service_password_is_valid()`).
+ */
 static bool security_service_set_password_record(security_service_user_record_t *record,
                                                  const uint8_t *password,
                                                  size_t password_length)
@@ -455,6 +556,12 @@ static bool security_service_set_password_record(security_service_user_record_t 
                                           record->password_hash);
 }
 
+/**
+ * @brief Verifies @p password against @p record's stored salt/hash using a
+ * constant-time comparison (`diff |=` accumulator, not short-circuited).
+ * @return false if @p record is NULL, not in use, disabled, or the password
+ * is invalid/does not match.
+ */
 static bool security_service_verify_password_record(const security_service_user_record_t *record,
                                                     const uint8_t *password,
                                                     size_t password_length)
@@ -485,6 +592,17 @@ static bool security_service_verify_password_record(const security_service_user_
     return diff == 0u;
 }
 
+/**
+ * @brief Validates a candidate store: magic, version, per-field length
+ * bounds (certificate/key/trust-list lengths within their `*_MAX_LEN`
+ * caps), and CRC32 — the sole gate for trusting Flash contents (or a
+ * heap-staged image before it is committed).
+ * @note `expected_crc` is computed from @p store before the NULL check
+ * below runs; this only avoids a NULL dereference because every current
+ * caller passes a non-NULL pointer (the fixed XIP Flash address or a
+ * heap-allocated image) — passing a genuinely NULL @p store would crash in
+ * `security_service_crc32()` before reaching this function's own guard.
+ */
 static bool security_service_store_is_valid(const security_service_store_t *store)
 {
     const uint32_t expected_crc = security_service_crc32((const uint8_t *)store,
@@ -510,6 +628,13 @@ static bool security_service_store_is_valid(const security_service_store_t *stor
     return expected_crc == store->crc32;
 }
 
+/**
+ * @brief Heap-allocates a full `security_service_store_t`-sized staging
+ * image, either copied from @p source or (if NULL) freshly defaulted via
+ * `security_service_reset_defaults()`.
+ * @return NULL on allocation failure. Caller owns and must `vPortFree()`
+ * the result (typically after `security_service_commit_store()`).
+ */
 static security_service_store_t *security_service_allocate_image(const security_service_store_t *source)
 {
     security_service_store_t *image =
@@ -532,12 +657,25 @@ static security_service_store_t *security_service_allocate_image(const security_
     return image;
 }
 
+/** @brief Rounds @p image_size up to a whole number of Flash program-page units. */
 static size_t security_service_get_program_size(size_t image_size)
 {
     return ((image_size + OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES - 1u) /
             OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES) * OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES;
 }
 
+/**
+ * @brief Stamps magic/version/CRC32 onto @p image, then erases and
+ * reprograms the entire `OTA_LAYOUT_SECURITY_STORE_SIZE_BYTES` Flash region
+ * with it via `flash_operation_coordinator`.
+ *
+ * @note Two-phase: erase all sectors first, then program all pages; a
+ * failure partway through either phase leaves the region in an
+ * indeterminate state — no rollback is attempted. On success, sets
+ * `g_security_store_ready = true`.
+ * @return false on NULL input, scratch-buffer allocation failure, or any
+ * individual erase/program operation failure.
+ */
 static bool security_service_commit_store(security_service_store_t *image)
 {
     uint8_t *program_image = NULL;
@@ -588,6 +726,24 @@ cleanup:
     return committed;
 }
 
+/**
+ * @brief Re-derives and commits `security_state_service`'s snapshot from a
+ * `security_service` store image, called after every store mutation
+ * (init, identity seed/update, trust-list update, commissioning-mode
+ * change).
+ *
+ * Commissioning mode is forced true if @p store is NULL or has an empty
+ * trust list (mirrors `security_service_is_commissioning_mode()`'s own
+ * fallback rule). The active trust-generation counter is set to the
+ * trust-list version only when a trust list is actually present (0
+ * otherwise), and the pending trust-generation counter is always reset to 0
+ * here — this function does not know about an in-flight
+ * `security_trust_import_service` session's pending generation.
+ *
+ * @return false if any of the underlying `security_state_service_*` calls fail.
+ * @note Performs Flash writes in `security_state_service` (its own reserved
+ * region, separate from this module's store).
+ */
 static bool security_service_sync_state_store(const security_service_store_t *store)
 {
     const bool commissioning_mode = store == NULL ||
@@ -615,6 +771,22 @@ static bool security_service_sync_state_store(const security_service_store_t *st
     return security_state_service_set_commissioning_mode(commissioning_mode);
 }
 
+/**
+ * @brief Overwrites (or creates, in the first free slot) an `admin` user
+ * record in @p store with the bootstrap default password, resetting its
+ * role to `SECURITY_ROLE_ADMIN` and enabling it.
+ *
+ * Called from `security_service_init()` when the existing store has no
+ * enabled admin account (fresh store or all admins disabled/deleted) —
+ * this is the mechanism that guarantees the device is never left without
+ * any way to administratively log in.
+ *
+ * @return false only if no free slot is available (table full with a
+ * differently-named non-admin user occupying every slot) or password
+ * hashing fails.
+ * @note Does not commit to Flash; caller is responsible for calling
+ * `security_service_commit_store()`.
+ */
 static bool security_service_ensure_admin_account(security_service_store_t *store)
 {
     security_service_user_record_t *record;

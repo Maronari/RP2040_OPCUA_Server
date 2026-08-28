@@ -1,3 +1,46 @@
+/**
+ * @file
+ * @brief Address-space builder: node-creation primitives (readonly/writable
+ *        variables, method nodes, folders/objects), the generic per-channel
+ *        node set (v0.4.2+) and legacy single-temperature-channel node set,
+ *        AMB asset-discovery aliases, DeviceHealth nodes, diagnostics/
+ *        network/time/security/configuration/messaging fixed nodes, and the
+ *        top-level orchestrator `model_build_address_space`.
+ *
+ * Responsibilities (see `docs/code/modules/opcua_model.md` for the
+ * file-naming caveat: despite the generic-sounding name, this file — not
+ * `model_channels.c` — is where channel and diagnostics nodes are actually
+ * created):
+ * - `model_build_address_space`, called once from `model_core_task` after
+ *   `UA_Server_newWithConfig`, creates every OPC UA node this server
+ *   exposes: the `Device` object tree, AMB/DI structures, per-channel
+ *   generic and legacy node sets (iterating `channel_manager_copy_snapshot_by_index`
+ *   snapshots — never a raw channel-registry pointer), diagnostics/network/
+ *   time/security/configuration/messaging fixed nodes, event types, and (if
+ *   enabled) Alarms & Conditions.
+ * - `model_add_channel_nodes` builds one channel's generic node subtree
+ *   (Value + static properties) using a fixed on-stack NodeId-string array
+ *   (`ids[13]`) — no heap allocation — and rolls back only the nodes it
+ *   itself created on failure; `model_rollback_channel_model` is the
+ *   deterministic full-teardown counterpart the orchestrator calls when a
+ *   later channel or step fails, covering every `PLATFORM_CHANNEL_LIMIT`
+ *   slot regardless of how far node creation got.
+ * - `model_add_legacy_temperature_nodes` builds the pre-v0.4.2 single-channel
+ *   `Device.Channels.<name>.*` subtree in parallel with the generic one, for
+ *   upgrade/back-compat continuity.
+ *
+ * Ownership: node-context payloads (`model_node_context_t`) handed to
+ * `UA_Server_addVariableNode` point into the fixed arrays inside
+ * `opcua_model_context_t` (`g_channel_node_contexts`,
+ * `g_generic_channel_node_contexts`, `g_fixed_node_contexts`,
+ * `g_task_node_contexts`); this file only populates those slots, it never
+ * allocates node-context memory itself.
+ *
+ * Concurrency: every function in this file runs on `OpcUaTask`, only during
+ * server startup (`model_build_address_space`) or a subsequent identity/
+ * asset-alias update triggered from a method callback also running on
+ * `OpcUaTask`; nothing here is safe to call from another task.
+ */
 #include "opcua_model_internal.h"
 
 UA_StatusCode model_write_asset_alias_node_version(UA_Server *server,
@@ -1476,6 +1519,23 @@ UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
                                        task_context);
 }
 
+/**
+ * @brief Initializes and returns the fixed-slot `model_node_context_t` for
+ *        one legacy per-channel field (`g_channel_node_contexts[channel_index][field_index]`),
+ *        used as the `nodeContext` for the legacy `Device.Channels.<name>.*`
+ *        variable nodes built by `model_add_legacy_temperature_nodes`.
+ * @param channel_index Channel registry slot, must be `< PLATFORM_CHANNEL_LIMIT`.
+ * @param field_index Legacy field slot, must be `< MODEL_CHANNEL_FIELD_CONTEXT_COUNT`.
+ * @param kind Node kind to store (e.g. `MODEL_NODE_PROCESS_TEMPERATURE_VALUE`).
+ * @param channel_id Channel id to copy into the context's bounded storage;
+ *        must be non-NULL/non-empty.
+ * @return Pointer into the fixed context array (never freed, stable for the
+ *         life of `opcua_model_context_t`), or NULL if any argument is out
+ *         of range.
+ * @note Not declared in `opcua_model_internal.h`; only called from
+ *       `model_add_legacy_temperature_nodes` in this file. Runs on
+ *       `OpcUaTask` during address-space construction.
+ */
 model_node_context_t *model_prepare_channel_context(size_t channel_index,
                                                            size_t field_index,
                                                            model_node_kind_t kind,
@@ -1499,6 +1559,18 @@ model_node_context_t *model_prepare_channel_context(size_t channel_index,
     return context;
 }
 
+/**
+ * @brief Same as `model_prepare_channel_context` but for the v0.4.2+ generic
+ *        per-channel node set (`g_generic_channel_node_contexts`), used by
+ *        `model_add_channel_nodes`.
+ * @param channel_index Channel registry slot, must be `< PLATFORM_CHANNEL_LIMIT`.
+ * @param field_index Generic field slot, must be `< MODEL_GENERIC_CHANNEL_CONTEXT_COUNT`.
+ * @param kind Node kind to store.
+ * @param channel_id Channel id copied into bounded storage; must be
+ *        non-NULL/non-empty.
+ * @return Pointer into the fixed context array, zeroed before
+ *         initialization, or NULL if any argument is out of range.
+ */
 static model_node_context_t *model_prepare_generic_channel_context(size_t channel_index,
                                                                     size_t field_index,
                                                                     model_node_kind_t kind,
@@ -1523,6 +1595,11 @@ static model_node_context_t *model_prepare_generic_channel_context(size_t channe
     return context;
 }
 
+/** @brief Zeroes the fixed generic-channel node-context slot row for
+ *         @p channel_index (`g_generic_channel_node_contexts[channel_index]`),
+ *         so a subsequent read/write callback cannot observe a stale
+ *         `kind`/`channel_id` from a previous build attempt after a
+ *         rollback. No-op if @p channel_index is out of range. */
 static void model_clear_generic_channel_contexts(size_t channel_index)
 {
     if (channel_index < PLATFORM_CHANNEL_LIMIT)
@@ -1533,6 +1610,8 @@ static void model_clear_generic_channel_contexts(size_t channel_index)
     }
 }
 
+/** @brief Same as `model_clear_generic_channel_contexts` but for the legacy
+ *         per-channel context row (`g_channel_node_contexts[channel_index]`). */
 static void model_clear_legacy_channel_contexts(size_t channel_index)
 {
     if (channel_index < PLATFORM_CHANNEL_LIMIT)
@@ -1543,6 +1622,11 @@ static void model_clear_legacy_channel_contexts(size_t channel_index)
     }
 }
 
+/** @brief Deletes @p channel's legacy `Device.Channels.<name>` object node
+ *         and, recursively, every child node under it (`deleteReferences =
+ *         true`), used to unwind a partially-built legacy channel subtree
+ *         on failure or during full rollback. No-op if @p server is NULL or
+ *         the node id cannot be built. */
 static void model_delete_legacy_channel_subtree(UA_Server *server,
                                                 const telemetry_channel_t *channel)
 {
@@ -1557,6 +1641,12 @@ static void model_delete_legacy_channel_subtree(UA_Server *server,
     }
 }
 
+/** @brief Deletes the first @p node_count entries of @p node_ids (channel
+ *         namespace) in reverse-creation order, used by
+ *         `model_add_channel_nodes`'s failure path to undo exactly the
+ *         generic nodes it created for one channel (the object node plus
+ *         however many properties got created before the failure). No-op if
+ *         @p server is NULL. */
 static void model_delete_generic_nodes(UA_Server *server,
                                        const char node_ids[][MODEL_CHANNEL_NODE_ID_MAX_LEN],
                                        size_t node_count)
@@ -1569,6 +1659,18 @@ static void model_delete_generic_nodes(UA_Server *server,
     }
 }
 
+/**
+ * @brief Adds one read-only scalar `PropertyType` variable node
+ *        (`node_id`/`browse_name`) under @p parent_id in the channel
+ *        namespace, its value copied from @p data via `UA_Variant_setScalarCopy`.
+ * @param data_type Both the OPC UA `UA_NodeId` data type and the source
+ *        `UA_DataType` describing @p data's in-memory layout.
+ * @return `UA_STATUSCODE_BADINVALIDARGUMENT` if any pointer argument is
+ *         NULL; the `UA_Variant_setScalarCopy`/`UA_Server_addVariableNode`
+ *         status otherwise.
+ * @note Building block for `model_add_channel_nodes`'s static per-channel
+ *       properties (Description, ChannelKind, DriverId, ...).
+ */
 static UA_StatusCode model_add_generic_static_property(UA_Server *server,
                                                         const char *node_id,
                                                         const char *browse_name,
@@ -1611,6 +1713,17 @@ static UA_StatusCode model_add_generic_static_property(UA_Server *server,
     return status;
 }
 
+/**
+ * @brief Adds the generic per-channel `Value` variable node
+ *        (`node_id`/@p parent_id, in the channel namespace), wiring the
+ *        generic `model_read_value`/`model_write_value` DataSource and
+ *        setting `AccessLevel`/`HistoryRead` bits from @p writable/@p historizing.
+ * @param context `model_node_context_t` to attach as `nodeContext` (from
+ *        `model_prepare_generic_channel_context`); the `write` callback is
+ *        only installed when @p writable is true.
+ * @return `UA_Server_addVariableNode`/`UA_Server_setVariableNode_dataSource`
+ *         status.
+ */
 static UA_StatusCode model_add_generic_value(UA_Server *server,
                                               const char *node_id,
                                               UA_NodeId parent_id,
@@ -1662,6 +1775,10 @@ static UA_StatusCode model_add_generic_value(UA_Server *server,
     return UA_Server_setVariableNode_dataSource(server, created_id, data_source);
 }
 
+/** @brief True for `telemetry_channel_value_type_t` values that are numeric
+ *         (Float/Double/Int32/UInt32/Int64/UInt64), used to gate whether
+ *         `model_add_channel_nodes` adds an `EURange` property (String/
+ *         Boolean channels have no meaningful engineering range). */
 static bool model_channel_value_type_is_numeric(telemetry_channel_value_type_t type)
 {
     return type == TELEMETRY_CHANNEL_VALUE_FLOAT || type == TELEMETRY_CHANNEL_VALUE_DOUBLE ||
@@ -1760,6 +1877,10 @@ UA_StatusCode model_add_channel_nodes(UA_Server *server,
     {
         UA_EUInformation eu = {0};
         eu.namespaceUri = UA_STRING((char *)"http://www.opcfoundation.org/UA/units/un/cefact");
+        /* UNECE Common Code -> UA_EUInformation.unitId, packed per the OPC UA
+         * spec's 4-character-code encoding. Only "degC" and "V" are mapped;
+         * any other unit string silently gets unitId=0 (unknown unit) rather
+         * than failing node creation. */
         eu.unitId = strcmp(channel->metadata.unit, "degC") == 0 ? 4408652 :
                     strcmp(channel->metadata.unit, "V") == 0 ? 5655636 : 0;
         eu.displayName = UA_LOCALIZEDTEXT((char *)"en-US", (char *)channel->metadata.unit);
@@ -1788,6 +1909,22 @@ fail:
     return status;
 }
 
+/**
+ * @brief Deterministic full teardown of every channel's address-space nodes
+ *        (generic and legacy), called by `model_build_address_space` when
+ *        building any channel's nodes fails partway through the
+ *        `PLATFORM_CHANNEL_LIMIT` loop.
+ *
+ * Unlike `model_add_channel_nodes`'s own failure path (which only deletes
+ * the nodes it itself just created for the channel that failed), this walks
+ * every channel slot unconditionally and attempts to delete every possible
+ * generic/legacy node id for it, tolerating `UA_Server_deleteNode` failures
+ * for nodes that were never created (satisfies the v0.4.2 "bounded
+ * temporary allocation, deterministic rollback" requirement — see
+ * `docs/code/modules/opcua_model.md`). Also re-zeroes every legacy/generic
+ * node-context slot so a later retry does not observe stale contexts.
+ * @note Runs on `OpcUaTask` during address-space construction only.
+ */
 static void model_rollback_channel_model(UA_Server *server)
 {
     static const char *const fields[] = {NULL, "Value", "Description", "ChannelKind", "DriverId",

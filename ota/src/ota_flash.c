@@ -1,3 +1,31 @@
+/**
+ * @file
+ * @brief Implements the OTA state record I/O and Bank B staging writer
+ *        declared in `ota/ota_flash.h`.
+ *
+ * Responsibilities:
+ * - Erase-then-program the single OTA state Flash sector on every state
+ *   write.
+ * - Buffer arbitrary-sized caller writes into full Flash program pages and
+ *   flush them into Bank B (`ota_flash_writer_*` family).
+ * - Bounds-check every offset/size against Bank B's configured capacity
+ *   before touching Flash.
+ *
+ * Ownership:
+ * `g_ota_state_sector_buffer` is a private scratch buffer sized to one
+ * Flash erase block, reused across every `ota_flash_write_state()` call; it
+ * holds no state between calls (always fully overwritten before use).
+ *
+ * Concurrency:
+ * No internal locking. All Flash access is funneled through
+ * `ota_flash_backend_erase()`/`ota_flash_backend_program()`
+ * (`ota_flash_backend.h`); on the application side that backend is
+ * serialized by `drivers/flash_operation_coordinator`, but callers of this
+ * module (e.g. `firmware_update_service.c`) must still ensure only one OTA
+ * write session is active at a time, since `ota_flash_writer_t` state and
+ * the shared `g_ota_state_sector_buffer` are not protected here.
+ */
+
 #include "ota/ota_flash.h"
 
 #include <string.h>
@@ -6,16 +34,44 @@
 #include "ota_layout.h"
 #include "pico/stdlib.h"
 
+/** Scratch buffer for one OTA-state Flash sector, reused by every
+ * `ota_flash_write_state()` call. Placed in `.scratch_x` RAM (SRAM striped
+ * bank, see `__scratch_x`) rather than the default heap/BSS so it remains
+ * valid even during flash-critical sections where normal RAM banking may be
+ * restricted. */
 static uint8_t __scratch_x("ota_flash") g_ota_state_sector_buffer[OTA_LAYOUT_FLASH_ERASE_SIZE_BYTES];
 
 _Static_assert(OTA_FLASH_WRITER_PAGE_BUFFER_SIZE == OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES,
                "OTA writer page buffer must match flash program size");
 
+/**
+ * @brief Computes the Bank B byte offset of the page currently buffered in
+ *        @p writer.
+ *
+ * `bytes_written` includes the bytes still sitting in `page_buffer`
+ * (`buffered_bytes`), so subtracting them back out yields the offset where
+ * that buffered page actually starts once flushed.
+ *
+ * @param writer Writer whose current page offset is computed. Must not be
+ *        NULL (caller-guaranteed; not checked here).
+ * @return Byte offset within Bank B of the start of the buffered page.
+ */
 static uint32_t ota_flash_bank_b_offset_for_writer(const ota_flash_writer_t *writer)
 {
     return (uint32_t)(writer->bytes_written - writer->buffered_bytes);
 }
 
+/**
+ * @brief Rounds @p value up to the next multiple of @p alignment.
+ *
+ * Used to compute the number of Flash erase-block-aligned bytes needed to
+ * cover an arbitrary image size.
+ *
+ * @param value Value to round up.
+ * @param alignment Alignment to round to; must be non-zero.
+ * @return @p value rounded up to a multiple of @p alignment, or 0 if
+ *         @p alignment is 0.
+ */
 static uint32_t ota_flash_round_up(uint32_t value, uint32_t alignment)
 {
     if (alignment == 0u)
@@ -26,6 +82,19 @@ static uint32_t ota_flash_round_up(uint32_t value, uint32_t alignment)
     return (uint32_t)(((value + alignment - 1u) / alignment) * alignment);
 }
 
+/**
+ * @brief Checks whether a `[offset, offset + size)` byte range lies
+ *        entirely within Bank B's configured capacity.
+ *
+ * Written to avoid overflow: computed as
+ * `offset <= BANK_B_SIZE - size` rather than `offset + size <= BANK_B_SIZE`,
+ * so it cannot wrap around for very large @p offset/@p size.
+ *
+ * @param offset Candidate start offset within Bank B.
+ * @param size Candidate range length in bytes.
+ * @return true if the whole range fits within Bank B; false otherwise
+ *         (including when @p size alone exceeds Bank B's capacity).
+ */
 static bool ota_flash_range_is_within_bank_b(uint32_t offset, size_t size)
 {
     return offset <= OTA_LAYOUT_BANK_B_SIZE_BYTES &&
@@ -33,11 +102,41 @@ static bool ota_flash_range_is_within_bank_b(uint32_t offset, size_t size)
            offset <= (OTA_LAYOUT_BANK_B_SIZE_BYTES - (uint32_t)size);
 }
 
+/**
+ * @brief Returns a read-only XIP-mapped pointer into Bank B at @p offset.
+ *
+ * @param offset Byte offset within Bank B (not validated here — callers
+ *        must bounds-check first, e.g. via `ota_flash_range_is_within_bank_b()`).
+ * @return Pointer into memory-mapped Flash (XIP address space); dereferencing
+ *         it performs a direct Flash read, not a RAM access.
+ */
 static const uint8_t *ota_flash_bank_b_pointer(uint32_t offset)
 {
     return (const uint8_t *)(OTA_LAYOUT_BANK_B_ORIGIN + offset);
 }
 
+/**
+ * @brief Flushes the writer's currently buffered page to Bank B.
+ *
+ * For a non-final page the buffer must be exactly one full Flash program
+ * page (`OTA_LAYOUT_FLASH_PROGRAM_SIZE_BYTES`); for the final page a short
+ * buffer is padded with `0xFF` up to a full page before programming, since
+ * Flash can only be programmed in whole pages. A zero-length buffer is a
+ * no-op success (nothing to flush). On any failure path the caller
+ * (`ota_flash_writer_write()`/`ota_flash_writer_finish()`) is responsible
+ * for marking the writer inactive; this function only reports the status.
+ *
+ * @param writer Writer whose buffered page should be flushed. Must be
+ *        non-NULL and active.
+ * @param final_page true if this is the last page of the image (allows a
+ *        short, padded final page); false requires a full page.
+ * @return `OTA_FLASH_STATUS_OK` on success (including the no-op empty-buffer
+ *         case); `OTA_FLASH_STATUS_WRITER_STATE_ERROR` if @p writer is
+ *         NULL/inactive, or if a non-final page is short;
+ *         `OTA_FLASH_STATUS_OUT_OF_RANGE` if the resulting page falls
+ *         outside Bank B; otherwise propagates `ota_flash_backend_program()`
+ *         failures.
+ */
 static ota_flash_status_t ota_flash_flush_writer_page(ota_flash_writer_t *writer, bool final_page)
 {
     uint32_t page_offset;
@@ -92,6 +191,9 @@ bool ota_flash_read_state(ota_state_record_t *out_record)
     return ota_state_validate(out_record);
 }
 
+/* Erase-then-program: the full sector is erased before the new record is
+ * programmed, so a power loss between the two steps leaves the state region
+ * erased (invalid) rather than reverted to the previous record. */
 ota_flash_status_t ota_flash_write_state(const ota_state_record_t *record)
 {
     ota_state_record_t local_record;
@@ -191,6 +293,9 @@ void ota_flash_writer_init(ota_flash_writer_t *writer)
     memset(writer, 0, sizeof(*writer));
 }
 
+/* Discards any previous session's OTA state (reset to IDLE) before erasing
+ * Bank B, so an interrupted begin() cannot leave a stale STAGED/COPYING
+ * record pointing at a partially-erased Bank B. */
 ota_flash_status_t ota_flash_writer_begin(ota_flash_writer_t *writer, uint32_t image_size)
 {
     ota_flash_status_t status;

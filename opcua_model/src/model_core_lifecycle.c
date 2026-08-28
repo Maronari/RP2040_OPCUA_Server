@@ -1,10 +1,63 @@
+/**
+ * @file
+ * @brief Server lifecycle: `opcua_model_init`/`opcua_model_task` entry points,
+ *        `UA_ServerConfig` construction (transport, security, historizing),
+ *        and the `OpcUaTask` run loop (`model_core_task`).
+ *
+ * Responsibilities:
+ * - `model_core_init` performs one-time PSRAM scratch allocation (bounded
+ *   maintenance-export payload and HistoryRead sample buffer) and seeds
+ *   `opcua_model_context_t`'s config/pending-actions/PubSub-runtime fields.
+ * - `model_core_task` is the `OpcUaTask` entry point: waits for network
+ *   readiness, builds the `UA_ServerConfig` (buffers, security policies,
+ *   access control, historizing), calls `UA_Server_newWithConfig`, builds the
+ *   address space, starts PubSub if enabled, then runs the
+ *   `UA_Server_run_iterate` poll loop until a scheduled reboot fires.
+ * - The `#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS` block builds the secure
+ *   `UA_ServerConfig`: bootstrap-identity seeding, trust-list/AcceptAll PKI
+ *   selection by commissioning mode, and endpoint filtering.
+ *
+ * Ownership: `model_core_init`/`model_core_task` are the only functions that
+ * allocate/free `g_model_maintenance_export_payload` and
+ * `g_model_history_read_sample_buffer` (PSRAM); every other field this file
+ * touches lives in the single `opcua_model_context_t` (`g_model_config`,
+ * `g_pending_actions`, `g_default_*` saved access-control callbacks).
+ *
+ * Concurrency: `model_core_init` runs on whichever task calls
+ * `opcua_model_init` (see `app/basic_profile/main.c`) before `OpcUaTask` is
+ * created; everything else in this file — the entire `UA_ServerConfig` build
+ * sequence and the run loop — executes exclusively on `OpcUaTask`. This
+ * ordering is safety-critical: `model_core_task` must observe
+ * `g_model_initialized` before touching any model state, and every
+ * `UA_ServerConfig` step that fails calls `vTaskDelete(NULL)` rather than
+ * continuing with a partially-configured server.
+ */
 #include "opcua_model_internal.h"
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
+/**
+ * @brief Compiled-in, non-secret placeholder TLS server identity
+ *        (`TEST_SRV_CRT_RSA_SHA256_DER`/`TEST_SRV_KEY_RSA_PEM`, from
+ *        `test_certs.h`), used only by `model_seed_bootstrap_identity_if_needed`
+ *        to give a freshly-flashed device *some* identity to start a secure
+ *        server with before a real one is provisioned.
+ * @note Same key material on every device running this firmware image; not
+ *       a production-quality identity. Never used once
+ *       `security_service_has_device_identity()` reports a real,
+ *       non-bootstrap identity.
+ */
 static const uint8_t g_bootstrap_device_certificate[] = TEST_SRV_CRT_RSA_SHA256_DER;
+/** @brief Private key half of `g_bootstrap_device_certificate`. Same
+ *         non-production caveat applies. */
 static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
 #endif
 
+/* Implementation note: the two PSRAM scratch buffers are allocated
+ * independently and idempotently (skipped if already non-NULL, so repeated
+ * init calls are safe), but only the history sample buffer's failure path
+ * rolls back the maintenance-export payload allocation made earlier in the
+ * same call — a partial-success state (payload allocated, history buffer
+ * not) must never be left in the context on a false return. */
 bool model_core_init(const opcua_model_config_t *config)
 {
 #ifdef UA_ENABLE_HISTORIZING
@@ -506,6 +559,11 @@ UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
 
     model_clear_runtime_security_config(config);
 
+    /* No silent downgrade: if the device is already out of commissioning
+     * mode but has no trust list, startup fails hard here rather than
+     * falling back to commissioning/AcceptAll on its own. Leaving strict
+     * mode requires an explicit, audited model_enter_commissioning_mode
+     * call (model_security.c) — see docs/code/modules/opcua_model.md#access-control. */
     if (!commissioning_mode && !have_trust_list)
     {
         printf("[OPC UA]\tStrict security mode requires a provisioned trust list\n");
@@ -615,6 +673,13 @@ void model_bind_open62541_allocators(void)
 #endif
 }
 
+/* Implementation note: this is the FreeRTOS `OpcUaTask` entry function
+ * (installed via xTaskCreate in app/basic_profile/main.c, not in this file).
+ * Every fatal step below follows the same fail-fast pattern: log the
+ * open62541 UA_StatusCode, release whatever has been allocated so far
+ * (UA_ServerConfig_clear(config) before UA_Server_newWithConfig succeeds,
+ * model_context_delete_server(server) after), then vTaskDelete(NULL) — there
+ * is no retry or degraded-mode path once server construction has begun. */
 void model_core_task(void *argument)
 {
     UA_Server *server = NULL;

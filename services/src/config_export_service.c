@@ -1,4 +1,25 @@
-﻿#include "services/config_export_service.h"
+﻿/**
+ * @file
+ * @brief Implementation of configuration-to-JSON serialization declared in
+ * `services/config_export_service.h`.
+ *
+ * Responsibilities:
+ * - A bounded, allocation-free streaming JSON writer
+ *   (`config_json_writer_t` + `config_json_writer_*` helpers) that never
+ *   writes past the caller-supplied buffer and tracks overflow rather than
+ *   producing partial/incorrect JSON silently.
+ * - `config_export_service_write_profile_json()` formats exactly the
+ *   schema `config_validate_service`'s JSON parser expects, field-for-field
+ *   in the same fixed key order.
+ *
+ * Ownership: no persistent state.
+ *
+ * Concurrency: no internal synchronization; reads configuration state via
+ * `config_service_get()`/`config_service_get_staged()`, which return live
+ * pointers without their own copy — see the layering note on those
+ * functions in `services/config_service.h`.
+ */
+#include "services/config_export_service.h"
 
 #include <float.h>
 #include <math.h>
@@ -11,6 +32,15 @@
 #include "services/config_service.h"
 #include "services/config_store_service.h"
 
+/**
+ * @brief Bounded, allocation-free streaming JSON writer state.
+ *
+ * All `config_json_writer_append_*()` helpers below are no-ops once
+ * `overflow` is set, so a caller only needs to check `writer.overflow` (or
+ * the boolean return of the top-level export function) once at the end
+ * rather than after every append. Owned entirely by the calling export
+ * function; not shared across threads.
+ */
 typedef struct
 {
     char *buffer;
@@ -19,11 +49,17 @@ typedef struct
     bool overflow;
 } config_json_writer_t;
 
+/** @brief Maps `network_mode_t` to its JSON schema string (`"dhcp"`/`"static"`). */
 static const char *config_export_network_mode_to_string(network_mode_t mode)
 {
     return mode == NETWORK_MODE_STATIC ? "static" : "dhcp";
 }
 
+/**
+ * @brief Initializes @p writer to write into @p buffer, or into an
+ * already-overflowed state if @p buffer/@p capacity are invalid.
+ * @note No-op if @p writer is NULL.
+ */
 static void config_json_writer_init(config_json_writer_t *writer, char *buffer, size_t capacity)
 {
     if (writer == NULL)
@@ -42,6 +78,11 @@ static void config_json_writer_init(config_json_writer_t *writer, char *buffer, 
     }
 }
 
+/**
+ * @brief Appends exactly @p text_length raw bytes, or sets `writer->overflow`
+ * if they wouldn't fit (leaving one byte reserved for the NUL terminator).
+ * @note No-op if @p writer is NULL, already overflowed, or @p text is NULL.
+ */
 static void config_json_writer_append_bytes(config_json_writer_t *writer, const char *text, size_t text_length)
 {
     if (writer == NULL || writer->overflow || text == NULL)
@@ -62,6 +103,7 @@ static void config_json_writer_append_bytes(config_json_writer_t *writer, const 
     writer->buffer[writer->length] = '\0';
 }
 
+/** @brief Appends a NUL-terminated literal string (JSON punctuation/keys). No-op if @p text is NULL. */
 static void config_json_writer_append_raw(config_json_writer_t *writer, const char *text)
 {
     if (text != NULL)
@@ -70,11 +112,18 @@ static void config_json_writer_append_raw(config_json_writer_t *writer, const ch
     }
 }
 
+/** @brief Appends a single character. */
 static void config_json_writer_append_char(config_json_writer_t *writer, char value)
 {
     config_json_writer_append_bytes(writer, &value, 1u);
 }
 
+/**
+ * @brief Appends the decimal digits of @p value without invoking
+ * `snprintf()`/newlib formatting, used for high-frequency small integers
+ * (e.g. per-channel period/flag fields) to keep JSON export fast and
+ * allocation-free.
+ */
 static void config_json_writer_append_u64(config_json_writer_t *writer, uint64_t value)
 {
     char digits[20];
@@ -92,6 +141,10 @@ static void config_json_writer_append_u64(config_json_writer_t *writer, uint64_t
     }
 }
 
+/**
+ * @brief Appends a signed decimal integer, handling `INT64_MIN` without
+ * signed-overflow UB when negating it.
+ */
 static void config_json_writer_append_i64(config_json_writer_t *writer, int64_t value)
 {
     uint64_t magnitude;
@@ -109,6 +162,13 @@ static void config_json_writer_append_i64(config_json_writer_t *writer, int64_t 
     config_json_writer_append_u64(writer, magnitude);
 }
 
+/**
+ * @brief `vsnprintf()`-based formatted append for compound JSON fragments
+ * (e.g. `"port":%u,"enableAlarmAckMethod":%s`) where the fixed
+ * byte/character helpers above would be more verbose than useful.
+ * @note Sets `writer->overflow` on truncation or a `vsnprintf()` encoding
+ * error (negative return).
+ */
 static void config_json_writer_append_format(config_json_writer_t *writer, const char *format, ...)
 {
     va_list args;
@@ -134,6 +194,17 @@ static void config_json_writer_append_format(config_json_writer_t *writer, const
     writer->length += (size_t)written;
 }
 
+/**
+ * @brief Appends @p text as a JSON string literal, escaping `\`, `"`, `\n`,
+ * `\r`, `\t`.
+ * @param text Source text; a NULL pointer is treated as an empty string.
+ * @param text_capacity Fixed-size buffer capacity of @p text (as stored in
+ * `device_profile_config_t`), used only as a hard upper bound on the scan —
+ * @p text is still expected to be NUL-terminated within that capacity.
+ * @note Fails closed: if no NUL terminator is found within @p text_capacity
+ * bytes, this sets `writer->overflow` rather than scanning past the
+ * fixed-width field into adjacent memory.
+ */
 static void config_json_writer_append_quoted(config_json_writer_t *writer,
                                              const char *text,
                                              size_t text_capacity)
@@ -189,10 +260,19 @@ static void config_json_writer_append_quoted(config_json_writer_t *writer,
     config_json_writer_append_char(writer, '\"');
 }
 
-/* DBL_MAX is the persisted high-only lower-alarm sentinel. Formatting it via
- * %.6f produces more than 300 decimal digits, once for each configured slot.
- * These common values avoid newlib soft-float formatting entirely; the
- * finite DBL_MAX spelling round-trips exactly and remains valid JSON. */
+/**
+ * @brief Appends a finite double as a JSON number, with fast paths for
+ * common values and exact literals for the `DBL_MAX` sentinel.
+ *
+ * `DBL_MAX` is the persisted high-only lower-alarm sentinel
+ * (`config_compat_expand_channel()`). Formatting it via `%.6f` would
+ * produce more than 300 decimal digits, once per configured channel slot;
+ * these common values (`0`, `1`, `-1`, `±DBL_MAX`, whole integers) avoid
+ * newlib soft-float formatting entirely, and the finite `DBL_MAX` spelling
+ * round-trips exactly and remains valid JSON.
+ * @note Non-finite (NaN/Inf) values set `writer->overflow` rather than
+ * being emitted as invalid JSON.
+ */
 static void config_json_writer_append_double(config_json_writer_t *writer, double value)
 {
     if (writer == NULL || writer->overflow)
@@ -248,6 +328,7 @@ static void config_json_writer_append_double(config_json_writer_t *writer, doubl
     }
 }
 
+/** @brief Appends a quoted dotted-quad IPv4 string; `"0.0.0.0"` if @p address is NULL. */
 static void config_json_writer_append_ipv4(config_json_writer_t *writer, const uint8_t address[4])
 {
     if (address == NULL)
@@ -264,6 +345,7 @@ static void config_json_writer_append_ipv4(config_json_writer_t *writer, const u
                                      (unsigned)address[3]);
 }
 
+/** @brief Appends a quoted colon-separated MAC string; `"00:00:00:00:00:00"` if @p mac is NULL. */
 static void config_json_writer_append_mac(config_json_writer_t *writer, const uint8_t mac[6])
 {
     if (mac == NULL)
@@ -282,6 +364,15 @@ static void config_json_writer_append_mac(config_json_writer_t *writer, const ui
                                      (unsigned)mac[5]);
 }
 
+/**
+ * @brief Serializes @p config as the public configuration JSON schema:
+ * `schemaVersion`, `device`, `network`, `time`, `mqtt`, `diagnostics`,
+ * `opcua`, `channels` (`PLATFORM_CHANNEL_LIMIT` elements, including the
+ * v0.4.3 lower-alarm fields), in exactly the key order
+ * `config_validate_service`'s JSON parser expects.
+ * @return true if the document fit in @p buffer without any writer
+ * overflow; false on NULL/zero-sized arguments or truncation.
+ */
 static bool config_export_service_write_profile_json(const device_profile_config_t *config,
                                                      char *buffer,
                                                      size_t buffer_size)
