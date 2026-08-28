@@ -4,7 +4,7 @@
 >
 > **Board profile:** `RP2350_INDUSTRIAL_MVP_V1`
 >
-> **Last hardware consolidation:** 2026-08-27
+> **Last hardware consolidation:** 2026-08-28
 
 This document describes the current hardware architecture, frozen component choices, power tree, MCU pin allocation, completed schematic sheets, PCB/mechanical constraints, status indication, firmware-facing hardware contract, and the remaining work before production PCB release.
 
@@ -38,10 +38,13 @@ Main functional blocks:
 - 2 × analog output;
 - 4 × industrial digital input;
 - 2 × protected high-side digital output;
-- 4 × universal/counter/frequency/encoder input;
-- 2 × I²C sensor ports;
+- 4 × universal/counter/frequency/encoder input, with RP2350 ADC capability reserved on the same GPIOs;
+- 2 × I²C sensor ports with stuck-bus isolation/recovery;
 - 1 × SPI sensor port;
 - 1 × UART sensor port;
+- 4 × independently switched/current-limited sensor power channels;
+- one 16-bit internal I²C GPIO expander for slow control/diagnostic signals;
+- RP2350 internal ADC monitoring of selected board supply rails;
 - external supervisor/watchdog;
 - hardware safe-state gating for AO and DO;
 - status LEDs;
@@ -73,11 +76,13 @@ Main functional blocks:
 | Analog outputs | 2 × `AD5422BREZ` | voltage/current output |
 | Digital inputs | `MAX22190ATJ+` | industrial DI frontend |
 | Digital outputs | `IPS2050HTR` | protected high-side outputs |
-| Universal inputs | `TLV3214PWR` | UIC frontend |
+| Universal inputs | `TLV3214PWR` | current comparator-based UIC frontend; analog-path revision still required if analog UIC mode is retained |
 | Supervisor/watchdog | `TPS3851H33EDRBR` | reset + watchdog |
 | Safe-state logic | `SN74LVC2G08DCTR` | AO/DO enable gating |
 | AO optional logic | `SN74LVC2G04DBVR` | optional |
 | Sensor power switches | 4 × `TPS2553DBVR` | current-limited switched sensor power |
+| Internal I/O expander | `TCAL9539` | 16-bit I²C GPIO expander, `/INT` + `/RESET`; exact package/orderable suffix TBD |
+| External I²C recovery | 2 × `TCA4307` | one per external I²C port; hot-swap buffer and stuck-bus recovery; exact package/orderable suffix TBD |
 
 ### 2.1 LED support components added to the PCB concept
 
@@ -186,13 +191,25 @@ Primary modes:
 - frequency input;
 - period measurement;
 - quadrature encoder using channel pairs;
-- optional low-voltage GPIO-style mode where electrically safe.
+- optional low-voltage GPIO-style mode where electrically safe;
+- target analog-voltage mode through RP2350 `ADC0..ADC3`, if the final UIC frontend preserves an analog path.
 
-The frontend uses `TLV3214PWR`.
+RP2350 assignment is intentionally:
+
+```text
+UIC0 -> GPIO40 / ADC0
+UIC1 -> GPIO41 / ADC1
+UIC2 -> GPIO42 / ADC2
+UIC3 -> GPIO43 / ADC3
+```
+
+This preserves the option to reuse the generic RP2350 ADC-voltage driver for UIC analog mode.
+
+**Important:** the currently selected `TLV3214PWR` comparator path produces a digital output and therefore does not preserve analog amplitude. Merely changing GPIO40..43 to ADC mode is not enough with the current comparator-only topology. Before analog UIC mode is claimed, the UIC schematic must provide a valid protected/scaled analog path to `ADC0..ADC3`, while retaining a clean digital/comparator path for counter/frequency/encoder operation.
 
 Counter and encoder processing should use RP2350 PIO and DMA where appropriate rather than nondeterministic task-level GPIO polling.
 
-Typical configurations:
+Typical digital configurations:
 
 ```text
 4 independent counters
@@ -219,9 +236,35 @@ Requirements:
 - 3.3 V logic only;
 - ESD protection and series damping where appropriate;
 - current-limited switched sensor power;
-- intended for short cables inside an enclosure or laboratory setup.
+- intended for short cables inside an enclosure or laboratory setup;
+- external stuck-bus isolation/recovery through `TCA4307`.
 
 I²C is not treated as a long-distance industrial field bus.
+
+Frozen internal/external topology:
+
+```text
+RP2350 GPIO24/25 / I2C0
+    |
+    +---- TCAL9539              internal service device
+    |
+    +---- TCA4307 #0 ---------- external I2C0 connector
+
+RP2350 GPIO26/27 / I2C1
+    |
+    +---- TCA4307 #1 ---------- external I2C1 connector
+```
+
+The `TCAL9539` remains on the **internal side** of the I2C0 recovery buffer. A faulted external I2C0 device therefore must not prevent firmware from reaching the expander and power-cycling the external sensor port.
+
+Each `TCA4307` provides:
+
+- physical separation of internal and external bus capacitance;
+- `EN` control;
+- open-drain `READY` status;
+- automatic stuck-bus recovery. The device disconnects the external side after a prolonged low state (about 40 ms per TI documentation) and can generate up to 16 SCL pulses on the external side while attempting recovery.
+
+Each `TCA4307 EN` shall have a hardware default that keeps the external branch disconnected during reset until firmware intentionally enables it. Pull-up sizing, bus pull-ups on both sides, and exact startup timing remain schematic-level items to finalize.
 
 ### 4.2 SPI
 
@@ -243,11 +286,85 @@ Provide **1 UART sensor port**:
 
 This is a 3.3 V logic interface. Direct RS-232 voltage levels are not allowed without an external transceiver.
 
-### 4.4 Sensor power
+### 4.4 Sensor power and internal service I/O
 
-Four current-limited sensor power channels are implemented using 4 × `TPS2553DBVR`.
+Four current-limited sensor power channels are implemented using 4 × `TPS2553DBVR`, one for each external low-voltage sensor port:
 
-The MCU has four independent enables and one combined sensor-power fault input.
+```text
+SENSOR_PWR0 -> I2C0 port
+SENSOR_PWR1 -> I2C1 port
+SENSOR_PWR2 -> SPI port
+SENSOR_PWR3 -> UART port
+```
+
+The four `TPS2553 EN` controls no longer consume RP2350 ADC-capable GPIO44..47. They are moved to `TCAL9539` outputs.
+
+Frozen expander allocation:
+
+```text
+TCAL9539 P00 -> SENSOR_PWR_EN0        OUT
+TCAL9539 P01 -> SENSOR_PWR_EN1        OUT
+TCAL9539 P02 -> SENSOR_PWR_EN2        OUT
+TCAL9539 P03 -> SENSOR_PWR_EN3        OUT
+
+TCAL9539 P04 <- SENSOR_PWR_FAULT0_N   IN
+TCAL9539 P05 <- SENSOR_PWR_FAULT1_N   IN
+TCAL9539 P06 <- SENSOR_PWR_FAULT2_N   IN
+TCAL9539 P07 <- SENSOR_PWR_FAULT3_N   IN
+
+TCAL9539 P10 -> I2C0_ISOL_EN          OUT -> TCA4307 #0 EN
+TCAL9539 P11 <- I2C0_READY            IN  <- TCA4307 #0 READY
+TCAL9539 P12 -> I2C1_ISOL_EN          OUT -> TCA4307 #1 EN
+TCAL9539 P13 <- I2C1_READY            IN  <- TCA4307 #1 READY
+
+TCAL9539 P14..P17                     RESERVED
+```
+
+`TCAL9539 /INT` is connected to RP2350 GPIO39 and becomes the shared slow-service interrupt:
+
+```text
+TCAL9539 /INT -> BOARD_IO_INT_N -> GPIO39
+```
+
+Firmware must not perform I²C transactions directly inside the GPIO ISR. The ISR should only notify/defer work; task context then reads the expander interrupt/status/input registers and identifies the changed source.
+
+`TCAL9539 /RESET` shall be tied into `SYS_RESET_N` so supervisor reset returns the service I/O expander to its hardware-reset state. Sensor-power enable nets must also have safe external biasing so reset/Hi-Z cannot accidentally power a port.
+
+This replaces the old architecture where GPIO44..47 directly drove `SENSOR_PWR_EN0..3` and GPIO39 only reported one combined sensor-power fault.
+
+Benefits of the new architecture:
+
+- individual fault identity for all four `TPS2553` channels;
+- no RP2350 GPIO cost for the four slow sensor-power enables;
+- both external I²C branches can be disconnected/recovered independently;
+- a stuck external I²C0 device cannot block access to the internal expander;
+- four expander GPIOs remain reserved for later slow control/diagnostics.
+
+### 4.5 RP2350 internal ADC board monitoring
+
+GPIO44..47 are released from sensor-power control and reserved for board-voltage diagnostics.
+
+Frozen allocation:
+
+```text
+GPIO44 / ADC4 -> VIN_PROTECTED_MON
+GPIO45 / ADC5 -> AO_15V_MON
+GPIO46 / ADC6 -> ANA_5V_MON
+GPIO47 / ADC7 -> ADC7_MON_RESERVED
+```
+
+Current intent:
+
+- `VIN_PROTECTED_MON`: actual protected input voltage after the eFuse;
+- `AO_15V_MON`: actual `+15V_AO` rail feeding the analog-output domain;
+- `ANA_5V_MON`: actual `+5V_ANALOG` rail used by the analog/ADC domain;
+- `ADC7_MON_RESERVED`: intentionally uncommitted until a more valuable internal diagnostic node is identified.
+
+`+3V3_ANALOG` is **not** currently assigned a dedicated ADC monitor. Its diagnostic value does not justify consuming the last spare ADC channel at this stage.
+
+Each monitored rail requires an appropriate divider/protection/RC network such that the ADC pin remains inside the RP2350 absolute and operating limits over worst-case rail/input tolerance. Exact divider and RC values are **not frozen yet** and must be verified against RP2350 ADC acquisition/source-impedance requirements before schematic release.
+
+The existing firmware `adc_voltage` driver is architecturally reusable for these board monitors, but the current implementation only validates source indices `0..3`. RP2350 board support must extend/validate that driver for `ADC4..ADC7` before these monitor channels are enabled in the industrial firmware profile.
 
 ---
 
@@ -418,7 +535,7 @@ The physical output stages must therefore remain disabled while the MCU is in re
 
 ## 6. RP2350B core — sheet `03_MCU_RP2350`
 
-Status: **practically closed**.
+Status: **practically closed; GPIO39 and GPIO44..47 net update required before final audit**.
 
 ### 6.1 Internal core regulator
 
@@ -499,20 +616,20 @@ GPIO36 RS485_TX
 GPIO37 RS485_RX
 GPIO38 RS485_DE_RE
 
-GPIO39 SENSOR_PWR_FAULT_N
+GPIO39 BOARD_IO_INT_N
 
-GPIO40 UIC0_IN
-GPIO41 UIC1_IN
-GPIO42 UIC2_IN
-GPIO43 UIC3_IN
+GPIO40 UIC0_IN / ADC0
+GPIO41 UIC1_IN / ADC1
+GPIO42 UIC2_IN / ADC2
+GPIO43 UIC3_IN / ADC3
 
-GPIO44 SENSOR_PWR_EN0
-GPIO45 SENSOR_PWR_EN1
-GPIO46 SENSOR_PWR_EN2
-GPIO47 SENSOR_PWR_EN3
+GPIO44 VIN_PROTECTED_MON / ADC4
+GPIO45 AO_15V_MON / ADC5
+GPIO46 ANA_5V_MON / ADC6
+GPIO47 ADC7_MON_RESERVED / ADC7
 ```
 
-All GPIOs are currently allocated. New firmware-controlled features should not assume a spare GPIO exists.
+All RP2350 GPIOs remain allocated/reserved. `SENSOR_PWR_EN0..3` are no longer direct MCU pins; they move to the `TCAL9539`. GPIO39 is no longer a single combined sensor-power fault input; it is the expander interrupt `BOARD_IO_INT_N`.
 
 ---
 
@@ -1036,7 +1153,7 @@ Main indicators:
 | `FAULT` | red | board-level hardware fault | `BOARD_FAULT_N` via driver |
 | `AO` | amber | analog outputs are actually hardware-enabled | `AO_SAFE_EN` |
 | `DO` | amber | digital outputs are actually hardware-enabled | `DO_SAFE_EN` |
-| `SENS` | red | sensor-power fault | `SENSOR_PWR_FAULT_N` via driver |
+| `SENS` | red | any sensor-power fault | derived from individual `SENSOR_PWR_FAULTx_N` states read through `TCAL9539`; final LED electrical drive TBD |
 | `RS485` | amber | RS-485 transmit activity | `RS485_DE_RE` |
 
 Ethernet indicators are provided by the MagJack:
@@ -1081,7 +1198,7 @@ RUN blinking     -> firmware execution + watchdog servicing alive
 FAULT on         -> board hardware fault condition
 AO on            -> AO_SAFE_EN is actually asserted
 DO on            -> DO_SAFE_EN is actually asserted
-SENS on          -> sensor power fault
+SENS on          -> one or more sensor power channels report fault
 RS485 blinking   -> transmit activity
 ```
 
@@ -1146,6 +1263,8 @@ Critical/high-current/high-speed/protection components remain on TOP where pract
 
 The latest placement concept also reserves a single LED row for enclosure light pipes.
 
+The `TCAL9539` must remain on the internal side of the I2C0 `TCA4307`; the two `TCA4307` devices should be placed near the transition from internal logic to the corresponding external sensor connector so that external bus faults/capacitance are isolated from the internal bus segment.
+
 ### 11.3 Current validation state of the scripted floorplan
 
 The latest placement concept has been mechanically checked for:
@@ -1153,6 +1272,8 @@ The latest placement concept has been mechanically checked for:
 - component body overlap;
 - board-edge violations;
 - mounting-hole keepout violations.
+
+The scripted concept predates the newly frozen `TCAL9539` + 2 × `TCA4307` addition and must be regenerated after those parts and the ADC monitor networks are placed.
 
 The scripted concept is **not** a substitute for production Altium DRC, courtyard checks, exact footprint clearances, assembly access, or pin-level routing verification.
 
@@ -1204,6 +1325,17 @@ field terminal -> protection -> input/output conditioning -> ADC/DAC
 
 Keep analog signal returns and reference-sensitive paths away from Ethernet, USB, switch nodes, and digital clock routing.
 
+Internal RP2350 rail-monitor divider/RC networks should be treated as diagnostic analog nodes and kept away from switch nodes. `VIN_PROTECTED_MON` must be designed for the full protected input range plus engineering margin, not only nominal 24 V operation.
+
+#### External I²C
+
+- keep `TCAL9539` electrically inside the protected/internal I2C0 segment;
+- one `TCA4307` per external I²C connector;
+- provide pull-ups appropriate to each side of each buffer;
+- avoid creating an external fault path that can hold the internal service bus low;
+- default `TCA4307 EN` to external-bus-disconnected during reset;
+- route `READY` back to the `TCAL9539` as documented above.
+
 ---
 
 ## 12. Enclosure requirements implied by the PCB
@@ -1238,7 +1370,10 @@ Firmware shall expose a machine-readable hardware capability descriptor containi
 - supported native drivers;
 - calibration schema version;
 - unavailable/unpopulated/DNP hardware features;
-- board diagnostics and power-good/fault capabilities.
+- board diagnostics and power-good/fault capabilities;
+- internal ADC monitor availability;
+- sensor-power switch count and per-port fault state;
+- external I²C isolation/recovery status.
 
 The configurator must read these capabilities before creating or applying a configuration.
 
@@ -1249,6 +1384,15 @@ profile: RP2350_INDUSTRIAL_MVP_V1
 ```
 
 Firmware should treat the frozen GPIO map in this document as the hardware abstraction source for board-level pin definitions.
+
+Required firmware consequences of the 2026-08-28 hardware decision:
+
+- replace direct `GPIO44..47 -> SENSOR_PWR_EN0..3` control with a `TCAL9539` driver/service path;
+- change GPIO39 from `SENSOR_PWR_FAULT_N` to `BOARD_IO_INT_N`;
+- expose four independent TPS2553 fault states instead of only one combined fault;
+- control and diagnose both `TCA4307` instances (`EN`/`READY`);
+- extend/validate the RP2350 generic ADC-voltage driver for ADC source indices 4..7 before internal rail monitors are enabled;
+- preserve GPIO40..43 as `UIC0..3` with ADC0..3 capability reserved for a future validated analog UIC path.
 
 ---
 
@@ -1266,7 +1410,9 @@ The final prototype should demonstrate at least:
 8. OPC UA browsing, subscriptions, timestamps, quality, alarms, and history;
 9. configuration persistence and restart recovery;
 10. firmware and hardware diagnostics exposed through OPC UA;
-11. visible power/run/fault status indication.
+11. visible power/run/fault status indication;
+12. per-port sensor-power control/fault reporting and at least one demonstrated external-I²C recovery/power-cycle path;
+13. internal voltage diagnostics for the populated RP2350 ADC monitor channels.
 
 Not every physical channel must be simultaneously loaded during the defense, but every channel class must be implemented and verified.
 
@@ -1280,11 +1426,26 @@ Current status:
 01_POWER_INPUT      practically closed
 02_POWER_RAILS      practically closed
 02B_AO_POWER        practically closed
-03_MCU_RP2350       practically closed
+03_MCU_RP2350       practically closed; GPIO39/44..47 net update pending
 04_MEMORY           practically closed
 05_ETHERNET_USB     practically closed; final audit required
 06_RS485            practically closed
-07_ANALOG_INPUTS    next sheet / not yet frozen
+07_ANALOG_INPUTS    current work / not yet frozen
+```
+
+New schematic work introduced by the 2026-08-28 architecture decision:
+
+```text
+- add TCAL9539 internal service I/O expander;
+- add 2 × TCA4307, one per external I²C port;
+- move SENSOR_PWR_EN0..3 from RP2350 GPIO44..47 to TCAL9539 P00..P03;
+- route four TPS2553 fault outputs individually to TCAL9539 P04..P07;
+- route TCA4307 EN/READY through TCAL9539 P10..P13;
+- connect TCAL9539 /INT to GPIO39 / BOARD_IO_INT_N;
+- connect TCAL9539 /RESET to SYS_RESET_N;
+- add VIN_PROTECTED, +15V_AO and +5V_ANALOG monitor networks to ADC4..ADC6;
+- reserve ADC7 monitor input;
+- revisit the UIC frontend if analog UIC mode is retained, because TLV3214 comparator output is not an analog path.
 ```
 
 Before the PCB is considered release-ready, the closed sheets still require one full-system pass:
@@ -1300,7 +1461,7 @@ final BOM audit
 PCB DRC
 ```
 
-The newly added discrete LED circuitry must also be represented in the schematic and included in this audit.
+The newly added discrete LED circuitry and the new service-I/O/I²C-recovery circuitry must also be represented in the schematic and included in this audit.
 
 ---
 
@@ -1342,6 +1503,8 @@ Workflow:
 5. replicate it to four channels;
 6. define behavior of unused ADC channels.
 
+The new RP2350 internal rail monitors are **board diagnostics**, not replacements for the ADS8688 industrial AI channels.
+
 ---
 
 ## 17. Deferred product features
@@ -1375,16 +1538,29 @@ PSRAM    : 8 MB APS6404L-3SQR-SN
 PCB      : 120 × 90 mm baseline, monolithic
 Power    : 9–36 V DC input
 
-4 × AI   : 0–10 V / 0–20 mA / 4–20 mA target
+4 × AI   : 0–10 V / 0–20 mA / 4–20 mA target via ADS8688
 2 × AO   : 0–10 V / 0–20 mA / 4–20 mA
 4 × DI   : protected 24 V
 2 × DO   : protected 24 V high-side
 4 × UIC  : counter / frequency / encoder / digital input
+           ADC0..3 capability reserved; analog frontend path still to be finalized
 
-2 × I2C  : 3.3 V sensor ports
+2 × I2C  : 3.3 V external sensor ports, each through TCA4307 recovery buffer
 1 × SPI  : 3.3 V sensor port
 1 × UART : 3.3 V sensor port
 1 × RS-485 isolated
+
+Sensor I/O control:
+1 × TCAL9539 16-bit internal service GPIO expander
+4 × TPS2553 independently controlled power switches with individual faults
+2 × TCA4307 external-I2C isolation/recovery channels
+GPIO39 = BOARD_IO_INT_N
+
+RP2350 ADC board diagnostics:
+ADC4 = VIN_PROTECTED_MON
+ADC5 = AO_15V_MON
+ADC6 = ANA_5V_MON
+ADC7 = reserved monitor
 
 1 × W5500 10/100 Ethernet
 1 × top-entry RJ45 MagJack
