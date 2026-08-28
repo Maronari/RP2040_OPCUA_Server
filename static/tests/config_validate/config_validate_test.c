@@ -724,6 +724,56 @@ static void test_json_sscanf_trailing_junk_is_currently_accepted(void)
     assert(parsed.mac[5] == 0x1fu);
 }
 
+/* An unrecognized JSON schemaVersion must be rejected with a diagnostic
+ * (CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA) rather than parsed as if it
+ * were the current schema -- config_validate_service_parse_json_payload()
+ * now sources this check from config_compat_schema_version_is_supported(),
+ * the same migration-table source of truth the Flash-binary path uses. */
+static void test_json_rejects_unsupported_schema_version(void)
+{
+    json_tokens_t tokens = valid_json_tokens();
+
+    tokens.schema_version = "999";
+    expect_json_result(&tokens, CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA, NULL);
+}
+
+/* Mirrors the JSON case above for the binary-import path
+ * (config_validate_service_validate_binary_payload()): a staged binary
+ * payload whose session schema_version has no migration-table entry must be
+ * refused before config_compat_decode_versioned() even looks at the bytes,
+ * and must not disturb the caller's prior output. */
+static void test_binary_import_rejects_unsupported_schema_version(void)
+{
+    device_profile_config_t candidate = valid_candidate();
+    config_validate_service_report_t report = {0};
+    device_profile_config_t output;
+    device_profile_config_t before;
+    const uint8_t *payload = (const uint8_t *)&candidate;
+    size_t offset = 0u;
+
+    memset(&output, 0xa5, sizeof(output));
+    before = output;
+    assert(config_import_service_begin((uint32_t)sizeof(candidate),
+                                       ota_crc32_compute(&candidate, sizeof(candidate)),
+                                       CONFIG_STORE_SCHEMA_VERSION_CURRENT + 1u) ==
+           CONFIG_IMPORT_RESULT_OK);
+    while (offset < sizeof(candidate))
+    {
+        size_t chunk_size = sizeof(candidate) - offset;
+        if (chunk_size > CONFIG_IMPORT_SERVICE_MAX_CHUNK_BYTES)
+        {
+            chunk_size = CONFIG_IMPORT_SERVICE_MAX_CHUNK_BYTES;
+        }
+        assert(config_import_service_write_chunk(payload + offset, chunk_size) == CONFIG_IMPORT_RESULT_OK);
+        offset += chunk_size;
+    }
+    assert(config_validate_service_validate_imported(&report, &output) ==
+           CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA);
+    assert(!report.valid && report.result == CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA);
+    assert(memcmp(&output, &before, sizeof(output)) == 0);
+    assert(config_import_service_abort() == CONFIG_IMPORT_RESULT_OK);
+}
+
 static void test_import_bounds_and_staging(void)
 {
     config_import_service_status_t status = {0};
@@ -833,5 +883,7 @@ int main(void)
     test_worst_case_json_export_is_bounded();
     test_json_i64_overflow_is_currently_saturated();
     test_json_sscanf_trailing_junk_is_currently_accepted();
+    test_json_rejects_unsupported_schema_version();
+    test_binary_import_rejects_unsupported_schema_version();
     return 0;
 }

@@ -16,8 +16,11 @@
  *   `cursor` only on success; on the first error the whole parse aborts and
  *   propagates that result up to
  *   `config_validate_service_parse_json_payload()`.
- * - Binary payload validation: decodes via `config_compat_decode_binary()`
- *   (schema/version migration) then re-uses the same semantic gate.
+ * - Binary payload validation: decodes via the `schema_version`-keyed
+ *   `config_compat_decode_versioned()` (schema/version migration; rejects an
+ *   unrecognized `schema_version` outright) then re-uses the same semantic
+ *   gate. The JSON `schemaVersion` field is checked against the same
+ *   migration table via `config_compat_schema_version_is_supported()`.
  *
  * Ownership: no persistent state; the JSON reader borrows the caller's
  * payload buffer and never copies it except into caller-supplied
@@ -1200,7 +1203,7 @@ static config_validate_service_result_t config_validate_service_parse_json_paylo
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
     result = config_json_expect_named_u32(&reader, true, "schemaVersion", "schemaVersion", &document_schema_version);
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
-    if (document_schema_version != CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY)
+    if (!config_compat_schema_version_is_supported(document_schema_version))
     {
         return config_json_reader_fail(&reader,
                                        CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA,
@@ -1486,18 +1489,19 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
 }
 
 /**
- * @brief Decodes an opaque-binary config-import payload
- * (`config_compat_decode_binary()`, which also handles frozen prior-version
- * layouts) and runs it through
+ * @brief Decodes a binary config-import payload against the
+ * `schema_version`-keyed migration table (`config_compat_decode_versioned()`,
+ * which also handles frozen prior-version layouts under the current schema
+ * version) and runs the result through
  * `config_validate_service_validate_candidate()`.
- * @param schema_version Must equal `CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY`;
- * any other value is rejected without attempting to decode.
+ * @param schema_version Dispatch key; any value with no migration-table
+ * entry is rejected without attempting to decode.
  * @param out_candidate Filled with the decoded configuration only on
  * success; optional (may be NULL).
- * @return `CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA` for a wrong
+ * @return `CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA` for an unrecognized
  * @p schema_version; `CONFIG_VALIDATE_RESULT_INVALID_SIZE` if @p payload_size
- * doesn't match any known layout (current or frozen v0.4.0/v0.4.1/v0.4.2);
- * otherwise the semantic validation result.
+ * doesn't match any known layout for that version (current or frozen
+ * v0.4.0/v0.4.1/v0.4.2); otherwise the semantic validation result.
  */
 static config_validate_service_result_t config_validate_service_validate_binary_payload(const uint8_t *payload,
                                                                                         size_t payload_size,
@@ -1508,17 +1512,19 @@ static config_validate_service_result_t config_validate_service_validate_binary_
 {
     device_profile_config_t candidate = {0};
 
-    if (schema_version != CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY)
+    if (!config_compat_schema_version_is_supported(schema_version))
     {
         config_validate_service_set_message(message,
                                             message_size,
-                                            "only opaque binary config schema is supported for binary payloads");
+                                            "binary config schema version %lu is not supported",
+                                            (unsigned long)schema_version);
         return CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA;
     }
-    if (!config_compat_decode_binary(payload,
-                                     payload_size,
-                                     &candidate,
-                                     NULL))
+    if (!config_compat_decode_versioned(schema_version,
+                                        payload,
+                                        payload_size,
+                                        &candidate,
+                                        NULL))
     {
         config_validate_service_set_message(message,
                                             message_size,

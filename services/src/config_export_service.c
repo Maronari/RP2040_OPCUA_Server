@@ -387,7 +387,7 @@ static bool config_export_service_write_profile_json(const device_profile_config
     config_json_writer_init(&writer, buffer, buffer_size);
     config_json_writer_append_raw(&writer, "{");
 
-    config_json_writer_append_raw(&writer, "\"schemaVersion\":1,");
+    config_json_writer_append_format(&writer, "\"schemaVersion\":%u,", (unsigned)CONFIG_STORE_SCHEMA_VERSION_CURRENT);
     config_json_writer_append_raw(&writer, "\"device\":{");
     config_json_writer_append_raw(&writer, "\"manufacturer\":");
     config_json_writer_append_quoted(&writer, config->manufacturer, sizeof(config->manufacturer));

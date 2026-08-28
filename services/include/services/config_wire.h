@@ -20,9 +20,27 @@
 #define CONFIG_STORE_SLOT_HEADER_VERSION 1u
 /** Number of Flash slots the config store rotates writes across. */
 #define CONFIG_STORE_SLOT_COUNT 2u
-/** `schema_version` value used for the current opaque-binary
- * `device_profile_config_t` payload encoding. */
-#define CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY 1u
+/**
+ * @brief `schema_version` value every currently-written config record and
+ * JSON export/import document is stamped with.
+ *
+ * Unlike `CONFIG_STORE_SLOT_HEADER_VERSION` (the header's own struct-layout
+ * version), this identifies the *payload's* shape and is the key
+ * `config_compat_decode_versioned()`'s migration-function table
+ * (`services/config_compat.h`) dispatches on. Bump this whenever the
+ * `device_profile_config_t`/JSON schema changes in a way that table needs to
+ * recognize and either migrate or reject; add the new value as a table entry
+ * rather than repurposing this one, so a firmware image can still tell an
+ * old record apart from the new shape. `config_export_service.c`'s JSON
+ * `schemaVersion` field and `config_validate_service.c`'s import-time schema
+ * check both source from this same constant rather than a separate literal.
+ */
+#define CONFIG_STORE_SCHEMA_VERSION_CURRENT 1u
+/** @deprecated Prior name for `CONFIG_STORE_SCHEMA_VERSION_CURRENT`; kept as
+ * an alias so call sites outside this release's schema-versioning work keep
+ * compiling unchanged. New code should reference
+ * `CONFIG_STORE_SCHEMA_VERSION_CURRENT` directly. */
+#define CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY CONFIG_STORE_SCHEMA_VERSION_CURRENT
 
 /**
  * @brief Encoding of the bytes stored in a config-store slot's payload.

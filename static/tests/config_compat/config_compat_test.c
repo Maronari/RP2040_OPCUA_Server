@@ -1,4 +1,5 @@
 #include "services/config_compat.h"
+#include "services/config_wire.h"
 
 #include <assert.h>
 #include <float.h>
@@ -387,11 +388,87 @@ static void test_v042(void)
                                         NULL));
 }
 
+/* config_compat_decode_versioned() wraps config_compat_decode_binary() as
+ * the CONFIG_STORE_SCHEMA_VERSION_CURRENT table entry -- every payload shape
+ * config_compat_decode_binary() already recognizes by size (native, v0.4.0
+ * in both variants, v0.4.1/v0.4.2) was in fact always stamped with that same
+ * version historically, so the version-keyed path must accept every one of
+ * them exactly like the size-only path, and reject any schema_version with
+ * no table entry before even looking at payload_size. */
+static void test_decode_versioned(void)
+{
+    device_profile_config_t native = {0};
+    device_profile_config_t decoded;
+    bool migrated = true;
+
+    strcpy(native.device_name, "versioned-native");
+    strcpy(native.asset_id, "asset-versioned");
+    native.opcua_port = 4840u;
+    native.channels[0].in_use = 1u;
+    native.channels[0].driver_id = CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP;
+    strcpy(native.channels[0].id, "channel.temperature.1");
+
+    assert(config_compat_schema_version_is_supported(CONFIG_STORE_SCHEMA_VERSION_CURRENT));
+    assert(config_compat_decode_versioned(CONFIG_STORE_SCHEMA_VERSION_CURRENT,
+                                          (const uint8_t *)&native,
+                                          sizeof(native),
+                                          &decoded,
+                                          &migrated));
+    assert(!migrated);
+    assert(strcmp(decoded.device_name, native.device_name) == 0);
+    assert(strcmp(decoded.asset_id, native.asset_id) == 0);
+    assert(decoded.opcua_port == native.opcua_port);
+
+    /* An unrecognized schema_version must be refused outright, without
+     * touching the caller's last known-good output -- regardless of whether
+     * payload_size happens to match a known layout. */
+    memset(&decoded, 0, sizeof(decoded));
+    strcpy(decoded.device_name, "known-good-versioned");
+    assert(!config_compat_schema_version_is_supported(CONFIG_STORE_SCHEMA_VERSION_CURRENT + 1u));
+    assert(!config_compat_decode_versioned(CONFIG_STORE_SCHEMA_VERSION_CURRENT + 1u,
+                                           (const uint8_t *)&native,
+                                           sizeof(native),
+                                           &decoded,
+                                           &migrated));
+    assert(strcmp(decoded.device_name, "known-good-versioned") == 0);
+    assert(!config_compat_schema_version_is_supported(0u));
+    assert(!config_compat_decode_versioned(0u,
+                                           (const uint8_t *)&native,
+                                           sizeof(native),
+                                           &decoded,
+                                           NULL));
+    assert(strcmp(decoded.device_name, "known-good-versioned") == 0);
+
+    /* Every pre-mechanism legacy record shape was, historically, also
+     * stamped with CONFIG_STORE_SCHEMA_VERSION_CURRENT (the field had no
+     * discriminating meaning before this table existed) -- the version-keyed
+     * path's CURRENT entry must still fall through to the same payload-size
+     * fallback for those records, not just the native shape. */
+    {
+        v040_profile_t legacy = {0};
+
+        strcpy(legacy.device_name, "versioned-legacy-v040");
+        legacy.channels[0].in_use = 1u;
+        strcpy(legacy.channels[0].id, "channel.legacy");
+        legacy.channels[0].settings.warning_threshold = 40.0;
+        migrated = false;
+        assert(config_compat_decode_versioned(CONFIG_STORE_SCHEMA_VERSION_CURRENT,
+                                              (const uint8_t *)&legacy,
+                                              sizeof(legacy),
+                                              &decoded,
+                                              &migrated));
+        assert(migrated);
+        assert(strcmp(decoded.device_name, legacy.device_name) == 0);
+        assert(decoded.channels[0].settings.low_threshold == DBL_MAX);
+    }
+}
+
 int main(void)
 {
     test_v040();
     test_v040_partial_payloads();
     test_v042();
+    test_decode_versioned();
     printf("config compat host suite: PASS\n");
     return 0;
 }

@@ -7,7 +7,10 @@
  * `device_profile_config_t` layouts (v0.4.0 in two variants,
  * v0.4.1/v0.4.2) as local struct types, and expand each into the current
  * live layout by copying ABI-stable prefixes/suffixes and per-channel
- * settings via `config_compat_expand_channel()`.
+ * settings via `config_compat_expand_channel()`; also owns the
+ * `schema_version`-keyed migration table (`config_compat_decode_versioned()`)
+ * that wraps this size-based decoder as the current schema's entry and
+ * rejects any unrecognized version outright.
  *
  * Ownership: no persistent state; every function operates on caller-owned
  * buffers.
@@ -27,6 +30,8 @@
 #include <float.h>
 #include <stddef.h>
 #include <string.h>
+
+#include "services/config_wire.h"
 
 #define CONFIG_COMPAT_LEGACY_ASSET_ID_MAX_LEN 32u
 
@@ -450,4 +455,59 @@ size_t config_compat_v040_payload_size(void)
 size_t config_compat_v042_payload_size(void)
 {
     return sizeof(config_compat_v042_profile_t);
+}
+
+/**
+ * @brief One `schema_version` -> decode/migrate function entry.
+ * @note Every record this codebase has ever written -- current and every
+ * frozen prior layout `config_compat_decode_binary()` recognizes by size --
+ * was stamped with `CONFIG_STORE_SCHEMA_VERSION_CURRENT`, since the field
+ * had no discriminating meaning before this table existed. That single entry
+ * is therefore correct and complete for every record on Flash today; a
+ * future schema bump adds a second entry here rather than repurposing this
+ * one.
+ */
+typedef struct
+{
+    uint32_t schema_version;
+    config_compat_migrate_fn decode;
+} config_compat_migration_entry_t;
+
+static const config_compat_migration_entry_t CONFIG_COMPAT_MIGRATIONS[] = {
+    {CONFIG_STORE_SCHEMA_VERSION_CURRENT, config_compat_decode_binary},
+};
+
+#define CONFIG_COMPAT_MIGRATION_COUNT \
+    (sizeof(CONFIG_COMPAT_MIGRATIONS) / sizeof(CONFIG_COMPAT_MIGRATIONS[0]))
+
+static const config_compat_migration_entry_t *config_compat_find_migration(uint32_t schema_version)
+{
+    for (size_t index = 0u; index < CONFIG_COMPAT_MIGRATION_COUNT; ++index)
+    {
+        if (CONFIG_COMPAT_MIGRATIONS[index].schema_version == schema_version)
+        {
+            return &CONFIG_COMPAT_MIGRATIONS[index];
+        }
+    }
+    return NULL;
+}
+
+bool config_compat_schema_version_is_supported(uint32_t schema_version)
+{
+    return config_compat_find_migration(schema_version) != NULL;
+}
+
+bool config_compat_decode_versioned(uint32_t schema_version,
+                                    const uint8_t *payload,
+                                    size_t payload_size,
+                                    device_profile_config_t *out_config,
+                                    bool *out_migrated)
+{
+    const config_compat_migration_entry_t *entry = config_compat_find_migration(schema_version);
+
+    if (entry == NULL)
+    {
+        return false;
+    }
+    return entry->decode(payload, payload_size, out_config, out_migrated);
 }
