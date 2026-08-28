@@ -21,6 +21,7 @@ def main() -> int:
             args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
             f"-I{test_dir}", f"-I{root / 'services' / 'include'}",
             f"-I{root / 'services' / 'src'}", f"-I{root / 'ota' / 'include'}",
+            f"-I{root / 'drivers' / 'include'}",
             str(root / "services" / "src" / "config_import_service.c"),
             str(root / "services" / "src" / "config_compat.c"),
             str(root / "services" / "src" / "config_export_service.c"),

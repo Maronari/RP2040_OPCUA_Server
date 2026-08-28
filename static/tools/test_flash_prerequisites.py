@@ -123,7 +123,11 @@ class FlashPrerequisiteTests(unittest.TestCase):
     def test_application_writers_keep_shared_serialization(self):
         writers = (
             ROOT / "ota/src/ota_flash_backend_application.c",
-            ROOT / "services/src/config_store_service.c",
+            # v0.5.0 T3: services/src/config_store_service.c no longer does
+            # direct Flash I/O -- it delegates every write to
+            # drivers/src/config_transaction_backend.c, which is the actual
+            # coordinator-serialized writer now.
+            ROOT / "drivers/src/config_transaction_backend.c",
             ROOT / "services/src/security_service.c",
             ROOT / "services/src/security_state_service.c",
         )

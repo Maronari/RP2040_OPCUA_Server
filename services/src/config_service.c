@@ -643,10 +643,11 @@ bool config_service_init(const device_profile_config_t *defaults)
                                  &persisted_payload_size,
                                  &persisted_info) &&
         persisted_info.payload_format == CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY &&
-        config_compat_decode_binary(g_persisted_payload,
-                                    persisted_payload_size,
-                                    &g_running_config,
-                                    &persisted_requires_migration) &&
+        config_compat_decode_versioned(persisted_info.schema_version,
+                                       g_persisted_payload,
+                                       persisted_payload_size,
+                                       &g_running_config,
+                                       &persisted_requires_migration) &&
         config_validate_service_validate_candidate(&g_running_config, NULL, 0u) ==
             CONFIG_VALIDATE_RESULT_OK)
     {
@@ -672,10 +673,11 @@ bool config_service_init(const device_profile_config_t *defaults)
                                       sizeof(g_persisted_payload),
                                       &persisted_payload_size,
                                       &persisted_info) &&
-             config_compat_decode_binary(g_persisted_payload,
-                                         persisted_payload_size,
-                                         &g_running_config,
-                                         NULL))
+             config_compat_decode_versioned(persisted_info.schema_version,
+                                            g_persisted_payload,
+                                            persisted_payload_size,
+                                            &g_running_config,
+                                            NULL))
     {
         g_staged_config = g_running_config;
         persisted_requires_migration = false;
