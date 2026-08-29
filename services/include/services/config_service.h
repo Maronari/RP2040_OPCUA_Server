@@ -198,15 +198,19 @@ typedef bool (*config_service_runtime_apply_fn)(const device_profile_config_t *c
  * @brief Initializes the configuration service: allocates state storage,
  * seeds it from @p defaults, and loads persisted configuration from Flash.
  *
- * Load order: (1) the current-schema active config-store slot
- * (`config_store_load_active()` + `config_compat_decode_binary()`); (2) on
- * failure, a one-shot read-only fallback via
- * `flash_storage_driver_load_partial()` for pre-config-store layouts, which
- * — if it decodes and validates — is immediately re-persisted through
- * `config_store_save_payload()` so subsequent boots use the normal path.
- * If neither source yields a valid configuration, @p defaults (if non-NULL)
- * remains the running/staged configuration and nothing is treated as an
- * error.
+ * As of v0.5.0 T4, first consults `config_store_get_recovery_state()` (the
+ * `config_transaction_backend` boot-time classification T3 computes) and
+ * reacts per the mapping documented next to that call site in
+ * `config_service.c` — e.g. discarding a leftover uncommitted STAGED
+ * record, or self-healing RUNNING from LAST_KNOWN_GOOD. Then, load order:
+ * (1) the current-schema active config-store slot (`config_store_load_active()`
+ * + `config_compat_decode_versioned()`); (2) on failure, a one-shot
+ * read-only fallback via `flash_storage_driver_load_partial()` for
+ * pre-config-store layouts, which — if it decodes and validates — is
+ * immediately re-persisted through `config_store_save_payload()` so
+ * subsequent boots use the normal path. If neither source yields a valid
+ * configuration, @p defaults (if non-NULL) remains the running/staged
+ * configuration and nothing is treated as an error.
  *
  * @param defaults Compiled-in default profile; also becomes the source of
  * truth for `fw_revision`/`build_time`/`git_hash` on every subsequent
@@ -259,22 +263,32 @@ const device_profile_config_t *config_service_get_staged(void);
 bool config_service_reset_to_defaults(void);
 
 /**
- * @brief Normalizes, validates, and activates the currently staged
- * configuration as the new running configuration.
+ * @brief Normalizes, validates, persists, activates, and verifies the
+ * currently staged configuration as the new running configuration.
  *
- * Does not persist to Flash — see `config_service_save()`/
- * `config_service_replace_and_save()` for persistence.
+ * As of v0.5.0 T4, this is a full Flash-backed transaction, executed in the
+ * frozen order: validate -> persist the candidate to the
+ * `config_transaction_backend` STAGED role (`config_store_stage_payload()`)
+ * -> stop the affected drivers, start/verify the candidate, and publish it
+ * (one call into the registered runtime-apply callback) -> commit
+ * (`config_store_commit_staged()`, promoting STAGED to RUNNING and RUNNING
+ * to LAST_KNOWN_GOOD) or roll back (`config_store_discard_staged()`; the
+ * runtime-apply callback's own internal rollback already restarts the
+ * previous drivers on an activation/verify failure, and this function
+ * additionally re-invokes it to restore the previous drivers if the Flash
+ * commit itself fails after activation already succeeded). Unlike prior
+ * releases, this call now performs synchronous Flash writes.
  *
- * @return true if the staged configuration was normalized, passed
- * `config_validate_service_validate_candidate()`, and (if a runtime-apply
- * callback is registered) was accepted by it. false leaves the running
- * configuration unchanged.
+ * @return true if every phase above succeeded. false leaves the running
+ * configuration unchanged and, on a Flash-write failure, best-effort
+ * restores the previously-active drivers; the staged configuration is
+ * always left as whatever was attempted (never reverted by this call).
  * @pre No other apply-style transaction may already be in flight; returns
  * false immediately if `config_service_replace_and_save()`/
  * `config_service_apply()` is already executing.
- * @note May invoke the registered runtime-apply callback synchronously,
- * which may touch hardware; this call does not hold the configuration
- * critical section while doing so.
+ * @note Invokes the registered runtime-apply callback synchronously, which
+ * may touch hardware and take real time (driver start/verify); this call
+ * does not hold the configuration critical section while doing so.
  */
 bool config_service_apply(void);
 
@@ -387,25 +401,34 @@ bool config_service_stage_clear_channel(size_t index);
  * @brief Validates, persists, and optionally activates a full replacement
  * configuration in one transaction (used by the config-import flow).
  *
- * Sequence: normalize @p config -> validate ->
- * (if @p apply_running) invoke the runtime-apply callback -> persist via
- * `config_store_save_payload()` -> update staged (+revision) ->
- * (if @p apply_running) update running (+revision).
+ * As of v0.5.0 T4, sequence: normalize @p config -> validate -> persist to
+ * the `config_transaction_backend` STAGED role
+ * (`config_store_stage_payload()`) -> (if @p apply_running) invoke the
+ * runtime-apply callback (stop/start/verify/publish) -> commit
+ * (`config_store_commit_staged()`) or roll back
+ * (`config_store_discard_staged()`, plus re-invoking the runtime-apply
+ * callback with the previous configuration if activation had already
+ * succeeded before the commit itself failed) -> update staged (+revision)
+ * -> (if @p apply_running) update running (+revision) and run the
+ * commit-step extension point. The old activate-before-persist order does
+ * not survive this release.
  *
  * @param config Replacement configuration; must not be NULL. Copied and
  * normalized internally, not retained.
  * @param apply_running If true, also activates @p config as the running
  * configuration (invoking the runtime-apply callback); if false, only the
- * staged configuration and Flash are updated.
+ * staged configuration and Flash are updated (no driver activation).
  * @return true on full success. false if: @p config is NULL; validation
- * fails; the runtime-apply callback rejects the candidate (staged
- * configuration is still updated with the rejected-but-valid candidate for
- * correction/retry); or the Flash write fails (if the runtime was already
- * switched over, the previous running configuration is re-applied via the
- * callback as a rollback attempt — the callback's own success is not
- * checked here).
+ * fails; the candidate could not be staged to Flash; the runtime-apply
+ * callback rejects the candidate (staged configuration is still updated
+ * with the rejected-but-valid candidate for correction/retry, and the
+ * staged Flash record is discarded); or the commit itself fails (if the
+ * runtime was already switched over, the previous running configuration is
+ * re-applied via the callback as a rollback attempt — the callback's own
+ * success is not checked here, and the staged configuration is left
+ * unchanged in this case).
  * @pre No other apply-style transaction may already be in flight.
- * @note Performs a synchronous Flash write and may invoke the runtime-apply
+ * @note Performs synchronous Flash writes and may invoke the runtime-apply
  * callback; neither happens while holding the configuration critical
  * section.
  */

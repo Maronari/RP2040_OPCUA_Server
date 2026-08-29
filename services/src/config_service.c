@@ -125,6 +125,42 @@ static void config_service_end_transaction(void)
     taskEXIT_CRITICAL();
 }
 
+/**
+ * @brief Commit-step extension point (v0.5.0 T4): invoked synchronously
+ * immediately after a transaction's Flash commit succeeded and the RAM
+ * running configuration has been updated, still inside the transaction
+ * lock, before the transaction's caller regains control.
+ *
+ * Intentionally a no-op today. Per docs/releases/v0.5.0.md's "Architecture
+ * and public-contract rules", two actions must eventually be inserted here,
+ * in this exact order, once their owning tasks land -- this function is
+ * that seam, not a stand-in implementation of either:
+ *   1. T7: an explicit per-channel history/alarm clear
+ *      (`history_service_clear_channel()`/`alarm_service_clear_channel()`,
+ *      not yet implemented) for every channel deleted or modified (same
+ *      `channel_id`, different driver/value_type) between
+ *      @p previous_config and @p new_config.
+ *   2. T6: if the model changed in a way that requires it
+ *      (`model_config_requires_server_reboot()`, already computed every
+ *      apply but currently unconsumed), a synchronous, controlled full OPC
+ *      UA server restart -- invoked from here specifically so no live
+ *      server ever serves the old namespace against already-T7-cleared
+ *      history/alarm state for a just-deleted-or-modified channel.
+ * Both must run synchronously and in this order before this function (and
+ * therefore config_service_apply()/config_service_replace_and_save())
+ * returns to its own caller.
+ *
+ * @param new_config The just-committed configuration, now `g_running_config`.
+ * @param previous_config The running configuration @p new_config replaced.
+ */
+static void config_service_run_commit_extensions(const device_profile_config_t *new_config,
+                                                  const device_profile_config_t *previous_config)
+{
+    (void)new_config;
+    (void)previous_config;
+    /* Intentionally empty -- see doc comment above. T6/T7 hook in here. */
+}
+
 static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
 {
     return value >= -720 && value <= 840;
@@ -600,6 +636,7 @@ static void config_service_normalize(device_profile_config_t *config)
 bool config_service_init(const device_profile_config_t *defaults)
 {
     bool persisted_requires_migration = false;
+    config_transaction_recovery_state_t recovery_state;
 
 #if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
     if (g_config_state == NULL)
@@ -633,6 +670,51 @@ bool config_service_init(const device_profile_config_t *defaults)
         g_staged_config = *defaults;
         g_default_config = *defaults;
         g_default_config_valid = true;
+    }
+
+    /*
+     * v0.5.0 T4 reboot recovery: consult config_transaction_backend's (T3)
+     * boot-time classification before reading anything, and react per this
+     * frozen recovery-state-to-boot-decision mapping (T9's power-loss test
+     * harness tests against this exact mapping):
+     *
+     *   CONFIG_TXN_RECOVERY_EMPTY / _OK / _DEGRADED:
+     *       RUNNING (if any) is safe to use as-is; boot proceeds through the
+     *       normal config_store_load_active() path below, unchanged. A
+     *       leftover STAGED record -- a transaction that persisted its
+     *       staged copy but was never committed, e.g. a power loss between
+     *       config_store_stage_payload() and the driver-activation/verify
+     *       work in config_service_apply() -- is explicitly discarded here
+     *       as hygiene: boot on the existing RUNNING config exactly as if
+     *       that transaction had never started.
+     *   CONFIG_TXN_RECOVERY_FALLBACK_REQUIRED:
+     *       RUNNING is not usable but LAST_KNOWN_GOOD is -- self-heal by
+     *       promoting LAST_KNOWN_GOOD into RUNNING
+     *       (config_store_recover_fallback_to_last_known_good()) so this and
+     *       every later boot use the normal load_active() path below
+     *       without relying on its transparent per-read LAST_KNOWN_GOOD
+     *       fallback every single boot.
+     *   CONFIG_TXN_RECOVERY_INDETERMINATE / _FATAL:
+     *       Nothing usable and/or mutations are blocked backend-side; no
+     *       Flash write is attempted here. Boot falls through
+     *       config_store_load_active() (which will fail closed) to the
+     *       legacy importer and then to @p defaults, exactly as when no
+     *       persisted record exists at all.
+     *
+     * A transaction that reached commit (STAGED promoted to RUNNING) but
+     * whose driver activation/verify was interrupted by a power loss before
+     * config_service_apply() returned cannot be observed here at all: that
+     * in-flight state lives only in RAM for the duration of one live
+     * transaction. Such a reboot always collapses to the CONFIG_TXN_RECOVERY_OK
+     * case above (RUNNING already reflects the committed candidate) -- there
+     * is no partial activation state on Flash to recover, and none is
+     * needed.
+     */
+    recovery_state = config_store_get_recovery_state();
+    (void)config_store_discard_staged();
+    if (recovery_state == CONFIG_TXN_RECOVERY_FALLBACK_REQUIRED)
+    {
+        (void)config_store_recover_fallback_to_last_known_good(NULL);
     }
 
     size_t persisted_payload_size = 0u;
@@ -740,8 +822,10 @@ bool config_service_reset_to_defaults(void)
 bool config_service_apply(void)
 {
     device_profile_config_t normalized_config;
+    device_profile_config_t previous_running;
     config_service_runtime_apply_fn runtime_apply;
     uint32_t candidate_revision;
+    uint32_t previous_revision;
 
     if (!config_service_begin_transaction())
     {
@@ -751,6 +835,8 @@ bool config_service_apply(void)
     taskENTER_CRITICAL();
     normalized_config = g_staged_config;
     runtime_apply = g_runtime_apply_callback;
+    previous_running = g_running_config;
+    previous_revision = g_running_revision;
     candidate_revision = g_running_revision + 1u;
     taskEXIT_CRITICAL();
 
@@ -763,8 +849,42 @@ bool config_service_apply(void)
         return false;
     }
 
+    /* v0.5.0 T4 frozen order: persist staged -> stop/activate/verify (one
+     * call into the registered runtime-apply callback) -> commit/rollback.
+     * The old activate-before-persist order must not survive this release. */
+    if (!config_store_stage_payload(&normalized_config,
+                                    sizeof(normalized_config),
+                                    CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                    CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                    NULL))
+    {
+        config_service_end_transaction();
+        return false;
+    }
+
+    /* Stop affected drivers, start/verify the candidate, and publish the
+     * channel-registry generation -- all inside the one runtime-apply call
+     * (sensor_manager_activate_config() as of T4). Its own internal rollback
+     * already restarts the previous drivers on any failure here, including
+     * a failed verify, so nothing further is needed on this path beyond
+     * discarding the now-orphaned staged Flash record. */
     if (runtime_apply != NULL && !runtime_apply(&normalized_config, candidate_revision))
     {
+        (void)config_store_discard_staged();
+        config_service_end_transaction();
+        return false;
+    }
+
+    if (!config_store_commit_staged(NULL))
+    {
+        (void)config_store_discard_staged();
+        if (runtime_apply != NULL)
+        {
+            /* Best-effort: the candidate is live but Flash could not be made
+             * durable for it -- restore the previous drivers so running
+             * hardware state matches what Flash will report on reboot. */
+            (void)runtime_apply(&previous_running, previous_revision);
+        }
         config_service_end_transaction();
         return false;
     }
@@ -773,6 +893,9 @@ bool config_service_apply(void)
     g_running_config = normalized_config;
     g_running_revision = candidate_revision;
     taskEXIT_CRITICAL();
+
+    config_service_run_commit_extensions(&normalized_config, &previous_running);
+
     config_service_end_transaction();
     return true;
 }
@@ -1013,6 +1136,7 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
     device_profile_config_t previous_running;
     config_service_runtime_apply_fn runtime_apply;
     uint32_t candidate_revision = 0u;
+    uint32_t previous_revision = 0u;
 
     if (config == NULL)
     {
@@ -1036,13 +1160,28 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
 
     taskENTER_CRITICAL();
     previous_running = g_running_config;
+    previous_revision = g_running_revision;
     runtime_apply = g_runtime_apply_callback;
     candidate_revision = g_running_revision + 1u;
     taskEXIT_CRITICAL();
 
+    /* v0.5.0 T4 frozen order: persist staged -> stop/activate/verify ->
+     * commit/rollback. This function's old activate-before-persist order
+     * must not survive this release. */
+    if (!config_store_stage_payload(&normalized_config,
+                                    sizeof(normalized_config),
+                                    CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                    CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                    NULL))
+    {
+        config_service_end_transaction();
+        return false;
+    }
+
     if (apply_running && runtime_apply != NULL &&
         !runtime_apply(&normalized_config, candidate_revision))
     {
+        (void)config_store_discard_staged();
         /* Keep a valid but non-running candidate staged for correction/retry. */
         taskENTER_CRITICAL();
         g_staged_config = normalized_config;
@@ -1052,15 +1191,12 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
         return false;
     }
 
-    if (!config_store_save_payload(&normalized_config,
-                                   sizeof(normalized_config),
-                                   CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
-                                   CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
-                                   NULL))
+    if (!config_store_commit_staged(NULL))
     {
+        (void)config_store_discard_staged();
         if (apply_running && runtime_apply != NULL)
         {
-            (void)runtime_apply(&previous_running, g_running_revision);
+            (void)runtime_apply(&previous_running, previous_revision);
         }
         config_service_end_transaction();
         return false;
@@ -1077,6 +1213,8 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
         g_running_config = normalized_config;
         g_running_revision = candidate_revision;
         taskEXIT_CRITICAL();
+
+        config_service_run_commit_extensions(&normalized_config, &previous_running);
     }
     config_service_end_transaction();
     return true;

@@ -165,3 +165,65 @@ bool config_store_reset(void)
     config_transaction_backend_t *backend = config_store_backend();
     return config_transaction_backend_reset_all(backend) == CONFIG_TXN_BACKEND_OK;
 }
+
+bool config_store_stage_payload(const void *payload, size_t payload_size, uint16_t payload_format,
+                                uint32_t schema_version, config_store_record_info_t *out_info)
+{
+    config_transaction_backend_t *backend = config_store_backend();
+    config_transaction_record_info_t staged_info;
+
+    if (config_transaction_backend_stage(backend, payload, payload_size, payload_format, schema_version,
+                                         &staged_info) != CONFIG_TXN_BACKEND_OK)
+    {
+        return false;
+    }
+    if (out_info != NULL)
+    {
+        config_store_translate_info(CONFIG_TXN_ROLE_STAGED, &staged_info, out_info);
+    }
+    return true;
+}
+
+bool config_store_commit_staged(config_store_record_info_t *out_info)
+{
+    config_transaction_backend_t *backend = config_store_backend();
+    config_transaction_record_info_t running_info;
+
+    if (config_transaction_backend_commit(backend, &running_info) != CONFIG_TXN_BACKEND_OK)
+    {
+        return false;
+    }
+    if (out_info != NULL)
+    {
+        config_store_translate_info(CONFIG_TXN_ROLE_RUNNING, &running_info, out_info);
+    }
+    return true;
+}
+
+bool config_store_discard_staged(void)
+{
+    config_transaction_backend_t *backend = config_store_backend();
+    return config_transaction_backend_discard_staged(backend) == CONFIG_TXN_BACKEND_OK;
+}
+
+config_transaction_recovery_state_t config_store_get_recovery_state(void)
+{
+    return config_store_backend()->recovery;
+}
+
+bool config_store_recover_fallback_to_last_known_good(config_store_record_info_t *out_info)
+{
+    config_transaction_backend_t *backend = config_store_backend();
+    config_transaction_record_info_t running_info;
+
+    if (config_transaction_backend_recover_fallback_to_last_known_good(backend, &running_info) !=
+        CONFIG_TXN_BACKEND_OK)
+    {
+        return false;
+    }
+    if (out_info != NULL)
+    {
+        config_store_translate_info(CONFIG_TXN_ROLE_RUNNING, &running_info, out_info);
+    }
+    return true;
+}

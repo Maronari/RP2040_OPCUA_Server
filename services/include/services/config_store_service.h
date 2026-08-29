@@ -24,6 +24,18 @@
  * - Never interpret payload contents — schema decoding/migration is
  *   `services/config_compat.h`'s responsibility; validation is
  *   `services/config_validate_service.h`'s.
+ * - As of v0.5.0 T4, also expose the underlying stage/commit/discard
+ *   primitives as distinct calls (`config_store_stage_payload()`/
+ *   `config_store_commit_staged()`/`config_store_discard_staged()`) and the
+ *   boot-time recovery classification (`config_store_get_recovery_state()`/
+ *   `config_store_recover_fallback_to_last_known_good()`), so
+ *   `config_service.c`'s transaction pipeline can run real
+ *   stop/activate/verify work *between* staging and committing instead of
+ *   going through `config_store_save_payload()`'s atomic stage+commit. That
+ *   atomic wrapper is unchanged and still exists for callers that
+ *   legitimately want one-shot persistence with no activation gate in
+ *   between (`config_service_set_asset_id()`, `config_service_save()`, the
+ *   boot-time migration re-persist in `config_service_init()`).
  *
  * Ownership: this module owns one static `config_transaction_backend_t`
  * instance, lazily initialized and recovered on first use; callers own all
@@ -42,6 +54,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "drivers/config_transaction_backend.h"
 #include "services/config_wire.h"
 
 /**
@@ -138,5 +151,80 @@ bool config_store_save_payload(const void *payload,
  * configuration back to compiled-in defaults; destructive and irreversible.
  */
 bool config_store_reset(void);
+
+/**
+ * @brief Writes @p payload to the STAGED role only -- does not commit it.
+ *
+ * First phase of the two-phase transaction primitive `config_service.c`'s
+ * apply/replace-and-save pipeline uses (v0.5.0 T4): stage now, run
+ * stop/activate/verify against real hardware, then either
+ * `config_store_commit_staged()` or `config_store_discard_staged()`.
+ *
+ * @param payload Payload bytes to stage; must not be NULL.
+ * @param payload_size Non-zero, `<= CONFIG_STORE_MAX_PAYLOAD_SIZE_BYTES`.
+ * @param payload_format One of `config_store_payload_format_t`.
+ * @param schema_version Caller-defined schema tag; stored verbatim.
+ * @param out_info Filled with the newly staged record's metadata on success;
+ * optional.
+ * @return true if the STAGED role now holds a physically committed copy of
+ * @p payload; false on invalid arguments or any Flash failure -- RUNNING and
+ * any previously staged content are left untouched (see
+ * `config_transaction_backend_stage()`).
+ * @note Routes through `drivers/config_transaction_backend`, same as
+ * `config_store_save_payload()`.
+ */
+bool config_store_stage_payload(const void *payload,
+                                size_t payload_size,
+                                uint16_t payload_format,
+                                uint32_t schema_version,
+                                config_store_record_info_t *out_info);
+
+/**
+ * @brief Promotes the current STAGED record to RUNNING (and RUNNING to
+ * LAST_KNOWN_GOOD first), completing a `config_store_stage_payload()`
+ * transaction.
+ * @param out_info Filled with the new RUNNING record's metadata on success;
+ * optional.
+ * @return true once RUNNING is confirmed to hold what was staged; false if
+ * STAGED had no committed record or the promotion failed physically -- see
+ * `config_transaction_backend_commit()` for exactly what is guaranteed left
+ * in place on each failure path.
+ */
+bool config_store_commit_staged(config_store_record_info_t *out_info);
+
+/**
+ * @brief Discards the current STAGED record without promoting it, aborting
+ * an in-progress `config_store_stage_payload()` transaction.
+ * @return true on success (including when STAGED already held nothing);
+ * false on a Flash erase/read-verify failure.
+ * @note RUNNING and LAST_KNOWN_GOOD are never touched by this call.
+ */
+bool config_store_discard_staged(void);
+
+/**
+ * @brief Returns the boot-time recovery classification computed the first
+ * time this module's backend was initialized/recovered (lazily, on the
+ * first call to any `config_store_*` function).
+ *
+ * `config_service_init()` (v0.5.0 T4) consults this once at boot to decide
+ * how to react to a power loss that interrupted a transaction mid-flight --
+ * see the recovery-state-to-boot-decision mapping documented next to that
+ * call site.
+ * @return See `config_transaction_recovery_state_t`.
+ */
+config_transaction_recovery_state_t config_store_get_recovery_state(void);
+
+/**
+ * @brief Self-heals RUNNING by copying LAST_KNOWN_GOOD's content into it.
+ *
+ * Wraps `config_transaction_backend_recover_fallback_to_last_known_good()`;
+ * intended for `CONFIG_TXN_RECOVERY_FALLBACK_REQUIRED` (RUNNING unusable,
+ * LAST_KNOWN_GOOD still committed).
+ * @param out_info Filled with the restored RUNNING record's metadata on
+ * success; optional.
+ * @return true if RUNNING now holds LAST_KNOWN_GOOD's former content; false
+ * if LAST_KNOWN_GOOD itself had no committed record or the write failed.
+ */
+bool config_store_recover_fallback_to_last_known_good(config_store_record_info_t *out_info);
 
 #endif
