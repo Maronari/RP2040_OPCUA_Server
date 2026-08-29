@@ -3,6 +3,7 @@
 #include "services/config_wire.h"
 #include "services/config_validate_service.h"
 #include "services/driver_catalog.h"
+#include "drivers/config_transaction_backend.h"
 #include "drivers/flash_storage_driver.h"
 #include "pico/unique_id.h"
 
@@ -70,6 +71,52 @@ bool config_store_get_active_info(config_store_record_info_t *out_info)
 bool config_store_reset(void)
 {
     return false;
+}
+
+/* v0.5.0 T4: config_service_init() consults the recovery classification and
+ * discards any leftover staged record on every boot -- this test does not
+ * exercise a power-loss scenario itself (see static/tests/config_transaction/
+ * for that), so a fixed CONFIG_TXN_RECOVERY_OK / no-op discard is enough to
+ * satisfy the call without changing this test's own persisted-identity
+ * assertions. */
+config_transaction_recovery_state_t config_store_get_recovery_state(void)
+{
+    return CONFIG_TXN_RECOVERY_OK;
+}
+
+bool config_store_discard_staged(void)
+{
+    return true;
+}
+
+bool config_store_recover_fallback_to_last_known_good(config_store_record_info_t *out_info)
+{
+    (void)out_info;
+    return true;
+}
+
+/* v0.5.0 T4: config_service_apply()/config_service_replace_and_save() now
+ * drive the two-phase stage/commit primitive directly; this test never
+ * calls either (it only exercises config_service_init()), but both symbols
+ * are still referenced by config_service.c and must resolve at link time. */
+bool config_store_stage_payload(const void *payload,
+                                size_t payload_size,
+                                uint16_t payload_format,
+                                uint32_t schema_version,
+                                config_store_record_info_t *out_info)
+{
+    (void)payload;
+    (void)payload_size;
+    (void)payload_format;
+    (void)schema_version;
+    (void)out_info;
+    return true;
+}
+
+bool config_store_commit_staged(config_store_record_info_t *out_info)
+{
+    (void)out_info;
+    return true;
 }
 
 bool flash_storage_driver_load(void *buffer, size_t size)
