@@ -44,13 +44,24 @@ bool opcua_model_init(const opcua_model_config_t *config);
 /**
  * @brief FreeRTOS task entry point that owns the OPC UA server's lifetime.
  *
- * Blocks until `network_manager_is_ready()`, then builds the `UA_ServerConfig`,
- * creates the `UA_Server`, builds the full address space, starts the server,
- * and runs `UA_Server_run_iterate()` in a loop for the remaining lifetime of
- * the task. Never returns under normal operation; on a scheduled reboot it
- * shuts the server down and then blocks, expecting a watchdog/hardware reset
- * to actually restart the device. Must be started via `xTaskCreate()` after
- * a successful opcua_model_init() call.
+ * Blocks until `network_manager_is_ready()` (once), then builds the
+ * `UA_ServerConfig`, creates the `UA_Server`, builds the full address space,
+ * starts the server, and runs `UA_Server_run_iterate()` in a loop. Never
+ * returns under normal operation. Two distinct events can end a server's
+ * current lifetime:
+ * - A scheduled reboot: the server shuts down and the task then blocks
+ *   forever, expecting a watchdog/hardware reset to actually restart the
+ *   device.
+ * - A controlled restart (v0.5.0 T6), armed when a committed configuration
+ *   change requires rebuilding the OPC UA namespace
+ *   (`model_config_requires_server_reboot()`): the server shuts down and
+ *   this same task rebuilds it in place against the newly-committed
+ *   configuration, without exiting. Existing sessions/subscriptions do not
+ *   survive this (clients must reconnect); a transaction that does not
+ *   require it leaves the running server, its sessions, and its
+ *   subscriptions completely untouched.
+ * Must be started via `xTaskCreate()` after a successful opcua_model_init()
+ * call.
  *
  * @param argument Unused; required by the FreeRTOS task-entry signature.
  */

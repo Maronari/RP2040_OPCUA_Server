@@ -198,20 +198,38 @@ typedef struct
 } model_node_context_t;
 
 /**
- * @brief Adapter-owned deferred-action state: a scheduled reboot and/or an
- *        in-progress identify-LED blink sequence, both driven by
- *        `model_core_task`'s poll loop rather than executed synchronously
- *        from the method callback that requested them.
+ * @brief Adapter-owned deferred-action state: a scheduled reboot, a pending
+ *        controlled OPC UA server restart, and/or an in-progress
+ *        identify-LED blink sequence, all driven by `model_core_task`'s poll
+ *        loop rather than executed synchronously from the method callback
+ *        (or, for `restart_pending`, the `config_service` commit-step
+ *        callback) that requested them.
  *
  * Single instance embedded in `opcua_model_context_t` (`g_pending_actions`).
- * Written by `model_schedule_reboot` / `model_schedule_identify_blink` from
- * a method-callback context and consumed each iteration of `model_core_task`
- * (`OpcUaTask`); both run on the same task, so no locking is applied.
+ * Written by `model_schedule_reboot` / `model_schedule_identify_blink` /
+ * `model_config_service_restart_callback` (v0.5.0 T6) from a method-callback
+ * or `config_service` commit-step context and consumed each iteration of
+ * `model_core_task` (`OpcUaTask`); every writer and the sole reader run on
+ * the same task (see `model_core_lifecycle.c`'s file-level concurrency
+ * note for why: every current caller of `config_service_apply()`/
+ * `config_service_replace_and_save()` is itself an OPC UA method callback,
+ * i.e. already nested inside `OpcUaTask`'s own `UA_Server_run_iterate()`
+ * call), so no locking is applied.
+ *
+ * @note `restart_pending` cannot be handled synchronously from the callback
+ * that sets it the way its name might suggest: that callback runs nested
+ * inside the very `UA_Server_run_iterate()` call whose `UA_Server` it would
+ * need to tear down, so tearing down/rebuilding there would free memory the
+ * outer call frame is still using. Deferring to the top-level loop (this
+ * flag) is safe and still closes the race window `docs/releases/v0.5.0.md`
+ * cares about: single-tasked execution means no further client request can
+ * be served between the callback returning and the loop noticing this flag.
  */
 typedef struct
 {
     bool reboot_pending;
     TickType_t reboot_due_tick;
+    bool restart_pending;
     bool identify_blink_active;
     TickType_t identify_next_tick;
     uint8_t identify_toggles_remaining;
@@ -1432,7 +1450,11 @@ bool model_byte_array_changed(const uint8_t *lhs, const uint8_t *rhs, size_t siz
  *         (port, hostname, PubSub settings, network identity, or any channel
  *         needing `model_channel_requires_server_rebuild`) differs between
  *         @p lhs and @p rhs. Two NULL configs compare unequal only if their
- *         pointers differ. */
+ *         pointers differ. The single source of truth consulted both by the
+ *         read-only `MODEL_NODE_CONFIG_REBOOT_REQUIRED` diagnostic
+ *         (`model_is_reboot_required`) and, as of v0.5.0 T6, by
+ *         `model_config_service_restart_callback` to decide whether a
+ *         committed transaction must trigger an actual controlled restart. */
 bool model_config_requires_server_reboot(const device_profile_config_t *lhs, const device_profile_config_t *rhs);
 /**
  * @brief True if the address space was built from a config snapshot that no

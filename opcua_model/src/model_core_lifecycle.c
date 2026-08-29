@@ -6,16 +6,42 @@
  *
  * Responsibilities:
  * - `model_core_init` performs one-time PSRAM scratch allocation (bounded
- *   maintenance-export payload and HistoryRead sample buffer) and seeds
- *   `opcua_model_context_t`'s config/pending-actions/PubSub-runtime fields.
+ *   maintenance-export payload and HistoryRead sample buffer), seeds
+ *   `opcua_model_context_t`'s config/pending-actions/PubSub-runtime fields,
+ *   and registers `model_config_service_restart_callback` with
+ *   `config_service` (v0.5.0 T6).
  * - `model_core_task` is the `OpcUaTask` entry point: waits for network
- *   readiness, builds the `UA_ServerConfig` (buffers, security policies,
- *   access control, historizing), calls `UA_Server_newWithConfig`, builds the
- *   address space, starts PubSub if enabled, then runs the
- *   `UA_Server_run_iterate` poll loop until a scheduled reboot fires.
+ *   readiness once, then loops building the `UA_ServerConfig` (buffers,
+ *   security policies, access control, historizing), calling
+ *   `UA_Server_newWithConfig`, building the address space, starting PubSub
+ *   if enabled, and running the `UA_Server_run_iterate` poll loop -- until
+ *   either a scheduled reboot fires (MCU reset, task never returns) or a
+ *   controlled restart is armed (v0.5.0 T6: the server is torn down and the
+ *   same loop body rebuilds it against the newly-committed configuration,
+ *   without exiting the task).
  * - The `#ifdef UA_ENABLE_ENCRYPTION_MBEDTLS` block builds the secure
  *   `UA_ServerConfig`: bootstrap-identity seeding, trust-list/AcceptAll PKI
  *   selection by commissioning mode, and endpoint filtering.
+ *
+ * Controlled restart (v0.5.0 T6): `config_service_run_commit_extensions()`
+ * unconditionally invokes the registered restart callback after every
+ * successful configuration commit; `model_config_service_restart_callback`
+ * (below) calls `model_config_requires_server_reboot()` and, if the commit
+ * changed anything address-space-relevant, arms
+ * `g_pending_actions.restart_pending` rather than tearing the server down
+ * inline -- see that function's doc comment for why inline teardown is
+ * unsafe here. `model_core_task`'s run loop notices the flag the moment its
+ * current `UA_Server_run_iterate()` call returns (before any further client
+ * request can be served), gracefully shuts the old server down, and loops
+ * back to rebuild -- reusing exactly the same construction code cold boot
+ * uses, never a second implementation of it. Existing sessions/subscriptions
+ * do not survive a restart (same reconnect contract as a full firmware
+ * reboot, deliberately -- see docs/releases/v0.5.0.md scope decision 6);
+ * clients must reconnect, after which they see the new configuration's
+ * address space. A transaction that does not change anything
+ * `model_config_requires_server_reboot()` cares about never arms the flag,
+ * so the running server, its sessions, and its subscriptions are completely
+ * untouched.
  *
  * Ownership: `model_core_init`/`model_core_task` are the only functions that
  * allocate/free `g_model_maintenance_export_payload` and
@@ -25,12 +51,18 @@
  *
  * Concurrency: `model_core_init` runs on whichever task calls
  * `opcua_model_init` (see `app/basic_profile/main.c`) before `OpcUaTask` is
- * created; everything else in this file — the entire `UA_ServerConfig` build
- * sequence and the run loop — executes exclusively on `OpcUaTask`. This
- * ordering is safety-critical: `model_core_task` must observe
- * `g_model_initialized` before touching any model state, and every
+ * created -- except its one re-entrant call from within `model_core_task`
+ * itself to rebuild `g_model_config` before a restart, which runs on
+ * `OpcUaTask`, between two server lifetimes, with no other task touching
+ * model state at that point. Everything else in this file — the entire
+ * `UA_ServerConfig` build sequence and the run loop — executes exclusively
+ * on `OpcUaTask`. This ordering is safety-critical: `model_core_task` must
+ * observe `g_model_initialized` before touching any model state, and every
  * `UA_ServerConfig` step that fails calls `vTaskDelete(NULL)` rather than
- * continuing with a partially-configured server.
+ * continuing with a partially-configured server -- including on a
+ * restart-triggered rebuild, where a construction failure is treated
+ * identically to a cold-boot one (logged, then the task exits) rather than
+ * left to hang or silently retry; see `model_core_task`'s restart handling.
  */
 #include "opcua_model_internal.h"
 
@@ -52,12 +84,58 @@ static const uint8_t g_bootstrap_device_certificate[] = TEST_SRV_CRT_RSA_SHA256_
 static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
 #endif
 
+/**
+ * @brief `config_service_restart_fn` registered with `config_service` (v0.5.0
+ * T6): decides, via `model_config_requires_server_reboot()`, whether a
+ * just-committed configuration change requires rebuilding the OPC UA
+ * namespace, and if so arms a deferred, in-place server restart.
+ *
+ * Cannot rebuild `UA_Server` synchronously from here. This function runs
+ * inside `config_service_apply()`/`config_service_replace_and_save()`,
+ * which — for every caller in this codebase today
+ * (`model_apply_config`/`model_apply_imported_config` in
+ * `model_configuration.c`, the replace-and-save path in `model_ota.c`,
+ * `config_reset_service_execute` reached from `model_factory_reset`) —
+ * executes from an OPC UA method callback: already nested inside the very
+ * `UA_Server_run_iterate()` call that owns the live `server` pointer's call
+ * stack (`model_core_task`'s run loop is the only thing that calls
+ * `UA_Server_run_iterate`, on `OpcUaTask`). Deleting/rebuilding `UA_Server`
+ * from here would free memory that outer call frame is still using once
+ * this callback returns (e.g. `model_apply_config` itself dereferences
+ * `server` again immediately after `config_service_apply()` returns, via
+ * `model_refresh_amb_locations`). Instead this arms
+ * `g_pending_actions.restart_pending`, mirroring the existing
+ * `reboot_pending` deferral pattern (`model_schedule_reboot`);
+ * `model_core_task`'s run loop notices it the moment the current
+ * `UA_Server_run_iterate()` call returns — before any further client
+ * request can be served — and performs the actual teardown/rebuild there.
+ * Single-tasked execution is what keeps this equivalent, from a
+ * client-observable standpoint, to doing it inline: no request can be
+ * served against the old namespace in the gap.
+ *
+ * @param new_config The just-committed configuration.
+ * @param previous_config The configuration @p new_config replaced.
+ */
+static void model_config_service_restart_callback(const device_profile_config_t *new_config,
+                                                   const device_profile_config_t *previous_config)
+{
+    if (!model_config_requires_server_reboot(previous_config, new_config))
+    {
+        return;
+    }
+
+    g_pending_actions.restart_pending = true;
+}
+
 /* Implementation note: the two PSRAM scratch buffers are allocated
  * independently and idempotently (skipped if already non-NULL, so repeated
  * init calls are safe), but only the history sample buffer's failure path
  * rolls back the maintenance-export payload allocation made earlier in the
  * same call — a partial-success state (payload allocated, history buffer
- * not) must never be left in the context on a false return. */
+ * not) must never be left in the context on a false return. Also called a
+ * second time, re-entrantly from model_core_task on OpcUaTask (v0.5.0 T6),
+ * to reset pending-actions/PubSub-runtime state before a controlled
+ * restart's rebuild -- both PSRAM allocations are no-ops by then. */
 bool model_core_init(const opcua_model_config_t *config)
 {
 #ifdef UA_ENABLE_HISTORIZING
@@ -120,6 +198,7 @@ bool model_core_init(const opcua_model_config_t *config)
     g_model_config = *config;
     g_pending_actions.reboot_pending = false;
     g_pending_actions.reboot_due_tick = 0;
+    g_pending_actions.restart_pending = false;
     g_pending_actions.identify_blink_active = false;
     g_pending_actions.identify_next_tick = 0;
     g_pending_actions.identify_toggles_remaining = 0u;
@@ -128,6 +207,9 @@ bool model_core_init(const opcua_model_config_t *config)
     model_pubsub_reset_runtime();
 #endif
     g_model_initialized = true;
+    /* Idempotent: re-registering the same pointer on every call (including
+     * the T6 restart re-init below) is a harmless no-op. */
+    config_service_set_restart_callback(model_config_service_restart_callback);
     return true;
 }
 
@@ -679,13 +761,21 @@ void model_bind_open62541_allocators(void)
  * open62541 UA_StatusCode, release whatever has been allocated so far
  * (UA_ServerConfig_clear(config) before UA_Server_newWithConfig succeeds,
  * model_context_delete_server(server) after), then vTaskDelete(NULL) — there
- * is no retry or degraded-mode path once server construction has begun. */
+ * is no retry or degraded-mode path once server construction has begun. This
+ * applies identically whether construction is cold boot's or a v0.5.0 T6
+ * restart's rebuild -- see the `for (;;)` loop below: it is the same code
+ * either way, so a rebuild failure is handled the same way a cold-boot
+ * failure always has been (logged, task exits) rather than left undefined. */
 void model_core_task(void *argument)
 {
     UA_Server *server = NULL;
     UA_ServerConfig *config = NULL;
     UA_StatusCode status = UA_STATUSCODE_GOOD;
     bool wait_for_network_logged = false;
+    /* v0.5.0 T6: true from the second and every later pass through the
+     * `for (;;)` loop below, i.e. every controlled-restart rebuild; false
+     * only for the initial cold-boot pass. */
+    bool is_restart = false;
     TickType_t next_psram_stats_tick = 0;
     model_event_runtime_state_t event_runtime_state = {0};
     (void)argument;
@@ -714,10 +804,48 @@ void model_core_task(void *argument)
     fflush(stdout);
     model_bind_open62541_allocators();
 
+    /* v0.5.0 T6: everything from here through the run loop below is one
+     * "server lifetime". Cold boot runs it once; a controlled restart
+     * (g_pending_actions.restart_pending, armed by
+     * model_config_service_restart_callback) loops back and runs the exact
+     * same construction code again against the newly-committed
+     * configuration, rather than a second, parallel implementation of it. */
+    for (;;)
+    {
     UA_ServerConfig server_config;
     memset(&server_config, 0, sizeof(server_config));
     config = &server_config;
     config->logging = &g_model_ua_logger;
+
+    if (is_restart)
+    {
+        /* Rebuild g_model_config from the configuration that was just
+         * committed -- app_init_task()'s one-time opcua_model_init() call
+         * only ever reflected whatever was running at cold boot, so
+         * hostname/port/PubSub adapter settings must be re-derived here or
+         * a restart triggered by one of those fields changing would rebuild
+         * the server with stale values. Reusing model_core_init() (rather
+         * than poking g_model_config directly) also resets PubSub runtime
+         * state and pending-actions, matching a real cold boot exactly. */
+        const device_profile_config_t *restarted_profile = config_service_get();
+
+        if (restarted_profile != NULL)
+        {
+            opcua_model_config_t restarted_config = {0};
+
+            restarted_config.application_name = restarted_profile->device_name;
+            restarted_config.hostname = restarted_profile->opcua_hostname;
+            restarted_config.mqtt_broker_url = restarted_profile->mqtt_broker_url;
+            restarted_config.mqtt_topic_root = restarted_profile->mqtt_topic_root;
+            restarted_config.port = restarted_profile->opcua_port;
+            restarted_config.enable_alarm_methods = restarted_profile->enable_alarm_ack_method;
+            restarted_config.enable_heap_diagnostics = restarted_profile->enable_heap_diagnostics;
+            restarted_config.enable_task_diagnostics = restarted_profile->enable_task_diagnostics;
+            restarted_config.enable_mqtt_pubsub = restarted_profile->enable_mqtt_pubsub;
+            restarted_config.mqtt_pubsub_use_json = restarted_profile->mqtt_pubsub_use_json;
+            (void)model_core_init(&restarted_config);
+        }
+    }
 
     status = UA_ServerConfig_setMinimalCustomBuffer(config,
                                                     g_model_config.port,
@@ -886,7 +1014,12 @@ void model_core_task(void *argument)
     config = UA_Server_getConfig(server);
     model_context_set_server_handles(server, config);
 
-    if (maintenance_service_init() != MAINTENANCE_SERVICE_RESULT_OK)
+    /* Boot-only: maintenance_service owns its own independent Flash journal
+     * with its own recovery scan (drivers/maintenance_journal_backend.c),
+     * unrelated to the OPC UA namespace this loop rebuilds -- re-running its
+     * boot-time recovery mid-uptime on every restart would be both wrong and
+     * out of scope for a namespace-only rebuild. */
+    if (!is_restart && maintenance_service_init() != MAINTENANCE_SERVICE_RESULT_OK)
     {
         printf("[OPC UA]\tMaintenance service initialization failed\n");
         fflush(stdout);
@@ -983,6 +1116,14 @@ void model_core_task(void *argument)
         char startup_message[128];
         const device_profile_config_t *device_config = config_service_get();
 
+        /* v0.5.0 T6: intentionally the same message/event on a restart's
+         * rebuild as on cold boot (not a distinct string) -- this keeps
+         * opcua_model's reviewed public-inventory string-literal set
+         * (static/tools/verify_opcua_public_contract.py) byte-for-byte
+         * unchanged; the printf lines a few lines below (already
+         * unconditional, already inside this per-lifetime block) log
+         * "Creating server..."/"Starting server..." on every pass, restart
+         * included, which is enough operator-visible signal. */
         snprintf(startup_message,
                  sizeof(startup_message),
                  "Firmware startup complete (%s)",
@@ -995,6 +1136,11 @@ void model_core_task(void *argument)
     {
         if (g_pending_actions.reboot_pending &&
             xTaskGetTickCount() >= g_pending_actions.reboot_due_tick)
+        {
+            break;
+        }
+
+        if (g_pending_actions.restart_pending)
         {
             break;
         }
@@ -1046,6 +1192,11 @@ void model_core_task(void *argument)
 
     if (g_pending_actions.reboot_pending)
     {
+        /* Hard MCU reset: the whole address space, PSRAM scratch, and this
+         * task itself disappear with it, so there is nothing to gracefully
+         * shut down first -- unlike the controlled-restart path below, which
+         * keeps the firmware running and must tear the server down cleanly
+         * before rebuilding. */
         printf("[OPC UA]\tExecuting scheduled reboot\n");
         fflush(stdout);
         diag_service_reboot(10u);
@@ -1055,6 +1206,12 @@ void model_core_task(void *argument)
         }
     }
 
+    /* Reached for a controlled restart (v0.5.0 T6) -- existing
+     * sessions/subscriptions are lost here and clients must reconnect; once
+     * the loop below rebuilds, a reconnecting client sees the
+     * newly-committed configuration's address space. Not reached for a
+     * normal exit today (the only two break conditions above are
+     * reboot_pending, handled above, and restart_pending, handled below). */
     status = UA_Server_run_shutdown(server);
     if (status != UA_STATUSCODE_GOOD)
     {
@@ -1065,10 +1222,28 @@ void model_core_task(void *argument)
     }
 
     model_context_delete_server(server);
+    server = NULL;
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     security_service_set_audit_callback(NULL, NULL);
 #endif
+
+    if (g_pending_actions.restart_pending)
+    {
+        /* v0.5.0 T6: no new printf string here -- see the startup-message
+         * comment above the run loop for why: this keeps opcua_model's
+         * reviewed public-inventory string-literal set byte-for-byte
+         * unchanged. The "Creating server..."/"Starting server..." lines
+         * below, already unconditional and already inside this per-lifetime
+         * block, print again on this pass and are the operator-visible
+         * signal that a rebuild happened. */
+        g_pending_actions.restart_pending = false;
+        is_restart = true;
+        continue;
+    }
+
+    break;
+    }
 
     if (g_model_maintenance_export_payload != NULL)
     {
