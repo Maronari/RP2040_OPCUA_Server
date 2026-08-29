@@ -105,13 +105,13 @@ FreeRTOS, который также обнаруживает повторный 
 ```mermaid
 graph TD
     FOC["flash_operation_coordinator.c<br/>ЕДИНСТВЕННЫЙ вызывающий flash_range_program/erase<br/>мьютекс FreeRTOS + защита от повторного входа"]
-    ConfigStore["config_store_service.c"]
+    ConfigTxn["config_transaction_backend.c<br/>(drivers/, staged/running/last-known-good, v0.5.0 T3)"]
     Security["security_service.c"]
     SecurityState["security_state_service.c"]
     MJ["maintenance_journal_backend.c<br/>(drivers/, транзакционный журнал)"]
     HFB["history_flash_backend.c<br/>(drivers/, нетранзакционное кольцо)"]
 
-    ConfigStore --> FOC
+    ConfigTxn --> FOC
     Security --> FOC
     SecurityState --> FOC
     MJ --> FOC
@@ -119,7 +119,8 @@ graph TD
 
     MSvc["maintenance_service.c:399"] --> MJ
     HSvc["history_service.c:231"] --> HFB
-    CSvc["config_service.c:514<br/>устаревший импортёр только для чтения"] --> FSD["flash_storage_driver.c<br/>только прямое чтение XIP, никогда не стирает/не программирует"]
+    ConfigStoreSvc["config_store_service.c<br/>(services/, тонкая обёртка, сама Flash не касается)"] --> ConfigTxn
+    CSvc["config_service.c:804<br/>устаревший импортёр только для чтения<br/>(пре-config-store компоновки, не связан с ConfigTxn)"] --> FSD["flash_storage_driver.c<br/>только прямое чтение XIP, никогда не стирает/не программирует"]
 ```
 
 `maintenance_journal_backend.c` и `history_flash_backend.c` сами являются

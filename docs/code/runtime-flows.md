@@ -58,45 +58,46 @@ flowchart TD
 напрямую; он всегда читает последний снимок, опубликованный
 `channel_manager`.
 
-## Конфигурация
+<a id="config-transaction-flow"></a>
+## Конфигурация (v0.5.0: реальный конвейер транзакции)
+
+С v0.5.0 `config_service_apply()`/`config_service_replace_and_save()`
+выполняют единственный зафиксированный порядок — validate -> persist staged
+-> stop -> activate -> verify -> commit/rollback — заменивший
+pre-v0.5.0 порядок «activate before persist» (T4):
 
 ```mermaid
 flowchart TD
-    Input["Метод OPC UA (ApplyConfig / SetChannelConfig / import chunk)<br/>opcua_model/src/model_configuration.c или model_ota.c"] --> Validate["config_validate_service_validate_candidate()<br/>services/src/config_validate_service.c"]
-    Validate -->|недействительно| Reject["типизированный код состояния, промежуточная конфигурация не изменена"]
-    Validate -->|действительно| Stage["config_service stage_set_* / normalize()<br/>локальная копия, фиксируется в g_staged_config под критической секцией"]
-    Stage --> Apply["config_service_apply()<br/>транзакция из 5 шагов, см. modules/services.md"]
-    Apply --> Begin["1. begin_transaction() — защита «по одной за раз»"]
-    Begin --> NormValidate["2. нормализация + валидация промежуточной копии (без блокировки)"]
-    NormValidate --> RuntimeApply["3. g_runtime_apply_callback()<br/>= sensor_manager_activate_config()<br/>вызывается БЕЗ удержания блокировки конфигурации"]
-    RuntimeApply --> Candidate["sensor_manager формирует кандидатный банк,<br/>запускает/самотестирует кандидатные драйверы,<br/>при неудаче в обратном порядке останавливает/восстанавливает предыдущий банк"]
-    Candidate -->|успех| Publish["channel_manager_reset() + register_from_config()"]
-    Candidate -->|неудача| RollbackRuntime["предыдущий рабочий банк остаётся активным;<br/>config_service_apply() сообщает об ошибке"]
-    Publish --> Commit["4. фиксация g_running_config под критической секцией"]
-    Commit --> End["5. end_transaction()"]
-    Commit --> Persist["config_store_save_payload()<br/>запись во Flash с двумя слотами и счётчиком генерации<br/>через flash_operation_coordinator"]
+    Input["Метод OPC UA (ApplyConfig / SetChannelConfig / import chunk / ApplyConfigPreset)<br/>opcua_model/src/model_configuration.c, model_ota.c, model_address_space.c"] --> Validate["1. validate: config_validate_service_validate_candidate()<br/>services/src/config_validate_service.c<br/>(v0.5.0 T5: собирает КАЖДЫЙ отсутствующий driver_id, не только первый)"]
+    Validate -->|недействительно| Reject["типизированный код состояния;<br/>staged/running Flash не тронуты"]
+    Validate -->|действительно| Persist["2. persist staged: config_store_stage_payload()<br/>-> drivers/config_transaction_backend_stage() (v0.5.0 T3)"]
+    Persist -->|сбой записи| RejectIO["ошибка ввода-вывода;<br/>предыдущая RUNNING-конфигурация остаётся активной"]
+    Persist -->|успех| Stop["3. stop: sensor_manager останавливает драйверы затронутых каналов"]
+    Stop --> Activate["4. activate: запуск новых/изменённых драйверов,<br/>публикация поколения реестра каналов<br/>(БЕЗ перестроения пространства имён OPC UA —<br/>см. modules/opcua_model.md)"]
+    Activate -->|сбой| RollbackDriver["перезапуск предыдущих драйверов,<br/>восстановление предыдущего реестра;<br/>staged/running Flash НЕ изменяются"]
+    Activate -->|успех| Verify["5. verify: init каждого нового/изменённого драйвера<br/>+ минимум одно валидное чтение на канал,<br/>с явным таймаутом на канал"]
+    Verify -->|сбой| RollbackDriver
+    Verify -->|успех| Commit["6. commit: config_store_commit_staged()<br/>-> config_transaction_backend_commit()<br/>(сначала RUNNING -> LAST_KNOWN_GOOD, затем STAGED -> RUNNING)"]
+    Commit --> ClearState["config_service_clear_stale_channel_state() (v0.5.0 T7)<br/>очищает историю/тревоги удалённых/изменённых каналов"]
+    ClearState --> Restart["коллбэк перезапуска (v0.5.0 T6):<br/>если model_config_requires_server_reboot() —<br/>управляемый перезапуск OPC UA сервера,<br/>синхронно, в этом же шаге, до возврата вызывающему"]
 ```
 
-Коллбэк активации во время выполнения (`sensor_manager_activate_config`)
-вызывается **синхронно, без удержания собственной критической секции
-сервиса конфигурации** — по контракту он должен либо полностью активировать
-кандидата, либо оставить предыдущее рабочее состояние полностью нетронутым.
-Сохранение во Flash происходит после фиксации в памяти, через
-`config_store_service`, никогда прямым доступом к регистрам из
-`config_service.c`. См.
-[modules/services.md](modules/services.md#configuration-config_service--config_store_service--friends)
-и [persistence.md](persistence.md#config-persistence-servicesconfig_store_servicec).
-
-**v0.5.0 T6**: после шага `Commit` на диаграмме выше
-`config_service_run_commit_extensions()` безусловно вызывает
-зарегистрированный `opcua_model`-ом коллбэк перезапуска
-(`config_service_set_restart_callback()`); если изменённая конфигурация
-требует перестроения адресного пространства
-(`model_config_requires_server_reboot()`), коллбэк планирует управляемый
-перезапуск сервера OPC UA — см.
-[modules/opcua_model.md](modules/opcua_model.md#server-lifecycle) для
-полной последовательности и обоснования, почему перестроение отложено до
-границы цикла `model_core_task`, а не выполнено прямо внутри коллбэка.
+Каждый шаг выполняется синхронно и последовательно, без блокировки
+конфигурации на всём протяжении (блокировка — явный `SemaphoreHandle_t`
+мьютекс вокруг `sensor_manager_activate_config()`, v0.5.0 T4). Persist
+теперь **предшествует** activate (эта перестановка и есть исправление
+pre-v0.5.0 бага «activate before persist»
+(`config_service_replace_and_save()`)); откат на шагах Activate/Verify
+восстанавливает предыдущие драйверы и реестр, но никогда не трогает
+staged/running Flash — Flash остаётся согласованным независимо от того, на
+каком шаге произошёл сбой. Полную геометрию Flash-бэкенда, его
+commit-page-классификацию и восстановление после перезагрузки на каждой
+фазе см. в [persistence.md](persistence.md#config-persistence)
+и [flash-storage.md](../flash-storage.md#config-txn-backend);
+полное описание шага `Commit`/очистки/перезапуска и почему перестроение
+пространства имён отложено до границы цикла `model_core_task` — в
+[modules/opcua_model.md](modules/opcua_model.md#server-lifecycle) и
+[modules/services.md](modules/services.md#config-service-and-config-store-service).
 
 ## Техническое обслуживание
 

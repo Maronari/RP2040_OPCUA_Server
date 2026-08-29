@@ -73,7 +73,8 @@ typedef struct telemetry_driver_vtbl {
 `flash_range_program`/`flash_range_erase`, сериализован мьютексом FreeRTOS с
 обнаружением повторного входа из той же задачи и отклоняет любую страницу,
 пересекающуюся с исполняемым образом прошивки. Через него проходят шесть
-вызывающих сторон: `config_store_service`, `security_service`,
+вызывающих сторон: `config_transaction_backend` (v0.5.0 T3, ранее —
+`config_store_service` напрямую), `security_service`,
 `security_state_service`, `maintenance_journal_backend`, `history_flash_backend`
 и (только чтение, без стирания/программирования) устаревший `flash_storage_driver`.
 Подробности: [hardware.md](../hardware.md#flash-driver-layer).
@@ -118,13 +119,18 @@ typedef struct telemetry_driver_vtbl {
 
 ## Подтверждённый результат разделения по уровням
 
-**Обращений к аппаратуре в `services/` не найдено**, за исключением двух
-исключений, задокументированных в
+**Обращений к аппаратуре в `services/` не найдено**, за единственным
+оставшимся исключением, задокументированным в
 [architecture.md](../architecture.md#confirmed-layering-observations)
-(прямые вызовы watchdog в `diag_service.c` и прямое чтение конфигурации из XIP
-в `config_store_service.c`) — историческое нарушение в `driver_catalog.c`
-(ADC/GPIO), отмеченное в более ранних версиях `ROADMAP.md`, подтверждённо
-устранено.
+(прямые вызовы watchdog в `diag_service.c`) — историческое нарушение в
+`driver_catalog.c` (ADC/GPIO), отмеченное в более ранних версиях
+`ROADMAP.md`, подтверждённо устранено. Второе ранее отмеченное исключение
+(прямое чтение конфигурации из XIP в `config_store_service.c`) устранено в
+v0.5.0 T3: физическое чтение/запись Flash для конфигурации переехали
+целиком в `drivers/config_transaction_backend.c` (staged/running/
+last-known-good роли, шесть вызывающих сторон
+`flash_operation_coordinator` перечислены ниже), `config_store_service.c`
+теперь сам не касается Flash.
 
 ## Связанные тесты
 

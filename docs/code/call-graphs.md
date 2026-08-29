@@ -79,18 +79,20 @@ graph LR
 
 ```mermaid
 graph TD
-    ConfigStore["config_store_service.c"]
+    ConfigTxn["drivers/config_transaction_backend.c<br/>(staged/running/last-known-good, v0.5.0 T3)"]
     Security["security_service.c"]
     SecurityState["security_state_service.c"]
     MJ["drivers/maintenance_journal_backend.c<br/>(транзакционный журнал)"]
     HFB["drivers/history_flash_backend.c<br/>(нетранзакционное кольцо)"]
     FOC["drivers/flash_operation_coordinator.c<br/>ЕДИНСТВЕННЫЙ вызывающий flash_range_program/erase<br/>мьютекс FreeRTOS + защита от повторного входа"]
 
-    ConfigStore --> FOC
+    ConfigTxn --> FOC
     Security --> FOC
     SecurityState --> FOC
     MJ --> FOC
     HFB --> FOC
+
+    ConfigStoreSvc["services/config_store_service.c<br/>(тонкая обёртка, сама Flash не касается)"] --> ConfigTxn
 ```
 
 Шесть независимых механизмов сохранения состояния более высокого уровня,
