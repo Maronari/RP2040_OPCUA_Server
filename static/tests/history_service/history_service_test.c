@@ -91,6 +91,11 @@ static bool g_flash_backend_ready;
 static history_flash_backend_result_t g_flash_bind_result = HISTORY_FLASH_BACKEND_OK;
 static history_flash_backend_result_t g_flash_restore_result = HISTORY_FLASH_BACKEND_OK;
 static history_flash_backend_result_t g_flash_append_result = HISTORY_FLASH_BACKEND_OK;
+/* v0.5.0 T7: track history_flash_backend_bind_channel() calls so the test
+ * can prove history_service_clear_channel() unbinds the Flash slot
+ * (bind_channel(slot, NULL)), not just the PSRAM ring. */
+static unsigned g_bind_calls;
+static bool g_last_bind_channel_id_was_null;
 
 bool psram_allocator_is_ready(void) { return g_psram_ready; }
 void *psram_calloc(size_t count, size_t size)
@@ -121,7 +126,8 @@ history_flash_backend_result_t history_flash_backend_bind_channel(history_flash_
                                                                    const char *channel_id)
 {
     (void)slot;
-    (void)channel_id;
+    ++g_bind_calls;
+    g_last_bind_channel_id_was_null = (channel_id == NULL);
     return backend->ready ? g_flash_bind_result : HISTORY_FLASH_BACKEND_NOT_BOUND;
 }
 
@@ -571,7 +577,77 @@ int main(void)
                                                   SERVICE_QUALITY_GOOD, 1900000000000000ULL, 1u));
     assert(history_service_get_channel_restore_status("channel.float") ==
            HISTORY_SERVICE_RESTORE_STATUS_FLASH_APPEND_FAILED);
+    g_flash_append_result = HISTORY_FLASH_BACKEND_OK;
 #endif
+
+    /* --- v0.5.0 T7: history_service_clear_channel() --- */
+    {
+        size_t got;
+
+        /* Bad arguments are a safe no-op. */
+        assert(!history_service_clear_channel(NULL));
+        assert(!history_service_clear_channel(""));
+        /* A channel id that was never claimed reports false. */
+        assert(!history_service_clear_channel("channel.never.claimed"));
+
+        /* "channel.float" has recorded samples from earlier in this test;
+         * clearing it must drop both its PSRAM ring (reads back nothing,
+         * generation lookup fails) and its restore-status tracking (reverts
+         * to CHANNEL_NOT_BOUND, indistinguishable from never having been
+         * claimed at all). */
+        assert(history_service_clear_channel("channel.float"));
+        got = history_service_read_channel_samples("channel.float", 0u, 0u, false, 10u, 0u, samples, 10u,
+                                                    &generation, &more, &busy);
+        assert(got == 0u);
+        assert(!busy && !more);
+        {
+            uint32_t cleared_generation = 999u;
+
+            assert(!history_service_get_channel_generation("channel.float", &cleared_generation));
+        }
+        assert(history_service_get_channel_restore_status("channel.float") ==
+               HISTORY_SERVICE_RESTORE_STATUS_CHANNEL_NOT_BOUND);
+
+        /* Clearing twice in a row is a safe, reported no-op the second
+         * time. */
+        assert(!history_service_clear_channel("channel.float"));
+
+        /* The freed slot is reclaimed by a fresh record for the same id --
+         * a cleared channel is not permanently unusable, mirroring
+         * history_service_claim_ring_locked()'s "channel_id[0] == '\0'"
+         * free-slot test. */
+        g_tick = 8000u;
+        assert(history_service_record_channel_sample("channel.float", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                                                      &(history_service_value_t){.f32 = 7.0f},
+                                                      SERVICE_QUALITY_GOOD, 2000000000000000ULL, 1u));
+        got = history_service_read_channel_samples("channel.float", 0u, 0u, false, 10u, 0u, samples, 10u,
+                                                    &generation, &more, &busy);
+        assert(got == 1u);
+        assert(samples[0].value.f32 == 7.0f);
+
+        /* Lock-busy: clear must fail closed (no state mutated) when the
+         * mutex cannot be acquired -- "channel.bool" (still claimed, never
+         * cleared) must be left exactly as it was. */
+        g_force_mutex_busy = true;
+        assert(!history_service_clear_channel("channel.bool"));
+        g_force_mutex_busy = false;
+        assert(history_service_get_channel_restore_status("channel.bool") !=
+               HISTORY_SERVICE_RESTORE_STATUS_CHANNEL_NOT_BOUND);
+
+#if defined(PICO_ON_DEVICE)
+        /* On device, clearing must also unbind the channel's Flash slot
+         * (history_flash_backend_bind_channel(slot, NULL)) under the same
+         * lock hold -- not just reset the PSRAM ring -- since bind_channel()
+         * is a pure in-memory reset with no Flash I/O of its own. */
+        {
+            const unsigned bind_calls_before = g_bind_calls;
+
+            assert(history_service_clear_channel("channel.bool"));
+            assert(g_bind_calls == bind_calls_before + 1u);
+            assert(g_last_bind_channel_id_was_null);
+        }
+#endif
+    }
 
     return 0;
 }
