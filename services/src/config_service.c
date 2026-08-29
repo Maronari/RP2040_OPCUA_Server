@@ -38,9 +38,11 @@
 
 #include <config_store_limits.h>
 #include "drivers/flash_storage_driver.h"
+#include "services/alarm_service.h"
 #include "services/config_compat.h"
 #include "services/config_store_service.h"
 #include "services/config_validate_service.h"
+#include "services/history_service.h"
 #include "pico/unique_id.h"
 
 #if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
@@ -127,6 +129,55 @@ static void config_service_end_transaction(void)
 }
 
 /**
+ * @brief T7: finds every channel present (`in_use`) in @p previous_config
+ * that is either absent from @p new_config or present there with a
+ * different `driver_id`/`value_type`, and clears its history/alarm state.
+ *
+ * Per docs/releases/v0.5.0.md scope decision 7, deletion and modification
+ * (same `channel_id`, different driver/value type) are treated identically
+ * -- as delete+recreate -- and a channel whose only change is some other
+ * field (e.g. sample period) is left untouched. Comparison is by
+ * `channel_id` string, never array index: index does not identify a
+ * channel across a reconfiguration (channels can be reordered).
+ *
+ * @param new_config The just-committed configuration.
+ * @param previous_config The running configuration @p new_config replaced.
+ */
+static void config_service_clear_stale_channel_state(const device_profile_config_t *new_config,
+                                                      const device_profile_config_t *previous_config)
+{
+    for (size_t prev_index = 0u; prev_index < PLATFORM_CHANNEL_LIMIT; ++prev_index)
+    {
+        const config_channel_definition_t *prev_channel = &previous_config->channels[prev_index];
+        const config_channel_definition_t *matched = NULL;
+
+        if (!prev_channel->in_use || prev_channel->id[0] == '\0')
+        {
+            continue;
+        }
+
+        for (size_t new_index = 0u; new_index < PLATFORM_CHANNEL_LIMIT; ++new_index)
+        {
+            const config_channel_definition_t *new_channel = &new_config->channels[new_index];
+
+            if (new_channel->in_use &&
+                strncmp(new_channel->id, prev_channel->id, sizeof(new_channel->id)) == 0)
+            {
+                matched = new_channel;
+                break;
+            }
+        }
+
+        if (matched == NULL || matched->driver_id != prev_channel->driver_id ||
+            matched->value_type != prev_channel->value_type)
+        {
+            (void)history_service_clear_channel(prev_channel->id);
+            (void)alarm_service_clear_channel(prev_channel->id);
+        }
+    }
+}
+
+/**
  * @brief Commit-step extension point (v0.5.0 T4): invoked synchronously
  * immediately after a transaction's Flash commit succeeded and the RAM
  * running configuration has been updated, still inside the transaction
@@ -134,13 +185,14 @@ static void config_service_end_transaction(void)
  *
  * Per docs/releases/v0.5.0.md's "Architecture and public-contract rules",
  * two actions run here, in this exact order:
- *   1. T7 (not yet implemented): an explicit per-channel history/alarm
- *      clear (`history_service_clear_channel()`/`alarm_service_clear_channel()`)
- *      for every channel deleted or modified (same `channel_id`, different
- *      driver/value_type) between @p previous_config and @p new_config. T7
- *      must insert its call immediately above the restart callback below --
- *      not after it -- so no live server ever serves the old namespace
- *      against already-cleared history/alarm state.
+ *   1. T7: an explicit per-channel history/alarm clear
+ *      (`history_service_clear_channel()`/`alarm_service_clear_channel()`,
+ *      via config_service_clear_stale_channel_state()) for every channel
+ *      deleted or modified (same `channel_id`, different driver/value_type)
+ *      between @p previous_config and @p new_config. Runs immediately above
+ *      the restart callback below -- not after it -- so no live server ever
+ *      serves the old namespace against already-cleared history/alarm
+ *      state.
  *   2. T6 (this function): unconditionally invokes the registered restart
  *      callback (`config_service_set_restart_callback()`), passing both
  *      configs. `config_service` does not itself decide whether a rebuild
@@ -164,9 +216,7 @@ static void config_service_run_commit_extensions(const device_profile_config_t *
     restart_callback = g_restart_callback;
     taskEXIT_CRITICAL();
 
-    /* T7 (not yet implemented) must insert its per-channel history/alarm
-     * clear call here, before the restart callback below -- see the doc
-     * comment above for why the order matters. */
+    config_service_clear_stale_channel_state(new_config, previous_config);
 
     if (restart_callback != NULL)
     {

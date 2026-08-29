@@ -159,6 +159,23 @@ const driver_catalog_entry_t *driver_catalog_get_by_index(size_t index)
     return NULL;
 }
 
+/* v0.5.0 T7: config_service_run_commit_extensions() references these, but
+ * this test only exercises config_service_init() (never apply()/
+ * replace_and_save()), so they are never actually invoked -- present solely
+ * to satisfy the link, like config_store_stage_payload()/commit_staged()
+ * above. */
+bool history_service_clear_channel(const char *channel_id)
+{
+    (void)channel_id;
+    return false;
+}
+
+bool alarm_service_clear_channel(const char *channel_id)
+{
+    (void)channel_id;
+    return false;
+}
+
 void pico_get_unique_board_id(pico_unique_board_id_t *id_out)
 {
     memset(id_out, 0, sizeof(*id_out));

@@ -1,3 +1,4 @@
+#include "services/alarm_service.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
 #include "services/config_store_service.h"
@@ -39,12 +40,52 @@ static size_t g_recover_fallback_calls;
 static size_t g_restart_calls;
 static device_profile_config_t g_restart_last_new_config;
 static device_profile_config_t g_restart_last_previous_config;
+
+/* v0.5.0 T7: config_service_run_commit_extensions() must call
+ * history_service_clear_channel()/alarm_service_clear_channel() for every
+ * deleted-or-modified channel strictly before it invokes the restart
+ * callback above (see the ordering rule in config_service.c's doc comment).
+ * g_extension_sequence is a shared call-order counter stamped by every one
+ * of these three fakes; comparing the stamps a test captured for the same
+ * commit proves the relative order without relying on wall-clock/thread
+ * timing. */
+static unsigned g_extension_sequence;
+static unsigned g_restart_seq;
+#define TEST_MAX_CLEAR_RECORDS 8u
+static char g_history_clear_ids[TEST_MAX_CLEAR_RECORDS][CONFIG_SERVICE_CHANNEL_ID_MAX_LEN];
+static unsigned g_history_clear_seq[TEST_MAX_CLEAR_RECORDS];
+static size_t g_history_clear_calls;
+static char g_alarm_clear_ids[TEST_MAX_CLEAR_RECORDS][CONFIG_SERVICE_CHANNEL_ID_MAX_LEN];
+static unsigned g_alarm_clear_seq[TEST_MAX_CLEAR_RECORDS];
+static size_t g_alarm_clear_calls;
+
 static void fake_restart_callback(const device_profile_config_t *new_config,
                                   const device_profile_config_t *previous_config)
 {
     ++g_restart_calls;
+    g_restart_seq = ++g_extension_sequence;
     if (new_config != NULL) { g_restart_last_new_config = *new_config; }
     if (previous_config != NULL) { g_restart_last_previous_config = *previous_config; }
+}
+
+bool history_service_clear_channel(const char *channel_id)
+{
+    assert(g_history_clear_calls < TEST_MAX_CLEAR_RECORDS);
+    (void)snprintf(g_history_clear_ids[g_history_clear_calls], sizeof(g_history_clear_ids[0]), "%s",
+                   channel_id != NULL ? channel_id : "");
+    g_history_clear_seq[g_history_clear_calls] = ++g_extension_sequence;
+    ++g_history_clear_calls;
+    return true;
+}
+
+bool alarm_service_clear_channel(const char *channel_id)
+{
+    assert(g_alarm_clear_calls < TEST_MAX_CLEAR_RECORDS);
+    (void)snprintf(g_alarm_clear_ids[g_alarm_clear_calls], sizeof(g_alarm_clear_ids[0]), "%s",
+                   channel_id != NULL ? channel_id : "");
+    g_alarm_clear_seq[g_alarm_clear_calls] = ++g_extension_sequence;
+    ++g_alarm_clear_calls;
+    return true;
 }
 
 void *psram_calloc(size_t count, size_t size) { return calloc(count, size); }
@@ -96,17 +137,32 @@ static const driver_catalog_entry_t g_entry = {
     .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT),
     .validate_source = fake_validate_source, .driver = &g_driver,
 };
-const driver_catalog_entry_t *driver_catalog_get_by_id(uint8_t id) { return id == g_entry.driver_id ? &g_entry : NULL; }
+/* v0.5.0 T7: a second, distinct driver id so tests can exercise a "modified
+ * channel" (same channel id, different driver_id) without also having to
+ * change value_type -- reuses the same fake vtbl, since events are tracked
+ * by source_index, not driver_id. */
+static const driver_catalog_entry_t g_entry_b = {
+    .driver_id = CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE,
+    .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT),
+    .validate_source = fake_validate_source, .driver = &g_driver,
+};
+const driver_catalog_entry_t *driver_catalog_get_by_id(uint8_t id)
+{ if (id == g_entry.driver_id) return &g_entry; if (id == g_entry_b.driver_id) return &g_entry_b; return NULL; }
 const driver_catalog_entry_t *driver_catalog_get_by_name(const char *name) { (void)name; return NULL; }
-size_t driver_catalog_count(void) { return 1u; }
-const driver_catalog_entry_t *driver_catalog_get_by_index(size_t index) { return index == 0u ? &g_entry : NULL; }
+size_t driver_catalog_count(void) { return 2u; }
+const driver_catalog_entry_t *driver_catalog_get_by_index(size_t index)
+{ return index == 0u ? &g_entry : index == 1u ? &g_entry_b : NULL; }
 bool driver_catalog_supports_value_type(const driver_catalog_entry_t *entry, telemetry_channel_value_type_t type)
-{ return entry == &g_entry && type == TELEMETRY_CHANNEL_VALUE_FLOAT; }
+{ return (entry == &g_entry || entry == &g_entry_b) && type == TELEMETRY_CHANNEL_VALUE_FLOAT; }
 bool driver_catalog_get_resource_claims(uint8_t id, uint8_t source_index, uint8_t source_flags,
                                         driver_catalog_resource_claim_t *claims, size_t capacity, size_t *out_count)
-{ (void)source_index; (void)source_flags; if (id != g_entry.driver_id || capacity == 0u || claims == NULL || out_count == NULL) return false; claims[0] = (driver_catalog_resource_claim_t){ DRIVER_CATALOG_RESOURCE_GPIO, 1u, true }; *out_count = 1u; return true; }
+{ (void)source_flags; if ((id != g_entry.driver_id && id != g_entry_b.driver_id) || capacity == 0u || claims == NULL || out_count == NULL) return false;
+  /* Keyed by source_index so two simultaneously-active channels (distinct
+   * source_index by construction, see fake_validate_source) never appear to
+   * conflict over the same fake GPIO resource. */
+  claims[0] = (driver_catalog_resource_claim_t){ DRIVER_CATALOG_RESOURCE_GPIO, source_index, true }; *out_count = 1u; return true; }
 bool driver_catalog_claims_are_compatible(const driver_catalog_resource_claim_t *claims, size_t count)
-{ (void)claims; return count <= 1u; }
+{ (void)claims; return count <= 2u; }
 
 config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate, char *message, size_t message_size)
 { (void)message; (void)message_size; return candidate != NULL ? CONFIG_VALIDATE_RESULT_OK : CONFIG_VALIDATE_RESULT_INTERNAL_ERROR; }
@@ -145,6 +201,39 @@ static device_profile_config_t profile(uint8_t source_index)
             .low_threshold = DBL_MAX, .low_low_threshold = DBL_MAX,
         },
     }}};
+    return value;
+}
+
+/* v0.5.0 T7 helpers: build one channel definition / a one- or two-channel
+ * profile with an explicit id/driver_id, so tests can construct a
+ * delete/modify/untouched scenario across a commit. */
+static config_channel_definition_t channel_def(uint8_t source_index, const char *channel_id, uint8_t driver_id,
+                                                const char *name)
+{
+    config_channel_definition_t channel = {
+        .in_use = 1u, .driver_id = driver_id,
+        .source_index = source_index, .value_type = TELEMETRY_CHANNEL_VALUE_FLOAT,
+        .flags = TELEMETRY_CHANNEL_FLAG_ENABLED,
+        .settings = {
+            .enabled = true, .sample_period_ms = 1u,
+            .low_threshold = DBL_MAX, .low_low_threshold = DBL_MAX,
+        },
+    };
+    (void)snprintf(channel.id, sizeof(channel.id), "%s", channel_id);
+    (void)snprintf(channel.name, sizeof(channel.name), "%s", name);
+    return channel;
+}
+static device_profile_config_t profile_one(config_channel_definition_t a)
+{
+    device_profile_config_t value = { .opcua_port = 4840u };
+    value.channels[0] = a;
+    return value;
+}
+static device_profile_config_t profile_two(config_channel_definition_t a, config_channel_definition_t b)
+{
+    device_profile_config_t value = { .opcua_port = 4840u };
+    value.channels[0] = a;
+    value.channels[1] = b;
     return value;
 }
 
@@ -274,6 +363,81 @@ int main(void)
     assert(g_restart_calls == 2u);
     assert(g_restart_last_new_config.channels[0].source_index == 5u);
     assert(g_restart_last_previous_config.channels[0].source_index == 2u);
+
+    /* v0.5.0 T7: per-channel history/alarm cleanup on delete/modify, wired
+     * into config_service_run_commit_extensions() strictly before the
+     * restart callback. Every commit above only ever changed source_index
+     * on the same id/driver_id/value_type ("channel.temperature.1"), so
+     * neither clear function should have fired yet. */
+    assert(g_history_clear_calls == 0u);
+    assert(g_alarm_clear_calls == 0u);
+    {
+        config_channel_definition_t channel_a =
+            channel_def(5u, "channel.temperature.1", CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP, "temperature");
+        config_channel_definition_t channel_b =
+            channel_def(8u, "channel.pressure.1", CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP, "pressure");
+        device_profile_config_t two_channel = profile_two(channel_a, channel_b);
+        size_t history_before;
+        size_t alarm_before;
+
+        /* Adding a genuinely new channel (B) alongside an untouched one (A,
+         * same id/driver/value_type as already running) must not clear A's
+         * state -- A was never in the "deleted or modified" set. (B's
+         * verify pass polls every registered channel, including unchanged
+         * A -- R5 alongside R8 -- but that read alone must not trigger a
+         * clear for A.) */
+        assert(config_service_replace_and_save(&two_channel, true));
+        expect_event("O5S5C5T5S8C8T8R5R8");
+        assert(g_history_clear_calls == 0u);
+        assert(g_alarm_clear_calls == 0u);
+
+        /* Modify B only (same id, different driver_id): B must be cleared
+         * exactly once by each service, strictly before the restart
+         * callback fires for this same commit; A (still unchanged) must
+         * never be cleared. */
+        channel_b = channel_def(8u, "channel.pressure.1", CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE, "pressure");
+        two_channel = profile_two(channel_a, channel_b);
+        history_before = g_history_clear_calls;
+        alarm_before = g_alarm_clear_calls;
+        assert(config_service_replace_and_save(&two_channel, true));
+        expect_event("O5O8S5C5T5S8C8T8R5R8");
+        assert(g_history_clear_calls == history_before + 1u);
+        assert(g_alarm_clear_calls == alarm_before + 1u);
+        assert(strcmp(g_history_clear_ids[g_history_clear_calls - 1u], "channel.pressure.1") == 0);
+        assert(strcmp(g_alarm_clear_ids[g_alarm_clear_calls - 1u], "channel.pressure.1") == 0);
+        assert(g_history_clear_seq[g_history_clear_calls - 1u] < g_restart_seq);
+        assert(g_alarm_clear_seq[g_alarm_clear_calls - 1u] < g_restart_seq);
+
+        /* Delete B entirely (drop it from the candidate): B must be cleared
+         * exactly once more; A (still unchanged) must never be cleared. An
+         * untouched channel's history/alarm state survives a transaction
+         * that changes/removes a sibling channel. */
+        {
+            device_profile_config_t one_channel = profile_one(channel_a);
+
+            history_before = g_history_clear_calls;
+            alarm_before = g_alarm_clear_calls;
+            assert(config_service_replace_and_save(&one_channel, true));
+            expect_event("O5O8S5C5T5");
+            assert(g_history_clear_calls == history_before + 1u);
+            assert(g_alarm_clear_calls == alarm_before + 1u);
+            assert(strcmp(g_history_clear_ids[g_history_clear_calls - 1u], "channel.pressure.1") == 0);
+            assert(strcmp(g_alarm_clear_ids[g_alarm_clear_calls - 1u], "channel.pressure.1") == 0);
+            assert(g_history_clear_seq[g_history_clear_calls - 1u] < g_restart_seq);
+            assert(g_alarm_clear_seq[g_alarm_clear_calls - 1u] < g_restart_seq);
+        }
+
+        /* Across all three commits above, "channel.temperature.1" (A) was
+         * never passed to either clear function. */
+        for (size_t i = 0u; i < g_history_clear_calls; ++i)
+        {
+            assert(strcmp(g_history_clear_ids[i], "channel.temperature.1") != 0);
+        }
+        for (size_t i = 0u; i < g_alarm_clear_calls; ++i)
+        {
+            assert(strcmp(g_alarm_clear_ids[i], "channel.temperature.1") != 0);
+        }
+    }
 
     /* v0.5.0 T4(d) reboot recovery: config_service_init() must consult
      * config_transaction_backend's recovery classification (via
