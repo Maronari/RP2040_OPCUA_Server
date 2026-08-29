@@ -4,6 +4,7 @@ set(FIRMWARE_SERVICES_SOURCES
         src/config_export_service.c
         src/config_compat.c
         src/config_import_service.c
+        src/config_presets.c
         src/config_reset_service.c
         src/config_service.c
         src/config_store_service.c

@@ -709,6 +709,90 @@ UA_StatusCode model_apply_config(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+UA_StatusCode model_apply_config_preset(UA_Server *server,
+                                               const UA_NodeId *session_id,
+                                               void *session_context,
+                                               const UA_NodeId *method_id,
+                                               void *method_context,
+                                               const UA_NodeId *object_id,
+                                               void *object_context,
+                                               size_t input_size,
+                                               const UA_Variant *input,
+                                               size_t output_size,
+                                               UA_Variant *output)
+{
+    UA_StatusCode status;
+    UA_Boolean result = false;
+    char preset_name[CONFIG_SERVICE_TEXT_MAX_LEN] = {0};
+    const config_preset_catalog_entry_t *preset = NULL;
+    const char *details = "unknown configuration preset";
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+
+    status = model_require_method_role(session_context, method_id, output_size, output);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    if (input_size != 1u || input == NULL || !model_copy_input_string(&input[0], preset_name, sizeof(preset_name)))
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    preset = config_presets_get_by_name(preset_name);
+    if (preset == NULL)
+    {
+        model_set_boolean_method_output(output_size, output, false);
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    /* config_presets_apply() resolves the preset onto the currently running
+     * configuration and feeds it straight into config_service_replace_and_save()
+     * -- the same validate -> persist staged -> stop -> activate -> verify ->
+     * commit/rollback transaction every other candidate configuration goes
+     * through. A preset always replaces the channel set, so it always trips
+     * model_config_requires_server_reboot() and the commit-step restart
+     * (T6) already rebuilds the full address space -- no separate
+     * model_refresh_amb_locations() call is needed here. */
+    if (config_presets_apply(preset->preset_id))
+    {
+        result = true;
+        details = "preset applied";
+    }
+    else
+    {
+        details = "preset failed validation or activation";
+    }
+
+    printf("[OPC UA]\tApplyConfigPreset %s preset=%s\n",
+           result == UA_TRUE ? "succeeded" : "failed",
+           preset_name);
+    fflush(stdout);
+    model_audit_session_event(session_context,
+                              "config-preset-apply",
+                              preset_name,
+                              result == UA_TRUE,
+                              details);
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    {
+        char actor[SECURITY_SERVICE_USERNAME_MAX_LEN];
+        model_emit_config_changed_event(server,
+                                        result == UA_TRUE ? "Configuration preset applied" : "Configuration preset apply failed",
+                                        result == UA_TRUE ? 300u : 700u,
+                                        "Configuration",
+                                        preset_name,
+                                        model_session_actor_name(session_context, actor, sizeof(actor)));
+    }
+#endif
+    model_set_boolean_method_output(output_size, output, result);
+    return UA_STATUSCODE_GOOD;
+}
+
 UA_StatusCode model_save_config(UA_Server *server,
                                        const UA_NodeId *session_id,
                                        void *session_context,
@@ -1143,6 +1227,201 @@ UA_StatusCode model_get_channel_config(UA_Server *server,
         status = UA_Variant_setScalarCopy(&output[0], &string_value, &UA_TYPES[UA_TYPES_STRING]);
     }
     return status;
+}
+
+void model_format_config_preset_catalog_json(char *buffer, size_t buffer_size)
+{
+    size_t offset = 0u;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+
+    offset += (size_t)snprintf(buffer + offset, buffer_size - offset, "[");
+    for (size_t index = 0u; index < config_presets_count() && offset < buffer_size; ++index)
+    {
+        const config_preset_catalog_entry_t *preset = config_presets_get_by_index(index);
+        const int written = snprintf(buffer + offset,
+                                     buffer_size - offset,
+                                     "%s{\"id\":%u,\"name\":\"%s\",\"description\":\"%s\"}",
+                                     index > 0u ? "," : "",
+                                     preset != NULL ? (unsigned)preset->preset_id : 0u,
+                                     preset != NULL && preset->name != NULL ? preset->name : "unknown",
+                                     preset != NULL && preset->description != NULL ? preset->description : "");
+
+        if (written < 0)
+        {
+            break;
+        }
+
+        offset += (size_t)written;
+    }
+
+    if (offset < buffer_size)
+    {
+        (void)snprintf(buffer + offset, buffer_size - offset, "]");
+    }
+    else
+    {
+        buffer[buffer_size - 1u] = '\0';
+    }
+}
+
+UA_StatusCode model_list_config_presets(UA_Server *server,
+                                               const UA_NodeId *session_id,
+                                               void *session_context,
+                                               const UA_NodeId *method_id,
+                                               void *method_context,
+                                               const UA_NodeId *object_id,
+                                               void *object_context,
+                                               size_t input_size,
+                                               const UA_Variant *input,
+                                               size_t output_size,
+                                               UA_Variant *output)
+{
+    UA_StatusCode status;
+    char payload[512] = {0};
+    (void)server;
+    (void)session_id;
+    (void)method_context;
+    (void)object_id;
+    (void)object_context;
+    (void)input_size;
+    (void)input;
+
+    status = model_require_method_role(session_context, method_id, 0u, NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    model_format_config_preset_catalog_json(payload, sizeof(payload));
+    model_set_string_method_output(output_size, output, payload);
+    return UA_STATUSCODE_GOOD;
+}
+
+/** @brief Appends the comma-separated names of every
+ *         `TELEMETRY_DRIVER_CAPABILITY_*` bit set in @p capabilities as a
+ *         JSON string array, e.g. `["start","stop","read"]`. */
+static void model_append_driver_capability_names_json(uint32_t capabilities, char *buffer, size_t buffer_size, size_t *offset)
+{
+    static const struct
+    {
+        uint32_t bit;
+        const char *name;
+    } known[] = {
+        {TELEMETRY_DRIVER_CAPABILITY_START, "start"},
+        {TELEMETRY_DRIVER_CAPABILITY_STOP, "stop"},
+        {TELEMETRY_DRIVER_CAPABILITY_READ, "read"},
+        {TELEMETRY_DRIVER_CAPABILITY_WRITE, "write"},
+        {TELEMETRY_DRIVER_CAPABILITY_CONFIGURE, "configure"},
+        {TELEMETRY_DRIVER_CAPABILITY_SELF_TEST, "self_test"},
+    };
+    bool first = true;
+
+    *offset += (size_t)snprintf(buffer + *offset, buffer_size - *offset, "[");
+    for (size_t index = 0u; index < sizeof(known) / sizeof(known[0]) && *offset < buffer_size; ++index)
+    {
+        int written;
+
+        if ((capabilities & known[index].bit) == 0u)
+        {
+            continue;
+        }
+        written = snprintf(buffer + *offset, buffer_size - *offset, "%s\"%s\"", first ? "" : ",", known[index].name);
+        if (written < 0)
+        {
+            break;
+        }
+        *offset += (size_t)written;
+        first = false;
+    }
+    if (*offset < buffer_size)
+    {
+        *offset += (size_t)snprintf(buffer + *offset, buffer_size - *offset, "]");
+    }
+}
+
+/** @brief Maps a driver_catalog_resource_type_t to its JSON wire name. */
+static const char *model_driver_resource_type_to_string(driver_catalog_resource_type_t type)
+{
+    switch (type)
+    {
+    case DRIVER_CATALOG_RESOURCE_ADC_INPUT: return "adc_input";
+    case DRIVER_CATALOG_RESOURCE_ADC_PERIPHERAL: return "adc_peripheral";
+    case DRIVER_CATALOG_RESOURCE_GPIO: return "gpio";
+    case DRIVER_CATALOG_RESOURCE_NONE:
+    default: return "none";
+    }
+}
+
+void model_format_driver_compatibility_json(const driver_catalog_entry_t *driver, char *buffer, size_t buffer_size)
+{
+    driver_catalog_resource_claim_t claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
+    size_t claim_count = 0u;
+    bool have_claims = false;
+    size_t offset;
+
+    if (buffer == NULL || buffer_size == 0u)
+    {
+        return;
+    }
+    if (driver == NULL)
+    {
+        (void)snprintf(buffer, buffer_size, "{}");
+        return;
+    }
+
+    /* Resource claim shape is fixed per driver_id, not per configured
+     * channel (driver_catalog_get_resource_claims()); source_index 0 /
+     * source_flags 0 is a representative probe only -- it is not a claim
+     * about any actually-configured channel. */
+    have_claims = driver_catalog_get_resource_claims(driver->driver_id, 0u, 0u, claims,
+                                                      sizeof(claims) / sizeof(claims[0]), &claim_count);
+
+    offset = (size_t)snprintf(buffer, buffer_size,
+                              "{\"id\":%u,\"name\":\"%s\",\"analog\":%s,\"defaultUnit\":\"%s\",\"capabilities\":",
+                              (unsigned)driver->driver_id,
+                              driver->name != NULL ? driver->name : "unknown",
+                              driver->analog ? "true" : "false",
+                              driver->default_unit != NULL ? driver->default_unit : "");
+    if (offset >= buffer_size)
+    {
+        buffer[buffer_size - 1u] = '\0';
+        return;
+    }
+
+    model_append_driver_capability_names_json(driver->capabilities, buffer, buffer_size, &offset);
+
+    if (offset < buffer_size)
+    {
+        offset += (size_t)snprintf(buffer + offset, buffer_size - offset, ",\"resources\":[");
+    }
+    for (size_t index = 0u; have_claims && index < claim_count && offset < buffer_size; ++index)
+    {
+        const int written = snprintf(buffer + offset,
+                                     buffer_size - offset,
+                                     "%s{\"type\":\"%s\",\"index\":%u,\"shared\":%s}",
+                                     index > 0u ? "," : "",
+                                     model_driver_resource_type_to_string(claims[index].type),
+                                     (unsigned)claims[index].index,
+                                     claims[index].shared ? "true" : "false");
+
+        if (written < 0)
+        {
+            break;
+        }
+        offset += (size_t)written;
+    }
+    if (offset < buffer_size)
+    {
+        (void)snprintf(buffer + offset, buffer_size - offset, "]}");
+    }
+    else
+    {
+        buffer[buffer_size - 1u] = '\0';
+    }
 }
 
 UA_StatusCode model_list_drivers(UA_Server *server,

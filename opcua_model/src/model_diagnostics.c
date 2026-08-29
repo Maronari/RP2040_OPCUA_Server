@@ -425,3 +425,116 @@ UA_StatusCode model_build_amb_capabilities_and_requirements(UA_Server *server,
     fflush(stdout);
     return UA_STATUSCODE_GOOD;
 }
+
+/* Loop-over-a-small-fixed-catalog builder, mirroring
+ * model_build_amb_capabilities_and_requirements above: one static variable
+ * node per driver_catalog entry, walked via its existing
+ * driver_catalog_count()/driver_catalog_get_by_index() API rather than any
+ * hardcoded count, so this subtree always reflects the actually compiled
+ * driver catalog. */
+UA_StatusCode model_build_compatibility_info(UA_Server *server, UA_NodeId device_id, const device_profile_config_t *device_config)
+{
+    const UA_String firmware_profile = UA_STRING((char *)MODEL_FIRMWARE_DRIVER_PACK_NAME);
+    UA_String hardware_revision;
+    const UA_UInt32 schema_version = CONFIG_STORE_SCHEMA_VERSION_CURRENT;
+    UA_NodeId compatibility_id = UA_NODEID_STRING(1, (char *)"Device.Compatibility");
+    UA_NodeId supported_drivers_id = UA_NODEID_STRING(1, (char *)"Device.Compatibility.SupportedDrivers");
+    UA_StatusCode status;
+
+    if (server == NULL || device_config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    hardware_revision = UA_STRING((char *)device_config->hw_revision);
+
+    status = model_add_folder(server,
+                              "Device.Compatibility",
+                              "Compatibility",
+                              device_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_static_organized_variable(
+        server,
+        "Device.Compatibility.FirmwareProfile",
+        "FirmwareProfile",
+        "Compile-time driver-pack identity (ROADMAP.md 5.1), distinct from a runtime configuration preset",
+        compatibility_id,
+        &firmware_profile,
+        &UA_TYPES[UA_TYPES_STRING]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_static_organized_variable(
+        server,
+        "Device.Compatibility.HardwareRevision",
+        "HardwareRevision",
+        "Hardware revision of this device",
+        compatibility_id,
+        &hardware_revision,
+        &UA_TYPES[UA_TYPES_STRING]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_static_organized_variable(
+        server,
+        "Device.Compatibility.ConfigurationSchemaVersion",
+        "ConfigurationSchemaVersion",
+        "Configuration schema version this firmware image writes and accepts (services/config_wire.h)",
+        compatibility_id,
+        &schema_version,
+        &UA_TYPES[UA_TYPES_UINT32]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_add_folder(server,
+                              "Device.Compatibility.SupportedDrivers",
+                              "SupportedDrivers",
+                              compatibility_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    for (size_t index = 0u; index < driver_catalog_count(); ++index)
+    {
+        const driver_catalog_entry_t *driver = driver_catalog_get_by_index(index);
+        char node_id[128];
+        char descriptor[384] = {0};
+        UA_String descriptor_value;
+
+        if (driver == NULL || driver->name == NULL)
+        {
+            continue;
+        }
+        (void)snprintf(node_id, sizeof(node_id), "Device.Compatibility.SupportedDrivers.%s", driver->name);
+        model_format_driver_compatibility_json(driver, descriptor, sizeof(descriptor));
+        descriptor_value = UA_STRING(descriptor);
+
+        status = model_add_static_organized_variable(server,
+                                                      node_id,
+                                                      driver->name,
+                                                      "Compiled driver capability/resource descriptor (JSON)",
+                                                      supported_drivers_id,
+                                                      &descriptor_value,
+                                                      &UA_TYPES[UA_TYPES_STRING]);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+
+    printf("[OPC UA]\tDevice.Compatibility ready (%u supported drivers)\n", (unsigned)driver_catalog_count());
+    fflush(stdout);
+    return UA_STATUSCODE_GOOD;
+}

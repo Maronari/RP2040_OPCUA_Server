@@ -970,6 +970,37 @@ UA_StatusCode model_add_list_drivers_method_node(UA_Server *server,
                                                     NULL);
 }
 
+UA_StatusCode model_add_list_config_presets_method_node(UA_Server *server,
+                                                              UA_NodeId maintenance_folder_id)
+{
+    return model_add_method_node_with_string_result(server,
+                                                    maintenance_folder_id,
+                                                    MODEL_METHOD_LIST_CONFIG_PRESETS,
+                                                    "ListConfigPresets",
+                                                    "Returns the compile-time runtime configuration preset catalog as JSON.",
+                                                    model_list_config_presets,
+                                                    0u,
+                                                    NULL);
+}
+
+UA_StatusCode model_add_apply_config_preset_method_node(UA_Server *server,
+                                                              UA_NodeId maintenance_folder_id)
+{
+    UA_Argument input_argument;
+
+    model_fill_string_argument(&input_argument,
+                               "PresetName",
+                               "Runtime configuration preset name (see ListConfigPresets), e.g. sensor_node");
+    return model_add_method_node_with_boolean_result(server,
+                                                     maintenance_folder_id,
+                                                     MODEL_METHOD_APPLY_CONFIG_PRESET,
+                                                     "ApplyConfigPreset",
+                                                     "Resolves and applies a named runtime configuration preset through the existing configuration transaction pipeline.",
+                                                     model_apply_config_preset,
+                                                     1u,
+                                                     &input_argument);
+}
+
 UA_StatusCode model_add_get_config_state_method_node(UA_Server *server,
                                                             UA_NodeId maintenance_folder_id)
 {
@@ -2180,6 +2211,12 @@ UA_StatusCode model_build_address_space(UA_Server *server)
     }
 
     status = model_build_amb_capabilities_and_requirements(server, device_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    status = model_build_compatibility_info(server, device_id, device_config);
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
@@ -3555,6 +3592,18 @@ UA_StatusCode model_build_address_space(UA_Server *server)
         }
 
         status = model_add_list_drivers_method_node(server, maintenance_configuration_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_list_config_presets_method_node(server, maintenance_configuration_id);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+
+        status = model_add_apply_config_preset_method_node(server, maintenance_configuration_id);
         if (status != UA_STATUSCODE_GOOD)
         {
             return status;

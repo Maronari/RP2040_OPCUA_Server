@@ -1,5 +1,6 @@
 #include "services/alarm_service.h"
 #include "services/channel_manager.h"
+#include "services/config_presets.h"
 #include "services/config_service.h"
 #include "services/config_store_service.h"
 #include "services/config_validate_service.h"
@@ -126,8 +127,15 @@ static telemetry_driver_result_t fake_self_test(telemetry_channel_t *channel)
 { event('T', source(channel)); return source(channel) == g_fail_source && g_fail_step == 'T' ? TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE : TELEMETRY_DRIVER_RESULT_OK; }
 static telemetry_driver_result_t fake_read(telemetry_channel_t *channel, uint32_t now)
 { (void)now; event('R', source(channel)); return source(channel) == g_fail_source && g_fail_step == 'R' ? TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE : TELEMETRY_DRIVER_RESULT_OK; }
+/* v0.5.0 T8: source_index == 0 must validate too -- the real
+ * CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP/CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE
+ * source validators both accept index 0 (see
+ * drivers/src/internal_temperature_channel_driver.c and
+ * drivers/src/adc_voltage_channel_driver.c), and the "sensor_node" preset
+ * (services/config_presets.c) uses index 0 for both. No existing test
+ * above relies on index 0 being rejected. */
 static bool fake_validate_source(uint8_t source_index, uint8_t source_flags)
-{ return source_index > 0u && source_flags == 0u; }
+{ (void)source_index; return source_flags == 0u; }
 static const telemetry_driver_vtbl_t g_driver = {
     .start = fake_start, .stop = fake_stop, .read = fake_read,
     .configure = fake_configure, .self_test = fake_self_test,
@@ -146,23 +154,39 @@ static const driver_catalog_entry_t g_entry_b = {
     .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT),
     .validate_source = fake_validate_source, .driver = &g_driver,
 };
+/* v0.5.0 T8: a third catalog entry (BOOLEAN-typed, like the real
+ * CONFIG_CHANNEL_DRIVER_GPIO_INPUT) so the "sensor_node" preset's three
+ * channels can all activate through this fixture. */
+static const driver_catalog_entry_t g_entry_c = {
+    .driver_id = CONFIG_CHANNEL_DRIVER_GPIO_INPUT,
+    .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+    .validate_source = fake_validate_source, .driver = &g_driver,
+};
 const driver_catalog_entry_t *driver_catalog_get_by_id(uint8_t id)
-{ if (id == g_entry.driver_id) return &g_entry; if (id == g_entry_b.driver_id) return &g_entry_b; return NULL; }
+{
+    if (id == g_entry.driver_id) return &g_entry;
+    if (id == g_entry_b.driver_id) return &g_entry_b;
+    if (id == g_entry_c.driver_id) return &g_entry_c;
+    return NULL;
+}
 const driver_catalog_entry_t *driver_catalog_get_by_name(const char *name) { (void)name; return NULL; }
-size_t driver_catalog_count(void) { return 2u; }
+size_t driver_catalog_count(void) { return 3u; }
 const driver_catalog_entry_t *driver_catalog_get_by_index(size_t index)
-{ return index == 0u ? &g_entry : index == 1u ? &g_entry_b : NULL; }
+{ return index == 0u ? &g_entry : index == 1u ? &g_entry_b : index == 2u ? &g_entry_c : NULL; }
 bool driver_catalog_supports_value_type(const driver_catalog_entry_t *entry, telemetry_channel_value_type_t type)
-{ return (entry == &g_entry || entry == &g_entry_b) && type == TELEMETRY_CHANNEL_VALUE_FLOAT; }
+{ return (entry == &g_entry && type == TELEMETRY_CHANNEL_VALUE_FLOAT) ||
+         (entry == &g_entry_b && type == TELEMETRY_CHANNEL_VALUE_FLOAT) ||
+         (entry == &g_entry_c && type == TELEMETRY_CHANNEL_VALUE_BOOLEAN); }
 bool driver_catalog_get_resource_claims(uint8_t id, uint8_t source_index, uint8_t source_flags,
                                         driver_catalog_resource_claim_t *claims, size_t capacity, size_t *out_count)
-{ (void)source_flags; if ((id != g_entry.driver_id && id != g_entry_b.driver_id) || capacity == 0u || claims == NULL || out_count == NULL) return false;
+{ (void)source_flags; if ((id != g_entry.driver_id && id != g_entry_b.driver_id && id != g_entry_c.driver_id) ||
+      capacity == 0u || claims == NULL || out_count == NULL) return false;
   /* Keyed by source_index so two simultaneously-active channels (distinct
    * source_index by construction, see fake_validate_source) never appear to
    * conflict over the same fake GPIO resource. */
   claims[0] = (driver_catalog_resource_claim_t){ DRIVER_CATALOG_RESOURCE_GPIO, source_index, true }; *out_count = 1u; return true; }
 bool driver_catalog_claims_are_compatible(const driver_catalog_resource_claim_t *claims, size_t count)
-{ (void)claims; return count <= 2u; }
+{ (void)claims; return count <= 8u; }
 
 config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate, char *message, size_t message_size)
 { (void)message; (void)message_size; return candidate != NULL ? CONFIG_VALIDATE_RESULT_OK : CONFIG_VALIDATE_RESULT_INTERNAL_ERROR; }
@@ -479,6 +503,71 @@ int main(void)
         assert(g_discard_staged_calls == discard_before + 1u);
         assert(g_recover_fallback_calls == fallback_before);
         assert(config_service_get()->channels[0].source_index == 9u);
+    }
+
+    /* v0.5.0 T8: applying the "sensor_node" runtime configuration preset
+     * (services/config_presets.c) through the existing transaction
+     * pipeline. config_presets_apply() must resolve the preset by id and
+     * feed the resulting candidate straight into
+     * config_service_replace_and_save() -- the exact same apply path every
+     * other candidate configuration in this file goes through; there is no
+     * parallel apply path to test separately. The recovery block above
+     * re-ran config_service_init() (which unregisters both callbacks), so
+     * both must be re-registered first, exactly as app_init_task() does at
+     * boot. */
+    {
+        uint32_t revision_before;
+        const config_preset_catalog_entry_t *preset;
+
+        config_service_set_runtime_apply_callback(sensor_manager_activate_config);
+        config_service_set_restart_callback(fake_restart_callback);
+        /* g_fail_step is left set (never reset to a no-op value) by the last
+         * injected-failure scenario above; g_fail_source == 0u would
+         * otherwise spuriously match this preset's source_index == 0
+         * channels. */
+        g_fail_source = 0xFFu; g_fail_step = '\0';
+
+        preset = config_presets_get_by_id((uint8_t)CONFIG_PRESET_ID_SENSOR_NODE);
+        assert(preset != NULL);
+        assert(strcmp(preset->name, "sensor_node") == 0);
+        assert(config_presets_get_by_name("sensor_node") == preset);
+        assert(config_presets_get_by_name("no_such_preset") == NULL);
+        assert(config_presets_get_by_id(99u) == NULL);
+
+        revision_before = config_service_get_running_revision();
+        g_event_length = 0u; g_events[0] = '\0';
+
+        assert(config_presets_apply((uint8_t)CONFIG_PRESET_ID_SENSOR_NODE));
+        /* Proves activation actually ran through sensor_manager (stop/start/
+         * configure/self_test/read of the real driver lifecycle), not a
+         * trivial no-op success. */
+        assert(g_event_length > 0u);
+        assert(config_service_get_running_revision() == revision_before + 1u);
+
+        {
+            const device_profile_config_t *running = config_service_get();
+            size_t in_use_count = 0u;
+
+            for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
+            {
+                if (running->channels[index].in_use != 0u)
+                {
+                    ++in_use_count;
+                }
+            }
+            assert(in_use_count == 3u);
+            assert(strcmp(running->channels[0].id, "channel.temperature.1") == 0);
+            assert(running->channels[0].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP);
+            assert(strcmp(running->channels[1].id, "channel.adc.1") == 0);
+            assert(running->channels[1].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE);
+            assert(strcmp(running->channels[2].id, "channel.gpio.1") == 0);
+            assert(running->channels[2].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
+        }
+
+        /* Unknown preset id: resolved before any Flash/activation attempt,
+         * so the running configuration must be left untouched. */
+        assert(!config_presets_apply(99u));
+        assert(config_service_get_running_revision() == revision_before + 1u);
     }
     return 0;
 }

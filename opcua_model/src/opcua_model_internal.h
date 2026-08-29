@@ -23,8 +23,10 @@
 #include "services/config_service.h"
 #include "services/config_export_service.h"
 #include "services/config_import_service.h"
+#include "services/config_presets.h"
 #include "services/config_reset_service.h"
 #include <services/config_validate_service.h>
+#include "services/config_wire.h"
 #include "services/device_channels.h"
 #include "services/diag_service.h"
 #include "services/device_health_service.h"
@@ -54,6 +56,21 @@ UA_ConnectionManager *UA_ConnectionManager_new_MQTT(const UA_String eventSourceN
 #define MODEL_BOOTSTRAP_APPLICATION_URI "urn:open62541.server.application"
 #define MODEL_CHANNEL_NAMESPACE_URI "urn:maronari:rp2-industrial-opcua:channel-model"
 #define MODEL_CHANNEL_NODE_ID_MAX_LEN 128u
+
+/**
+ * @brief Compile-time driver-pack identity (ROADMAP.md 5.1), exposed
+ *        read-only through `Device.Compatibility.FirmwareProfile`.
+ *
+ * Distinct from a runtime configuration preset (`services/config_presets.h`):
+ * this names which fixed set of native drivers this firmware image was
+ * built with, not which of those drivers a device's running configuration
+ * actually uses. Only "base" (internal temperature, generic ADC, GPIO
+ * input) is compiled today; overridable via a compile definition once more
+ * than one driver pack exists.
+ */
+#ifndef MODEL_FIRMWARE_DRIVER_PACK_NAME
+#define MODEL_FIRMWARE_DRIVER_PACK_NAME "base"
+#endif
 
 /**
  * @def fflush
@@ -821,6 +838,13 @@ enum
 #define MODEL_METHOD_GET_CHANNEL_CONFIG "Device.Maintenance.GetChannelConfig"
 #define MODEL_METHOD_CLEAR_CHANNEL_CONFIG "Device.Maintenance.ClearChannelConfig"
 #define MODEL_METHOD_LIST_DRIVERS "Device.Maintenance.ListDrivers"
+#define MODEL_METHOD_LIST_CONFIG_PRESETS "Device.Maintenance.ListConfigPresets"
+/* Deliberately prefixed with MODEL_METHOD_APPLY_CONFIG's own NodeId text
+ * ("Device.Maintenance.ApplyConfig") -- model_required_role_for_method()
+ * (model_access.c) matches that as a string PREFIX, so this method inherits
+ * ApplyConfig's Operator role automatically; no model_access.c change
+ * needed. */
+#define MODEL_METHOD_APPLY_CONFIG_PRESET "Device.Maintenance.ApplyConfigPreset"
 #define MODEL_METHOD_GET_CONFIG_STATE "Device.Maintenance.GetConfigState"
 #define MODEL_METHOD_EXPORT_CONFIG "Device.Maintenance.ExportConfig"
 #define MODEL_METHOD_BEGIN_CONFIG_IMPORT "Device.Maintenance.BeginConfigImport"
@@ -2294,6 +2318,21 @@ void model_format_channel_config_json(size_t slot_index, const config_channel_de
 /** @brief Formats the compiled-in driver catalog (`driver_catalog`) as a
  *         JSON array into @p buffer, used by `ListDrivers`. */
 void model_format_driver_catalog_json(char *buffer, size_t buffer_size);
+/** @brief Formats the compile-time preset catalog (`config_presets`) as a
+ *         JSON array into @p buffer, used by `ListConfigPresets`. */
+void model_format_config_preset_catalog_json(char *buffer, size_t buffer_size);
+/** @brief `Device.Maintenance.ListConfigPresets`: returns the compile-time
+ *         runtime-configuration-preset catalog as JSON text
+ *         (`model_format_config_preset_catalog_json`). */
+UA_StatusCode model_list_config_presets(UA_Server *server, const UA_NodeId *session_id, void *session_context, const UA_NodeId *method_id, void *method_context, const UA_NodeId *object_id, void *object_context, size_t input_size, const UA_Variant *input, size_t output_size, UA_Variant *output);
+/** @brief `Device.Maintenance.ApplyConfigPreset`: resolves the named preset
+ *         via `config_presets_get_by_name()` and applies it through
+ *         `config_presets_apply()` -- the existing `config_service`
+ *         transaction pipeline; a channel-changing preset always requires
+ *         and triggers a controlled restart (`model_config_requires_server_reboot`,
+ *         T6), which already rebuilds the full address space, so this
+ *         callback does not separately call `model_refresh_amb_locations`. */
+UA_StatusCode model_apply_config_preset(UA_Server *server, const UA_NodeId *session_id, void *session_context, const UA_NodeId *method_id, void *method_context, const UA_NodeId *object_id, void *object_context, size_t input_size, const UA_Variant *input, size_t output_size, UA_Variant *output);
 /** @brief `Device.Maintenance.GetChannelConfig`: returns one channel's
  *         configuration as JSON text
  *         (`model_format_channel_config_json`). */
@@ -2499,6 +2538,25 @@ UA_StatusCode model_add_static_organized_variable(UA_Server *server, const char 
  *         nodes under @p device_id via repeated
  *         `model_add_static_organized_variable` calls. */
 UA_StatusCode model_build_amb_capabilities_and_requirements(UA_Server *server, UA_NodeId device_id);
+/** @brief Formats one compiled driver-catalog entry's compatibility
+ *         descriptor (id, name, supported value types, capability
+ *         bitmask, and a representative resource-claim shape via
+ *         `driver_catalog_get_resource_claims()`) as a JSON object into
+ *         @p buffer, used by `model_build_compatibility_info` to populate
+ *         each `Device.Compatibility.SupportedDrivers.<name>` node. */
+void model_format_driver_compatibility_json(const driver_catalog_entry_t *driver, char *buffer, size_t buffer_size);
+/** @brief Builds the `Device.Compatibility` subtree: firmware profile
+ *         (compile-time driver-pack identity), hardware revision,
+ *         configuration-schema version, and one
+ *         `Device.Compatibility.SupportedDrivers.<name>` static variable
+ *         node per compiled driver (`driver_catalog_count()`/
+ *         `driver_catalog_get_by_index()`), each holding that driver's
+ *         capabilities/resource descriptor
+ *         (`model_format_driver_compatibility_json`). Read-only,
+ *         compile-time data -- built once, not gated on
+ *         `g_model_config.enable_alarm_methods` like the
+ *         `Device.Maintenance.*` methods are. */
+UA_StatusCode model_build_compatibility_info(UA_Server *server, UA_NodeId device_id, const device_profile_config_t *device_config);
 /** @brief Adds the AMB `NodeVersion` property to a location node, required
  *         so clients can detect when a location subtree has changed. */
 UA_StatusCode model_add_location_node_version(UA_Server *server, const char *node_id, UA_NodeId parent_id);
@@ -2676,6 +2734,8 @@ UA_StatusCode model_add_set_channel_config_method_node(UA_Server *server, UA_Nod
 UA_StatusCode model_add_get_channel_config_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_clear_channel_config_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_list_drivers_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
+UA_StatusCode model_add_list_config_presets_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
+UA_StatusCode model_add_apply_config_preset_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_get_config_state_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_export_config_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);
 UA_StatusCode model_add_begin_config_import_method_node(UA_Server *server, UA_NodeId maintenance_folder_id);

@@ -16,6 +16,7 @@ import sys
 EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
 EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
 EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
+EXPECTED_V043_COMMIT = "dec08ba22e835e8037f9fd5342dcc63ddc03f5ac"
 EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
     "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
 )
@@ -32,6 +33,19 @@ EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
 # commit d48fd06 (pre-fix) before recording this hash.
 EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
     "a9a3b7610c5484987a9f01fd67cd2515876177071ea1bedbfa8595873ab3c4f8"
+)
+# v0.5.0 T8 adds the runtime-configuration-preset apply/list methods
+# (Device.Maintenance.ApplyConfigPreset, Device.Maintenance.ListConfigPresets)
+# and the Device.Compatibility subtree (FirmwareProfile, HardwareRevision,
+# ConfigurationSchemaVersion, and one Device.Compatibility.SupportedDrivers.*
+# node per compiled driver_catalog entry) -- the first genuinely new public
+# OPC UA surface added since the v0.4.3 baseline (T1-T7 restructured the
+# configuration transaction pipeline and added a controlled restart without
+# registering any new NodeId). Computed directly from this script's own
+# public_inventory() output against the current tree at T8 completion, not
+# guessed.
+EXPECTED_V050_PUBLIC_INVENTORY_SHA256 = (
+    "074324c4cd2f1fdf410e3a09f9cba3787ebeecd2b50d3f4de02db7b898425c6b"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
@@ -166,6 +180,17 @@ V043_REVIEWED_COMMENT_ONLY_DRIFT_PATHS = frozenset({
     # strip_c_comments() equality before adding (2026-08-28).
     "services/include/services/device_channels.h",
 })
+# v0.5.0: every MODEL_SOURCE_SET file already carries reviewed drift from the
+# v0.4.3 baseline by the time T8 lands (T2-T7's schema-version/transaction/
+# restart/history-alarm-cleanup work already touched most of them; T8 itself
+# touches opcua_model_internal.h, model_configuration.c, model_diagnostics.c
+# and model_address_space.c for the config-preset methods and
+# Device.Compatibility subtree). Mirrors V043_REVIEWED_MODEL_DRIFT_PATHS's own
+# precedent (that set also ended up covering all sixteen files) -- the actual
+# fail-closed proof this whole mode provides is the exact
+# EXPECTED_V050_PUBLIC_INVENTORY_SHA256 comparison below, plus
+# missing_baseline_contract() rejecting any removed v0.4.3 public entry.
+V050_REVIEWED_MODEL_DRIFT_PATHS = frozenset(MODEL_SOURCE_SET)
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",
     "UA_EXPANDEDNODEID_",
@@ -205,6 +230,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-v043-channel-additions",
         action="store_true",
         help="Allow only the reviewed v0.4.3 history/alarm model source delta",
+    )
+    parser.add_argument(
+        "--allow-v050-additions",
+        action="store_true",
+        help="Allow only the reviewed v0.5.0 config-preset/compatibility model source delta",
     )
     parser.add_argument(
         "--source-dir",
@@ -576,6 +606,22 @@ def main() -> int:
                     f"{relative}"
                 )
         assert_v043_channel_compatibility(source_dir)
+    if args.allow_v050_additions:
+        if args.baseline != "v0.4.3" or baseline_commit != EXPECTED_V043_COMMIT:
+            raise SystemExit(
+                "opcua-contract: FAIL: v0.5.0 additions require "
+                f"v0.4.3@{EXPECTED_V043_COMMIT}, got {args.baseline}@{baseline_commit}"
+            )
+        for relative in MODEL_SOURCE_SET:
+            if relative in V050_REVIEWED_MODEL_DRIFT_PATHS:
+                continue
+            baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
+            current_data = normalized_source((source_dir / relative).read_bytes())
+            if current_data != baseline_data:
+                raise SystemExit(
+                    "opcua-contract: FAIL: model drift outside reviewed v0.5.0 "
+                    f"config-preset/compatibility files: {relative}"
+                )
 
     stable_files: list[dict[str, str]] = []
     for relative in BYTE_STABLE_PUBLIC_CONTRACT_PATHS:
@@ -604,7 +650,11 @@ def main() -> int:
     assert_closed_registration_coverage(source_dir)
     current_inventory = public_inventory(aggregate_current_source(source_dir))
     inventory_changed = current_inventory != baseline_inventory
-    allow_additions = args.allow_v042_channel_additions or args.allow_v043_channel_additions
+    allow_additions = (
+        args.allow_v042_channel_additions
+        or args.allow_v043_channel_additions
+        or args.allow_v050_additions
+    )
     missing_baseline = missing_baseline_contract(baseline_inventory, current_inventory)
     if allow_additions and missing_baseline:
         summary = ", ".join(
@@ -626,6 +676,12 @@ def main() -> int:
             "opcua-contract: FAIL: public inventory is not the reviewed v0.4.3 delta: "
             + str(current_inventory["sha256"])
         )
+    if (args.allow_v050_additions and
+            current_inventory["sha256"] != EXPECTED_V050_PUBLIC_INVENTORY_SHA256):
+        raise SystemExit(
+            "opcua-contract: FAIL: public inventory is not the reviewed v0.5.0 delta: "
+            + str(current_inventory["sha256"])
+        )
     if inventory_changed and not allow_additions:
         raise SystemExit("opcua-contract: FAIL: public model inventory differs from baseline")
 
@@ -644,6 +700,10 @@ def main() -> int:
             EXPECTED_V043_PUBLIC_INVENTORY_SHA256
             if args.allow_v043_channel_additions else None
         ),
+        "reviewed_v050_public_inventory_sha256": (
+            EXPECTED_V050_PUBLIC_INVENTORY_SHA256
+            if args.allow_v050_additions else None
+        ),
         "baseline_contract_removals": missing_baseline,
         "reviewed_v042_channel_additions": bool(
             args.allow_v042_channel_additions and inventory_changed
@@ -651,10 +711,15 @@ def main() -> int:
         "reviewed_v043_channel_additions": bool(
             args.allow_v043_channel_additions and inventory_changed
         ),
+        "reviewed_v050_additions": bool(
+            args.allow_v050_additions and inventory_changed
+        ),
         "reviewed_v042_model_drift_paths": sorted(V042_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v042_channel_additions else [],
         "reviewed_v043_model_drift_paths": sorted(V043_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v043_channel_additions else [],
+        "reviewed_v050_model_drift_paths": sorted(V050_REVIEWED_MODEL_DRIFT_PATHS)
+        if args.allow_v050_additions else [],
         "string_literal_count": len(current_inventory["string_literals"]),
         "node_and_browse_call_count": len(current_inventory["node_and_browse_calls"]),
         "public_attribute_assignment_count": len(
