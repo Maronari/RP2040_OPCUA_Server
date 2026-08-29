@@ -71,19 +71,51 @@ HistoryRead, контроль доступа и публикация PubSub/MQTT
 
 ```mermaid
 flowchart TD
-    A["ожидание network_manager_is_ready()"] --> B["привязка аллокаторов open62541 к PSRAM"]
+    A["ожидание network_manager_is_ready() (один раз)"] --> B["привязка аллокаторов open62541 к PSRAM"]
     B --> C["формирование UA_ServerConfig<br/>ограниченные лимиты сессий/подписок/отслеживаемых элементов"]
     C --> D["настройка URL конечной точки + политик безопасности<br/>(Basic256Sha256 либо откат к None)"]
     D --> E["установка пользовательских функций-обёрток UA_AccessControl"]
     E --> F["установка UA_HistoryDatabase.readRaw = model_history_read_raw"]
     F --> G["UA_Server_newWithConfig()"]
-    G --> H["maintenance_service_init()"]
+    G --> H["maintenance_service_init() — только при холодном старте"]
     H --> I["model_build_address_space()<br/>создаёт каждый узел OPC UA"]
     I --> J["model_configure_pubsub_publishers(), если включено"]
     J --> K["UA_Server_run_startup()"]
     K --> L["цикл: model_process_runtime_events()<br/>+ UA_Server_run_iterate(false)<br/>+ ограниченная задержка 10-100мс"]
-    L -->|запланированная перезагрузка| M["UA_Server_run_shutdown()<br/>model_context_delete_server()"]
+    L -->|запланированная перезагрузка| M["UA_Server_run_shutdown()<br/>model_context_delete_server()<br/>затем реальный сброс MCU (не возвращается)"]
+    L -->|restart_pending — v0.5.0 T6| N["UA_Server_run_shutdown()<br/>model_context_delete_server()"]
+    N -->|цикл назад к C, is_restart=true| C
 ```
+
+**Управляемый перезапуск сервера OPC UA (v0.5.0 T6)**: `config_service_run_commit_extensions()`
+после каждой успешно зафиксированной транзакции конфигурации безусловно
+вызывает коллбэк, зарегистрированный через
+`config_service_set_restart_callback()` —
+`model_config_service_restart_callback` (`model_core_lifecycle.c`). Этот
+коллбэк вызывает `model_config_requires_server_reboot()` и, если требуется
+перестроение адресного пространства, устанавливает
+`g_pending_actions.restart_pending`, а не перестраивает `UA_Server`
+напрямую: этот коллбэк выполняется изнутри вызова метода OPC UA, то есть
+уже вложен в тот самый вызов `UA_Server_run_iterate()`, которому
+принадлежит указатель `server` — удаление сервера прямо здесь освободило бы
+память, которую этот внешний кадр вызова ещё использует после возврата
+коллбэка (например, `model_apply_config` разыменовывает `server` снова
+сразу после `config_service_apply()`, вызывая
+`model_refresh_amb_locations`). Цикл `model_core_task` замечает флаг сразу
+после возврата текущего вызова `UA_Server_run_iterate()` — раньше, чем
+может быть обслужен любой следующий запрос клиента — корректно завершает
+работу старого сервера и строит новый **тем же самым кодом**, что и
+холодный старт (`for (;;)` в `model_core_task`), никогда не второй,
+параллельной реализацией. Транзакция, не требующая перестроения
+(`model_config_requires_server_reboot()` вернул false), никогда не
+устанавливает флаг — работающий сервер, его сессии и подписки остаются
+полностью нетронутыми.
+
+Видимая клиентам последовательность при перезапуске: все существующие
+сессии/подписки теряются (то же поведение переподключения, что и при полной
+перезагрузке прошивки — намеренное решение, см. `docs/releases/v0.5.0.md`,
+пункт 6 списка зафиксированных решений), клиент должен переподключиться;
+после переподключения он видит адресное пространство новой конфигурации.
 
 Загрузка NodeSet (DI/AMB) происходит внутри поставляемой сборки open62541
 через `port/open62541/nodesetinjector.c` до возврата из

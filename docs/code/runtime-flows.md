@@ -87,6 +87,17 @@ flowchart TD
 [modules/services.md](modules/services.md#configuration-config_service--config_store_service--friends)
 и [persistence.md](persistence.md#config-persistence-servicesconfig_store_servicec).
 
+**v0.5.0 T6**: после шага `Commit` на диаграмме выше
+`config_service_run_commit_extensions()` безусловно вызывает
+зарегистрированный `opcua_model`-ом коллбэк перезапуска
+(`config_service_set_restart_callback()`); если изменённая конфигурация
+требует перестроения адресного пространства
+(`model_config_requires_server_reboot()`), коллбэк планирует управляемый
+перезапуск сервера OPC UA — см.
+[modules/opcua_model.md](modules/opcua_model.md#server-lifecycle) для
+полной последовательности и обоснования, почему перестроение отложено до
+границы цикла `model_core_task`, а не выполнено прямо внутри коллбэка.
+
 ## Техническое обслуживание
 
 ```mermaid
