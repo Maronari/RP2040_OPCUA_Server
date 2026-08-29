@@ -227,3 +227,10 @@ bool config_store_recover_fallback_to_last_known_good(config_store_record_info_t
     }
     return true;
 }
+
+void config_store_service_init_with_storage(const config_transaction_storage_t *storage)
+{
+    config_transaction_backend_init(&g_config_store_backend, storage);
+    (void)config_transaction_backend_recover(&g_config_store_backend);
+    g_config_store_backend_ready = true;
+}

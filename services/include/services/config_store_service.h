@@ -227,4 +227,25 @@ config_transaction_recovery_state_t config_store_get_recovery_state(void);
  */
 bool config_store_recover_fallback_to_last_known_good(config_store_record_info_t *out_info);
 
+/**
+ * @brief Test-only seam: (re)install an explicit storage backend, bypassing
+ * the lazy `config_transaction_backend_init_flash()` every other
+ * `config_store_*` entry point performs on first use.
+ *
+ * Mirrors `maintenance_service_init()`'s optional `storage` parameter
+ * (`services/maintenance_service.h`) -- same purpose: host-test injection of
+ * a simulated Flash media. Real firmware never calls this; production boot
+ * still goes through `config_store_backend()`'s lazy `_init_flash()` path
+ * exactly as before.
+ *
+ * Calling this again re-initializes and re-recovers against @p storage from
+ * scratch, discarding any previously cached role state -- e.g. to simulate a
+ * reboot against the same underlying media in a host test (the media bytes
+ * persist across the call; only this module's in-RAM cache is reset).
+ *
+ * @param storage Fake storage callbacks (see
+ * `drivers/config_transaction_backend.h`); must not be NULL.
+ */
+void config_store_service_init_with_storage(const config_transaction_storage_t *storage);
+
 #endif
