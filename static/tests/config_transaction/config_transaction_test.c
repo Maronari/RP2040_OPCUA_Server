@@ -28,6 +28,25 @@ static config_transaction_recovery_state_t g_recovery_state = CONFIG_TXN_RECOVER
 static size_t g_discard_staged_calls;
 static size_t g_recover_fallback_calls;
 
+/* v0.5.0 T6: config_service_run_commit_extensions() must invoke the
+ * registered restart callback exactly once per successful commit -- never on
+ * a rolled-back/failed transaction -- passing the just-committed and
+ * previous configs. The real restart decision (model_config_requires_server_reboot())
+ * and the actual UA_Server teardown/rebuild live in opcua_model, which this
+ * host suite does not link (no open62541); this fake only proves the
+ * config_service-side wiring: registered/invoked correctly, with the right
+ * arguments, on commit only. */
+static size_t g_restart_calls;
+static device_profile_config_t g_restart_last_new_config;
+static device_profile_config_t g_restart_last_previous_config;
+static void fake_restart_callback(const device_profile_config_t *new_config,
+                                  const device_profile_config_t *previous_config)
+{
+    ++g_restart_calls;
+    if (new_config != NULL) { g_restart_last_new_config = *new_config; }
+    if (previous_config != NULL) { g_restart_last_previous_config = *previous_config; }
+}
+
 void *psram_calloc(size_t count, size_t size) { return calloc(count, size); }
 bool psram_allocator_is_ready(void) { return true; }
 TickType_t xTaskGetTickCount(void) { return 1u; }
@@ -153,9 +172,14 @@ int main(void)
     assert(config_service_get()->channels[0].settings.low_low_threshold == DBL_MAX);
     assert(channel_manager_init());
     assert(sensor_manager_init());
+    config_service_set_restart_callback(fake_restart_callback);
     /* Boot activation: no prior bank to diff against, so the sole channel is
      * always "new" and the v0.5.0 T4 verify gate runs (one read, R1). */
     expect_event("S1C1T1R1");
+    /* Boot activation runs sensor_manager_activate_running_config() directly,
+     * never through config_service_apply()/config_service_run_commit_extensions()
+     * -- the restart callback must not fire for it. */
+    assert(g_restart_calls == 0u);
 
     for (const char *step = "SCT"; *step != '\0'; ++step)
     {
@@ -169,12 +193,20 @@ int main(void)
         expect_event(*step == 'S' ? "O1S2O2S1C1T1" :
                      *step == 'C' ? "O1S2C2O2S1C1T1" :
                                     "O1S2C2T2O2S1C1T1");
+        /* v0.5.0 T6: a rolled-back transaction never reaches the commit
+         * step, so the restart callback must not fire. */
+        assert(g_restart_calls == 0u);
         g_fail_source = 0u;
     }
 
     assert(config_service_apply());
     expect_event("O1S2C2T2R2");
     assert(config_service_get()->channels[0].source_index == 2u);
+    /* v0.5.0 T6: the first successful commit must invoke the restart
+     * callback exactly once, with the just-committed and previous configs. */
+    assert(g_restart_calls == 1u);
+    assert(g_restart_last_new_config.channels[0].source_index == 2u);
+    assert(g_restart_last_previous_config.channels[0].source_index == 1u);
 
     /* v0.5.0 T4 ordering fix, proven directly: a Flash stage failure must
      * abort the transaction before any driver is touched at all -- the
@@ -185,6 +217,7 @@ int main(void)
     assert(config_service_get_running_revision() == old_revision);
     assert(config_service_get()->channels[0].source_index == 2u);
     expect_event("");
+    assert(g_restart_calls == 1u);
     g_fail_stage = false;
 
     /* Driver stop() failure (the coverage gap T1/T9 identified: fake_stop
@@ -199,6 +232,7 @@ int main(void)
     assert(config_service_get()->channels[0].source_index == 2u);
     assert(config_service_get_staged()->channels[0].source_index == 6u);
     expect_event("O2S2C2T2");
+    assert(g_restart_calls == 1u);
     g_fail_source = 0u;
 
     /* Verify-gate (read) failure: driver init/start/configure/self_test all
@@ -213,6 +247,7 @@ int main(void)
     assert(config_service_get()->channels[0].source_index == 2u);
     assert(config_service_get_staged()->channels[0].source_index == 7u);
     expect_event("O2S7C7T7R7R7R7O7S2C2T2");
+    assert(g_restart_calls == 1u);
     g_fail_source = 0u;
 
     candidate = profile(3u); old_revision = config_service_get_running_revision();
@@ -225,7 +260,20 @@ int main(void)
      * verify-failure scenario staged (7), not this call's own candidate. */
     assert(config_service_get_staged()->channels[0].source_index == 7u);
     expect_event("O2S3C3T3R3O3S2C2T2R2");
+    assert(g_restart_calls == 1u);
     g_fail_commit = false;
+
+    /* v0.5.0 T6: config_service_replace_and_save()'s commit path must also
+     * invoke the registered restart callback exactly like
+     * config_service_apply() does -- both call
+     * config_service_run_commit_extensions() from the same place. */
+    candidate = profile(5u);
+    assert(config_service_replace_and_save(&candidate, true));
+    expect_event("O2S5C5T5R5");
+    assert(config_service_get()->channels[0].source_index == 5u);
+    assert(g_restart_calls == 2u);
+    assert(g_restart_last_new_config.channels[0].source_index == 5u);
+    assert(g_restart_last_previous_config.channels[0].source_index == 2u);
 
     /* v0.5.0 T4(d) reboot recovery: config_service_init() must consult
      * config_transaction_backend's recovery classification (via
