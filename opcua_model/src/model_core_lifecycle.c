@@ -832,6 +832,17 @@ void model_core_task(void *argument)
         if (restarted_profile != NULL)
         {
             opcua_model_config_t restarted_config = {0};
+            /* model_core_init() unconditionally zeroes every field of
+             * g_pending_actions, including reboot_pending/reboot_due_tick --
+             * correct for a cold boot, but this call is re-entrant during a
+             * controlled restart (v0.5.0 T6) and a hard reboot can
+             * legitimately be scheduled (model_schedule_reboot()) around the
+             * same time a restart is armed (see the due-tick re-check below
+             * this loop). Save and restore across the call so a real
+             * scheduled reboot survives a restart's rebuild instead of being
+             * silently cancelled. */
+            const bool saved_reboot_pending = g_pending_actions.reboot_pending;
+            const TickType_t saved_reboot_due_tick = g_pending_actions.reboot_due_tick;
 
             restarted_config.application_name = restarted_profile->device_name;
             restarted_config.hostname = restarted_profile->opcua_hostname;
@@ -844,6 +855,9 @@ void model_core_task(void *argument)
             restarted_config.enable_mqtt_pubsub = restarted_profile->enable_mqtt_pubsub;
             restarted_config.mqtt_pubsub_use_json = restarted_profile->mqtt_pubsub_use_json;
             (void)model_core_init(&restarted_config);
+
+            g_pending_actions.reboot_pending = saved_reboot_pending;
+            g_pending_actions.reboot_due_tick = saved_reboot_due_tick;
         }
     }
 
@@ -1190,8 +1204,23 @@ void model_core_task(void *argument)
         vTaskDelay(pdMS_TO_TICKS(wait_ms));
     }
 
-    if (g_pending_actions.reboot_pending)
+    if (g_pending_actions.reboot_pending &&
+        xTaskGetTickCount() >= g_pending_actions.reboot_due_tick)
     {
+        /* Re-check the due-tick here, not just `reboot_pending` -- the loop
+         * above can also break on `restart_pending` (v0.5.0 T6) while a
+         * reboot is scheduled but not yet due (e.g. model_factory_reset()
+         * arms both: config_service_apply()'s restart callback fires
+         * synchronously, then model_schedule_reboot() gives the stack a
+         * short grace period to flush the method's own response before the
+         * MCU resets). Without this check, that early, unrelated break would
+         * be misread as "the reboot is due" and fire the hard reset
+         * immediately, cutting the grace period short and dropping the
+         * response. Falling through instead lets the controlled-restart path
+         * below run first; reboot_pending/reboot_due_tick are preserved
+         * across it (see the is_restart branch above) and this check fires
+         * for real on a later pass once the tick is actually reached. */
+
         /* Hard MCU reset: the whole address space, PSRAM scratch, and this
          * task itself disappear with it, so there is nothing to gracefully
          * shut down first -- unlike the controlled-restart path below, which

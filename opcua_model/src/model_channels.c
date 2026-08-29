@@ -59,6 +59,9 @@ bool model_config_requires_server_reboot(const device_profile_config_t *lhs,
     if (lhs->opcua_port != rhs->opcua_port ||
         lhs->enable_mqtt_pubsub != rhs->enable_mqtt_pubsub ||
         lhs->mqtt_pubsub_use_json != rhs->mqtt_pubsub_use_json ||
+        lhs->enable_alarm_ack_method != rhs->enable_alarm_ack_method ||
+        lhs->enable_heap_diagnostics != rhs->enable_heap_diagnostics ||
+        lhs->enable_task_diagnostics != rhs->enable_task_diagnostics ||
         model_string_changed(lhs->device_name, rhs->device_name) ||
         model_string_changed(lhs->opcua_hostname, rhs->opcua_hostname) ||
         model_string_changed(lhs->ntp_server, rhs->ntp_server) ||
