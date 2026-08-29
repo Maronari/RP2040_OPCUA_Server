@@ -122,6 +122,11 @@ bool alarm_service_init(void)
  *        condition.
  * @return true on success; false on bad arguments or if every slot is
  *         already bound to a different channel (registry exhausted).
+ * @note Slot allocation reclaims freed slots (see alarm_service_clear_channel()):
+ *       it first scans [0, g_condition_count) for an `in_use == false` hole
+ *       left by a clear, and only extends the g_condition_count cursor when
+ *       none exists. Without this, a clear would permanently shrink capacity
+ *       by one slot per call -- see docs/releases/v0.5.0.md T7.
  */
 static bool alarm_service_find_or_bind_snapshot(const char *channel_id,
                                                 size_t *out_index,
@@ -148,15 +153,27 @@ static bool alarm_service_find_or_bind_snapshot(const char *channel_id,
         }
     }
 
-    if (g_condition_count < ALARM_SERVICE_MAX_CONDITIONS)
+    for (size_t index = 0u; index < g_condition_count; ++index)
     {
-        free_index = g_condition_count;
-        ++g_condition_count;
+        if (!g_conditions[index].in_use)
+        {
+            free_index = index;
+            break;
+        }
     }
-    else
+
+    if (free_index == ALARM_SERVICE_MAX_CONDITIONS)
     {
-        taskEXIT_CRITICAL();
-        return false;
+        if (g_condition_count < ALARM_SERVICE_MAX_CONDITIONS)
+        {
+            free_index = g_condition_count;
+            ++g_condition_count;
+        }
+        else
+        {
+            taskEXIT_CRITICAL();
+            return false;
+        }
     }
 
     memset(&g_conditions[free_index], 0, sizeof(g_conditions[free_index]));
@@ -636,6 +653,32 @@ bool alarm_service_acknowledge_channel(const char *channel_id)
         {
             g_conditions[index].acknowledged = true;
             g_conditions[index].acknowledgement_revision++;
+            found = true;
+            break;
+        }
+    }
+    taskEXIT_CRITICAL();
+    return found;
+}
+
+bool alarm_service_clear_channel(const char *channel_id)
+{
+    bool found = false;
+
+    if (channel_id == NULL || channel_id[0] == '\0' || g_conditions == NULL)
+    {
+        return false;
+    }
+
+    taskENTER_CRITICAL();
+    for (size_t index = 0u; index < g_condition_count; ++index)
+    {
+        if (g_conditions[index].in_use &&
+            strncmp(g_conditions[index].channel_id, channel_id, TELEMETRY_CHANNEL_ID_MAX_LEN) == 0)
+        {
+            /* Zeroing clears in_use, making this slot reclaimable by
+             * alarm_service_find_or_bind_snapshot()'s free-slot scan. */
+            memset(&g_conditions[index], 0, sizeof(g_conditions[index]));
             found = true;
             break;
         }
