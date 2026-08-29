@@ -26,11 +26,12 @@
  * among drivers already compiled into this firmware image and is applied
  * through this normal configuration transaction, never a firmware update.
  *
- * v0.5.0 T8 scope decision 4 (docs/releases/v0.5.0.md): prove this
- * mechanism against one real preset ("sensor_node") first. `remote_io` and
- * `dev_benchmark` are deliberately not yet defined; see the
- * `config_preset_id_t` doc comment below for how to add them later without
- * touching this pipeline.
+ * v0.5.0 T8 scope decision 4 (docs/releases/v0.5.0.md): the mechanism was
+ * proven against one real preset ("sensor_node") first, then "remote_io" and
+ * "dev_benchmark" were appended as two more `g_config_preset_catalog`
+ * entries -- neither needed any change to this header or to
+ * `config_presets_build()`/`config_presets_apply()`, confirming the catalog
+ * really is append-only as designed.
  *
  * Ownership: this module holds no persistent/mutable state; the catalog is
  * a read-only compile-time array.
@@ -51,17 +52,17 @@
  * @brief Persisted/wire identifier for one runtime configuration preset.
  *
  * Only appended to, never renumbered -- mirrors `config_channel_driver_id_t`'s
- * convention (`driver_catalog.h`).
- *
- * Add `remote_io`/`dev_benchmark` here (`CONFIG_PRESET_ID_REMOTE_IO = 2`,
- * `CONFIG_PRESET_ID_DEV_BENCHMARK = 3`) plus one `g_config_preset_catalog[]`
- * entry each (`config_presets.c`) once their channel layouts are designed;
- * nothing else in this header or in the apply pipeline needs to change.
+ * convention (`driver_catalog.h`). Any future preset is added the same way:
+ * one more value here plus one more `g_config_preset_catalog[]` entry
+ * (`config_presets.c`); nothing else in this header or in the apply
+ * pipeline needs to change.
  */
 typedef enum
 {
     CONFIG_PRESET_ID_NONE = 0,
     CONFIG_PRESET_ID_SENSOR_NODE = 1,
+    CONFIG_PRESET_ID_REMOTE_IO = 2,
+    CONFIG_PRESET_ID_DEV_BENCHMARK = 3,
 } config_preset_id_t;
 
 /**

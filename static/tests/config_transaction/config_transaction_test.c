@@ -191,8 +191,14 @@ bool driver_catalog_get_resource_claims(uint8_t id, uint8_t source_index, uint8_
    * source_index by construction, see fake_validate_source) never appear to
    * conflict over the same fake GPIO resource. */
   claims[0] = (driver_catalog_resource_claim_t){ DRIVER_CATALOG_RESOURCE_GPIO, source_index, true }; *out_count = 1u; return true; }
+/* v0.5.0 T8: raised from the original 8 to PLATFORM_CHANNEL_LIMIT so the
+ * "remote_io" (14 channels) and "dev_benchmark" (16 channels, filling
+ * PLATFORM_CHANNEL_LIMIT exactly) preset-apply scenarios below don't trip
+ * this arbitrary sanity ceiling -- no existing scenario above ever built a
+ * candidate with more than two channels, so nothing here relied on the old
+ * cap actually rejecting anything. */
 bool driver_catalog_claims_are_compatible(const driver_catalog_resource_claim_t *claims, size_t count)
-{ (void)claims; return count <= 8u; }
+{ (void)claims; return count <= (size_t)PLATFORM_CHANNEL_LIMIT; }
 
 config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate, char *message, size_t message_size)
 { (void)message; (void)message_size; return candidate != NULL ? CONFIG_VALIDATE_RESULT_OK : CONFIG_VALIDATE_RESULT_INTERNAL_ERROR; }
@@ -630,6 +636,120 @@ int main(void)
          * so the running configuration must be left untouched. */
         assert(!config_presets_apply(99u));
         assert(config_service_get_running_revision() == revision_before + 1u);
+    }
+
+    /* v0.5.0 T8: "remote_io" (services/config_presets.c) -- the
+     * discrete-I/O-heavy composition (12 GPIO inputs + 2 supervisory ADC
+     * inputs) applied through the exact same config_presets_apply() ->
+     * config_service_replace_and_save() path proven above for
+     * "sensor_node". Proves the second catalog entry resolves, activates
+     * through the real sensor_manager lifecycle, and commits. */
+    {
+        uint32_t revision_before;
+        const config_preset_catalog_entry_t *preset;
+
+        g_fail_source = 0xFFu; g_fail_step = '\0';
+
+        preset = config_presets_get_by_id((uint8_t)CONFIG_PRESET_ID_REMOTE_IO);
+        assert(preset != NULL);
+        assert(strcmp(preset->name, "remote_io") == 0);
+        assert(config_presets_get_by_name("remote_io") == preset);
+
+        revision_before = config_service_get_running_revision();
+        g_event_length = 0u; g_events[0] = '\0';
+
+        assert(config_presets_apply((uint8_t)CONFIG_PRESET_ID_REMOTE_IO));
+        assert(g_event_length > 0u);
+        assert(config_service_get_running_revision() == revision_before + 1u);
+
+        {
+            const device_profile_config_t *running = config_service_get();
+            size_t in_use_count = 0u;
+
+            for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
+            {
+                if (running->channels[index].in_use != 0u)
+                {
+                    ++in_use_count;
+                }
+            }
+            assert(in_use_count == 14u);
+            assert(strcmp(running->channels[0].id, "channel.gpio.1") == 0);
+            assert(running->channels[0].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
+            assert(strcmp(running->channels[11].id, "channel.gpio.12") == 0);
+            assert(running->channels[11].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
+            assert(strcmp(running->channels[12].id, "channel.adc.1") == 0);
+            assert(running->channels[12].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE);
+            assert(strcmp(running->channels[13].id, "channel.adc.2") == 0);
+            assert(running->channels[13].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE);
+            assert(running->channels[14].in_use == 0u);
+            assert(running->channels[15].in_use == 0u);
+        }
+    }
+
+    /* v0.5.0 T8: "dev_benchmark" (services/config_presets.c) -- the
+     * maximum-density mix (1 internal temperature + 4 ADC + 11 GPIO ==
+     * PLATFORM_CHANNEL_LIMIT) applied through the same pipeline. Proves the
+     * catalog's densest entry also activates and commits cleanly, and that
+     * every one of PLATFORM_CHANNEL_LIMIT slots really does get filled. */
+    {
+        uint32_t revision_before;
+        const config_preset_catalog_entry_t *preset;
+
+        g_fail_source = 0xFFu; g_fail_step = '\0';
+
+        preset = config_presets_get_by_id((uint8_t)CONFIG_PRESET_ID_DEV_BENCHMARK);
+        assert(preset != NULL);
+        assert(strcmp(preset->name, "dev_benchmark") == 0);
+        assert(config_presets_get_by_name("dev_benchmark") == preset);
+
+        revision_before = config_service_get_running_revision();
+        g_event_length = 0u; g_events[0] = '\0';
+
+        assert(config_presets_apply((uint8_t)CONFIG_PRESET_ID_DEV_BENCHMARK));
+        assert(g_event_length > 0u);
+        assert(config_service_get_running_revision() == revision_before + 1u);
+
+        {
+            const device_profile_config_t *running = config_service_get();
+            size_t in_use_count = 0u;
+
+            for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
+            {
+                if (running->channels[index].in_use != 0u)
+                {
+                    ++in_use_count;
+                }
+            }
+            assert(in_use_count == (size_t)PLATFORM_CHANNEL_LIMIT);
+            assert(strcmp(running->channels[0].id, "channel.temperature.1") == 0);
+            assert(running->channels[0].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP);
+            assert(strcmp(running->channels[1].id, "channel.adc.1") == 0);
+            assert(running->channels[1].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE);
+            assert(strcmp(running->channels[4].id, "channel.adc.4") == 0);
+            assert(running->channels[4].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE);
+            assert(strcmp(running->channels[5].id, "channel.gpio.1") == 0);
+            assert(running->channels[5].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
+            assert(strcmp(running->channels[15].id, "channel.gpio.11") == 0);
+            assert(running->channels[15].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
+        }
+    }
+
+    /* v0.5.0 T8: ListConfigPresets' backing enumeration
+     * (config_presets_count()/config_presets_get_by_index()) must report all
+     * three catalog entries once remote_io/dev_benchmark are appended --
+     * the OPC UA method itself is untested here (no open62541 in this host
+     * suite), but this proves the catalog it iterates is catalog-generic and
+     * genuinely has three entries, not still hardcoded to one. */
+    {
+        assert(config_presets_count() == 3u);
+        assert(config_presets_get_by_index(0u) != NULL &&
+               strcmp(config_presets_get_by_index(0u)->name, "sensor_node") == 0);
+        assert(config_presets_get_by_index(1u) != NULL &&
+               strcmp(config_presets_get_by_index(1u)->name, "remote_io") == 0);
+        assert(config_presets_get_by_index(2u) != NULL &&
+               strcmp(config_presets_get_by_index(2u)->name, "dev_benchmark") == 0);
+        assert(config_presets_get_by_index(3u) == NULL);
     }
     return 0;
 }
