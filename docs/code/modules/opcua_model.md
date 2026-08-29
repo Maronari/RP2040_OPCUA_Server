@@ -54,7 +54,7 @@ HistoryRead, контроль доступа и публикация PubSub/MQTT
 | `model_configuration.c` | 1166 | Обобщённая диспетчеризация DataSource **Write** + коллбэки методов конфигурации/идентификации/перезагрузки |
 | `model_security.c` | 820 | Методы жизненного цикла сертификатов/идентичности/списка доверия |
 | `model_ota.c` | 1319 | Импорт конфигурации/доверия, методы обновления прошивки (OTA), методы конфигурации каналов, управление пользователями |
-| `model_diagnostics.c` | 390 | Методы управления пользователями, обобщённые вспомогательные функции построения узлов (см. оговорку об именовании) |
+| `model_diagnostics.c` | 390 | Методы управления пользователями, обобщённые вспомогательные функции построения узлов (см. оговорку об именовании), поддерево `Device.Compatibility` (v0.5.0 T8) |
 | `model_identity_di_amb.c` | 660 | Дерево локаций AMB, функциональные группы DI, поиск псевдонимов активов |
 | `model_events.c` | 1423 | Инфраструктура Events/Conditions + **движок тревог по каналам v0.4.3** |
 | `model_maintenance.c` | 2839 | Условия DeviceHealth/SecurityFault, генерация событий, аудит, опрос истечения срока сертификатов, методы рабочего процесса обслуживания |
@@ -117,6 +117,19 @@ flowchart TD
 пункт 6 списка зафиксированных решений), клиент должен переподключиться;
 после переподключения он видит адресное пространство новой конфигурации.
 
+**Порядок с очисткой истории/тревог по каналу (v0.5.0 T7)**: перед вызовом
+коллбэка перезапуска `config_service_run_commit_extensions()`
+(`services/src/config_service.c:210-225`) синхронно вызывает
+`config_service_clear_stale_channel_state()`, которая для каждого
+удалённого или изменённого (тот же `channel_id`, другой `driver_id`/
+`value_type`) канала очищает его историю (`history_service_clear_channel()`)
+и состояние условия тревоги (`alarm_service_clear_channel()`) — раньше, чем
+может сработать перезапуск, зарегистрированный ниже. Тот факт, что любое
+такое изменение канала всегда взводит
+`model_config_requires_server_reboot()`, гарантирует: ни один клиент
+никогда не увидит пространство имён, всё ещё содержащее канал, чьё
+состояние истории/тревог уже очищено.
+
 Загрузка NodeSet (DI/AMB) происходит внутри поставляемой сборки open62541
 через `port/open62541/nodesetinjector.c` до возврата из
 `UA_Server_newWithConfig` — `opcua_model` лишь *потребляет* уже
@@ -171,6 +184,34 @@ flowchart TD
 `history_service_read_channel_samples()` — слой модели никогда не
 обращается к самому кольцевому буферу напрямую. См.
 [docs/channel_model.md](../../channel_model.md#history-v043).
+
+## Совместимость и пресеты конфигурации (v0.5.0 T8)
+
+`model_build_compatibility_info` (`model_diagnostics.c:435-540`) строит
+поддерево `Device.Compatibility` как обычный статический
+организованный объект (без диспетчеризации DataSource — значения читаются
+один раз при построении адресного пространства, не за счёт коллбэка):
+
+| BrowseName | Тип | Источник |
+| --- | --- | --- |
+| `Device.Compatibility.FirmwareProfile` | `String` | Компилируемая идентичность драйвер-пака (`ROADMAP.md` 5.1), отдельно от рантайм-пресета конфигурации |
+| `Device.Compatibility.HardwareRevision` | `String` | `device_profile_config_t::hw_revision` |
+| `Device.Compatibility.ConfigurationSchemaVersion` | `UInt32` | `CONFIG_STORE_SCHEMA_VERSION_CURRENT` (v0.5.0 T2) |
+| `Device.Compatibility.SupportedDrivers.<name>` | `String` (JSON) | По одному статическому узлу на запись `driver_catalog` — цикл по `driver_catalog_count()`/`_get_by_index()`, так что поддерево всегда отражает фактически скомпилированный каталог драйверов, а не жёстко заданное число |
+
+Рантайм-пресеты конфигурации (`services/config_presets.c`, отдельно от
+пресета `FirmwareProfile` выше) экспонируются двумя методами
+`Device.Maintenance` (`model_address_space.c:972-1000`):
+`ListConfigPresets` возвращает каталог пресетов времени компиляции в виде
+JSON; `ApplyConfigPreset` принимает имя пресета (например,
+`"sensor_node"`) и разрешает/применяет его через
+`config_presets_apply()` — тот же самый конвейер транзакции
+validate→persist-staged→stop→activate→verify→commit/rollback, что и любая
+другая кандидатная конфигурация; отдельного пути применения не существует.
+Требуемая роль для `ApplyConfigPreset` — `SECURITY_ROLE_OPERATOR`
+(`model_access.c:409-415`, префиксное совпадение с
+`"Device.Maintenance.ApplyConfig"`, та же роль, что и у существующего
+`ApplyConfig`).
 
 <a id="access-control"></a>
 ## Контроль доступа

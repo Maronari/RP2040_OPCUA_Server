@@ -1,8 +1,98 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.4.2`. Historical tag
+This file tracks the firmware release line through `v0.5.0`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
+
+## v0.5.0
+
+- Configuration transaction pipeline: restructures `config_service_apply()`/
+  `config_service_replace_and_save()` into a real validate -> persist staged
+  -> stop -> activate -> verify (driver init plus at least one valid
+  per-channel read, each bounded by an explicit timeout) -> commit/rollback
+  transaction, fixing the previous activate-before-persist ordering. Adds an
+  explicit `SemaphoreHandle_t` mutex around driver activation and ensures a
+  transaction that activates the first channel on a channel-less device
+  correctly creates/hands off to `SensorTask` (previously boot-only-gated on
+  `channel_manager_count() > 0`; `SensorTask` is now always created at boot).
+- Flash backend: replaces the two-slot generation config store with a
+  staged/running/last-known-good transaction backend
+  (`drivers/config_transaction_backend.c`) inside the existing 128 KiB
+  configuration budget — no new Flash region, no OTA-bank shrink. Follows
+  the maintenance journal's commit-page/CRC physical-read-back
+  classification pattern, one physical copy per role. See
+  `docs/flash-storage.md`.
+- Schema versioning: gives `schema_version` real discriminating meaning with
+  a migration-function table shared by the Flash-binary decode path, JSON
+  export, and JSON import (previously a single hardcoded literal duplicated
+  across three call sites); rejects an incompatible/future schema version
+  with a diagnostic.
+- Validation: splits the missing-driver condition out of a combined
+  generic-error check into its own dedicated result code and collects every
+  missing `driver_id` in a rejected candidate configuration, not just the
+  first, via an additive (non-breaking) API extension.
+- OPC UA server restart: consumes the previously-computed
+  `model_config_requires_server_reboot()` diagnostic to trigger an actual
+  controlled full server restart, synchronously from within the same
+  transaction commit step, reusing the exact cold-boot address-space
+  construction codepath. A transaction that does not require a restart
+  leaves existing sessions/subscriptions untouched.
+- Presets and compatibility: adds one runtime configuration preset
+  (`sensor_node`) applied through the normal transaction pipeline via new
+  `Device.Maintenance.ListConfigPresets`/`ApplyConfigPreset` methods, and
+  exposes firmware/configuration compatibility data (firmware profile,
+  hardware revision, configuration schema version, supported drivers and
+  their capabilities/resources) through a new `Device.Compatibility`
+  subtree.
+- **In addition to `ROADMAP.md`'s literal v0.5.0 scope**: per-channel
+  history/alarm state cleanup on channel delete/modify. Deleting a channel,
+  or modifying it with a different driver/value type (same `channel_id`),
+  now zeroes that channel's Flash-backed history ring and alarm condition
+  instance/acknowledgement state, treated uniformly as delete+recreate. This
+  requirement was not derived from `ROADMAP.md` text; it was identified
+  during v0.5.0 planning because a reused `channel_id` could otherwise
+  surface a stranger's stale history/alarm state. It is a conscious,
+  documented tradeoff, not an implicit byproduct: discarding alarm
+  acknowledgement history on every qualifying reconfiguration has no
+  retention/audit-trail guarantee, which industrial alarm-management
+  practice (e.g. ISA-18.2) often expects independent of point
+  reconfiguration; this project does not currently claim that compliance
+  bar. See `docs/releases/v0.5.0.md` scope decision 7 and
+  `docs/channel_model.md`.
+- Fix found during implementation: `alarm_service`'s condition-slot
+  allocator (`g_condition_count`) never reclaimed a freed slot, so a naive
+  per-channel clear would have permanently shrunk available alarm capacity
+  by one per delete/modify cycle on the same channel, eventually exhausting
+  `ALARM_SERVICE_MAX_CONDITIONS` (16) even though live channel occupancy
+  never exceeds `PLATFORM_CHANNEL_LIMIT`. `alarm_service_clear_channel()`
+  fixes the allocator itself (reclaims the first freed slot below the
+  cursor) rather than adding a setter on top of the bug.
+- Accepted residual risk: no physical hardware power-cut test was performed
+  against the configuration transaction pipeline — this implementation
+  environment had no access to the reference RP2350 board or any other
+  hardware. Coverage is three layers of deterministic, automatable host-test
+  fault injection (Flash-backend-level, `config_service.c`-level, and an
+  end-to-end real-chain-plus-simulated-reboot suite), which found no
+  correctness bug in the frozen commit-ordering guarantee or the
+  recovery-state-to-boot-decision mapping. The specific gap host simulation
+  cannot catch: real Flash write-alignment/timing failure modes that only
+  manifest against physical QSPI hardware. See
+  `docs/known_limits.md#v050-accepted-residual-risks`.
+- Found while documenting this release (not fixed in this release — flagged
+  for follow-up): a device that has run v0.4.0-v0.4.3 firmware does not have
+  its configuration migrated in place when it upgrades to v0.5.0 firmware.
+  The old two-slot format's header magic and the new transaction backend's
+  header/commit-page magic and offsets are unrelated, so the new backend
+  does not recognize old-format bytes as a valid record, and the existing
+  legacy-importer fallback targets an even older, pre-config-store format,
+  not the v0.4.x two-slot layout. The device boots on compiled defaults
+  after such an upgrade instead of preserving its prior configuration. See
+  `docs/known_limits.md#v050-accepted-residual-risks`.
+- Verification: 35/35 deterministic host-test suites
+  (`static/tools/run_host_tests.py`) and first-party cppcheck
+  (`static/tools/run_first_party_cppcheck.py`) both pass on the integrated
+  v0.5.0 tree.
+- Release plan: `docs/releases/v0.5.0.md`.
 
 ## v0.4.3
 

@@ -5,10 +5,15 @@ industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
 `waveshare_core2350b_16mb_psram8mb`; the default application target is
 `device_profile_basic`.
 
-The current implementation target is `v0.4.3`. It generalizes per-channel
-history (PSRAM plus a Flash-backed ring surviving reboot/power loss) and adds
-per-channel Alarms & Conditions on top of the generic OPC UA channel
-information model released in `v0.4.2`, while preserving unrelated public
+The current implementation target is `v0.5.0`. It restructures runtime
+configuration into a real validate -> persist-staged -> stop -> activate ->
+verify -> commit/rollback transaction with a staged/running/last-known-good
+Flash backend and a real configuration schema version, adds exhaustive
+missing-driver reporting, consumes the reboot-required diagnostic to trigger
+an actual controlled OPC UA server restart, clears per-channel history/alarm
+state on channel delete/modify, and adds runtime configuration presets plus
+firmware/configuration compatibility data on top of the per-channel
+history/alarms released in `v0.4.3`, while preserving unrelated public
 contracts.
 
 ## What The Firmware Already Implements
@@ -37,17 +42,35 @@ contracts.
   hysteresis and debounce for numeric channels, a discrete state for Boolean
   channels, and a quality-fault state that never overwrites the last
   good-quality alarm state) with independent per-condition acknowledgement.
+- A real transaction pipeline for runtime configuration (validate -> persist
+  staged -> stop -> activate -> verify -> commit/rollback) backed by a
+  staged/running/last-known-good Flash region, a real configuration schema
+  version with migration functions (Flash-binary and JSON import/export),
+  and exhaustive missing-driver reporting.
+- A controlled full OPC UA server restart, synchronously triggered by any
+  transaction that changes the running model, and per-channel history/alarm
+  state cleanup on channel delete/modify.
+- Runtime configuration presets (one reference preset, `sensor_node`, proven
+  against the full transaction pipeline) and firmware/configuration
+  compatibility data (profile, hardware revision, schema version, supported
+  drivers/capabilities) exposed through the management model.
 
 ## Current Boundaries
 
 - This is not a production security baseline yet. OTA payload integrity is
   still CRC based; signed OTA and rollback-health confirmation are scheduled for
   later roadmap releases.
-- Multi-channel history and alarm generalization is the current implementation
-  work. Alarm history is not persisted to Flash in this release (live OPC UA
-  events only); OPC UA Part 11 Historical Event Access is scheduled for
-  v0.8.1, and transactional live model regeneration remains scheduled for
-  v0.5.0.
+- Alarm history is not persisted to Flash (live OPC UA events only); OPC UA
+  Part 11 Historical Event Access is scheduled for v0.8.1. A structural
+  configuration transaction always triggers a full controlled OPC UA server
+  restart rather than live, in-place namespace mutation — a deliberate,
+  permanent architectural choice (see `docs/channel_model.md`), not deferred
+  work.
+- No physical hardware power-cut test has been performed against the v0.5.0
+  configuration transaction pipeline (host-test fault injection only); a
+  device that has run v0.4.0-v0.4.3 firmware does not have its configuration
+  migrated in place when it upgrades to v0.5.0. See
+  `docs/known_limits.md#v050-accepted-residual-risks`.
 - The built-in `adc_voltage` channel driver is limited to protected low-voltage
   RP2350 ADC use and is not the industrial `AI0..AI3` implementation from
   `HARDWARE_MVP.md`; industrial analog inputs require the dedicated external

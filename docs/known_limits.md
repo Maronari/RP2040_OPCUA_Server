@@ -17,7 +17,7 @@ session table, or staging buffer at runtime.
 | HistoryRead continuation points | 16 active points globally; 30-second TTL; 128 samples per response | `MODEL_HISTORY_CONTINUATION_CAPACITY`, `MODEL_HISTORY_CONTINUATION_EXPIRY_MS`, and `HISTORY_SERVICE_MAX_RETURN_COUNT` | Points are fixed model-context entries owned by session, channel NodeId, range, direction, ring generation, and skip cursor. Exhaustion returns `BadNoContinuationPoints`; foreign, malformed, expired, released, session-closed, or generation-invalidated points return `BadContinuationPointInvalid`. `ReleaseContinuationPoints` and session close free entries deterministically. If sampling wraps the retained ring between pages, the client must restart the query after `BadContinuationPointInvalid`; no full history snapshot is retained per cursor. | No. |
 | Configuration method JSON scratch | 24,576 bytes, one model-owned PSRAM buffer | `MODEL_MAINTENANCE_EXPORT_PAYLOAD_CAPACITY` | `GetConfigState`, `ExportConfig`, and maintenance export share the server-task-owned bounded scratch, sufficient for the worst-case 16-channel document. Their response uses a persistent non-owning view, avoiding a second large PSRAM allocation. The OPC UA send buffer, lwIP heap, and TCP send queue are each bounded at 16,384 bytes so one secure response can be queued without a self-blocking allocation wait. The lwIP arena permanently reserves 16,448 bytes of PSRAM (16 KiB usable plus explicit allocator/alignment padding); startup fails closed if that bounded allocation is unavailable, and the required 360 KiB FreeRTOS heap remains in internal SRAM. `MaxNodesPerMethodCall` is advertised as 1; larger batched `CallRequest`s fail with `BadTooManyOperations` before a callback, so the server encodes each view before any method can reuse the scratch. Missing scratch returns `BadResourceUnavailable`; overflow returns `BadEncodingLimitsExceeded`, never `{}` with `Good`. | No. |
 | Flash-backed history samples | 256 samples per channel (matches the PSRAM capacity above) | `HISTORY_FLASH_BACKEND_SAMPLES_PER_CHANNEL`, [drivers/include/drivers/history_flash_backend.h](../drivers/include/drivers/history_flash_backend.h) | 128 KiB reserved QSPI Flash (`OTA_HISTORY_*`, [ota/cmake/ota_layout.cmake](../ota/cmake/ota_layout.cmake)), 8 KiB per channel as two 4 KiB double-buffered erase sectors. A non-transactional cyclic buffer (unlike the maintenance journal): each 32-byte record carries a CRC32, a valid marker, and a channel-id hash, so a torn or foreign record is skipped on restore rather than exposed. Writes are batched 8 records/page to respect QSPI page-program granularity; losing up to 7 of the most recent, not-yet-flushed samples per channel after power loss is accepted, documented behavior. Restoring this region shrank both OTA application banks from `0x7b4000` to `0x7a4000` bytes (64 KiB each) — see the OTA transfer measurement below for current headroom. | No. |
-| Alarm condition instances | 1 per alarm-eligible channel (up to 16) | `ALARM_SERVICE_MAX_CONDITIONS`, [services/include/services/alarm_service.h](../services/include/services/alarm_service.h) | 2,432 bytes of PSRAM (16 × 152-byte `alarm_condition_status_t`) in [services/src/alarm_service.c](../services/src/alarm_service.c), keyed by stable channel id. Every numeric or Boolean channel present at startup gets one independent condition (high/high-high/low/low-low with configurable hysteresis and debounce for numeric channels, a discrete state for Boolean channels); String channels are not eligible. A quality fault (stale/invalid channel quality) is tracked as a separate field and never overwrites the last good-quality process/discrete state. Acknowledgement is independent per condition; alarm transitions are live OPC UA Alarms & Conditions events only, with no Flash persistence for alarm history in this release. | No. |
+| Alarm condition instances | 1 per alarm-eligible channel (up to 16) | `ALARM_SERVICE_MAX_CONDITIONS`, [services/include/services/alarm_service.h](../services/include/services/alarm_service.h) | 2,432 bytes of PSRAM (16 × 152-byte `alarm_condition_status_t`) in [services/src/alarm_service.c](../services/src/alarm_service.c), keyed by stable channel id. Every numeric or Boolean channel present at startup gets one independent condition (high/high-high/low/low-low with configurable hysteresis and debounce for numeric channels, a discrete state for Boolean channels); String channels are not eligible. A quality fault (stale/invalid channel quality) is tracked as a separate field and never overwrites the last good-quality process/discrete state. Acknowledgement is independent per condition; alarm transitions are live OPC UA Alarms & Conditions events only, with no Flash persistence for alarm history in this release. `alarm_service_clear_channel()` (v0.5.0 T7) reclaims a cleared channel's condition slot for reuse — before this fix, `g_condition_count`'s allocator cursor never reclaimed a freed slot, so repeated delete/modify cycles on the same channel would have permanently shrunk available capacity by one per cycle even though live channel occupancy never exceeds `PLATFORM_CHANNEL_LIMIT`. | No. |
 | Retained maintenance journal records | 15 logical records; 24 physical slots in 8 × 4096-byte sectors | `MAINTENANCE_JOURNAL_MAX_RETAINED_RECORDS`, `MAINTENANCE_JOURNAL_TOTAL_SLOTS`, and geometry constants in [drivers/include/drivers/maintenance_journal_backend.h](../drivers/include/drivers/maintenance_journal_backend.h) | Uses 32 KiB reserved QSPI Flash. The backend retains at most 15 exportable records, reserves erased sectors for bounded rotation, and blocks mutation on indeterminate, fatal, or unknown-schema recovery rather than accepting uncertain state. | No. |
 | Journal export page | 4 logical records | `MAINTENANCE_JOURNAL_EXPORT_PAGE_MAX` / `MAINTENANCE_SERVICE_EXPORT_PAGE_MAX`, [drivers/include/drivers/maintenance_journal_backend.h](../drivers/include/drivers/maintenance_journal_backend.h) and [services/include/services/maintenance_service.h](../services/include/services/maintenance_service.h) | A fixed service staging array holds one page. Cursor validation/recovery errors fail the call; raw Flash buffers are never exported. | No. |
 | OTA write chunk | 4096 bytes | `FIRMWARE_UPDATE_SERVICE_MAX_CHUNK_BYTES`, [services/include/services/firmware_update_service.h](../services/include/services/firmware_update_service.h) | The OTA service passes a bounded caller chunk to the Flash writer; an oversize, null, or empty chunk is rejected, and Flash write failure clears the active OTA session. | No. |
@@ -43,6 +43,54 @@ rate is therefore dominated by per-chunk round trips and synchronous Flash
 work, not by Ethernet bandwidth. Improving this requires a separately scoped
 change, such as a larger bounded chunk size or buffered/batched Flash writes;
 the figures above are measurements, not performance acceptance targets.
+
+<a id="v050-accepted-residual-risks"></a>
+## v0.5.0 accepted residual risks
+
+Recorded per `docs/releases/v0.5.0.md` scope decisions 5 and 7 as explicit,
+deliberate accepted risks — not silent omissions:
+
+- **No physical hardware power-cut test.** Scope decision 5's fallback:
+  ship with host-test coverage only if a hardware power-cut test is
+  warranted but the reference board is unavailable before the gate. T9
+  implemented three layers of deterministic, automatable fault-injection
+  coverage (`static/tests/config_transaction_backend/config_transaction_backend_test.c`,
+  `static/tests/config_transaction/config_transaction_test.c`,
+  `static/tests/config_transaction/config_transaction_reboot_recovery_test.c`,
+  the last linking the real `config_service.c` → `config_store_service.c` →
+  `config_transaction_backend.c` chain against a simulated Flash media
+  array and a real reboot re-init) and found no correctness bug in the
+  frozen commit-ordering guarantee or the recovery-state-to-boot-decision
+  mapping. No physical power-cut test was performed — this implementation
+  environment had no access to the reference RP2350 board or any other
+  hardware. The specific residual risk host-level simulation cannot catch:
+  real Flash write-alignment/timing failure modes that only manifest
+  against physical QSPI hardware (e.g. a genuine mid-page power
+  interruption with real electrical characteristics), as opposed to this
+  suite's clean all-or-nothing/logically-torn write simulation.
+- **Pre-v0.5.0 Flash images are not migrated in place.** A device already
+  running v0.4.0-v0.4.3 firmware (the two-slot generation config store,
+  `CONFIG_STORE_SLOT_MAGIC` = `"CFG1"`) that upgrades to v0.5.0 firmware
+  will have its existing configuration-slot bytes reinterpreted under the
+  new three-role, commit-page-classified layout
+  (`CONFIG_TXN_RECORD_MAGIC` = `"CTX1"`), which shares no magic value or
+  physical offset convention with the old format and will not recognize
+  them as a valid record. `config_service_init()`'s only other fallback
+  (`flash_storage_driver_load_partial()`, `drivers/flash_storage_driver.c`)
+  is a distinct, older read-only importer for the pre-config-store
+  single-sector layout (pre-v0.4.0), not the v0.4.x two-slot format, so it
+  does not bridge this gap either. The practical effect: a device upgraded
+  from v0.4.x to v0.5.0 firmware boots on compiled defaults on first boot
+  after the upgrade, silently losing its previously configured network,
+  channel, and identity settings, rather than preserving them — Flash
+  itself is not corrupted or lost, only unrecognized by the new format.
+  This was found while writing v0.5.0 release documentation (T10); it was
+  not called out as a decision in the v0.5.0 plan and is not fixed in this
+  release. Treat it as an accepted, documented gap for this release, to be
+  triaged (e.g. an explicit one-shot legacy-slot importer, or a documented
+  "wipe the configuration region before upgrading past v0.4.3" operational
+  step) before v0.5.0 ships to a device that has ever run v0.4.0-v0.4.3
+  firmware.
 
 The configuration-import wire chunk has the same 4096-byte bound
 (`CONFIG_IMPORT_SERVICE_MAX_CHUNK_BYTES` in

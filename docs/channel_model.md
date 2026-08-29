@@ -4,8 +4,15 @@ Firmware creates the public channel topology once during OPC UA server
 startup from caller-owned snapshots of the service channel registry. Services
 remain the sole owners of metadata, runtime values, quality, source timestamps,
 driver lifecycle, and writes. Structural configuration changes therefore use
-the existing controlled reboot path; live topology regeneration is not part of
-this release (scheduled for v0.5.0).
+the existing controlled reboot path. As of v0.5.0, a transaction that changes
+the running model (including any channel add/remove/modify) synchronously
+triggers a full, controlled OPC UA server restart — the same server-process
+codepath as a cold boot, not a second, live-namespace-mutation
+implementation — rather than a lighter live topology regeneration; see
+"Reconfiguration and restart (v0.5.0)" below. This is a deliberate,
+permanent architectural choice (`ROADMAP.md`'s own guidance: do not
+implement fragile live mutation merely to avoid a short reconnect), not
+deferred work.
 
 ## Hierarchy and deterministic NodeIds
 
@@ -108,6 +115,37 @@ to the preserved `Device.Maintenance.AcknowledgeAllAlarms` Method. Alarm
 transitions are live OPC UA events only; Flash persistence for alarm history
 is out of scope for this release (scheduled for v0.8.1, OPC UA Part 11
 Historical Event Access).
+
+## Reconfiguration and restart (v0.5.0)
+
+A configuration transaction that adds, removes, or modifies a channel (or
+otherwise changes anything `model_config_requires_server_reboot()`
+considers structural) always trips that diagnostic, and the same commit
+step that persists the transaction synchronously invokes a full OPC UA
+server restart before returning control to the caller — never a deferred
+or asynchronous follow-up. Client-visible sequence: every existing
+session/subscription is lost (the same reconnect contract as a firmware
+reboot), the client must reconnect, and after reconnecting it sees the new
+configuration's address space, rebuilt through the identical
+`model_build_address_space()`/`model_core_init()` codepath cold boot uses —
+never a second, parallel construction path. A transaction that does not
+require a restart (e.g. a value-only or sample/publish-period change)
+leaves the running server, its sessions, and its subscriptions completely
+untouched.
+
+**Per-channel history/alarm state on delete/modify (v0.5.0 T7)**: deleting
+a channel, or modifying it in a way that changes its `driver_id` or value
+type (same `channel_id`, different backing driver/type — treated
+identically to delete+recreate), zeroes that channel's history ring
+(PSRAM and Flash) and alarm condition instance/acknowledgement state before
+the restart above runs, so no client ever observes a namespace exposing a
+channel whose backing history/alarm state has already been cleared. An
+untouched channel, or one whose only change is a non-identity field (e.g.
+sample period), keeps its history/alarm state across the transaction. No
+orphan-record audit trail is preserved — see `docs/releases/v0.5.0.md`
+scope decision 7 for the full reasoning, including why this is scope
+beyond `ROADMAP.md`'s literal v0.5.0 text and the accepted tradeoff against
+ISA-18.2-style independent alarm-history retention.
 
 ## Compatibility and release boundary
 
