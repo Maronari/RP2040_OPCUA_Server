@@ -93,6 +93,7 @@ static bool g_default_config_valid = false;
 static uint32_t g_running_revision = 0u;
 static uint32_t g_staged_revision = 0u;
 static config_service_runtime_apply_fn g_runtime_apply_callback;
+static config_service_restart_fn g_restart_callback;
 static bool g_transaction_active;
 
 /**
@@ -131,21 +132,22 @@ static void config_service_end_transaction(void)
  * running configuration has been updated, still inside the transaction
  * lock, before the transaction's caller regains control.
  *
- * Intentionally a no-op today. Per docs/releases/v0.5.0.md's "Architecture
- * and public-contract rules", two actions must eventually be inserted here,
- * in this exact order, once their owning tasks land -- this function is
- * that seam, not a stand-in implementation of either:
- *   1. T7: an explicit per-channel history/alarm clear
- *      (`history_service_clear_channel()`/`alarm_service_clear_channel()`,
- *      not yet implemented) for every channel deleted or modified (same
- *      `channel_id`, different driver/value_type) between
- *      @p previous_config and @p new_config.
- *   2. T6: if the model changed in a way that requires it
- *      (`model_config_requires_server_reboot()`, already computed every
- *      apply but currently unconsumed), a synchronous, controlled full OPC
- *      UA server restart -- invoked from here specifically so no live
- *      server ever serves the old namespace against already-T7-cleared
- *      history/alarm state for a just-deleted-or-modified channel.
+ * Per docs/releases/v0.5.0.md's "Architecture and public-contract rules",
+ * two actions run here, in this exact order:
+ *   1. T7 (not yet implemented): an explicit per-channel history/alarm
+ *      clear (`history_service_clear_channel()`/`alarm_service_clear_channel()`)
+ *      for every channel deleted or modified (same `channel_id`, different
+ *      driver/value_type) between @p previous_config and @p new_config. T7
+ *      must insert its call immediately above the restart callback below --
+ *      not after it -- so no live server ever serves the old namespace
+ *      against already-cleared history/alarm state.
+ *   2. T6 (this function): unconditionally invokes the registered restart
+ *      callback (`config_service_set_restart_callback()`), passing both
+ *      configs. `config_service` does not itself decide whether a rebuild
+ *      is warranted -- see `config_service_restart_fn`'s doc comment --
+ *      the callback (`opcua_model`'s `model_config_requires_server_reboot()`
+ *      consumer) makes that call and, if the answer is yes, performs (or
+ *      arms) a synchronous, controlled full OPC UA server restart.
  * Both must run synchronously and in this order before this function (and
  * therefore config_service_apply()/config_service_replace_and_save())
  * returns to its own caller.
@@ -156,9 +158,20 @@ static void config_service_end_transaction(void)
 static void config_service_run_commit_extensions(const device_profile_config_t *new_config,
                                                   const device_profile_config_t *previous_config)
 {
-    (void)new_config;
-    (void)previous_config;
-    /* Intentionally empty -- see doc comment above. T6/T7 hook in here. */
+    config_service_restart_fn restart_callback;
+
+    taskENTER_CRITICAL();
+    restart_callback = g_restart_callback;
+    taskEXIT_CRITICAL();
+
+    /* T7 (not yet implemented) must insert its per-channel history/alarm
+     * clear call here, before the restart callback below -- see the doc
+     * comment above for why the order matters. */
+
+    if (restart_callback != NULL)
+    {
+        restart_callback(new_config, previous_config);
+    }
 }
 
 static bool config_service_is_valid_timezone_offset_minutes(int16_t value)
@@ -662,6 +675,7 @@ bool config_service_init(const device_profile_config_t *defaults)
     g_running_revision = 1u;
     g_staged_revision = 1u;
     g_runtime_apply_callback = NULL;
+    g_restart_callback = NULL;
     g_transaction_active = false;
 
     if (defaults != NULL)
@@ -792,6 +806,13 @@ void config_service_set_runtime_apply_callback(config_service_runtime_apply_fn c
 {
     taskENTER_CRITICAL();
     g_runtime_apply_callback = callback;
+    taskEXIT_CRITICAL();
+}
+
+void config_service_set_restart_callback(config_service_restart_fn callback)
+{
+    taskENTER_CRITICAL();
+    g_restart_callback = callback;
     taskEXIT_CRITICAL();
 }
 

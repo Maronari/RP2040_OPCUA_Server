@@ -195,6 +195,32 @@ typedef bool (*config_service_runtime_apply_fn)(const device_profile_config_t *c
                                                 uint32_t candidate_revision);
 
 /**
+ * @brief Post-commit hook invoked synchronously, once per committed
+ * transaction, so a higher layer can rebuild whatever derived state depends
+ * on the whole committed configuration rather than one field at a time.
+ *
+ * Registered by the runtime owner (e.g. `opcua_model`, via
+ * `model_core_init()`) once, via `config_service_set_restart_callback()`.
+ * Called from `config_service_run_commit_extensions()` -- i.e. from within
+ * `config_service_apply()`/`config_service_replace_and_save()`, after the
+ * transaction's Flash commit and in-memory `g_running_config` update have
+ * both already succeeded, still before either function returns to its own
+ * caller. `config_service` itself never decides whether a rebuild is
+ * warranted (that decision lives entirely in the registered layer, e.g.
+ * `opcua_model`'s `model_config_requires_server_reboot()` -- `config_service`
+ * has no dependency on and must never call into that layer); this callback
+ * is invoked unconditionally on every successful commit and must make that
+ * decision itself, doing nothing when no rebuild is needed.
+ *
+ * @param new_config The just-committed configuration, now the running
+ * configuration. Valid only for the duration of the call.
+ * @param previous_config The running configuration @p new_config replaced.
+ * Valid only for the duration of the call.
+ */
+typedef void (*config_service_restart_fn)(const device_profile_config_t *new_config,
+                                          const device_profile_config_t *previous_config);
+
+/**
  * @brief Initializes the configuration service: allocates state storage,
  * seeds it from @p defaults, and loads persisted configuration from Flash.
  *
@@ -231,6 +257,14 @@ bool config_service_init(const device_profile_config_t *defaults);
  * @note Thread-safe (`taskENTER_CRITICAL`-protected pointer swap).
  */
 void config_service_set_runtime_apply_callback(config_service_runtime_apply_fn callback);
+
+/**
+ * @brief Registers (or clears, with NULL) the post-commit hook invoked by
+ * `config_service_run_commit_extensions()` after every successful
+ * `config_service_apply()`/`config_service_replace_and_save()` commit.
+ * @note Thread-safe (`taskENTER_CRITICAL`-protected pointer swap).
+ */
+void config_service_set_restart_callback(config_service_restart_fn callback);
 
 /**
  * @brief Returns the live running configuration.
