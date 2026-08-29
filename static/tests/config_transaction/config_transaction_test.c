@@ -29,6 +29,12 @@ static bool g_fail_commit;
 static config_transaction_recovery_state_t g_recovery_state = CONFIG_TXN_RECOVERY_OK;
 static size_t g_discard_staged_calls;
 static size_t g_recover_fallback_calls;
+/* v0.5.0 T9: proves the activate-phase-failure -> Flash-untouched claim
+ * T4's own doc comment calls out (config_service.c's commit-step doc
+ * comment) -- config_store_commit_staged() (the only call that ever touches
+ * RUNNING/LAST_KNOWN_GOOD) must never be reached when stop/start/configure/
+ * self_test/verify fails. */
+static size_t g_commit_staged_calls;
 
 /* v0.5.0 T6: config_service_run_commit_extensions() must invoke the
  * registered restart callback exactly once per successful commit -- never on
@@ -204,7 +210,7 @@ bool config_store_save_payload(const void *payload, size_t size, uint16_t format
 bool config_store_stage_payload(const void *payload, size_t size, uint16_t format, uint32_t schema, config_store_record_info_t *info)
 { (void)payload; (void)size; (void)format; (void)schema; (void)info; return !g_fail_stage; }
 bool config_store_commit_staged(config_store_record_info_t *info)
-{ (void)info; return !g_fail_commit; }
+{ (void)info; ++g_commit_staged_calls; return !g_fail_commit; }
 bool config_store_discard_staged(void)
 { ++g_discard_staged_calls; return true; }
 config_transaction_recovery_state_t config_store_get_recovery_state(void)
@@ -296,6 +302,7 @@ int main(void)
 
     for (const char *step = "SCT"; *step != '\0'; ++step)
     {
+        size_t commit_before = g_commit_staged_calls;
         stage_source(2u); old_revision = config_service_get_running_revision();
         g_fail_source = 2u; g_fail_step = *step;
         assert(!config_service_apply());
@@ -309,10 +316,18 @@ int main(void)
         /* v0.5.0 T6: a rolled-back transaction never reaches the commit
          * step, so the restart callback must not fire. */
         assert(g_restart_calls == 0u);
+        /* v0.5.0 T9 point 6: an activate-phase failure must never reach
+         * config_store_commit_staged() -- the only call that ever touches
+         * RUNNING/LAST_KNOWN_GOOD -- so Flash state is provably untouched. */
+        assert(g_commit_staged_calls == commit_before);
         g_fail_source = 0u;
     }
 
-    assert(config_service_apply());
+    {
+        size_t commit_before = g_commit_staged_calls;
+        assert(config_service_apply());
+        assert(g_commit_staged_calls == commit_before + 1u);
+    }
     expect_event("O1S2C2T2R2");
     assert(config_service_get()->channels[0].source_index == 2u);
     /* v0.5.0 T6: the first successful commit must invoke the restart
@@ -326,7 +341,11 @@ int main(void)
      * opposite of the pre-T4 activate-before-persist bug. */
     stage_source(4u); old_revision = config_service_get_running_revision();
     g_fail_stage = true;
-    assert(!config_service_apply());
+    {
+        size_t commit_before = g_commit_staged_calls;
+        assert(!config_service_apply());
+        assert(g_commit_staged_calls == commit_before);
+    }
     assert(config_service_get_running_revision() == old_revision);
     assert(config_service_get()->channels[0].source_index == 2u);
     expect_event("");
@@ -340,7 +359,14 @@ int main(void)
      * -- not proceeding to start_candidates(). */
     stage_source(6u); old_revision = config_service_get_running_revision();
     g_fail_source = 2u; g_fail_step = 'O';
-    assert(!config_service_apply());
+    {
+        size_t commit_before = g_commit_staged_calls;
+        assert(!config_service_apply());
+        /* v0.5.0 T9 point 6: staging (Flash) already succeeded by this
+         * point -- proving the activate-phase failure alone, not merely a
+         * persist failure, still never reaches commit_staged(). */
+        assert(g_commit_staged_calls == commit_before);
+    }
     assert(config_service_get_running_revision() == old_revision);
     assert(config_service_get()->channels[0].source_index == 2u);
     assert(config_service_get_staged()->channels[0].source_index == 6u);
@@ -355,7 +381,11 @@ int main(void)
      * (restore the old registry, restart the old drivers), never commit. */
     stage_source(7u); old_revision = config_service_get_running_revision();
     g_fail_source = 7u; g_fail_step = 'R';
-    assert(!config_service_apply());
+    {
+        size_t commit_before = g_commit_staged_calls;
+        assert(!config_service_apply());
+        assert(g_commit_staged_calls == commit_before);
+    }
     assert(config_service_get_running_revision() == old_revision);
     assert(config_service_get()->channels[0].source_index == 2u);
     assert(config_service_get_staged()->channels[0].source_index == 7u);
@@ -482,6 +512,27 @@ int main(void)
         assert(g_discard_staged_calls == discard_before + 1u);
         assert(g_recover_fallback_calls == fallback_before);
 
+        /* v0.5.0 T9: config_service.c's own doc comment groups _EMPTY/_OK/
+         * _DEGRADED as behaving identically -- proven directly here rather
+         * than only asserted in prose, since the boot logic is a simple
+         * binary branch (only _FALLBACK_REQUIRED is special-cased) and a
+         * future refactor could easily split that branch incorrectly
+         * without a test pinning every named outcome, not just one
+         * representative of the group. */
+        g_recovery_state = CONFIG_TXN_RECOVERY_EMPTY;
+        discard_before = g_discard_staged_calls;
+        fallback_before = g_recover_fallback_calls;
+        assert(config_service_init(&recovery_defaults));
+        assert(g_discard_staged_calls == discard_before + 1u);
+        assert(g_recover_fallback_calls == fallback_before);
+
+        g_recovery_state = CONFIG_TXN_RECOVERY_DEGRADED;
+        discard_before = g_discard_staged_calls;
+        fallback_before = g_recover_fallback_calls;
+        assert(config_service_init(&recovery_defaults));
+        assert(g_discard_staged_calls == discard_before + 1u);
+        assert(g_recover_fallback_calls == fallback_before);
+
         /* CONFIG_TXN_RECOVERY_FALLBACK_REQUIRED: RUNNING unusable but
          * LAST_KNOWN_GOOD committed -- must self-heal RUNNING from it. */
         g_recovery_state = CONFIG_TXN_RECOVERY_FALLBACK_REQUIRED;
@@ -497,6 +548,17 @@ int main(void)
          * still succeeds, falling through to compiled defaults exactly as
          * when no persisted record exists at all. */
         g_recovery_state = CONFIG_TXN_RECOVERY_FATAL;
+        discard_before = g_discard_staged_calls;
+        fallback_before = g_recover_fallback_calls;
+        assert(config_service_init(&recovery_defaults));
+        assert(g_discard_staged_calls == discard_before + 1u);
+        assert(g_recover_fallback_calls == fallback_before);
+        assert(config_service_get()->channels[0].source_index == 9u);
+
+        /* v0.5.0 T9: _INDETERMINATE must group with _FATAL, not with the
+         * _OK-like group -- same reasoning as the _EMPTY/_DEGRADED pinning
+         * above. */
+        g_recovery_state = CONFIG_TXN_RECOVERY_INDETERMINATE;
         discard_before = g_discard_staged_calls;
         fallback_before = g_recover_fallback_calls;
         assert(config_service_init(&recovery_defaults));
