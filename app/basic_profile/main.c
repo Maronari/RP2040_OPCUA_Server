@@ -25,8 +25,12 @@
  *
  * Ownership:
  * Owns the six FreeRTOS worker tasks created here (`InitTask` transiently,
- * then `NetworkTask`, `SensorTask` (if any channel is configured),
- * `TimeTask`, `AlarmTask`, `OpcUaTask`, `WatchdogTask`) and the watchdog
+ * then `NetworkTask`, `SensorTask` (unconditionally as of v0.5.0 T4 -- a
+ * transaction that activates the very first channel on a previously
+ * channel-less device must have a task to hand polling off to, and an idle
+ * `SensorTask` with zero channels simply polls nothing at negligible cost,
+ * the same as after every channel is later removed), `TimeTask`,
+ * `AlarmTask`, `OpcUaTask`, `WatchdogTask`) and the watchdog
  * kick/enable state (`g_watchdog_kick_enabled`,
  * `g_watchdog_timeout_ms_resolved`). Does not own any service's internal
  * state — this file only sequences service `_init()` calls.
@@ -729,10 +733,11 @@ static void watchdog_task(void *argument)
  * 10. `opcua_model_init(&model_config)` — builds the in-memory OPC UA
  *     server configuration only; the actual `UA_Server` instance is created
  *     later inside `OpcUaTask` (OPC UA builds only).
- * 11. Create worker tasks via `create_task()`: `NetworkTask` always;
- *     `SensorTask` only if `channel_manager_count() > 0`; `TimeTask`,
- *     `AlarmTask` always; `OpcUaTask` (OPC UA builds only); `WatchdogTask`
- *     directly via `xTaskCreate()` if `watchdog_driver_is_enabled()`.
+ * 11. Create worker tasks via `create_task()`: `NetworkTask`, `SensorTask`
+ *     (unconditionally as of v0.5.0 T4 -- see the file-level Ownership note),
+ *     `TimeTask`, `AlarmTask` always; `OpcUaTask` (OPC UA builds only);
+ *     `WatchdogTask` directly via `xTaskCreate()` if
+ *     `watchdog_driver_is_enabled()`.
  * 12. `app_acknowledge_ota_boot_if_needed()` — runs **after** every worker
  *     task above is already created and running concurrently; not a health
  *     check (see that function's documentation).
@@ -860,10 +865,13 @@ static void app_init_task(void *argument)
 
     create_task(network_manager_task, "NetworkTask", NETWORK_TASK_STACK_SIZE, NETWORK_TASK_PRIORITY, &task_handle);
 
-    if (channel_manager_count() > 0u)
-    {
-        create_task(sensor_manager_task, "SensorTask", SENSOR_TASK_STACK_SIZE, SENSOR_TASK_PRIORITY, &task_handle);
-    }
+    /* v0.5.0 T4: create unconditionally, not gated on channel_manager_count()
+     * > 0 at this boot instant. A later transaction can activate the first
+     * channel on a previously channel-less device, and that transaction has
+     * no other point at which to create this task -- an idle SensorTask
+     * polling zero channels is cheap, and is already what happens whenever
+     * every channel is later removed down to zero. */
+    create_task(sensor_manager_task, "SensorTask", SENSOR_TASK_STACK_SIZE, SENSOR_TASK_PRIORITY, &task_handle);
 
     create_task(time_service_task, "TimeTask", TIME_TASK_STACK_SIZE, TIME_TASK_PRIORITY, &task_handle);
     create_task(alarm_service_task, "AlarmTask", ALARM_TASK_STACK_SIZE, ALARM_TASK_PRIORITY, &task_handle);
