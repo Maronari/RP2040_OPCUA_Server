@@ -4,7 +4,7 @@
 >
 > **Board profile:** `RP2350_INDUSTRIAL_MVP_V1`
 >
-> **Last hardware consolidation:** 2026-08-28
+> **Last hardware consolidation:** 2026-08-30
 
 This document describes the current hardware architecture, frozen component choices, power tree, MCU pin allocation, completed schematic sheets, PCB/mechanical constraints, status indication, firmware-facing hardware contract, and the remaining work before production PCB release.
 
@@ -73,13 +73,17 @@ Main functional blocks:
 | ADC 5 V LDO | `TPS7A2050PDBVR` | generates `+5V_ANALOG` |
 | AO supply | `LT8362EMSE#PBF` | SEPIC to `+15V_AO` |
 | ADC | `ADS8688IDBTR` | external industrial ADC |
-| Analog outputs | 2 × `AD5422BREZ` | voltage/current output |
+| Analog outputs | 2 × `AD5422BREZ` | unified 0–10 V / 4–20 mA output |
+| AO sense buffer | `OPA2991IDR` | dual RRIO high-voltage buffer, one channel per AO |
+| AO CLEAR inverter | `SN74LVC2G04DBVR` | `AOx_CLEAR = !AO_SAFE_EN` |
+| AO rail clamp | 2 × `BAS70-04LT1G` | one dual Schottky SOT-23 per AO channel |
+| AO field TVS | 2 × `SMBJ15A` | one unidirectional TVS per AO channel |
+| AO terminal blocks | 2 × `DG350-3.5-02P-14` | `OUT/RET`, 3.5 mm pitch |
 | Digital inputs | `MAX22190ATJ+` | industrial DI frontend |
 | Digital outputs | `IPS2050HTR` | protected high-side outputs |
 | Universal inputs | `TLV3214PWR` | current comparator-based UIC frontend; analog-path revision still required if analog UIC mode is retained |
 | Supervisor/watchdog | `TPS3851H33EDRBR` | reset + watchdog |
 | Safe-state logic | `SN74LVC2G08DCTR` | AO/DO enable gating |
-| AO optional logic | `SN74LVC2G04DBVR` | optional |
 | Sensor power switches | 4 × `TPS2553DBVR` | current-limited switched sensor power |
 | Internal I/O expander | `TCAL9539` | 16-bit I²C GPIO expander, `/INT` + `/RESET`; exact package/orderable suffix TBD |
 | External I²C recovery | 2 × `TCA4307` | one per external I²C port; hot-swap buffer and stuck-bus recovery; exact package/orderable suffix TBD |
@@ -125,31 +129,538 @@ Minimum firmware-visible properties:
 - source timestamp;
 - overrange/underrange diagnostics.
 
-Detailed AI channel circuitry is not yet frozen; see the open work section.
+Current schematic status: the four-channel topology is practically closed and uses `ADS8688IDBTR` channels 0..3.
+
+ADS8688 channel mapping:
+
+```text
+AI0 -> AIN_0P pin16 / AIN_0GND pin17
+AI1 -> AIN_1P pin18 / AIN_1GND pin19
+AI2 -> AIN_2P pin21 / AIN_2GND pin20
+AI3 -> AIN_3P pin23 / AIN_3GND pin22
+```
+
+Unused CH4..CH7 and AUX are tied to `AGND`.
+
+ADC supplies/reference:
+
+```text
+AVDD9  -> +5V_ANALOG
+AVDD30 -> +5V_ANALOG
+DVDD34 -> +3V3_DIG
+
+REFSEL4 -> 1k -> AGND
+REFIO5  -> 10u -> AGND
+REFCAP7 -> 1u || 22u -> AGND
+```
+
+The internal 4.096 V reference is used. All ADS8688 ground pins, including `DGND33`, belong to the common analog ground domain `AGND`; no separate digital-ground island is created at the ADC.
+
+Reference AI channel topology, for `x = 0..3`:
+
+```text
+external connector
+     |
+   AIx_IN
+     |
+   PTC
+     |
+NODE_AIx_CLAMP
+     |
+     +---- SMBJ12CA -------- AIx_RET
+     |
+    100R
+     |
+NODE_AIx_PROT
+     |
+     +---- CDSOD323-T12C --- AIx_RET
+     |
+     +---- 27nF ------------ AIx_RET
+     |
+     +---- 200R + jumper --- AIx_RET   (current-mode burden)
+     |
+    1k
+     |
+  AIN_xP
+     |
+    1nF
+     |
+ AIN_xGND
+     |
+    1k
+     |
+  AIx_RET
+     |
+    0R
+     |
+   AGND
+```
+
+Current-mode burden:
+
+```text
+4 mA  -> ~0.8 V across 200R
+20 mA -> ~4.0 V across 200R
+```
+
+AI protection parts currently selected:
+
+```text
+primary TVS   : Littelfuse SMBJ12CA
+secondary TVS : CDSOD323-T12C
+PTC intended  : PTS120660V005
+```
+
+Important: older Altium screenshots temporarily used `PTS120630V012`; all four channels must use `PTS120660V005` before final BOM/PCB release.
+
+AI terminal block:
+
+```text
+DG350-3.5-08P-14
+1 AI0_IN
+2 AI0_RET
+3 AI1_IN
+4 AI1_RET
+5 AI2_IN
+6 AI2_RET
+7 AI3_IN
+8 AI3_RET
+```
+
+PCB priorities:
+
+- PTC + `SMBJ12CA` at the connector/protection boundary;
+- compact surge loop `AIx_IN -> PTC -> SMBJ12CA -> AIx_RET`;
+- the `100R` element separates the primary energy clamp from the ADC-side network;
+- secondary TVS/filter closer to the ADC region;
+- `1k/1k + 1nF` immediately at the corresponding ADC input pair;
+- reference capacitors kept away from SPI/protection currents;
+- continuous `AGND` plane under the ADC;
+- `AGND <-> GND_SYS` remains the single controlled tie on `02_POWER_RAILS`.
 
 ### 3.2 Analog outputs
 
 Provide **2 analog output channels**: `AO0..AO1`.
 
-Target ranges:
+Frozen MVP target ranges:
 
 - `0–10 V`;
-- `0–20 mA`;
 - `4–20 mA`.
 
-Bipolar `±10 V` output is out of scope for the MVP.
+The AD5422 silicon also supports additional ranges, but firmware/hardware qualification for this board shall not claim them unless explicitly validated. Bipolar `±10 V` output is out of scope because the MVP has no negative analog rail.
 
-Implementation uses 2 × `AD5422BREZ` and the dedicated `+15V_AO` rail.
+Implementation:
 
-Each channel shall define:
+```text
+2 × AD5422BREZ
+1 × OPA2991IDR        (dual sense buffer)
+1 × SN74LVC2G04DBVR   (dual CLEAR inverter)
++15V_AO
++3V3_DIG
+AGND
+```
 
-- commanded value;
-- electrical mode;
-- startup value;
-- communication-loss/watchdog value;
-- slew-rate limit where supported;
-- readback/diagnostic status where practical;
-- deterministic hardware-safe state during MCU reset.
+#### 3.2.1 AD5422 supply, ground and reference
+
+For each AD5422:
+
+```text
+pin 1  AVSS         -> AGND
+pin 2  DVCC         -> +3V3_DIG
+pin 4  GND          -> AGND
+pin 11 GND          -> AGND
+pin 12 GND          -> AGND
+pin 16 DVCC SELECT  -> AGND
+pin 24 AVDD         -> +15V_AO
+pin 25 EPAD         -> AGND
+```
+
+`DVCC SELECT = 0` selects the external `+3V3_DIG` supply instead of the internal ~4.5 V digital regulator, keeping the serial interface at the RP2350-compatible 3.3 V domain.
+
+Local decoupling per AD5422:
+
+```text
+AVDD  -> 100n || 10u -> AGND
+DVCC  -> 100n || 10u -> AGND
+```
+
+The 100 nF capacitors are high-frequency bypass parts and must be physically adjacent to the associated supply/ground pins. The 10 µF parts are local reservoirs and may be slightly farther away.
+
+The internal 5 V reference is used independently on each DAC:
+
+```text
+pin14 REFOUT ----+
+                 +---- AOx_REF_5V
+pin15 REFIN  -----+
+                 |
+                100n
+                 |
+                AGND
+```
+
+External current-setting resistor:
+
+```text
+pin13 RSET -> 15.0k precision -> AGND
+```
+
+Requirements for RSET:
+
+- `15.0 kΩ`;
+- `0.1%` max tolerance;
+- low TCR, preferably `<= 5..10 ppm/°C`;
+- thin-film preferred.
+
+Firmware must select the external resistor (`REXT = 1`).
+
+Unused/special pins:
+
+```text
+pin18 NC    -> NC
+pin20 BOOST -> NC
+```
+
+No external boost transistor is required with the present `+15V_AO` power architecture.
+
+#### 3.2.2 SPI and daisy chain
+
+Both DACs share `BOARD_SPI_SCK` and one common `AO_LATCH`.
+
+Daisy-chain wiring:
+
+```text
+RP2350 BOARD_SPI_MOSI
+        |
+        v
+AO0 AD5422 pin9 SDIN
+AO0 AD5422 pin10 SDO
+        |
+        +---- AO0_SDO_TO_AO1
+                         |
+                         v
+AO1 AD5422 pin9 SDIN
+AO1 AD5422 pin10 SDO -> NC / dedicated test point
+```
+
+Common signals:
+
+```text
+AO0 pin8 SCLK -> BOARD_SPI_SCK
+AO1 pin8 SCLK -> BOARD_SPI_SCK
+
+AO0 pin7 LATCH -> AO_LATCH
+AO1 pin7 LATCH -> AO_LATCH
+```
+
+Do not connect the final AO1 `SDO` directly to the shared `BOARD_SPI_MISO`; that bus is also used by the ADC and direct connection would create a push-pull contention risk during unrelated SPI clocks.
+
+After daisy-chain mode is enabled, a normal two-DAC update uses 48 SCLK edges before the common LATCH rising edge. The first transmitted 24-bit word propagates to the far AO1 device; the second remains in AO0.
+
+Conceptual update framing:
+
+```text
+AO_LATCH = LOW
+send WORD_AO1
+send WORD_AO0
+AO_LATCH = HIGH
+```
+
+`AO_LATCH` has one hardware pull-up:
+
+```text
+AO_LATCH -> 10k -> +3V3_DIG
+```
+
+#### 3.2.3 FAULT and hardware safe-state
+
+Both AD5422 `FAULT` outputs are open-drain and share the board fault net:
+
+```text
+AO0 pin3 FAULT ----+
+                   +---- BOARD_FAULT_N -> RP2350 GPIO19
+AO1 pin3 FAULT ----+
+```
+
+There is one common pull-up on the MCU sheet:
+
+```text
+BOARD_FAULT_N -> 10k -> +3V3_DIG
+```
+
+The existing supervisor logic provides:
+
+```text
+AO_SAFE_EN = SYS_RESET_N AND AO_ENABLE_REQ
+```
+
+`AO_ENABLE_REQ` requires a hardware default LOW:
+
+```text
+AO_ENABLE_REQ -> 100k -> GND_SYS
+```
+
+The dual inverter generates active-high asynchronous CLEAR:
+
+```text
+SN74LVC2G04DBVR
+
+1A <- AO_SAFE_EN
+1Y -> AO0_CLEAR
+
+2A <- AO_SAFE_EN
+2Y -> AO1_CLEAR
+
+VCC -> +3V3_DIG
+GND -> GND_SYS
+100n from VCC to GND_SYS
+```
+
+Final intended ground domain for this inverter is `GND_SYS`, not `AGND`, because it is purely digital safe-state logic. If an older schematic revision still shows its GND/bypass return on `AGND`, move them to `GND_SYS` before PCB release.
+
+Each AD5422:
+
+```text
+pin5 CLEAR SELECT -> AGND
+pin6 CLEAR        -> AOx_CLEAR
+```
+
+Therefore, during reset/watchdog or while firmware has not requested output enable:
+
+```text
+AO_SAFE_EN = 0
+AOx_CLEAR  = 1
+```
+
+Important safe-state semantics:
+
+- in the qualified `0–10 V` mode, CLEAR is intended to command the bottom of range (`0 V`) when software `CLRSEL` remains 0;
+- in the qualified `4–20 mA` mode, CLEAR commands the bottom of range (`4 mA`), not `0 mA` and not Hi-Z;
+- therefore the present hardware safe-state is **4 mA in current mode**;
+- if a future product requirement demands hard `0 mA`/Hi-Z independent of register state, a separate output-disconnect element is required.
+
+Firmware invariants for safety-critical operation:
+
+```text
+CLRSEL = 0
+SREN   = 0 unless a deliberate safe-state slew is required
+```
+
+The hardware CLEAR signal is supervisor-driven, but the exact analog clear level still depends on supported AD5422 register configuration; firmware must not enable a configuration that defeats the intended safe level.
+
+#### 3.2.4 Combined VOUT/IOUT topology
+
+Each channel uses one physical field output for both voltage and current modes.
+
+Internal DAC-side node:
+
+```text
+AD5422 pin19 IOUT ----+
+                      +---- AOx_RAW
+AD5422 pin21 VOUT ----+
+                      |
+pin17 CCOMP -- 4nF ---+
+```
+
+The `4 nF` compensation capacitor is connected between `CCOMP pin17` and the `VOUT/AOx_RAW` node. C0G/NP0 dielectric is preferred.
+
+`+VSENSE` is buffered because directly tying the combined output to the internal sense input would introduce unacceptable leakage/error in current mode.
+
+For AO0, OPA2991 channel A:
+
+```text
+AO0_OUT -> 10k -> pin3 +INA
+
+pin2 -INA ----+
+              +---- pin1 OUTA -> AO0_VSENSE -> AO0 AD5422 pin22 +VSENSE
+```
+
+For AO1, OPA2991 channel B:
+
+```text
+AO1_OUT -> 10k -> pin5 +INB
+
+pin6 -INB ----+
+              +---- pin7 OUTB -> AO1_VSENSE -> AO1 AD5422 pin22 +VSENSE
+```
+
+OPA2991 supply:
+
+```text
+pin8 V+ -> +15V_AO
+pin4 V- -> AGND
+100n from +15V_AO to AGND adjacent to the IC
+```
+
+Both AD5422 negative-sense pins are local analog-ground references:
+
+```text
+pin23 -VSENSE -> AGND
+```
+
+The OPA2991 inputs must sense `AOx_OUT` **after** the 33 Ω protection resistor. They must not sense `AOx_RAW`; this is what allows voltage-mode feedback to compensate the normal load-dependent drop across the series protection resistor.
+
+#### 3.2.5 Output protection and connector
+
+Each channel uses:
+
+```text
+AOx_RAW
+   |
+  33R
+   |
+AOx_OUT ------------------------- connector pin1
+   |
+ SMBJ15A
+   |
+AOx_RET ------------------------- connector pin2
+   |
+  0R
+   |
+ AGND
+```
+
+`SMBJ15A` is unidirectional:
+
+```text
+cathode -> AOx_OUT
+anode   -> AOx_RET
+```
+
+The output rail clamp is one `BAS70-04LT1G` per channel. The required symbol/pad mapping is:
+
+```text
+pin1 -> AGND
+pin3 -> AOx_RAW
+pin2 -> +15V_AO
+```
+
+Equivalent internal clamp direction:
+
+```text
+AGND --|>|-- AOx_RAW --|>|-- +15V_AO
+```
+
+The BAS70 is the low-leakage secondary rail clamp; it does not replace the field TVS. The `SMBJ15A` at the connector takes the main transient energy, the 33 Ω element limits residual current into the internal node, and the BAS70 limits the remaining excursion around the local rails.
+
+Series resistor requirements:
+
+```text
+33 Ω
+1%
+pulse-rated
+2512 preferred
+```
+
+At nominal 20 mA:
+
+```text
+V33 = 0.020 * 33 = 0.66 V
+P33 = 0.020^2 * 33 = 13.2 mW
+```
+
+With `AVDD = 15 V`, AD5422 current-mode compliance is approximately:
+
+```text
+15 V - 2.5 V = 12.5 V
+```
+
+For a 500 Ω loop load at 20 mA:
+
+```text
+VLOAD = 10.0 V
+VDAC  = 10.0 + 0.66 = 10.66 V
+nominal compliance margin ~= 1.84 V
+```
+
+This is acceptable for the frozen `4–20 mA` target. Do not automatically claim `24 mA @ 500 Ω` or other extended ranges without rechecking compliance.
+
+Voltage-mode remote sense compensates the normal drop across 33 Ω. For example, at roughly 10 mA load current the 33 Ω element drops about 0.33 V and the DAC raises its internal VOUT accordingly to keep the terminal near the commanded value.
+
+The 10 kΩ sense resistor is a protection/current-limiting element for the OPA2991 input; it is not in the power-output path.
+
+Connectors:
+
+```text
+J_AO0 = DG350-3.5-02P-14
+1 AO0_OUT
+2 AO0_RET
+
+J_AO1 = DG350-3.5-02P-14
+1 AO1_OUT
+2 AO1_RET
+```
+
+`AO0_RET` and `AO1_RET` are not isolated/floating returns. Each is tied through its own local 0 Ω element to the common `AGND` domain.
+
+The present network is a transient/ESD/EFT/surge-oriented protection architecture. It is **not yet a validated sustained 24/36 V field-miswire survival circuit**. If sustained DC miswire survival becomes a requirement, add/qualify a disconnect/current-limiting stage rather than assuming the TVS can dissipate indefinite DC energy.
+
+#### 3.2.6 AO PCB current loops and placement
+
+Normal current-mode DC loop:
+
+```text
++15V_AO
+ -> AD5422
+ -> IOUT / AOx_RAW
+ -> 33R
+ -> AOx_OUT
+ -> external load
+ -> AOx_RET
+ -> 0R
+ -> AGND
+ -> AD5422
+```
+
+Voltage-mode power loop is analogous through VOUT. The sense loop is separate:
+
+```text
+AOx_OUT
+ -> 10k
+ -> OPA2991 +IN
+ -> OPA2991 OUT
+ -> AD5422 +VSENSE
+```
+
+Route the sense pickup as a Kelvin branch from `AOx_OUT` on the field side of 33 Ω. Do not share it with the surge-current path.
+
+Protection placement from field toward the DAC:
+
+```text
+connector
+ -> SMBJ15A shunt to AOx_RET
+ -> AOx_OUT
+ -> 33R
+ -> AOx_RAW
+ -> BAS70-04 rail clamp
+ -> AD5422
+```
+
+TVS/surge loop:
+
+```text
+AOx_OUT terminal -> SMBJ15A -> AOx_RET terminal
+```
+
+This loop must be compact and kept out of the reference/sense area.
+
+HF supply loops must also be compact:
+
+```text
+AVDD24 -> AD5422 -> GND/AVSS -> 100n -> AVDD24
+DVCC2  -> AD5422 -> GND4     -> 100n -> DVCC2
+```
+
+Reference loop:
+
+```text
+REFOUT14 / REFIN15 / 100n / nearby GND12
+```
+
+Keep the reference cluster away from SCLK, LT8362 switching nodes, rail-clamp current paths, and the external protection area.
+
+Positive transient current conducted by the upper BAS70 diode can inject into `+15V_AO`; the LT8362 output is not assumed to be an ideal energy sink. During EMC qualification, observe the `+15V_AO` rail for uplift. AO bulk capacitors should have adequate voltage rating and effective capacitance at 15 V; `>=35 V`, preferably 50 V where practical, is recommended for the local 10 µF parts.
+
+---
 
 ### 3.3 Digital inputs
 
@@ -484,6 +995,16 @@ Current design values:
 
 Topology analogous to TPS7A2033.
 
+#### AGND / GND_SYS controlled tie
+
+There is exactly one intentional DC tie between the digital/system and analog ground domains:
+
+```text
+GND_SYS -> 0R (R_AGND_TIE) -> AGND
+```
+
+Place this physical tie near the analog LDO region. Do not add a second `AGND <-> GND_SYS` tie on AI/AO sheets.
+
 ### 5.4 AO power — sheet `02B_AO_POWER`
 
 Status: **practically closed**.
@@ -520,6 +1041,7 @@ SYS_RESET_N       -> 10k pull-up
 MANUAL_RESET_N    -> 10k pull-up
 WD_ENABLE         -> 100k pull-down
 WD_KICK           -> 100k pull-down
+AO_ENABLE_REQ     -> 100k pull-down to GND_SYS
 ```
 
 Hardware output gating uses `SN74LVC2G08DCTR`:
@@ -529,7 +1051,9 @@ AO_SAFE_EN = SYS_RESET_N AND AO_ENABLE_REQ
 DO_SAFE_EN = SYS_RESET_N AND DO_ENABLE_REQ
 ```
 
-The physical output stages must therefore remain disabled while the MCU is in reset or the external supervisor is asserting reset.
+For AO, `AO_SAFE_EN` is then inverted by `SN74LVC2G04DBVR` so reset/watchdog produces `AOx_CLEAR = 1`. The analog safe-state semantics are documented in section 3.2.3.
+
+The physical output stages must therefore remain at their defined safe state while the MCU is in reset or the external supervisor is asserting reset.
 
 ---
 
@@ -630,6 +1154,16 @@ GPIO47 ADC7_MON_RESERVED / ADC7
 ```
 
 All RP2350 GPIOs remain allocated/reserved. `SENSOR_PWR_EN0..3` are no longer direct MCU pins; they move to the `TCAL9539`. GPIO39 is no longer a single combined sensor-power fault input; it is the expander interrupt `BOARD_IO_INT_N`.
+
+AO-related board-level defaults on the MCU sheet:
+
+```text
+AO_LATCH      -> 10k -> +3V3_DIG
+BOARD_FAULT_N -> 10k -> +3V3_DIG
+AO_ENABLE_REQ -> 100k -> GND_SYS
+```
+
+Do not duplicate these pulls on the AO sheet.
 
 ---
 
@@ -1223,7 +1757,7 @@ Mechanical concept:
 Top region:
 
 ```text
-AO terminal block
+AO terminal blocks
 AI terminal block
 RS-485 terminal block at/near the top edge
 
@@ -1273,7 +1807,7 @@ The latest placement concept has been mechanically checked for:
 - board-edge violations;
 - mounting-hole keepout violations.
 
-The scripted concept predates the newly frozen `TCAL9539` + 2 × `TCA4307` addition and must be regenerated after those parts and the ADC monitor networks are placed.
+The scripted concept predates the newly frozen `TCAL9539` + 2 × `TCA4307` addition, completed AI protection population, and the AO output/sense/protection circuitry. It must be regenerated after those parts and the ADC monitor networks are placed.
 
 The scripted concept is **not** a substitute for production Altium DRC, courtyard checks, exact footprint clearances, assembly access, or pin-level routing verification.
 
@@ -1317,13 +1851,24 @@ For `LM76003`, `TPS62130`, and `LT8362`, final placement should follow the manuf
 
 #### Analog
 
-Prefer a physically linear frontend:
+Prefer physically linear frontends:
 
 ```text
-field terminal -> protection -> input/output conditioning -> ADC/DAC
+AI: field terminal -> primary protection -> secondary protection/filter -> ADC
+AO: AD5422 -> internal clamp/protection -> series resistor -> field TVS -> terminal
 ```
 
 Keep analog signal returns and reference-sensitive paths away from Ethernet, USB, switch nodes, and digital clock routing.
+
+For AO specifically:
+
+- `SMBJ15A` directly adjacent to the `AOx_OUT/AOx_RET` connector region;
+- 33 Ω pulse-rated resistor between field-side `AOx_OUT` and internal `AOx_RAW`;
+- `BAS70-04LT1G` close to the `AOx_RAW`/AD5422 region;
+- sense pickup is Kelvin from `AOx_OUT` after the 33 Ω resistor;
+- OPA2991 sense traces do not share the surge-current return;
+- CCOMP/reference/bypass parts stay compact around the AD5422;
+- positive clamp current can enter `+15V_AO`, so keep rail decoupling local and verify rail uplift in EMC testing.
 
 Internal RP2350 rail-monitor divider/RC networks should be treated as diagnostic analog nodes and kept away from switch nodes. `VIN_PROTECTED_MON` must be designed for the full protected input range plus engineering margin, not only nominal 24 V operation.
 
@@ -1385,7 +1930,7 @@ profile: RP2350_INDUSTRIAL_MVP_V1
 
 Firmware should treat the frozen GPIO map in this document as the hardware abstraction source for board-level pin definitions.
 
-Required firmware consequences of the 2026-08-28 hardware decision:
+Required firmware consequences of the 2026-08-28 service-I/O hardware decision:
 
 - replace direct `GPIO44..47 -> SENSOR_PWR_EN0..3` control with a `TCAL9539` driver/service path;
 - change GPIO39 from `SENSOR_PWR_FAULT_N` to `BOARD_IO_INT_N`;
@@ -1393,6 +1938,21 @@ Required firmware consequences of the 2026-08-28 hardware decision:
 - control and diagnose both `TCA4307` instances (`EN`/`READY`);
 - extend/validate the RP2350 generic ADC-voltage driver for ADC source indices 4..7 before internal rail monitors are enabled;
 - preserve GPIO40..43 as `UIC0..3` with ADC0..3 capability reserved for a future validated analog UIC path.
+
+Required AO firmware contract from the 2026-08-30 schematic:
+
+- qualified board ranges are `0–10 V` and `4–20 mA` unless additional modes are explicitly validated;
+- `AO_ENABLE_REQ` remains LOW until both DACs have been reset/configured and safe output codes are loaded;
+- after power-up, perform an AD5422 software RESET and wait at least 40 µs before relying on configuration/calibration state, because `DVCC` and `AVDD` come from independent power rails and their sequencing is not guaranteed;
+- configure/use external current-setting resistors (`REXT = 1`);
+- keep `CLRSEL = 0` for the intended voltage-mode safe state;
+- do not enable digital slew (`SREN`) for a safety-critical immediate clear unless a deliberate safe-state slew is specified;
+- configure daisy-chain operation before normal 48-clock dual-DAC updates;
+- transmit AO1 word first and AO0 word second before the common `AO_LATCH` rising edge;
+- final AO1 SDO is not a shared `BOARD_SPI_MISO` source;
+- interpret hardware CLEAR in `4–20 mA` mode as a `4 mA` safe-state, not a hard-off state;
+- `BOARD_FAULT_N` combines both AD5422 open-drain FAULT outputs; firmware must read/configure DAC status registers if channel-level discrimination is required;
+- do not claim sustained 24/36 V AO miswire survival until that condition is separately designed and qualified.
 
 ---
 
@@ -1426,29 +1986,57 @@ Current status:
 01_POWER_INPUT      practically closed
 02_POWER_RAILS      practically closed
 02B_AO_POWER        practically closed
-03_MCU_RP2350       practically closed; GPIO39/44..47 net update pending
+03_MCU_RP2350       practically closed; GPIO39/44..47 service-I/O update still needs final cross-sheet audit
 04_MEMORY           practically closed
 05_ETHERNET_USB     practically closed; final audit required
 06_RS485            practically closed
-07_ANALOG_INPUTS    current work / not yet frozen
+07_ANALOG_INPUTS    practically closed; final PTC/footprint/pulse-rating audit required
+08_ANALOG_OUTPUTS   practically closed; final annotate/ERC/footprint/ground-domain audit required
 ```
 
-New schematic work introduced by the 2026-08-28 architecture decision:
+Before PCB release, `07_ANALOG_INPUTS` must still:
 
 ```text
-- add TCAL9539 internal service I/O expander;
-- add 2 × TCA4307, one per external I²C port;
-- move SENSOR_PWR_EN0..3 from RP2350 GPIO44..47 to TCAL9539 P00..P03;
-- route four TPS2553 fault outputs individually to TCAL9539 P04..P07;
-- route TCA4307 EN/READY through TCAL9539 P10..P13;
-- connect TCAL9539 /INT to GPIO39 / BOARD_IO_INT_N;
-- connect TCAL9539 /RESET to SYS_RESET_N;
-- add VIN_PROTECTED, +15V_AO and +5V_ANALOG monitor networks to ADC4..ADC6;
-- reserve ADC7 monitor input;
-- revisit the UIC frontend if analog UIC mode is retained, because TLV3214 comparator output is not an analog path.
+- replace any remaining PTS120630V012 placeholders with PTS120660V005;
+- freeze pulse-rated 100R parts;
+- freeze 200R burden resistor power/temperature grade;
+- perform ADS8688 pin-to-pad audit;
+- verify DG350-3.5-08P-14 footprint/3D;
+- validate the final sustained-overvoltage/IEC protection requirement.
 ```
 
-Before the PCB is considered release-ready, the closed sheets still require one full-system pass:
+Before PCB release, `08_ANALOG_OUTPUTS` must still:
+
+```text
+- ensure SN74LVC2G04 GND/bypass return is GND_SYS, not AGND;
+- annotate all parts and remove placeholders;
+- freeze exact RSET / 33R pulse-rated / CCOMP / bypass orderable parts;
+- verify BAS70-04LT1G symbol pins 1/2/3 against PCB pads;
+- verify SMBJ15A polarity and footprint;
+- verify OPA2991IDR multi-part symbol-to-SOIC8 pad mapping;
+- verify AD5422BREZ EPAD is schematic pin 25 -> footprint pad 25;
+- verify one and only one AO_LATCH pull-up and BOARD_FAULT_N pull-up on the MCU sheet;
+- confirm AO_ENABLE_REQ 100k default LOW;
+- run a full AO0/AO1 net-label and daisy-chain audit;
+- qualify the selected transient/EMC level; current protection is not a guaranteed sustained 24/36 V miswire solution.
+```
+
+The 2026-08-28 service-I/O architecture decision still requires schematic completion/audit for:
+
+```text
+- TCAL9539 internal service I/O expander;
+- 2 × TCA4307, one per external I²C port;
+- SENSOR_PWR_EN0..3 moved from RP2350 GPIO44..47 to TCAL9539 P00..P03;
+- four TPS2553 fault outputs routed individually to TCAL9539 P04..P07;
+- TCA4307 EN/READY routed through TCAL9539 P10..P13;
+- TCAL9539 /INT connected to GPIO39 / BOARD_IO_INT_N;
+- TCAL9539 /RESET connected to SYS_RESET_N;
+- VIN_PROTECTED, +15V_AO and +5V_ANALOG monitor networks added to ADC4..ADC6;
+- ADC7 monitor input reserved;
+- UIC frontend revisited if analog UIC mode is retained, because TLV3214 comparator output is not an analog path.
+```
+
+Before the PCB is considered release-ready, all sheets require one full-system pass:
 
 ```text
 Annotate
@@ -1457,53 +2045,29 @@ ERC
 pin-to-pad audit
 footprint audit
 3D/mechanical audit
+cross-sheet net audit
 final BOM audit
 PCB DRC
 ```
 
-The newly added discrete LED circuitry and the new service-I/O/I²C-recovery circuitry must also be represented in the schematic and included in this audit.
+The discrete LED circuitry and service-I/O/I²C-recovery circuitry must also be represented in the schematic and included in this audit.
 
 ---
 
-## 16. Next schematic work — `07_ANALOG_INPUTS`
+## 16. Remaining schematic work after analog I/O
 
-Main IC:
+The analog input/output sheets are now topology-complete enough to move on after the final cleanup listed in section 15.
 
-```text
-ADS8688IDBTR
-```
+Remaining major hardware blocks still requiring schematic completion/finalization include:
 
-Architectural requirement:
+- industrial digital inputs around `MAX22190ATJ+`;
+- protected high-side outputs around `IPS2050HTR`;
+- UIC/counter/frequency/encoder frontend and the decision on an actual analog path to ADC0..3;
+- external sensor connectors, their TPS2553 power switches, `TCAL9539`, and both `TCA4307` devices;
+- internal ADC4..ADC6 rail-monitor dividers/filters;
+- final status-LED driver circuitry.
 
-```text
-4 × Analog Input
-```
-
-Before the external AI channel circuit is replicated, the following must be frozen:
-
-- which four ADS8688 channels are used;
-- treatment of the remaining four ADC channels;
-- final supported ranges;
-- exact 0–10 V / current-loop frontend topology;
-- external protection;
-- shunt selection for current measurement;
-- RC anti-alias filtering;
-- analog-ground topology;
-- ADC reference/power implementation;
-- SPI connection;
-- `ADC_RST_PD_N` behavior;
-- `ADC_CS_N` behavior.
-
-Workflow:
-
-1. verify the `ADS8688IDBTR` symbol against the official datasheet;
-2. verify supply/reference requirements;
-3. design one complete AI channel;
-4. validate electrical ranges/protection/filtering;
-5. replicate it to four channels;
-6. define behavior of unused ADC channels.
-
-The new RP2350 internal rail monitors are **board diagnostics**, not replacements for the ADS8688 industrial AI channels.
+Exact sheet numbering/order after `08_ANALOG_OUTPUTS` should follow the Altium project organization; do not renumber already-completed sheets merely to match this document.
 
 ---
 
@@ -1539,7 +2103,14 @@ PCB      : 120 × 90 mm baseline, monolithic
 Power    : 9–36 V DC input
 
 4 × AI   : 0–10 V / 0–20 mA / 4–20 mA target via ADS8688
-2 × AO   : 0–10 V / 0–20 mA / 4–20 mA
+           protected PTC + primary/secondary TVS topology
+
+2 × AO   : 0–10 V / 4–20 mA via 2 × AD5422BREZ
+           +15V_AO, OPA2991 buffered remote sense
+           33R + SMBJ15A + BAS70-04 protection
+           DG350-3.5-02P-14 OUT/RET per channel
+           current-mode hardware CLEAR safe state = 4 mA
+
 4 × DI   : protected 24 V
 2 × DO   : protected 24 V high-side
 4 × UIC  : counter / frequency / encoder / digital input
@@ -1567,7 +2138,8 @@ ADC7 = reserved monitor
 1 × top-entry USB-C service/recovery
 
 Watchdog : TPS3851H33
-Safe AO  : SYS_RESET_N AND AO_ENABLE_REQ
+Safe AO  : AO_SAFE_EN = SYS_RESET_N AND AO_ENABLE_REQ
+           AOx_CLEAR = !AO_SAFE_EN
 Safe DO  : SYS_RESET_N AND DO_ENABLE_REQ
 
 LEDs     : PWR / RUN / FAULT / AO / DO / SENS / RS485
