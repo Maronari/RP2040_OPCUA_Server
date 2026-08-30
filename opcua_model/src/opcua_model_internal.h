@@ -1477,17 +1477,24 @@ bool model_byte_array_changed(const uint8_t *lhs, const uint8_t *rhs, size_t siz
  *         pointers differ. The single source of truth consulted both by the
  *         read-only `MODEL_NODE_CONFIG_REBOOT_REQUIRED` diagnostic
  *         (`model_is_reboot_required`) and, as of v0.5.0 T6, by
- *         `model_config_service_restart_callback` to decide whether a
- *         committed transaction must trigger an actual controlled restart. */
+ *         `model_address_space_snapshot_requires_server_restart` to decide
+ *         whether a committed transaction must trigger an actual controlled
+ *         restart. */
 bool model_config_requires_server_reboot(const device_profile_config_t *lhs, const device_profile_config_t *rhs);
 /**
  * @brief True if the address space was built from a config snapshot that no
- *        longer matches either the running or staged configuration, i.e. a
- *        reboot is needed to pick up pending changes.
+ *        longer matches the service-owned RUNNING configuration in a field
+ *        requiring a full server rebuild.
  * @note Compares `g_model_address_space_config_snapshot` against
- *       `config_service_get()`/`config_service_get_staged()`; returns false
- *       if the snapshot was never captured.
+ *       `config_service_get()` only. Staged-only data has not become the
+ *       running model and therefore must not restart or mark the live server
+ *       as stale. Returns false if the snapshot was never captured.
  */
+bool model_address_space_snapshot_requires_server_restart(void);
+/** @brief Read-only `Device.Configuration.RebootRequired` diagnostic. In
+ *        addition to the RUNNING-only address-space comparison used to
+ *        schedule a restart, it retains the existing running-vs-staged
+ *        comparison so an uncommitted structural candidate remains visible. */
 bool model_is_reboot_required(void);
 /**
  * @brief Classifies the server's own device certificate expiry state

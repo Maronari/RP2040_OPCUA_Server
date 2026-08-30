@@ -54,10 +54,6 @@ DEFAULT_CHUNK_SIZE = 4096
 DEFAULT_EXPORT_PATH = Path('build/config_export.json')
 DEFAULT_AUTO_CLIENT_CERT_DIR = 'rp2040_opcua_client'
 CLIENT_APPLICATION_URI = 'urn:rp2040-opcua:verification-client'
-LEGACY_AUTO_CLIENT_CERT_DIRS = (
-    'rp2040_opcua_ota',
-    'rp2040_opcua_config',
-)
 CONFIG_SCHEMA_VERSION = 1
 CONFIG_MAX_CHANNELS = 16
 CONFIGURATION_NODE_ID = 'ns=1;s=Device.Maintenance.Configuration'
@@ -163,14 +159,6 @@ def client_certificate_has_application_uri(cert_path, app_uri):
 
 def resolve_auto_client_certificate_paths():
     temp_root = Path(tempfile.gettempdir())
-
-    for dirname in LEGACY_AUTO_CLIENT_CERT_DIRS:
-        base_dir = temp_root / dirname
-        client_cert = base_dir / 'client_cert.der'
-        client_key = base_dir / 'client_key.pem'
-        if client_cert.is_file() and client_key.is_file():
-            return client_cert, client_key
-
     base_dir = temp_root / DEFAULT_AUTO_CLIENT_CERT_DIR
     return base_dir / 'client_cert.der', base_dir / 'client_key.pem'
 

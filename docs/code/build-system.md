@@ -27,7 +27,7 @@ CMake + Raspberry Pi Pico SDK, кросс-компиляция через `arm-n
 
 `cmake/` содержит только `cmake/firmware_version.cmake` — единственный
 авторитетный источник семантической версии
-(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.4.3`), упаковываемый в
+(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.5.0`), упаковываемый в
 `RP2_FIRMWARE_VERSION_NUMBER` и используемый в `project(... VERSION ...)`,
 `pico_set_program_version()` и
 `DEVICE_PROFILE_FW_REVISION`/`OTA_APP_FIRMWARE_VERSION`. Вычисление

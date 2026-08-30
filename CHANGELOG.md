@@ -6,6 +6,15 @@ their target commit SHA rather than the tag-object SHA.
 
 ## v0.5.0
 
+- Release metadata: synchronizes the repository current-release instructions
+  and the authoritative firmware/runtime/OTA version source to `0.5.0` before
+  hardware verification. The version-integrity gate now checks the optional
+  OTA payload manifest only when the current CMake configuration enables
+  `OTA_BUILD_BOOTLOADER`; this prevents a stale artifact from a previous build
+  mode causing a false failure, while still requiring the manifest when enabled.
+  OTA staging now independently rejects a local build manifest unless the
+  sibling CMake cache enables bootloader artifacts and its version, board,
+  platform and Flash origins match the current generated layout.
 - Configuration transaction pipeline: restructures `config_service_apply()`/
   `config_service_replace_and_save()` into a real validate -> persist staged
   -> stop -> activate -> verify (driver init plus at least one valid
@@ -37,8 +46,8 @@ their target commit SHA rather than the tag-object SHA.
   transaction commit step, reusing the exact cold-boot address-space
   construction codepath. A transaction that does not require a restart
   leaves existing sessions/subscriptions untouched.
-- Presets and compatibility: adds one runtime configuration preset
-  (`sensor_node`) applied through the normal transaction pipeline via new
+- Presets and compatibility: adds three runtime configuration presets
+  (`sensor_node`, `remote_io` and `dev_benchmark`) applied through the normal transaction pipeline via new
   `Device.Maintenance.ListConfigPresets`/`ApplyConfigPreset` methods, and
   exposes firmware/configuration compatibility data (firmware profile,
   hardware revision, configuration schema version, supported drivers and

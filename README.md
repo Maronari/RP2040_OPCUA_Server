@@ -50,8 +50,8 @@ contracts.
 - A controlled full OPC UA server restart, synchronously triggered by any
   transaction that changes the running model, and per-channel history/alarm
   state cleanup on channel delete/modify.
-- Runtime configuration presets (one reference preset, `sensor_node`, proven
-  against the full transaction pipeline) and firmware/configuration
+- Runtime configuration presets (`sensor_node`, `remote_io` and
+  `dev_benchmark`, all proven against the full transaction pipeline) and firmware/configuration
   compatibility data (profile, hardware revision, schema version, supported
   drivers/capabilities) exposed through the management model.
 

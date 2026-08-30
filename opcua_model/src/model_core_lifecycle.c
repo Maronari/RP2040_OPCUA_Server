@@ -26,8 +26,9 @@
  * Controlled restart (v0.5.0 T6): `config_service_run_commit_extensions()`
  * unconditionally invokes the registered restart callback after every
  * successful configuration commit; `model_config_service_restart_callback`
- * (below) calls `model_config_requires_server_reboot()` and, if the commit
- * changed anything address-space-relevant, arms
+ * (below) compares the current address-space snapshot with the committed
+ * RUNNING configuration and, if they differ in an address-space-relevant
+ * field, arms
  * `g_pending_actions.restart_pending` rather than tearing the server down
  * inline -- see that function's doc comment for why inline teardown is
  * unsafe here. `model_core_task`'s run loop notices the flag the moment its
@@ -86,9 +87,9 @@ static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
 
 /**
  * @brief `config_service_restart_fn` registered with `config_service` (v0.5.0
- * T6): decides, via `model_config_requires_server_reboot()`, whether a
- * just-committed configuration change requires rebuilding the OPC UA
- * namespace, and if so arms a deferred, in-place server restart.
+ * T6): decides, via the address-space snapshot and the service-owned RUNNING
+ * configuration, whether the active OPC UA namespace needs rebuilding, and
+ * if so arms a deferred, in-place server restart.
  *
  * Cannot rebuild `UA_Server` synchronously from here. This function runs
  * inside `config_service_apply()`/`config_service_replace_and_save()`,
@@ -119,12 +120,31 @@ static const uint8_t g_bootstrap_device_private_key[] = TEST_SRV_KEY_RSA_PEM;
 static void model_config_service_restart_callback(const device_profile_config_t *new_config,
                                                    const device_profile_config_t *previous_config)
 {
-    if (!model_config_requires_server_reboot(previous_config, new_config))
+    /* The callback parameters are useful to config_service's generic contract,
+     * but the authoritative lifecycle comparison is the snapshot that built
+     * the live namespace against the now-committed RUNNING configuration. This
+     * also recovers deterministically if a prior restart notification was
+     * missed and the snapshot was already stale before this commit. */
+    bool diag_requires_restart;
+    (void)new_config;
+    (void)previous_config;
+
+    /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
+     * model_channels.c's model_is_reboot_required() for context. Remove
+     * before shipping. */
+    diag_requires_restart = model_address_space_snapshot_requires_server_restart();
+    printf("[DIAG-REBOOT-REQ] restart_callback invoked: requires_restart=%d snapshot_valid=%d\n",
+           (int)diag_requires_restart, (int)g_model_address_space_config_snapshot_valid);
+    fflush(stdout);
+
+    if (!diag_requires_restart)
     {
         return;
     }
 
     g_pending_actions.restart_pending = true;
+    printf("[DIAG-REBOOT-REQ] restart_callback armed restart_pending=true\n");
+    fflush(stdout);
 }
 
 /* Implementation note: the two PSRAM scratch buffers are allocated
@@ -812,6 +832,11 @@ void model_core_task(void *argument)
      * configuration, rather than a second, parallel implementation of it. */
     for (;;)
     {
+    /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
+     * model_channels.c's model_is_reboot_required() for context. Remove
+     * before shipping. */
+    printf("[DIAG-REBOOT-REQ] for(;;) top: is_restart=%d\n", (int)is_restart);
+    fflush(stdout);
     UA_ServerConfig server_config;
     memset(&server_config, 0, sizeof(server_config));
     config = &server_config;
@@ -1060,6 +1085,16 @@ void model_core_task(void *argument)
             g_model_address_space_config_snapshot = *running_config;
             g_model_address_space_config_snapshot_valid = true;
         }
+
+        /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
+         * model_channels.c's model_is_reboot_required() for context. Remove
+         * before shipping. */
+        printf("[DIAG-REBOOT-REQ] snapshot captured: is_restart=%d running_config=%p "
+               "snapshot_valid=%d desc0=\"%s\"\n",
+               (int)is_restart, (const void *)running_config,
+               (int)g_model_address_space_config_snapshot_valid,
+               running_config != NULL ? running_config->channels[0].description : "(null)");
+        fflush(stdout);
     }
 
     log_opcua_heap("Address space ready");
@@ -1191,6 +1226,33 @@ void model_core_task(void *argument)
             next_psram_stats_tick = xTaskGetTickCount() + pdMS_TO_TICKS(30000u);
         }
 
+        /* Fail closed if a committed RUNNING configuration has diverged from
+         * the snapshot that built this server. The normal commit callback arms
+         * restart_pending while nested in UA_Server_run_iterate(); this check
+         * also covers a missed or late callback and runs before another client
+         * request can be served against the stale namespace. Staged-only data
+         * is deliberately ignored: it has not become the running model. */
+        {
+            /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
+             * model_channels.c's model_is_reboot_required() for context.
+             * Remove before shipping. */
+            static uint32_t s_diag_loop_iter = 0u;
+            const bool diag_fail_closed = model_address_space_snapshot_requires_server_restart();
+            s_diag_loop_iter++;
+            if (diag_fail_closed || (s_diag_loop_iter % 20u) == 0u)
+            {
+                printf("[DIAG-REBOOT-REQ] loop iter=%u fail_closed=%d restart_pending=%d\n",
+                       (unsigned)s_diag_loop_iter, (int)diag_fail_closed,
+                       (int)g_pending_actions.restart_pending);
+                fflush(stdout);
+            }
+            if (diag_fail_closed)
+            {
+                g_pending_actions.restart_pending = true;
+                break;
+            }
+        }
+
         UA_UInt16 wait_ms = UA_Server_run_iterate(server, false);
         if (wait_ms == 0u)
         {
@@ -1241,7 +1303,16 @@ void model_core_task(void *argument)
      * newly-committed configuration's address space. Not reached for a
      * normal exit today (the only two break conditions above are
      * reboot_pending, handled above, and restart_pending, handled below). */
+    /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
+     * model_channels.c's model_is_reboot_required() for context. Remove
+     * before shipping. */
+    printf("[DIAG-REBOOT-REQ] post-loop-break: restart_pending=%d reboot_pending=%d\n",
+           (int)g_pending_actions.restart_pending, (int)g_pending_actions.reboot_pending);
+    fflush(stdout);
     status = UA_Server_run_shutdown(server);
+    printf("[DIAG-REBOOT-REQ] UA_Server_run_shutdown returned 0x%x (%s)\n",
+           status, UA_StatusCode_name(status));
+    fflush(stdout);
     if (status != UA_STATUSCODE_GOOD)
     {
         printf("[OPC UA]\tUA_Server_run_shutdown failed: 0x%x (%s)\n",
@@ -1252,11 +1323,16 @@ void model_core_task(void *argument)
 
     model_context_delete_server(server);
     server = NULL;
+    printf("[DIAG-REBOOT-REQ] model_context_delete_server done, server=NULL\n");
+    fflush(stdout);
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     security_service_set_audit_callback(NULL, NULL);
 #endif
 
+    printf("[DIAG-REBOOT-REQ] re-checking restart_pending=%d before continue/break\n",
+           (int)g_pending_actions.restart_pending);
+    fflush(stdout);
     if (g_pending_actions.restart_pending)
     {
         /* v0.5.0 T6: no new printf string here -- see the startup-message

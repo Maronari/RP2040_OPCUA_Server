@@ -203,8 +203,8 @@ flowchart TD
 пресета `FirmwareProfile` выше) экспонируются двумя методами
 `Device.Maintenance` (`model_address_space.c:972-1000`):
 `ListConfigPresets` возвращает каталог пресетов времени компиляции в виде
-JSON; `ApplyConfigPreset` принимает имя пресета (например,
-`"sensor_node"`) и разрешает/применяет его через
+JSON; `ApplyConfigPreset` принимает имя одного из пресетов (`"sensor_node"`,
+`"remote_io"` или `"dev_benchmark"`) и разрешает/применяет его через
 `config_presets_apply()` — тот же самый конвейер транзакции
 validate→persist-staged→stop→activate→verify→commit/rollback, что и любая
 другая кандидатная конфигурация; отдельного пути применения не существует.

@@ -121,17 +121,24 @@ Historical Event Access).
 A configuration transaction that adds, removes, or modifies a channel (or
 otherwise changes anything `model_config_requires_server_reboot()`
 considers structural) always trips that diagnostic, and the same commit
-step that persists the transaction synchronously invokes a full OPC UA
-server restart before returning control to the caller — never a deferred
-or asynchronous follow-up. Client-visible sequence: every existing
+step that persists the transaction arms a full OPC UA server restart. The
+actual teardown/rebuild is deferred until the current
+`UA_Server_run_iterate()` returns, because deleting the server inside its own
+Method callback would invalidate the active call stack; it runs before another
+client request can be served. Depending on transport timing, the applying
+client can receive the Method result or observe the connection close first.
+Client-visible sequence: every existing
 session/subscription is lost (the same reconnect contract as a firmware
 reboot), the client must reconnect, and after reconnecting it sees the new
 configuration's address space, rebuilt through the identical
 `model_build_address_space()`/`model_core_init()` codepath cold boot uses —
 never a second, parallel construction path. A transaction that does not
-require a restart (e.g. a value-only or sample/publish-period change)
+require a restart (for example, an alarm-threshold or hysteresis change)
 leaves the running server, its sessions, and its subscriptions completely
-untouched.
+untouched. Sample- or publish-period changes are structural because those
+properties are materialized in the address space; they therefore trigger the
+same restart and reconnect sequence. Alarm thresholds, hysteresis, debounce,
+scale/offset and history interval are runtime-only examples that do not.
 
 **Per-channel history/alarm state on delete/modify (v0.5.0 T7)**: deleting
 a channel, or modifying it in a way that changes its `driver_id` or value

@@ -142,9 +142,16 @@ def main() -> int:
     require_equal("OTA/layout manifest version", ota_layout["firmware"]["version"], version)
     require_equal("OTA/layout manifest version_number", int(ota_layout["firmware"]["version_number"]), packed)
 
+    ota_artifacts_enabled = cache.get("OTA_BUILD_BOOTLOADER", "OFF").upper() in {
+        "1",
+        "ON",
+        "TRUE",
+        "YES",
+        "Y",
+    }
     ota_payload_path = build_dir / "ota_artifacts" / "ota_payload.json"
     ota_payload_summary: dict[str, Any] | None = None
-    if ota_payload_path.exists():
+    if ota_artifacts_enabled:
         ota_payload = load_json(ota_payload_path)
         require_equal("OTA payload manifest firmware_version", ota_payload["firmware_version"], version)
         require_equal("OTA payload manifest version_number", int(ota_payload["version_number"]), packed)
@@ -172,6 +179,7 @@ def main() -> int:
         "compile_definition_version": compile_version,
         "config_export_path": "config_export.json",
         "ota_layout_manifest_path": "generated/ota_layout/ota_layout.json",
+        "ota_artifacts_enabled": ota_artifacts_enabled,
         "ota_payload_manifest": ota_payload_summary,
         "release_artifacts": artifact_entries,
     }

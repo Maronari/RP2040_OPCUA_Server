@@ -52,6 +52,7 @@ def main() -> int:
     events = (MODEL_DIR / "model_events.c").read_text(encoding="utf-8")
     diagnostics = (MODEL_DIR / "model_diagnostics.c").read_text(encoding="utf-8")
     lifecycle = (MODEL_DIR / "model_core_lifecycle.c").read_text(encoding="utf-8")
+    channels = (MODEL_DIR / "model_channels.c").read_text(encoding="utf-8")
     open62541 = (ROOT / "port" / "open62541" / "open62541.c").read_text(encoding="utf-8")
     require("MODEL_HISTORY_CONTINUATION_CAPACITY 16u" in internal,
             "HistoryRead continuation table does not have the frozen capacity")
@@ -109,6 +110,28 @@ def main() -> int:
             "Device.Compatibility.FirmwareProfile does not expose the compile-time driver-pack identity")
     require("driver_catalog_get_resource_claims(" in configuration,
             "SupportedDrivers descriptor does not reuse driver_catalog's resource-claim API")
+
+    # A controlled restart is driven only by a mismatch between the address
+    # space snapshot and the service-owned RUNNING configuration. A merely
+    # staged candidate must never tear down an otherwise valid live server.
+    helper_start = channels.index("bool model_address_space_snapshot_requires_server_restart(void)")
+    helper_end = channels.index("bool model_is_reboot_required(void)", helper_start)
+    restart_helper = channels[helper_start:helper_end]
+    reboot_required = channels[helper_end:]
+    require("const device_profile_config_t *running = config_service_get();" in restart_helper and
+            "config_service_get_staged()" not in restart_helper and
+            "model_address_space_snapshot_requires_server_restart()" in reboot_required and
+            "config_service_get_staged()" in reboot_required,
+            "address-space restart comparison is not RUNNING-only")
+    require("model_address_space_snapshot_requires_server_restart()" in lifecycle and
+            "g_pending_actions.restart_pending = true;" in lifecycle,
+            "restart callback does not arm the deferred restart from the live snapshot")
+    run_iterate_index = lifecycle.index("UA_Server_run_iterate(server, false)")
+    fail_safe_index = lifecycle.rfind("model_address_space_snapshot_requires_server_restart()",
+                                      0,
+                                      run_iterate_index)
+    require(fail_safe_index >= 0,
+            "run loop lacks a snapshot-vs-RUNNING fail-safe before UA_Server_run_iterate")
 
     result = subprocess.run(
         [sys.executable, "static/tools/verify_opcua_public_contract.py",
