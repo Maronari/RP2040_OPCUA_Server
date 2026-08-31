@@ -4,7 +4,7 @@
 >
 > **Board profile:** `RP2350_INDUSTRIAL_MVP_V1`
 >
-> **Last hardware consolidation:** 2026-08-30
+> **Last hardware consolidation:** 2026-08-31
 
 This document describes the current hardware architecture, frozen component choices, power tree, MCU pin allocation, completed schematic sheets, PCB/mechanical constraints, status indication, firmware-facing hardware contract, and the remaining work before production PCB release.
 
@@ -79,7 +79,9 @@ Main functional blocks:
 | AO rail clamp | 2 × `BAS70-04LT1G` | one dual Schottky SOT-23 per AO channel |
 | AO field TVS | 2 × `SMBJ15A` | one unidirectional TVS per AO channel |
 | AO terminal blocks | 2 × `DG350-3.5-02P-14` | `OUT/RET`, 3.5 mm pitch |
-| Digital inputs | `MAX22190ATJ+` | industrial DI frontend |
+| Digital inputs | `MAX22190ATJ+` | 4 × IEC 61131-2 Type 1/Type 3 DI; VDD/VL from +3V3_DIG, VDD24 NC |
+| DI series resistors | 4 × `CRCW25121K50FKEGHP` | 1.5 kΩ, 1%, 2512 pulse-withstanding, one per physical DI |
+| DI terminal block | `DG350-3.5-06P-14` | DI0..DI3 + 2 × DI_COM, 3.5 mm pitch |
 | Digital outputs | `IPS2050HTR` | protected high-side outputs |
 | Universal inputs | `TLV3214PWR` | current comparator-based UIC frontend; analog-path revision still required if analog UIC mode is retained |
 | Supervisor/watchdog | `TPS3851H33EDRBR` | reset + watchdog |
@@ -94,12 +96,14 @@ The current PCB concept includes discrete status LEDs and small transistor/buffe
 
 Current implementation concept:
 
-- `2N7002`-class N-MOSFET for active-high driven LEDs;
+- `2N7002`-class N-MOSFET for active-high driven board-status LEDs;
 - `BSS84`-class P-MOSFET / suitable active-low buffer stage where needed;
 - 0603 LEDs;
-- dedicated current-limiting resistors.
+- dedicated current-limiting resistors for ordinary board-status LEDs.
 
-These LED driver details must be captured and audited in the final schematic before PCB release.
+The four `DI0..DI3` state LEDs are a deliberate exception: they are driven from the MAX22190 `LED1..LED4` energyless current outputs and therefore do **not** use ordinary series current-limiting resistors. These LEDs are hardware input-state indicators, not firmware-controlled status LEDs.
+
+The remaining discrete board-status LED driver details must be captured and audited in the final schematic before PCB release.
 
 ---
 
@@ -373,12 +377,12 @@ AO_LATCH -> 10k -> +3V3_DIG
 
 #### 3.2.3 FAULT and hardware safe-state
 
-Both AD5422 `FAULT` outputs are open-drain and share the board fault net:
+Both AD5422 `FAULT` outputs are open-drain and share the board fault net. The MAX22190 `/FAULT` output on `09_DIGITAL_INPUTS` is also open-drain and joins the same net:
 
 ```text
-AO0 pin3 FAULT ----+
-                   +---- BOARD_FAULT_N -> RP2350 GPIO19
-AO1 pin3 FAULT ----+
+AO0 AD5422 pin3 FAULT -----+
+AO1 AD5422 pin3 FAULT -----+---- BOARD_FAULT_N -> RP2350 GPIO19
+MAX22190 pin14 /FAULT -----+
 ```
 
 There is one common pull-up on the MCU sheet:
@@ -386,6 +390,8 @@ There is one common pull-up on the MCU sheet:
 ```text
 BOARD_FAULT_N -> 10k -> +3V3_DIG
 ```
+
+Do not add separate pull-ups for the individual AO or DI fault sources. Firmware must identify the asserting source by reading the relevant device status registers.
 
 The existing supervisor logic provides:
 
@@ -664,17 +670,315 @@ Positive transient current conducted by the upper BAS70 diode can inject into `+
 
 ### 3.3 Digital inputs
 
-Provide **4 digital input channels**: `DI0..DI3`.
+Provide **4 physical industrial digital input channels**: `DI0..DI3`.
 
-Target electrical level:
+The frozen MVP implementation uses one `MAX22190ATJ+` in a **4 × IEC 61131-2 Type 1/Type 3** configuration. The silicon has eight input channels, but Hardware Prototype v1 intentionally uses only four of them. A quad Type 2 implementation using paired MAX22190 channels is deferred to a future board revision and shall not be claimed for this MVP.
 
-- nominal `24 V DC`;
-- protected and filtered frontend;
-- interrupt or deterministic polling support.
+Target electrical behavior:
 
-Target frontend IC: `MAX22190ATJ+`.
+- nominal `24 V DC` field inputs;
+- IEC 61131-2 Type 1/Type 3 input-current characteristic;
+- hardware input-state LEDs;
+- programmable internal debounce/filtering;
+- optional wire-break/open-wire diagnostics where the field wiring actually provides diagnostic current;
+- shared SPI interface with CRC;
+- board-level fault interrupt plus deterministic polling for normal input-state changes.
 
-Firmware shall support debounce/filter time, inversion, edge detection, event counting, and quality diagnostics.
+#### 3.3.1 Channel allocation and unused channels
+
+Physical channel mapping:
+
+```text
+DI0 -> MAX22190 IN1 pin1  -> internal DI bit0
+DI1 -> MAX22190 IN2 pin3  -> internal DI bit1
+DI2 -> MAX22190 IN3 pin5  -> internal DI bit2
+DI3 -> MAX22190 IN4 pin7  -> internal DI bit3
+```
+
+Unused internal channels:
+
+```text
+IN5 pin18 -> GND_SYS
+IN6 pin20 -> GND_SYS
+IN7 pin22 -> GND_SYS
+IN8 pin24 -> GND_SYS
+
+LED5 pin17 -> GND_SYS
+LED6 pin19 -> GND_SYS
+LED7 pin21 -> GND_SYS
+LED8 pin23 -> GND_SYS
+```
+
+Firmware must change the power-on default `INEN = 0xFF` to:
+
+```text
+INEN = 0x0F
+```
+
+so only IN1..IN4 remain enabled. The grounded unused channels are therefore deterministic during POR and are subsequently disabled in firmware.
+
+#### 3.3.2 Supply, grounds and serial interface
+
+The MAX22190 is powered from the board logic rail instead of from the field-supply pin:
+
+```text
+pin31 VDD   -> +3V3_DIG
+               100n || 1u -> GND_SYS
+
+pin16 VL    -> +3V3_DIG
+               100n || 1u -> GND_SYS
+
+pin30 VDD24 -> NC
+
+pin25 GND   -> GND_SYS
+pin32 GND   -> GND_SYS
+pin33 EPAD  -> GND_SYS
+```
+
+`VDD24` remains physically unconnected. Therefore the MAX22190 VDD24 undervoltage/missing monitors are not meaningful for this board and their FAULT-pin enables must remain masked in firmware.
+
+The exposed pad is represented in the Altium symbol/footprint as pad `33` and must be electrically and thermally connected to `GND_SYS`.
+
+SPI mode straps:
+
+```text
+pin29 M1 -> GND_SYS
+pin28 M0 -> GND_SYS
+```
+
+This selects the MAX22190 24-bit non-daisy-chain SPI mode with CRC. The RP2350 SPI peripheral shall use SCLK idle LOW and the edge relationship required by the MAX22190 datasheet; this corresponds to conventional SPI mode 0 semantics.
+
+Serial/control wiring:
+
+```text
+pin9  /CS    -> DI_CS_N         -> RP2350 GPIO16
+DI_CS_N      -> 10k -> +3V3_DIG
+
+pin10 SCLK   -> BOARD_SPI_SCK   -> RP2350 GPIO14
+pin11 SDI    -> BOARD_SPI_MOSI  -> RP2350 GPIO15
+pin13 SDO    -> BOARD_SPI_MISO  -> RP2350 GPIO12
+
+pin12 /LATCH -> +3V3_DIG
+
+pin14 /FAULT -> BOARD_FAULT_N
+pin15 /READY -> DI_READY_N
+DI_READY_N   -> 10k -> +3V3_DIG
+```
+
+`SDO` is tri-stated while `/CS` is inactive, so it can share `BOARD_SPI_MISO` with other properly chip-selected devices.
+
+`/LATCH` is held HIGH because only one MAX22190 is used. Falling `/CS` provides the required input snapshot for normal transactions.
+
+`/FAULT` is open-drain and joins the existing `BOARD_FAULT_N` wired-OR net together with both AD5422 fault outputs. The only board-level pull-up remains the `10k -> +3V3_DIG` pull-up on the MCU sheet.
+
+`/READY` is open-drain and is reserved as:
+
+```text
+DI_READY_N -> TCAL9539 P14
+```
+
+The service-I/O sheet must complete that cross-sheet connection. Firmware initializes the service expander early enough to observe `DI_READY_N` before relying on MAX22190 register accesses.
+
+#### 3.3.3 Type 1/Type 3 field frontend
+
+The shared Type 1/Type 3 current-setting resistor is:
+
+```text
+pin27 REFDI -> 7.50k 1% -> GND_SYS
+```
+
+This sets the MAX22190 input current limit to approximately `2.35 mA typ`, with the datasheet Type 1/Type 3 operating characteristic used for this board.
+
+Each physical input has one pulse-withstanding series resistor:
+
+```text
+DI0_IN -> 1.5k -> IN1
+DI1_IN -> 1.5k -> IN2
+DI2_IN -> 1.5k -> IN3
+DI3_IN -> 1.5k -> IN4
+```
+
+Frozen orderable part for all four:
+
+```text
+CRCW25121K50FKEGHP
+1.5 kΩ
+1%
+2512
+pulse-withstanding
+```
+
+No external capacitor is placed on `IN1..IN4`; debounce/filtering is performed inside the MAX22190. No per-channel TVS is currently used. The selected topology intentionally follows the MAX22190 resistor-only robust-input approach rather than adding a clamp that could disturb the IEC input characteristic.
+
+Terminal block:
+
+```text
+J_DI = DG350-3.5-06P-14
+
+1 DI0_IN
+2 DI1_IN
+3 DI2_IN
+4 DI3_IN
+5 DI_COM
+6 DI_COM
+```
+
+Both COM contacts are paralleled:
+
+```text
+DI_COM -> GND_SYS
+```
+
+The duplicate COM terminal is intentional and allows convenient field return/daisy wiring. The DI block is **not galvanically isolated** from the MCU/system ground domain.
+
+Normal field connection is therefore conceptually:
+
+```text
++24V ---- sensor/contact ---- DIx_IN
+0V  ------------------------ DI_COM
+```
+
+The MAX22190 `INx` pins have ±40 V input protection/absolute capability, but Hardware Prototype v1 only freezes **24 V nominal** operation. Sustained 36 V field operation/miswire shall not be claimed as qualified until it is explicitly verified over device, resistor, threshold and temperature tolerances. The 9–36 V main-board power-input range does not automatically imply a qualified 36 V DI field-input rating.
+
+ADI characterizes the MAX22190 robust-input approach with a minimum 1 kΩ series resistor for high ESD/EFT/surge immunity. Those manufacturer/reference-design results are evidence for the topology, not certification of this PCB. The final board must be tested with its actual connector, footprint clearances, grounding and enclosure.
+
+#### 3.3.4 Hardware DI LEDs
+
+The four used MAX22190 energyless LED outputs drive four physical channel LEDs:
+
+```text
+pin2 LED1 -> DI0_LED -> LED anode
+                         LED cathode -> GND_SYS
+
+pin4 LED2 -> DI1_LED -> LED anode
+                         LED cathode -> GND_SYS
+
+pin6 LED3 -> DI2_LED -> LED anode
+                         LED cathode -> GND_SYS
+
+pin8 LED4 -> DI3_LED -> LED anode
+                         LED cathode -> GND_SYS
+```
+
+No ordinary series resistor is used; the LED current comes from the MAX22190 field-input current path. Green high-efficiency 0603 LEDs are preferred, but the exact orderable LED remains to be frozen.
+
+These are **hardware input-state indicators**. They are not software-addressable and continue to represent field input activity independently of RP2350 firmware execution.
+
+Do not DNP one of these LEDs while leaving the corresponding MAX22190 `LEDx` pin floating. If a DI LED is deliberately omitted in a future assembly variant, its `LEDx` pin must instead be tied to `GND_SYS` as required for an unused LED output.
+
+#### 3.3.5 Wire-break/open-wire diagnostics
+
+The common wire-break reference is:
+
+```text
+pin26 REFWB -> 24.0k 1% -> GND_SYS
+```
+
+This gives a wire-break threshold of approximately:
+
+```text
+IWB ~= 2.44 V / 24 kΩ ~= 102 uA typ
+```
+
+Wire-break detection has its own approximately 20 ms filtering and is enabled independently per channel through the corresponding `FLTx.WBE` bit.
+
+Hardware Prototype v1 defaults wire-break **OFF** for every channel. It is only meaningful when the field circuit maintains a small diagnostic current in the normal OFF state, for example:
+
+- a compatible two-wire proximity sensor whose OFF-state current remains safely above the wire-break threshold; or
+- a dry contact with a diagnostic/end-of-line resistor installed remotely across the field contact.
+
+A plain open dry contact and a broken conductor both produce approximately zero current and therefore cannot be distinguished. Likewise, generic three-wire PNP sensors shall not be assumed to support wire-break unless their guaranteed OFF-state current makes the diagnostic valid.
+
+No end-of-line resistor is installed on the controller PCB. An EOL resistor intended to diagnose the field cable must be physically located at the remote sensor/contact end.
+
+While no channel has `WBE=1`, the REFWB open/short FAULT2 sources remain masked because `RFWBO` is expected after POR when all wire-break functions are disabled.
+
+#### 3.3.6 Filtering, diagnostics and firmware defaults
+
+The normal DI filter is internal and programmable per channel. Supported MAX22190 delays are:
+
+```text
+50 us
+100 us
+400 us
+800 us
+1.6 ms
+3.2 ms
+12.8 ms
+20 ms
+```
+
+with an additional filter-bypass mode.
+
+Frozen board/firmware default for `DI0..DI3`:
+
+```text
+WBE   = 0
+FBP   = 0
+DELAY = 100b = 1.6 ms
+
+FLT1 = 0x04
+FLT2 = 0x04
+FLT3 = 0x04
+FLT4 = 0x04
+```
+
+Longer filtering can be selected for switches/relays; shorter filtering can be selected for faster sensors. High-rate counter/frequency/encoder work should normally use the separate `UIC0..UIC3` subsystem rather than these general-purpose DI channels.
+
+Relevant register contract:
+
+| Register | Address | POR/default | MVP target/use |
+|---|---:|---:|---|
+| `WB` | `0x00` | `0x00` | read / clear-on-read wire-break flags |
+| `DI` | `0x02` | `0x00` | read input state |
+| `FAULT1` | `0x04` | status | primary diagnostics |
+| `FLT1..FLT4` | `0x06..0x0C` | `0x08` | write `0x04` default |
+| `FLT5..FLT8` | `0x0E..0x14` | `0x08` | unused channels; leave bypassed/disabled by INEN |
+| `CFG` | `0x18` | `0x00` | target `0x01`, enable REFDI-short detection |
+| `INEN` | `0x1A` | `0xFF` | target `0x0F` |
+| `FAULT2` | `0x1C` | status | read / clear-on-read secondary diagnostics |
+| `FAULT2EN` | `0x1E` | `0x00` | target `0x3C` while wire-break disabled |
+| `GPO` | `0x22` | `0x00` | target `0x80`, sticky FAULT behavior |
+| `FAULT1EN` | `0x24` | `0xC0` | target `0xF8` while wire-break disabled |
+
+`FAULT2EN = 0x3C` enables:
+
+- malformed SPI clock-count diagnostic;
+- thermal shutdown diagnostic;
+- REFDI open diagnostic;
+- REFDI short diagnostic;
+
+while leaving REFWB open/short masked until wire-break is actually used.
+
+`FAULT1EN = 0xF8` enables CRC, POR, FAULT2, and both overtemperature alarms while deliberately masking:
+
+- VDD24-low (`24VL`), because `VDD24` is NC;
+- VDD24-missing (`24VM`), because `VDD24` is NC;
+- group wire-break fault (`WBG`) while wire-break is globally unused.
+
+Recommended initialization sequence:
+
+```text
+1. initialize TCAL9539 sufficiently to observe DI_READY_N / P14
+2. wait until DI_READY_N == LOW
+3. configure SPI for 24-bit MAX22190 CRC operation, SCLK idle LOW
+4. perform a valid CRC-protected transaction and inspect FAULT1/POR
+5. write INEN = 0x0F
+6. write FLT1..FLT4 = 0x04
+7. write CFG = 0x01
+8. read WB and FAULT2 to clear stale/POR diagnostic state
+9. write FAULT2EN = 0x3C
+10. write GPO = 0x80
+11. write FAULT1EN = 0xF8
+12. explicitly clear the POR indication according to the datasheet write semantics
+13. read back configuration registers and enter normal operation
+```
+
+The CRC polynomial and frame-generation algorithm shall follow the official MAX22190 CRC documentation rather than a hand-invented variant.
+
+Normal DI `0/1` changes do **not** inherently assert `/FAULT`; firmware must use deterministic SPI polling for state/edge/event processing. `/FAULT` is reserved for diagnostics and is shared with the analog-output fault sources on `BOARD_FAULT_N`.
+
+When wire-break is enabled on at least one channel, firmware may additionally unmask the REFWB diagnostics and `WBG`; it must clear stale `WB/FAULT2` state during that transition. When the last wire-break-enabled channel is disabled, mask `WBG` and the REFWB diagnostics before clearing the final `WBE` bit.
 
 ### 3.4 Digital outputs
 
@@ -828,7 +1132,8 @@ TCAL9539 P11 <- I2C0_READY            IN  <- TCA4307 #0 READY
 TCAL9539 P12 -> I2C1_ISOL_EN          OUT -> TCA4307 #1 EN
 TCAL9539 P13 <- I2C1_READY            IN  <- TCA4307 #1 READY
 
-TCAL9539 P14..P17                     RESERVED
+TCAL9539 P14 <- DI_READY_N             IN  <- MAX22190 /READY
+TCAL9539 P15..P17                     RESERVED
 ```
 
 `TCAL9539 /INT` is connected to RP2350 GPIO39 and becomes the shared slow-service interrupt:
@@ -843,13 +1148,14 @@ Firmware must not perform I²C transactions directly inside the GPIO ISR. The IS
 
 This replaces the old architecture where GPIO44..47 directly drove `SENSOR_PWR_EN0..3` and GPIO39 only reported one combined sensor-power fault.
 
-Benefits of the new architecture:
+Benefits of the current service-I/O architecture:
 
 - individual fault identity for all four `TPS2553` channels;
 - no RP2350 GPIO cost for the four slow sensor-power enables;
 - both external I²C branches can be disconnected/recovered independently;
 - a stuck external I²C0 device cannot block access to the internal expander;
-- four expander GPIOs remain reserved for later slow control/diagnostics.
+- MAX22190 `/READY` is observable without consuming a direct RP2350 GPIO;
+- three expander GPIOs remain reserved for later slow control/diagnostics.
 
 ### 4.5 RP2350 internal ADC board monitoring
 
@@ -1155,7 +1461,7 @@ GPIO47 ADC7_MON_RESERVED / ADC7
 
 All RP2350 GPIOs remain allocated/reserved. `SENSOR_PWR_EN0..3` are no longer direct MCU pins; they move to the `TCAL9539`. GPIO39 is no longer a single combined sensor-power fault input; it is the expander interrupt `BOARD_IO_INT_N`.
 
-AO-related board-level defaults on the MCU sheet:
+AO/DI-related board-level defaults on the MCU sheet:
 
 ```text
 AO_LATCH      -> 10k -> +3V3_DIG
@@ -1163,7 +1469,7 @@ BOARD_FAULT_N -> 10k -> +3V3_DIG
 AO_ENABLE_REQ -> 100k -> GND_SYS
 ```
 
-Do not duplicate these pulls on the AO sheet.
+Do not duplicate the `BOARD_FAULT_N` pull-up on either the AO or DI sheet.
 
 ---
 
@@ -1738,6 +2044,19 @@ RS485 blinking   -> transmit activity
 
 AO and DO LEDs deliberately represent the **safe-gated hardware enable**, not only the MCU request, so they remain truthful during reset/watchdog fault conditions.
 
+### 10.3 Digital-input state LEDs
+
+The four DI state LEDs are separate from the board-status row:
+
+```text
+DI0_LED <- MAX22190 LED1
+DI1_LED <- MAX22190 LED2
+DI2_LED <- MAX22190 LED3
+DI3_LED <- MAX22190 LED4
+```
+
+They are driven directly by the MAX22190 energyless LED outputs and indicate actual physical input activity. They require no firmware GPIO and no ordinary LED series resistor. They should be positioned where the enclosure can associate each indicator with the corresponding DI terminal.
+
 ---
 
 ## 11. Current PCB / mechanical baseline
@@ -1791,11 +2110,12 @@ terminal -> protection -> filter -> ADC/frontend
 USB-C -> ESD -> series network -> RP2350
 W5500 -> MDI matching -> MagJack
 RS-485 connector -> TVS/termination -> isolated transceiver
+DI connector -> pulse-rated 2512 resistors -> MAX22190
 ```
 
 Critical/high-current/high-speed/protection components remain on TOP where practical. Small noncritical configuration/bias/DNP components may be placed on BOTTOM.
 
-The latest placement concept also reserves a single LED row for enclosure light pipes.
+The latest placement concept also reserves a single LED row for enclosure light pipes plus the four DI channel LEDs close to their field terminals.
 
 The `TCAL9539` must remain on the internal side of the I2C0 `TCA4307`; the two `TCA4307` devices should be placed near the transition from internal logic to the corresponding external sensor connector so that external bus faults/capacitance are isolated from the internal bus segment.
 
@@ -1807,7 +2127,7 @@ The latest placement concept has been mechanically checked for:
 - board-edge violations;
 - mounting-hole keepout violations.
 
-The scripted concept predates the newly frozen `TCAL9539` + 2 × `TCA4307` addition, completed AI protection population, and the AO output/sense/protection circuitry. It must be regenerated after those parts and the ADC monitor networks are placed.
+The scripted concept predates the newly frozen `TCAL9539` + 2 × `TCA4307` addition, completed AI protection population, the AO output/sense/protection circuitry, and the finalized DI MAX22190 frontend. It must be regenerated after those parts and the ADC monitor networks are placed.
 
 The scripted concept is **not** a substitute for production Altium DRC, courtyard checks, exact footprint clearances, assembly access, or pin-level routing verification.
 
@@ -1872,6 +2192,35 @@ For AO specifically:
 
 Internal RP2350 rail-monitor divider/RC networks should be treated as diagnostic analog nodes and kept away from switch nodes. `VIN_PROTECTED_MON` must be designed for the full protected input range plus engineering margin, not only nominal 24 V operation.
 
+#### Digital inputs
+
+The DI block must be physically ordered from field side to logic side:
+
+```text
+board edge
+ -> DG350-3.5-06P-14
+ -> four CRCW2512 1.5k pulse resistors
+ -> MAX22190
+ -> SPI / logic region
+```
+
+Rules:
+
+- keep the raw `DIx_IN` trace from the connector to its 2512 resistor short;
+- keep the protected resistor-to-`INx` trace short and avoid vias where practical;
+- do not place external filter capacitors on `INx`;
+- route the two `DI_COM` connector pins into a wide local `GND_SYS` return adjacent to the MAX22190 ground/EP area;
+- do not force DI transient return current to travel through the MCU, Flash, PSRAM or other logic regions;
+- use solid `GND_SYS` under the MAX22190 EPAD and multiple thermal/ground vias consistent with the final fabrication process;
+- place the VDD31 and VL16 100 nF bypass capacitors immediately adjacent to their corresponding pins; the 1 µF parts may be slightly farther away;
+- place the `7.5k REFDI` and `24k REFWB` resistors close to pins 27/26 and keep their reference nodes away from SCLK and raw field traces;
+- enter SPI/control routing from the logic side of the IC rather than through the field-input corridor;
+- place `DI0_LED..DI3_LED` where each LED can be visually associated with its connector channel.
+
+The actual footprint of `DG350-3.5-06P-14` must be checked for copper-to-copper clearance, not only nominal 3.5 mm pitch. Particular attention is required at the `DI3_IN` pin4 to `DI_COM` pin5 transition and around the 2512 resistor pads. ADI transient-testing experience showed that inadequate copper spacing can arc during high-voltage ESD even when the schematic topology is correct. Where footprint geometry permits, target at least approximately 2.5 mm local copper clearance in the field-exposed DI area rather than squeezing ground pours against field pads.
+
+Reference-design ESD/EFT/surge levels do not become board claims until this exact layout, connector and enclosure are tested.
+
 #### External I²C
 
 - keep `TCAL9539` electrically inside the protected/internal I2C0 segment;
@@ -1879,7 +2228,8 @@ Internal RP2350 rail-monitor divider/RC networks should be treated as diagnostic
 - provide pull-ups appropriate to each side of each buffer;
 - avoid creating an external fault path that can hold the internal service bus low;
 - default `TCA4307 EN` to external-bus-disconnected during reset;
-- route `READY` back to the `TCAL9539` as documented above.
+- route `READY` back to the `TCAL9539` as documented above;
+- route `DI_READY_N` to `TCAL9539 P14` as an internal slow diagnostic input.
 
 ---
 
@@ -1895,7 +2245,7 @@ Current assumptions:
 - RJ45, USB-C, terminal blocks, inductors, and light pipes are the primary Z-height/mechanical drivers;
 - top-entry USB/RJ45 require access from above;
 - terminal blocks require screwdriver and wire-bend volume;
-- the status LED row should align with enclosure apertures or a light-pipe assembly;
+- the status LED row and the four DI state LEDs should align with enclosure apertures or a light-pipe assembly;
 - no metal standoff/screw/insert may compromise the RS-485 isolation barrier;
 - connector mating volumes must be treated as 3D keepouts, not only PCB body keepouts.
 
@@ -1936,6 +2286,8 @@ Required firmware consequences of the 2026-08-28 service-I/O hardware decision:
 - change GPIO39 from `SENSOR_PWR_FAULT_N` to `BOARD_IO_INT_N`;
 - expose four independent TPS2553 fault states instead of only one combined fault;
 - control and diagnose both `TCA4307` instances (`EN`/`READY`);
+- use `TCAL9539 P14` as `DI_READY_N` from MAX22190 `/READY`;
+- keep `TCAL9539 P15..P17` reserved;
 - extend/validate the RP2350 generic ADC-voltage driver for ADC source indices 4..7 before internal rail monitors are enabled;
 - preserve GPIO40..43 as `UIC0..3` with ADC0..3 capability reserved for a future validated analog UIC path.
 
@@ -1951,8 +2303,30 @@ Required AO firmware contract from the 2026-08-30 schematic:
 - transmit AO1 word first and AO0 word second before the common `AO_LATCH` rising edge;
 - final AO1 SDO is not a shared `BOARD_SPI_MISO` source;
 - interpret hardware CLEAR in `4–20 mA` mode as a `4 mA` safe-state, not a hard-off state;
-- `BOARD_FAULT_N` combines both AD5422 open-drain FAULT outputs; firmware must read/configure DAC status registers if channel-level discrimination is required;
+- `BOARD_FAULT_N` combines both AD5422 open-drain FAULT outputs and MAX22190 `/FAULT`; firmware must query all relevant devices when this shared line is asserted;
 - do not claim sustained 24/36 V AO miswire survival until that condition is separately designed and qualified.
+
+Required DI firmware contract from the 2026-08-31 MAX22190 schematic:
+
+- expose exactly **4 physical DI channels** and advertise them as IEC 61131-2 Type 1/Type 3, nominal 24 V;
+- do not advertise Type 2 support for Hardware Prototype v1;
+- use `DI_CS_N = GPIO16`, `BOARD_SPI_SCK = GPIO14`, `BOARD_SPI_MOSI = GPIO15`, and `BOARD_SPI_MISO = GPIO12`;
+- use 24-bit non-daisy-chain MAX22190 SPI operation with CRC and SCLK idle LOW;
+- observe `DI_READY_N` through `TCAL9539 P14` before relying on MAX22190 accesses;
+- configure `INEN = 0x0F` after startup so IN5..IN8 are disabled;
+- default `FLT1..FLT4 = 0x04` for 1.6 ms internal filtering with wire-break disabled;
+- configure `CFG = 0x01` to enable REFDI-short diagnostics;
+- default `FAULT2EN = 0x3C`, masking REFWB faults while no wire-break channel is active;
+- default `GPO = 0x80` for sticky `/FAULT` handling;
+- default `FAULT1EN = 0xF8`, keeping VDD24-low/missing and WBG masked while unused;
+- clear and verify POR/diagnostic state using the official datasheet sequence before declaring DI healthy;
+- use deterministic SPI polling for normal input changes; `/FAULT` is diagnostic, not a normal change-of-state interrupt;
+- implement per-channel configurable debounce/filter time, inversion and edge/event processing above the hardware DI state;
+- keep wire-break disabled by default and only allow it for a channel whose field-device/EOL configuration guarantees a valid OFF-state diagnostic current;
+- do not imply that a plain dry-contact OFF state can be distinguished from a broken wire without a remote EOL/diagnostic path;
+- when wire-break is enabled on at least one channel, explicitly manage `WBE`, `WBG`, `RFWBO/RFWBS`, stale clear-on-read flags and the associated FAULT enable masks;
+- when `BOARD_FAULT_N` asserts, query MAX22190 as well as the AD5422 devices because all three open-drain fault sources share the line;
+- do not claim sustained 36 V DI operation or final IEC/EMC certification until the assembled PCB is qualified.
 
 ---
 
@@ -1992,6 +2366,7 @@ Current status:
 06_RS485            practically closed
 07_ANALOG_INPUTS    practically closed; final PTC/footprint/pulse-rating audit required
 08_ANALOG_OUTPUTS   practically closed; final annotate/ERC/footprint/ground-domain audit required
+09_DIGITAL_INPUTS   practically closed; final footprint/layout/clearance/firmware-driver audit required
 ```
 
 Before PCB release, `07_ANALOG_INPUTS` must still:
@@ -2021,6 +2396,26 @@ Before PCB release, `08_ANALOG_OUTPUTS` must still:
 - qualify the selected transient/EMC level; current protection is not a guaranteed sustained 24/36 V miswire solution.
 ```
 
+Before PCB release, `09_DIGITAL_INPUTS` must still:
+
+```text
+- annotate all parts and remove placeholders;
+- verify MAX22190ATJ+ symbol pins 1..32 and EPAD33 against the final TQFN footprint pads;
+- verify EPAD33 is solidly connected to GND_SYS with the intended thermal/ground via pattern;
+- confirm VDD31/VL16 local 100n || 1u placement and VDD24 pin30 NC;
+- confirm one and only one DI_CS_N 10k pull-up and BOARD_FAULT_N pull-up;
+- complete DI_READY_N -> TCAL9539 P14 on the service-I/O sheet;
+- freeze exact orderable 7.50k REFDI, 24.0k REFWB and four DI LED parts;
+- verify all four field resistors are CRCW25121K50FKEGHP / 1.5k / 2512 pulse-withstanding parts;
+- verify DG350-3.5-06P-14 footprint, 3D body and real copper clearances, especially DI3_IN pin4 to DI_COM pin5;
+- ensure no external capacitors are present on IN1..IN4;
+- confirm LED1..LED4 drive fitted LEDs to GND_SYS with no ordinary series resistor and LED5..LED8 are tied to GND_SYS;
+- confirm IN5..IN8 are tied to GND_SYS and firmware disables them with INEN=0x0F;
+- run a complete BOARD_SPI/DI_CS_N/BOARD_FAULT_N/DI_READY_N cross-sheet net audit;
+- implement and verify the CRC-protected MAX22190 driver/startup sequence;
+- qualify 24 V operation, sustained 36 V behavior if it is to be claimed, and the final ESD/EFT/surge levels on the assembled PCB.
+```
+
 The 2026-08-28 service-I/O architecture decision still requires schematic completion/audit for:
 
 ```text
@@ -2029,6 +2424,7 @@ The 2026-08-28 service-I/O architecture decision still requires schematic comple
 - SENSOR_PWR_EN0..3 moved from RP2350 GPIO44..47 to TCAL9539 P00..P03;
 - four TPS2553 fault outputs routed individually to TCAL9539 P04..P07;
 - TCA4307 EN/READY routed through TCAL9539 P10..P13;
+- DI_READY_N routed from MAX22190 /READY to TCAL9539 P14;
 - TCAL9539 /INT connected to GPIO39 / BOARD_IO_INT_N;
 - TCAL9539 /RESET connected to SYS_RESET_N;
 - VIN_PROTECTED, +15V_AO and +5V_ANALOG monitor networks added to ADC4..ADC6;
@@ -2050,24 +2446,23 @@ final BOM audit
 PCB DRC
 ```
 
-The discrete LED circuitry and service-I/O/I²C-recovery circuitry must also be represented in the schematic and included in this audit.
+The discrete board-status LED circuitry, DI state LEDs, and service-I/O/I²C-recovery circuitry must also be represented in the schematic and included in this audit.
 
 ---
 
-## 16. Remaining schematic work after analog I/O
+## 16. Remaining schematic work after analog I/O and DI
 
-The analog input/output sheets are now topology-complete enough to move on after the final cleanup listed in section 15.
+The analog input/output and digital-input sheets are now topology-complete enough to move on after the final cleanup listed in section 15.
 
 Remaining major hardware blocks still requiring schematic completion/finalization include:
 
-- industrial digital inputs around `MAX22190ATJ+`;
 - protected high-side outputs around `IPS2050HTR`;
 - UIC/counter/frequency/encoder frontend and the decision on an actual analog path to ADC0..3;
 - external sensor connectors, their TPS2553 power switches, `TCAL9539`, and both `TCA4307` devices;
 - internal ADC4..ADC6 rail-monitor dividers/filters;
-- final status-LED driver circuitry.
+- final board-status LED driver circuitry.
 
-Exact sheet numbering/order after `08_ANALOG_OUTPUTS` should follow the Altium project organization; do not renumber already-completed sheets merely to match this document.
+Exact sheet numbering/order after `09_DIGITAL_INPUTS` should follow the Altium project organization; do not renumber already-completed sheets merely to match this document.
 
 ---
 
@@ -2080,6 +2475,7 @@ Explicitly outside the diploma MVP:
 - second Ethernet port / embedded Ethernet switch;
 - network redundancy protocols;
 - analog `±10 V` outputs;
+- MAX22190 quad Type 2 DI topology using paired internal channels;
 - full per-channel galvanic isolation;
 - relay-output variants;
 - CAN/CAN-FD and IO-Link;
@@ -2111,7 +2507,21 @@ Power    : 9–36 V DC input
            DG350-3.5-02P-14 OUT/RET per channel
            current-mode hardware CLEAR safe state = 4 mA
 
-4 × DI   : protected 24 V
+4 × DI   : MAX22190ATJ+
+           IEC 61131-2 Type 1 / Type 3, nominal 24 V
+           DI0..DI3 -> IN1..IN4; IN5..IN8 unused/grounded
+           7.50k REFDI, 24.0k REFWB
+           1.5k CRCW2512 pulse-rated series resistor per channel
+           DG350-3.5-06P-14: DI0..DI3 + 2 × DI_COM
+           VDD/VL = +3V3_DIG, VDD24 = NC
+           24-bit CRC SPI, DI_CS_N = GPIO16
+           /FAULT -> shared BOARD_FAULT_N
+           /READY -> DI_READY_N -> TCAL9539 P14
+           4 × hardware energyless DI state LED
+           internal programmable filtering, default 1.6 ms
+           optional per-channel wire-break with valid field diagnostic current
+           Type 2 deferred to a future board revision
+
 2 × DO   : protected 24 V high-side
 4 × UIC  : counter / frequency / encoder / digital input
            ADC0..3 capability reserved; analog frontend path still to be finalized
@@ -2126,6 +2536,8 @@ Sensor I/O control:
 4 × TPS2553 independently controlled power switches with individual faults
 2 × TCA4307 external-I2C isolation/recovery channels
 GPIO39 = BOARD_IO_INT_N
+P14 = DI_READY_N
+P15..P17 reserved
 
 RP2350 ADC board diagnostics:
 ADC4 = VIN_PROTECTED_MON
@@ -2143,6 +2555,7 @@ Safe AO  : AO_SAFE_EN = SYS_RESET_N AND AO_ENABLE_REQ
 Safe DO  : SYS_RESET_N AND DO_ENABLE_REQ
 
 LEDs     : PWR / RUN / FAULT / AO / DO / SENS / RS485
+DI LEDs  : DI0 / DI1 / DI2 / DI3, hardware-driven by MAX22190
 RJ45 LED : LINK / ACT
 Debug DNP: 5V_PGOOD / 3V3_PGOOD
 ```
