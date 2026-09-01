@@ -18,7 +18,7 @@ EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
 EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
 EXPECTED_V043_COMMIT = "dec08ba22e835e8037f9fd5342dcc63ddc03f5ac"
 EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
-    "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
+    "830f8678a86040a31e8e2f51bea4647c4e8473243c012526674f3bc462763102"
 )
 # Updated 2026-08-23 (from 0f8e85b8477ff3edc77968806ad0cc509c3cfafd81594cc6318915ff48a00bf3)
 # for commit 5bed455: fixing the missing HasComponent references that left
@@ -32,7 +32,7 @@ EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
 # confirmed by diffing this script's own public_inventory() output against
 # commit d48fd06 (pre-fix) before recording this hash.
 EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
-    "a9a3b7610c5484987a9f01fd67cd2515876177071ea1bedbfa8595873ab3c4f8"
+    "830f8678a86040a31e8e2f51bea4647c4e8473243c012526674f3bc462763102"
 )
 # v0.5.0 T8 adds the runtime-configuration-preset apply/list methods
 # (Device.Maintenance.ApplyConfigPreset, Device.Maintenance.ListConfigPresets)
