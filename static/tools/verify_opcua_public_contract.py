@@ -45,7 +45,7 @@ EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
 # public_inventory() output against the current tree at T8 completion, not
 # guessed.
 EXPECTED_V050_PUBLIC_INVENTORY_SHA256 = (
-    "074324c4cd2f1fdf410e3a09f9cba3787ebeecd2b50d3f4de02db7b898425c6b"
+    "830f8678a86040a31e8e2f51bea4647c4e8473243c012526674f3bc462763102"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.

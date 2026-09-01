@@ -49,6 +49,7 @@ SUITES = (
     "test_rp2_ua_datetime_clock.py",
     "test_w5x00_transport.py",
     "test_open62541_lwip_listener.py",
+    "test_open62541_ns0_stack_bound.py",
     "test_bootloader_handoff.py",
     "test_stage_ota_resume.py",
 )

@@ -67,6 +67,67 @@
  */
 #include "opcua_model_internal.h"
 
+#include <timers.h>
+
+/**
+ * @brief Fallback deadline for `UA_Server_run_shutdown()` during a
+ *        controlled restart (v0.5.0 T6).
+ *
+ * Root cause (found on hardware 2026-08-31): open62541's
+ * `UA_BinaryProtocolManager` network callback accepts and fully activates
+ * new incoming connections on the listening socket even after the
+ * component has been told to stop (no check of its own STOPPING state
+ * before creating a new SecureChannel), while `UA_Server_run_shutdown()`'s
+ * drain loop waits for the SecureChannel list to become empty. Any client
+ * that reconnects during the drain window -- completely normal client
+ * behavior, and exactly what happens if the original client (or any
+ * monitoring/SCADA client) retries after the expected disconnect --
+ * keeps that list non-empty forever, so the call never returns. This is
+ * upstream open62541 behavior, present in both v1.5.3 and v1.5.7; not a
+ * version-specific regression.
+ *
+ * `UA_Server_run_shutdown()` is a single blocking call on OpcUaTask, which
+ * cannot time itself out of its own blocking call. `model_shutdown_deadline_timer_cb()`
+ * runs on the independent Timer Service Task instead: armed for
+ * `MODEL_SHUTDOWN_TIMEOUT_MS` right before the call, disarmed right after
+ * it returns. If it fires, the call is presumed stuck in the livelock
+ * above and `diag_service_reboot()` (the same hardware-watchdog-based hard
+ * reset already used for `g_pending_actions.reboot_pending`) is used as a
+ * fallback -- it works via `watchdog_reboot()`'s countdown in silicon, so
+ * it fires regardless of what OpcUaTask is doing.
+ */
+#define MODEL_SHUTDOWN_TIMEOUT_MS 8000u
+
+static void model_shutdown_deadline_timer_cb(TimerHandle_t timer)
+{
+    (void)timer;
+    printf("[OPC UA]\tUA_Server_run_shutdown did not complete within %u ms "
+           "(a reconnecting client likely kept a SecureChannel open through "
+           "the shutdown drain) -- falling back to a hard reboot\n",
+           (unsigned)MODEL_SHUTDOWN_TIMEOUT_MS);
+    fflush(stdout);
+    diag_service_reboot(10u);
+}
+
+/** @brief Lazily-created, reused across every controlled restart. */
+static TimerHandle_t model_get_shutdown_deadline_timer(void)
+{
+    static TimerHandle_t timer = NULL;
+    if (timer == NULL)
+    {
+        timer = xTimerCreate("RestartDeadline",
+                             pdMS_TO_TICKS(MODEL_SHUTDOWN_TIMEOUT_MS),
+                             pdFALSE, NULL, model_shutdown_deadline_timer_cb);
+        if (timer == NULL)
+        {
+            printf("[OPC UA]\tFailed to create restart-deadline timer; "
+                   "a stuck UA_Server_run_shutdown() will hang indefinitely\n");
+            fflush(stdout);
+        }
+    }
+    return timer;
+}
+
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
 /**
  * @brief Compiled-in, non-secret placeholder TLS server identity
@@ -125,26 +186,17 @@ static void model_config_service_restart_callback(const device_profile_config_t 
      * the live namespace against the now-committed RUNNING configuration. This
      * also recovers deterministically if a prior restart notification was
      * missed and the snapshot was already stale before this commit. */
-    bool diag_requires_restart;
+    bool requires_restart;
     (void)new_config;
     (void)previous_config;
 
-    /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
-     * model_channels.c's model_is_reboot_required() for context. Remove
-     * before shipping. */
-    diag_requires_restart = model_address_space_snapshot_requires_server_restart();
-    printf("[DIAG-REBOOT-REQ] restart_callback invoked: requires_restart=%d snapshot_valid=%d\n",
-           (int)diag_requires_restart, (int)g_model_address_space_config_snapshot_valid);
-    fflush(stdout);
-
-    if (!diag_requires_restart)
+    requires_restart = model_address_space_snapshot_requires_server_restart();
+    if (!requires_restart)
     {
         return;
     }
 
     g_pending_actions.restart_pending = true;
-    printf("[DIAG-REBOOT-REQ] restart_callback armed restart_pending=true\n");
-    fflush(stdout);
 }
 
 /* Implementation note: the two PSRAM scratch buffers are allocated
@@ -832,11 +884,6 @@ void model_core_task(void *argument)
      * configuration, rather than a second, parallel implementation of it. */
     for (;;)
     {
-    /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
-     * model_channels.c's model_is_reboot_required() for context. Remove
-     * before shipping. */
-    printf("[DIAG-REBOOT-REQ] for(;;) top: is_restart=%d\n", (int)is_restart);
-    fflush(stdout);
     UA_ServerConfig server_config;
     memset(&server_config, 0, sizeof(server_config));
     config = &server_config;
@@ -1085,16 +1132,6 @@ void model_core_task(void *argument)
             g_model_address_space_config_snapshot = *running_config;
             g_model_address_space_config_snapshot_valid = true;
         }
-
-        /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
-         * model_channels.c's model_is_reboot_required() for context. Remove
-         * before shipping. */
-        printf("[DIAG-REBOOT-REQ] snapshot captured: is_restart=%d running_config=%p "
-               "snapshot_valid=%d desc0=\"%s\"\n",
-               (int)is_restart, (const void *)running_config,
-               (int)g_model_address_space_config_snapshot_valid,
-               running_config != NULL ? running_config->channels[0].description : "(null)");
-        fflush(stdout);
     }
 
     log_opcua_heap("Address space ready");
@@ -1233,20 +1270,8 @@ void model_core_task(void *argument)
          * request can be served against the stale namespace. Staged-only data
          * is deliberately ignored: it has not become the running model. */
         {
-            /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
-             * model_channels.c's model_is_reboot_required() for context.
-             * Remove before shipping. */
-            static uint32_t s_diag_loop_iter = 0u;
-            const bool diag_fail_closed = model_address_space_snapshot_requires_server_restart();
-            s_diag_loop_iter++;
-            if (diag_fail_closed || (s_diag_loop_iter % 20u) == 0u)
-            {
-                printf("[DIAG-REBOOT-REQ] loop iter=%u fail_closed=%d restart_pending=%d\n",
-                       (unsigned)s_diag_loop_iter, (int)diag_fail_closed,
-                       (int)g_pending_actions.restart_pending);
-                fflush(stdout);
-            }
-            if (diag_fail_closed)
+            const bool fail_closed = model_address_space_snapshot_requires_server_restart();
+            if (fail_closed)
             {
                 g_pending_actions.restart_pending = true;
                 break;
@@ -1303,16 +1328,23 @@ void model_core_task(void *argument)
      * newly-committed configuration's address space. Not reached for a
      * normal exit today (the only two break conditions above are
      * reboot_pending, handled above, and restart_pending, handled below). */
-    /* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): see
-     * model_channels.c's model_is_reboot_required() for context. Remove
-     * before shipping. */
-    printf("[DIAG-REBOOT-REQ] post-loop-break: restart_pending=%d reboot_pending=%d\n",
-           (int)g_pending_actions.restart_pending, (int)g_pending_actions.reboot_pending);
-    fflush(stdout);
-    status = UA_Server_run_shutdown(server);
-    printf("[DIAG-REBOOT-REQ] UA_Server_run_shutdown returned 0x%x (%s)\n",
-           status, UA_StatusCode_name(status));
-    fflush(stdout);
+    {
+        /* See model_shutdown_deadline_timer_cb()'s doc comment: a hard
+         * fallback for UA_Server_run_shutdown()'s open62541-internal
+         * reconnect livelock. */
+        TimerHandle_t shutdown_deadline = model_get_shutdown_deadline_timer();
+        if (shutdown_deadline != NULL)
+        {
+            xTimerStart(shutdown_deadline, 0);
+        }
+
+        status = UA_Server_run_shutdown(server);
+
+        if (shutdown_deadline != NULL)
+        {
+            xTimerStop(shutdown_deadline, 0);
+        }
+    }
     if (status != UA_STATUSCODE_GOOD)
     {
         printf("[OPC UA]\tUA_Server_run_shutdown failed: 0x%x (%s)\n",
@@ -1323,16 +1355,11 @@ void model_core_task(void *argument)
 
     model_context_delete_server(server);
     server = NULL;
-    printf("[DIAG-REBOOT-REQ] model_context_delete_server done, server=NULL\n");
-    fflush(stdout);
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     security_service_set_audit_callback(NULL, NULL);
 #endif
 
-    printf("[DIAG-REBOOT-REQ] re-checking restart_pending=%d before continue/break\n",
-           (int)g_pending_actions.restart_pending);
-    fflush(stdout);
     if (g_pending_actions.restart_pending)
     {
         /* v0.5.0 T6: no new printf string here -- see the startup-message

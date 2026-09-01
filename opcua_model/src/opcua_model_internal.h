@@ -50,6 +50,13 @@
 #endif
 
 #if defined(UA_ENABLE_PUBSUB) && defined(UA_ENABLE_MQTT)
+/* open62541 v1.5.7's own public header only declares this for
+ * POSIX/win32 (`(UA_ARCHITECTURE_POSIX && !UA_ARCHITECTURE_LWIP) ||
+ * UA_ARCHITECTURE_WIN32`), even though the MQTT ConnectionManager
+ * implementation itself is architecture-agnostic and still compiles in
+ * for the lwip architecture (gated only by UA_ENABLE_MQTT). Restore the
+ * declaration so this project's lwip build doesn't fall back to an
+ * implicit int() prototype. */
 UA_ConnectionManager *UA_ConnectionManager_new_MQTT(const UA_String eventSourceName);
 #endif
 

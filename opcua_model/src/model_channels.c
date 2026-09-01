@@ -102,57 +102,6 @@ bool model_address_space_snapshot_requires_server_restart(void)
     return model_config_requires_server_reboot(&g_model_address_space_config_snapshot, running);
 }
 
-/* TEMPORARY v0.5.0 diagnostic instrumentation (2026-08-30): logs which of
- * model_is_reboot_required()'s two independent terms is true, and which
- * specific field differs, when investigating a hardware-observed defect
- * where rebootRequired does not clear after the first controlled restart
- * of a boot cycle. Remove before shipping; see
- * docs/releases/v0.5.0-hardware-verification.md's 2026-08-30 addendum. */
-static void model_debug_log_config_diff(const char *label,
-                                        const device_profile_config_t *lhs,
-                                        const device_profile_config_t *rhs)
-{
-    if (lhs == NULL || rhs == NULL)
-    {
-        printf("[DIAG-REBOOT-REQ] %s: lhs=%p rhs=%p (NULL)\n", label, (const void *)lhs, (const void *)rhs);
-        fflush(stdout);
-        return;
-    }
-
-    printf("[DIAG-REBOOT-REQ] %s: port=%d mqtt=%d mqttJson=%d alarmAck=%d heapDiag=%d taskDiag=%d "
-           "devName=%d hostname=%d ntp=%d mqttUrl=%d mqttTopic=%d prodUri=%d mac=%d netMode=%d "
-           "ip=%d mask=%d gw=%d dns=%d\n",
-           label,
-           (int)(lhs->opcua_port != rhs->opcua_port),
-           (int)(lhs->enable_mqtt_pubsub != rhs->enable_mqtt_pubsub),
-           (int)(lhs->mqtt_pubsub_use_json != rhs->mqtt_pubsub_use_json),
-           (int)(lhs->enable_alarm_ack_method != rhs->enable_alarm_ack_method),
-           (int)(lhs->enable_heap_diagnostics != rhs->enable_heap_diagnostics),
-           (int)(lhs->enable_task_diagnostics != rhs->enable_task_diagnostics),
-           (int)model_string_changed(lhs->device_name, rhs->device_name),
-           (int)model_string_changed(lhs->opcua_hostname, rhs->opcua_hostname),
-           (int)model_string_changed(lhs->ntp_server, rhs->ntp_server),
-           (int)model_string_changed(lhs->mqtt_broker_url, rhs->mqtt_broker_url),
-           (int)model_string_changed(lhs->mqtt_topic_root, rhs->mqtt_topic_root),
-           (int)model_string_changed(lhs->product_instance_uri, rhs->product_instance_uri),
-           (int)model_byte_array_changed(lhs->mac, rhs->mac, sizeof(lhs->mac)),
-           (int)(lhs->network_mode != rhs->network_mode),
-           (int)model_byte_array_changed(lhs->static_ip, rhs->static_ip, sizeof(lhs->static_ip)),
-           (int)model_byte_array_changed(lhs->static_netmask, rhs->static_netmask, sizeof(lhs->static_netmask)),
-           (int)model_byte_array_changed(lhs->static_gateway, rhs->static_gateway, sizeof(lhs->static_gateway)),
-           (int)model_byte_array_changed(lhs->static_dns, rhs->static_dns, sizeof(lhs->static_dns)));
-    fflush(stdout);
-
-    for (size_t index = 0u; index < PLATFORM_CHANNEL_LIMIT; ++index)
-    {
-        if (model_channel_requires_server_rebuild(&lhs->channels[index], &rhs->channels[index]))
-        {
-            printf("[DIAG-REBOOT-REQ] %s: channel[%u] differs\n", label, (unsigned)index);
-            fflush(stdout);
-        }
-    }
-}
-
 bool model_is_reboot_required(void)
 {
     const device_profile_config_t *running = config_service_get();
@@ -167,21 +116,6 @@ bool model_is_reboot_required(void)
 
     snapshot_differs = model_address_space_snapshot_requires_server_restart();
     staged_differs = model_config_requires_server_reboot(running, staged);
-
-    if (snapshot_differs || staged_differs)
-    {
-        printf("[DIAG-REBOOT-REQ] snapshot_differs=%d staged_differs=%d\n",
-               (int)snapshot_differs, (int)staged_differs);
-        fflush(stdout);
-        if (snapshot_differs)
-        {
-            model_debug_log_config_diff("snapshot-vs-running", &g_model_address_space_config_snapshot, running);
-        }
-        if (staged_differs)
-        {
-            model_debug_log_config_diff("staged-vs-running", staged, running);
-        }
-    }
 
     return snapshot_differs || staged_differs;
 }
