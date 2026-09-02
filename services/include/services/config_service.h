@@ -325,6 +325,33 @@ bool config_service_reset_to_defaults(void);
 bool config_service_apply(void);
 
 /**
+ * @brief Outcome of `config_service_rollback_running_to_last_known_good()`.
+ */
+typedef enum
+{
+    /** Flash RUNNING, this service's in-memory running/staged state, and
+     * the runtime-apply callback's own state all now reflect
+     * LAST_KNOWN_GOOD. Safe to retry bring-up (e.g. rebuild the OPC UA
+     * namespace) immediately. */
+    CONFIG_SERVICE_ROLLBACK_OK = 0,
+    /** LAST_KNOWN_GOOD had nothing usable (e.g. no prior commit ever
+     * happened on this device). Flash RUNNING was never touched by this
+     * call, so nothing changed -- a reboot would hit the exact same dead
+     * end. The caller has no further fallback. */
+    CONFIG_SERVICE_ROLLBACK_UNAVAILABLE,
+    /** Flash RUNNING was already overwritten with LAST_KNOWN_GOOD's bytes
+     * before a later step failed (decode, validation, or the runtime-apply
+     * callback rejecting the recovered configuration) -- this service's own
+     * in-memory running/staged state and the runtime-apply callback's own
+     * state (e.g. `channel_manager`'s registry) were left exactly as they
+     * were, now inconsistent with Flash. This function cannot reconcile
+     * that split in place: the caller must force a reboot so a fresh boot
+     * re-derives every layer from Flash RUNNING from scratch, instead of
+     * retrying or continuing to run with the split unresolved. */
+    CONFIG_SERVICE_ROLLBACK_FLASH_CHANGED_INCOMPLETE,
+} config_service_rollback_result_t;
+
+/**
  * @brief Recovers from an unusable RUNNING configuration by restoring
  * LAST_KNOWN_GOOD -- on Flash, in this service's in-memory running/staged
  * state, and in the registered runtime-apply callback's own state
@@ -345,22 +372,15 @@ bool config_service_apply(void);
  * this service's own records -- so the caller can retry bring-up against a
  * configuration, and a matching runtime state, already known to work.
  *
- * @return true if LAST_KNOWN_GOOD held a committed, valid record, the
- * runtime-apply callback (if any is registered) accepted it, and Flash
- * RUNNING plus this service's in-memory running/staged state now all
- * reflect it; false if LAST_KNOWN_GOOD had nothing usable (e.g. no prior
- * commit ever happened on this device), the recovery write failed, or the
- * runtime-apply callback rejected the recovered configuration.
- * @note On a runtime-apply rejection, Flash RUNNING has already been
- * overwritten with LAST_KNOWN_GOOD's bytes (that write is not staged/
- * transactional the way `config_service_apply()`'s is) but this service's
- * in-memory running/staged state and the runtime-apply callback's own state
- * are left exactly as they were -- the caller should treat this as fatal
- * (no further fallback exists) rather than retry.
+ * @return See `config_service_rollback_result_t`. The two failure values
+ * require different caller behavior: `_UNAVAILABLE` changed nothing and
+ * should be treated as fatal with no reboot warranted;
+ * `_FLASH_CHANGED_INCOMPLETE` left Flash ahead of RAM/runtime state and the
+ * caller must force a reboot to reconcile it, not just give up in place.
  * @note Does not invoke the restart callback: this runs from inside the
  * restart it is recovering, so arming another one would be meaningless.
  */
-bool config_service_rollback_running_to_last_known_good(void);
+config_service_rollback_result_t config_service_rollback_running_to_last_known_good(void);
 
 /**
  * @brief Validates and immediately mutates both running and staged timezone

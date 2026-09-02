@@ -1139,15 +1139,41 @@ void model_core_task(void *argument)
         model_context_delete_server(server);
         server = NULL;
 
-        if (!address_space_rollback_attempted &&
-            config_service_rollback_running_to_last_known_good())
+        if (!address_space_rollback_attempted)
         {
-            printf("[OPC UA]\tRolled back to the last-known-good configuration; "
-                   "retrying address-space build\n");
-            fflush(stdout);
+            config_service_rollback_result_t rollback_result =
+                config_service_rollback_running_to_last_known_good();
+
             address_space_rollback_attempted = true;
-            is_restart = true;
-            continue;
+
+            if (rollback_result == CONFIG_SERVICE_ROLLBACK_OK)
+            {
+                printf("[OPC UA]\tRolled back to the last-known-good configuration; "
+                       "retrying address-space build\n");
+                fflush(stdout);
+                is_restart = true;
+                continue;
+            }
+
+            if (rollback_result == CONFIG_SERVICE_ROLLBACK_FLASH_CHANGED_INCOMPLETE)
+            {
+                /* Flash RUNNING now holds LAST_KNOWN_GOOD's bytes, but this
+                 * task's own config/channel/driver state was left on the
+                 * failed candidate -- a split this task cannot reconcile in
+                 * place (see config_service_rollback_result_t). Force a
+                 * reboot so a fresh boot re-derives every layer from the
+                 * now-recovered Flash state instead of continuing to run
+                 * split. */
+                printf("[OPC UA]\tLast-known-good configuration restored on Flash "
+                       "but this task's own state could not be reconciled to it; "
+                       "forcing a reboot to recover\n");
+                fflush(stdout);
+                diag_service_reboot(10u);
+                while (1)
+                {
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                }
+            }
         }
 
         printf("[OPC UA]\tNo usable last-known-good configuration to fall back "

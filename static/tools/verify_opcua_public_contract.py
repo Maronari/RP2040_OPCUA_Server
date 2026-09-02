@@ -26,8 +26,15 @@ EXPECTED_V043_COMMIT = "dec08ba22e835e8037f9fd5342dcc63ddc03f5ac"
 # node_and_browse_calls/public_attribute_assignments are byte-for-byte
 # unchanged (0 added, 0 removed) -- confirmed by diffing this script's own
 # public_inventory() output against HEAD before recording this hash.
+# Updated again 2026-09-02 (from 7f77951fd61b2e0d09c6f74b1c1fd34c1673372bb5a9c8dbc75286f0cd231bbe)
+# for the rollback FLASH_CHANGED_INCOMPLETE/forced-reboot fix:
+# model_core_lifecycle.c gains three new printf strings ("Last-known-good
+# configuration restored on Flash "/"but this task's own state could not be
+# reconciled to it; "/"forcing a reboot to recover\n"), all diagnostic log
+# text. Again 0 added/removed for node_and_browse_calls and
+# public_attribute_assignments, confirmed the same way.
 EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
-    "7f77951fd61b2e0d09c6f74b1c1fd34c1673372bb5a9c8dbc75286f0cd231bbe"
+    "26a55277518624759f0fae0ed48a0da12c5fea359972bcb246cc4223a051e707"
 )
 # Updated 2026-08-23 (from 0f8e85b8477ff3edc77968806ad0cc509c3cfafd81594cc6318915ff48a00bf3)
 # for commit 5bed455: fixing the missing HasComponent references that left
@@ -41,7 +48,7 @@ EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
 # confirmed by diffing this script's own public_inventory() output against
 # commit d48fd06 (pre-fix) before recording this hash.
 EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
-    "7f77951fd61b2e0d09c6f74b1c1fd34c1673372bb5a9c8dbc75286f0cd231bbe"
+    "26a55277518624759f0fae0ed48a0da12c5fea359972bcb246cc4223a051e707"
 )
 # v0.5.0 T8 adds the runtime-configuration-preset apply/list methods
 # (Device.Maintenance.ApplyConfigPreset, Device.Maintenance.ListConfigPresets)
@@ -54,7 +61,7 @@ EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
 # public_inventory() output against the current tree at T8 completion, not
 # guessed.
 EXPECTED_V050_PUBLIC_INVENTORY_SHA256 = (
-    "7f77951fd61b2e0d09c6f74b1c1fd34c1673372bb5a9c8dbc75286f0cd231bbe"
+    "26a55277518624759f0fae0ed48a0da12c5fea359972bcb246cc4223a051e707"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.

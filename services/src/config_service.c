@@ -701,6 +701,7 @@ static void config_service_normalize(device_profile_config_t *config)
 bool config_service_init(const device_profile_config_t *defaults)
 {
     bool persisted_requires_migration = false;
+    bool loaded_persisted_record = false;
     config_transaction_recovery_state_t recovery_state;
 
 #if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
@@ -801,6 +802,7 @@ bool config_service_init(const device_profile_config_t *defaults)
         g_staged_config = g_running_config;
         g_running_revision = persisted_info.generation > 0u ? persisted_info.generation : 1u;
         g_staged_revision = g_running_revision;
+        loaded_persisted_record = true;
     }
 
     config_service_normalize(&g_running_config);
@@ -817,6 +819,28 @@ bool config_service_init(const device_profile_config_t *defaults)
      */
     if (persisted_requires_migration)
     {
+        (void)config_store_save_payload(&g_running_config,
+                                        sizeof(g_running_config),
+                                        CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                        CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                        NULL);
+    }
+    else if (!loaded_persisted_record && g_default_config_valid)
+    {
+        /* No usable persisted record exists (a genuinely fresh device, or
+         * one whose only record failed decode/validate) -- persist the
+         * compiled defaults now running in RAM as RUNNING's first committed
+         * record. Without this, config_transaction_backend_commit()'s
+         * promote-RUNNING-to-LAST_KNOWN_GOOD step (drivers/config_transaction_backend.c)
+         * has nothing to promote on the very first real config_service_apply()
+         * transaction, so LAST_KNOWN_GOOD stays empty through that first
+         * transaction -- if it then fails downstream (e.g. opcua_model's
+         * namespace build), config_service_rollback_running_to_last_known_good()
+         * has nothing to recover to, even though the compiled defaults were
+         * a perfectly good configuration that really was running a moment
+         * ago. Best-effort: a failed write here leaves this boot running on
+         * the in-RAM defaults exactly as before, just as unpersisted as
+         * every prior release. */
         (void)config_store_save_payload(&g_running_config,
                                         sizeof(g_running_config),
                                         CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
@@ -945,7 +969,7 @@ bool config_service_apply(void)
     return true;
 }
 
-bool config_service_rollback_running_to_last_known_good(void)
+config_service_rollback_result_t config_service_rollback_running_to_last_known_good(void)
 {
     device_profile_config_t recovered_config;
     config_store_record_info_t info = {0};
@@ -956,9 +980,22 @@ bool config_service_rollback_running_to_last_known_good(void)
 
     if (!config_store_recover_fallback_to_last_known_good(NULL))
     {
-        return false;
+        /* Nothing usable in LAST_KNOWN_GOOD -- Flash RUNNING is untouched,
+         * so there is nothing a reboot would recover into that isn't
+         * already true right now. */
+        return CONFIG_SERVICE_ROLLBACK_UNAVAILABLE;
     }
 
+    /* From here on, Flash RUNNING already holds LAST_KNOWN_GOOD's bytes --
+     * any failure below leaves Flash ahead of this service's own RAM state
+     * and of whatever runtime_apply last activated. A caller that gets
+     * CONFIG_SERVICE_ROLLBACK_FLASH_CHANGED_INCOMPLETE back should force a
+     * reboot rather than continue: a fresh boot re-derives both this
+     * service's RAM state and the runtime-apply layer's own state
+     * (channel_manager's registry, drivers) from Flash RUNNING from
+     * scratch, which reconciles the split this function cannot undo
+     * in-place (there is no "put the new candidate back" path once its own
+     * activation already succeeded and Flash has moved on). */
     memset(g_persisted_payload, 0, sizeof(g_persisted_payload));
     if (!config_store_load_active(g_persisted_payload,
                                   sizeof(g_persisted_payload),
@@ -973,7 +1010,7 @@ bool config_service_rollback_running_to_last_known_good(void)
         config_validate_service_validate_candidate(&recovered_config, NULL, 0u) !=
             CONFIG_VALIDATE_RESULT_OK)
     {
-        return false;
+        return CONFIG_SERVICE_ROLLBACK_FLASH_CHANGED_INCOMPLETE;
     }
 
     config_service_normalize(&recovered_config);
@@ -994,7 +1031,7 @@ bool config_service_rollback_running_to_last_known_good(void)
      * fields plus still-new channel/driver runtime state. */
     if (runtime_apply != NULL && !runtime_apply(&recovered_config, recovered_revision))
     {
-        return false;
+        return CONFIG_SERVICE_ROLLBACK_FLASH_CHANGED_INCOMPLETE;
     }
 
     taskENTER_CRITICAL();
@@ -1004,7 +1041,7 @@ bool config_service_rollback_running_to_last_known_good(void)
     g_staged_revision = g_running_revision;
     taskEXIT_CRITICAL();
 
-    return true;
+    return CONFIG_SERVICE_ROLLBACK_OK;
 }
 
 bool config_service_set_timezone_offset_minutes(int16_t value)
