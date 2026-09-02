@@ -4,7 +4,7 @@
 >
 > **Board profile:** `RP2350_INDUSTRIAL_MVP_V1`
 >
-> **Last hardware consolidation:** 2026-08-31
+> **Last hardware consolidation:** 2026-09-02
 
 This document describes the current hardware architecture, frozen component choices, power tree, MCU pin allocation, completed schematic sheets, PCB/mechanical constraints, status indication, firmware-facing hardware contract, and the remaining work before production PCB release.
 
@@ -66,7 +66,7 @@ Main functional blocks:
 | USB ESD | `TPD2EUSB30ADRTR` | shunt ESD protection |
 | Isolated RS-485 | `ISOW1432DFMR` | integrated isolated power, half-duplex use |
 | RS-485 TVS | `SM712` | field-side protection |
-| Input eFuse | `TPS26600RHFT` | protected 9–36 V input path |
+| Input eFuse | `TPS26600RHFT` | protected 9–36 V system-power path |
 | Main buck | `LM76003RNPR` | generates `+5V_PRE` |
 | Digital buck | `TPS62130RGTR` | generates `+3V3_DIG` |
 | Analog 3.3 V LDO | `TPS7A2033PDBVR` | generates `+3V3_ANALOG` |
@@ -82,10 +82,16 @@ Main functional blocks:
 | Digital inputs | `MAX22190ATJ+` | 4 × IEC 61131-2 Type 1/Type 3 DI; VDD/VL from +3V3_DIG, VDD24 NC |
 | DI series resistors | 4 × `CRCW25121K50FKEGHP` | 1.5 kΩ, 1%, 2512 pulse-withstanding, one per physical DI |
 | DI terminal block | `DG350-3.5-06P-14` | DI0..DI3 + 2 × DI_COM, 3.5 mm pitch |
-| Digital outputs | `IPS2050HTR` | protected high-side outputs |
+| Digital outputs | `IPS2050HTR` | dual protected high-side output, PowerSSO-24 |
+| DO command/fault isolation/interface | 4 × `TLP383` | two command interfaces + two FLT interfaces |
+| DO command AND | `SN74LVC2G08DCTR` | second dual AND, per-channel `DO_SAFE_EN AND DOx_CMD` |
+| DO field fuse | `0454005.MR` | Littelfuse NANO² 454, 5 A slow-blow |
+| DO field TVS | `5.0SMDJ36CA` | bidirectional, `VFIELD` to `GND_SYS`, after F_DO and before reverse diode |
+| DO reverse-polarity diode | `STPST10H100SBYTR` | 100 V / 10 A Schottky, DPAK, `VFIELD -> VFIELD_OUT` |
+| DO terminal blocks | 2 × `DG350-3.5-02P-14` | `DOx_OUT/GND_SYS`, 3.5 mm pitch |
 | Universal inputs | `TLV3214PWR` | current comparator-based UIC frontend; analog-path revision still required if analog UIC mode is retained |
 | Supervisor/watchdog | `TPS3851H33EDRBR` | reset + watchdog |
-| Safe-state logic | `SN74LVC2G08DCTR` | AO/DO enable gating |
+| Safe-state logic | `SN74LVC2G08DCTR` | original dual AND generates AO/DO safe enables |
 | Sensor power switches | 4 × `TPS2553DBVR` | current-limited switched sensor power |
 | Internal I/O expander | `TCAL9539` | 16-bit I²C GPIO expander, `/INT` + `/RESET`; exact package/orderable suffix TBD |
 | External I²C recovery | 2 × `TCA4307` | one per external I²C port; hot-swap buffer and stuck-bus recovery; exact package/orderable suffix TBD |
@@ -377,7 +383,7 @@ AO_LATCH -> 10k -> +3V3_DIG
 
 #### 3.2.3 FAULT and hardware safe-state
 
-Both AD5422 `FAULT` outputs are open-drain and share the board fault net. The MAX22190 `/FAULT` output on `09_DIGITAL_INPUTS` is also open-drain and joins the same net:
+Both AD5422 `FAULT` outputs are open-drain and share the board fault net. The MAX22190 `/FAULT` output on `09_DIGITAL_IO` is also open-drain and joins the same net:
 
 ```text
 AO0 AD5422 pin3 FAULT -----+
@@ -982,18 +988,511 @@ When wire-break is enabled on at least one channel, firmware may additionally un
 
 ### 3.4 Digital outputs
 
-Provide **2 digital output channels**: `DO0..DO1`.
+Provide **2 protected high-side digital output channels**. The physical schematic sheet remains numbered `09`; because it now contains both the existing MAX22190 DI block and this DO block, it is conceptually `09_DIGITAL_IO` even if the Altium sheet name/number is not renumbered.
 
-Target implementation:
+The selected output IC remains `IPS2050HTR` in `PowerSSO-24`. Hardware Prototype v1 freezes the following qualified target:
 
-- protected 24 V high-side outputs;
-- current limiting and thermal protection;
-- short-circuit/fault diagnostics where supported;
-- deterministic OFF state during reset and boot.
+```text
+2 × high-side DO
+nominal field level: 24 VDC
+field voltage follows the external/main supply
+qualified continuous target: 1.0 A/channel
+both channels may be ON simultaneously
+current limiting + thermal protection
+per-channel fault diagnostics
+deterministic hardware OFF during reset/watchdog/boot
+```
 
-Target output IC: `IPS2050HTR`.
+The IPS2050H silicon supports higher current, but Hardware Prototype v1 shall not advertise more than the 1 A/channel continuous target until the real PCB, connectors, Schottky, copper and thermal behavior are qualified.
 
-Firmware shall support commanded state, fault/actual state, startup state, and watchdog state.
+#### 3.4.1 Field-power branch and 24 V semantics
+
+The IPS2050H is **not** powered from `VIN_PROTECTED` behind the TPS26600. The system eFuse current limit is lower than the IPS2050H normal short-circuit/current-limit region; powering the DO from `VIN_PROTECTED` would allow a DO short to collapse/disturb the main system rail before the IPS protection can behave as intended.
+
+The DO field branch therefore splits directly from `VIN_RAW`:
+
+```text
+J1 +9...36V
+   |
+ VIN_RAW
+   |
+   +---- F1 2A --------------------> system power path
+   |
+   +---- F_DO = 0454005.MR, 5A slow-blow
+            |
+          VFIELD
+            |
+            +---- 5.0SMDJ36CA ---- GND_SYS
+            |
+          STPST10H100SBYTR
+            |
+         VFIELD_OUT
+            |
+         IPS2050H VCC + EPAD
+```
+
+Frozen branch components:
+
+```text
+F_DO     = Littelfuse 0454005.MR, 5 A slow-blow
+TVS      = 5.0SMDJ36CA, bidirectional, VFIELD <-> GND_SYS
+D_RPOL   = STPST10H100SBYTR, 100 V / 10 A Schottky
+```
+
+TVS placement is **after F_DO but before the reverse-polarity Schottky**. The reverse diode pin mapping is:
+
+```text
+pins 1 + 3 = anodes  -> VFIELD
+pin 2 / TAB = cathode -> VFIELD_OUT
+```
+
+Both anode terminals must be tied to the same `VFIELD` copper region.
+
+The IPS2050H is a switch, not a regulator. Therefore the DO voltage follows the main/field supply minus normal path drops:
+
+```text
+J1 = 9 V  -> DO approximately 9 V
+J1 = 12 V -> DO approximately 12 V
+J1 = 24 V -> nominal 24 V industrial DO operation
+J1 = 36 V -> DO approximately 36 V
+```
+
+The board-wide 9–36 V input range does **not** mean that the DO generates a regulated 24 V output at all input voltages.
+
+`5.0SMDJ36CA` is the frozen schematic TVS choice but the actual IEC surge level remains a qualification item. Final PCB testing must measure `VFIELD` and `VFIELD_OUT` overshoot directly and verify margin to the IPS2050H absolute maximum.
+
+#### 3.4.2 IPS2050HTR pin mapping
+
+PowerSSO-24 pin mapping is frozen as:
+
+```text
+1      VCC       -> VFIELD_OUT
+2      IN2       <- IPS_IN2
+3      IPD2
+4      FLT2
+5..12  OUT2      -> DO2_OUT
+13..20 OUT1      -> DO1_OUT
+21     FLT1
+22     IPD1
+23     IN1       <- IPS_IN1
+24     GND       -> GND_SYS
+25     EPAD/VCC  -> VFIELD_OUT
+```
+
+In the Altium symbol/footprint the exposed pad is represented as pad `25`. Electrically it is **VCC/VFIELD_OUT, not GND**.
+
+All eight pins of each output group must be joined:
+
+```text
+pins 5..12  -> one DO2_OUT copper/net
+pins 13..20 -> one DO1_OUT copper/net
+```
+
+The exposed pad must be soldered to `VFIELD_OUT` thermal/power copper. Thermal vias from EPAD must only connect to other `VFIELD_OUT` copper regions; they must not connect to ground.
+
+#### 3.4.3 Local supply decoupling
+
+At the IPS2050H:
+
+```text
+VFIELD_OUT -> 100nF / 100V -> GND_SYS
+VFIELD_OUT -> 2.2uF / 100V -> GND_SYS
+```
+
+The `100 nF` is the local HF bypass and belongs immediately at the VCC/GND region. The `2.2 uF / 100 V` local reservoir follows the ST reference topology.
+
+#### 3.4.4 MCU allocation and hardware safe state
+
+Frozen MCU nets:
+
+```text
+GPIO10 -> DO_ENABLE_REQ
+GPIO20 -> DO1_CMD
+GPIO21 -> DO2_CMD
+GPIO22 <- DO1_FAULT
+GPIO23 <- DO2_FAULT
+```
+
+Hardware defaults on the MCU sheet:
+
+```text
+DO_ENABLE_REQ -> 100k -> GND_SYS
+DO1_CMD       -> 100k -> GND_SYS
+DO2_CMD       -> 100k -> GND_SYS
+```
+
+The original safe-state dual AND already generates:
+
+```text
+DO_SAFE_EN = SYS_RESET_N AND DO_ENABLE_REQ
+```
+
+A **second** `SN74LVC2G08DCTR` on sheet 09 performs per-channel command gating:
+
+```text
+1A <- DO_SAFE_EN
+1B <- DO1_CMD
+1Y -> AND1_OUT
+
+2A <- DO_SAFE_EN
+2B <- DO2_CMD
+2Y -> AND2_OUT
+
+VCC -> +3V3_DIG
+GND -> GND_SYS
+100nF from VCC to GND_SYS adjacent to the IC
+```
+
+Therefore:
+
+```text
+AND1_OUT = DO_SAFE_EN AND DO1_CMD
+AND2_OUT = DO_SAFE_EN AND DO2_CMD
+```
+
+The AND outputs do not drive IPS IN pins directly. Each channel uses a `TLP383` interface so that a live 3.3 V logic domain cannot back-drive an unpowered IPS2050H field domain.
+
+DO1 command interface:
+
+```text
+AND1_OUT -> 390R -> TLP383 pin1 anode
+TLP383 pin3 cathode -> GND_SYS
+
+VFIELD_OUT -> TLP383 pin6 collector
+TLP383 pin4 emitter -> IPS_IN1
+IPS_IN1 -> 22k -> GND_SYS
+IPS_IN1 -> IPS2050H pin23 IN1
+```
+
+DO2 command interface:
+
+```text
+AND2_OUT -> 390R -> TLP383 pin1 anode
+TLP383 pin3 cathode -> GND_SYS
+
+VFIELD_OUT -> TLP383 pin6 collector
+TLP383 pin4 emitter -> IPS_IN2
+IPS_IN2 -> 22k -> GND_SYS
+IPS_IN2 -> IPS2050H pin2 IN2
+```
+
+The `22k` pull-downs should be at least 0805 / 0.125 W class, preferably 0.25 W class, because they can see the full field voltage while the command optocoupler is on.
+
+Safe-state behavior is deterministic:
+
+```text
+SYS_RESET_N = 0
+ -> DO_SAFE_EN = 0
+ -> both command AND outputs LOW
+ -> both TLP383 command LEDs OFF
+ -> IPS_IN1/IPS_IN2 pulled LOW
+ -> both DO OFF
+
+DO_ENABLE_REQ = 0
+ -> both DO OFF
+
+DOx_CMD = 0
+ -> corresponding DO OFF
+
++3V3_DIG lost
+ -> command optocouplers OFF
+ -> IPS inputs pulled LOW
+ -> DO OFF
+
+VFIELD_OUT lost / F_DO open
+ -> field-side collectors and IPS unpowered
+ -> no 3.3 V back-drive into IN pins
+ -> DO OFF
+```
+
+The TLP383 parts provide power-domain/level interfacing and fail-safe sequencing. The DO block remains non-isolated from the system ground and does not claim galvanic output isolation.
+
+#### 3.4.5 IPD current-limit configuration
+
+Both channels use the IPS2050H **single LOW-threshold** current-limit configuration:
+
+```text
+IPD1 pin22 -> 220k -> IPS_IN1 / IN1 pin23
+IPD2 pin3  -> 220k -> IPS_IN2 / IN2 pin2
+```
+
+This intentionally avoids the high-current startup-peak configuration.
+
+Relevant protection region:
+
+```text
+IPKL typ    ~5.2 A
+ILIML       2.5...4.5 A
+ILIML typ   ~3.5 A
+```
+
+These several-ampere values are protection/inrush headroom; the qualified board target remains 1.0 A/channel continuous.
+
+#### 3.4.6 FLT1/FLT2 diagnostic interface
+
+`FLT1` and `FLT2` are **diagnostic current-source outputs, not open-drain outputs**. Do not wire them directly as ordinary 3.3 V open-drain GPIO signals.
+
+Each FLT output drives a TLP383 LED through 2.2 kΩ.
+
+Channel 1:
+
+```text
+IPS2050H pin21 FLT1
+ -> 2.2k
+ -> TLP383 pin1 anode
+TLP383 pin3 cathode -> GND_SYS
+
+TLP383 pin6 collector -> DO1_FAULT
+TLP383 pin4 emitter   -> GND_SYS
+DO1_FAULT -> 10k -> +3V3_DIG
+DO1_FAULT -> RP2350 GPIO22
+```
+
+Channel 2:
+
+```text
+IPS2050H pin4 FLT2
+ -> 2.2k
+ -> TLP383 pin1 anode
+TLP383 pin3 cathode -> GND_SYS
+
+TLP383 pin6 collector -> DO2_FAULT
+TLP383 pin4 emitter   -> GND_SYS
+DO2_FAULT -> 10k -> +3V3_DIG
+DO2_FAULT -> RP2350 GPIO23
+```
+
+The frozen MCU net names remain `DO1_FAULT` / `DO2_FAULT`, but their **electrical polarity is active-low**:
+
+```text
+DOx_FAULT = 1 -> no fault asserted
+DOx_FAULT = 0 -> fault asserted
+```
+
+Firmware must invert the raw GPIO state when exposing a logical fault boolean.
+
+#### 3.4.7 Output power path, connectors and filtering
+
+DO1:
+
+```text
+VFIELD_OUT
+ -> IPS2050H channel 1
+ -> pins 13..20 OUT1
+ -> DO1_OUT
+ -> connector pin1
+
+connector pin2 -> GND_SYS
+```
+
+DO2:
+
+```text
+VFIELD_OUT
+ -> IPS2050H channel 2
+ -> pins 5..12 OUT2
+ -> DO2_OUT
+ -> connector pin1
+
+connector pin2 -> GND_SYS
+```
+
+Intended connector family:
+
+```text
+J_DO1 = DG350-3.5-02P-14
+1 DO1_OUT
+2 GND_SYS
+
+J_DO2 = DG350-3.5-02P-14
+1 DO2_OUT
+2 GND_SYS
+```
+
+Each output has one HF capacitor:
+
+```text
+DO1_OUT -> 100nF / 100V -> GND_SYS
+DO2_OUT -> 100nF / 100V -> GND_SYS
+```
+
+No ordinary external flyback diode is used and no per-output TVS is used in the frozen topology. IPS2050H internal fast-demagnetization / active-clamp behavior is the primary inductive-load protection mechanism. A conventional `OUT -> VFIELD_OUT` flyback diode would suppress the intended fast-demagnetization voltage and slow coil-current decay.
+
+#### 3.4.8 Continuous-current and thermal basis
+
+Frozen Hardware Prototype v1 qualified target:
+
+```text
+DO1 = 1.0 A continuous
+DO2 = 1.0 A continuous
+both channels simultaneously
+```
+
+Using a conservative elevated-temperature `RDS(on)` around 50 mΩ:
+
+```text
+P_channel ~= 1^2 * 0.05 = 50 mW
+P_two_channels ~= 100 mW
+```
+
+The IPS itself therefore has substantial thermal margin at the 1 A/channel target if its EPAD/VFIELD_OUT copper is implemented correctly.
+
+The `STPST10H100SBYTR` reverse-polarity Schottky is a larger continuous heat source. At approximately 2 A aggregate DO current its dissipation is of order 1 W; its DPAK cathode/tab therefore requires substantial `VFIELD_OUT` copper and thermal/current vias.
+
+A normal 24 V field supply is expected to produce approximately 23.4–23.6 V at a loaded output after fuse/Schottky/IPS path drops. At 36 V input the output similarly follows near 36 V; this is expected behavior, not a regulated 24 V output.
+
+#### 3.4.9 Short-circuit behavior
+
+In LOW-threshold mode a hard short can drive several amperes until current limiting and thermal protection act. Approximate instantaneous switch dissipation can reach order 100 W at 24 V and the maximum current-limit region, but this is a transient linear-mode condition handled by the IPS current-limit and thermal-shutdown mechanisms; it is not a valid continuous operating point.
+
+`F_DO` is deliberately slow-blow so ordinary channel shorts are handled by IPS2050H instead of repeatedly opening the board fuse. The fuse is intended primarily for catastrophic failure of the field branch, TVS, Schottky, IPS or PCB.
+
+Prototype validation must include single-channel and dual-channel hard-short testing while observing that the RP2350/system rails remain operational.
+
+#### 3.4.10 Inductive and capacitive load qualification
+
+For inductive loads the useful energy relation is:
+
+```text
+E_L = 0.5 * L * I^2
+```
+
+At the qualified 1 A current:
+
+```text
+100 mH -> 0.05 J
+500 mH -> 0.25 J
+1 H    -> 0.50 J
+```
+
+A practical conservative prototype validation point is approximately `1 H @ 1 A` for a single turn-off event, followed by repetitive-duty thermal testing at realistic switching rates.
+
+For capacitive/inrush loads the LOW-threshold current-limit mode intentionally reduces startup stress. A practical prototype validation point is approximately:
+
+```text
+CLOAD = 1000 uF
+VFIELD ~= 24 V
+```
+
+No universal maximum capacitive-load rating is claimed from schematic analysis alone; startup time, fault behavior and thermal cycling must be measured.
+
+#### 3.4.11 DO PCB current loops and placement
+
+High-current field branch:
+
+```text
+J1 VIN_RAW
+ -> F_DO
+ -> VFIELD
+ -> STPST10H100SBYTR
+ -> VFIELD_OUT
+ -> IPS2050H
+```
+
+Keep the unfused `VIN_RAW` connection from J1 to `F_DO` as short as practical.
+
+Place `5.0SMDJ36CA` close to the DO field-power entry with a compact surge loop:
+
+```text
+VFIELD -> TVS -> GND_SYS / power-entry return
+```
+
+Do not route TVS surge current through MCU/supervisor ground areas.
+
+For the reverse Schottky:
+
+- DPAK TAB/cathode is `VFIELD_OUT`;
+- use substantial `VFIELD_OUT` copper;
+- use multiple thermal/current vias to additional `VFIELD_OUT` copper where the stackup permits;
+- do not thermally choke the tab with narrow thermal spokes.
+
+For IPS2050H:
+
+- EPAD is `VFIELD_OUT`, not ground;
+- use a solid `VFIELD_OUT` thermal region beneath the PowerSSO-24;
+- thermal/current vias from the exposed pad must connect only to `VFIELD_OUT` copper;
+- all eight `OUT1` pins must enter a broad `DO1_OUT` copper region quickly;
+- all eight `OUT2` pins must enter a broad `DO2_OUT` copper region quickly;
+- do not collapse eight power pins into a single narrow signal-width trace.
+
+Place the `100nF/100V` output capacitors close to their respective driver/output regions.
+
+The field-load return is electrically `GND_SYS`, but ampere-level load current must be routed physically toward the power-entry return without traversing MCU, Flash, PSRAM, SPI, supervisor or reference-sensitive ground regions:
+
+```text
+DO connector GND
+ -> wide field-current return copper
+ -> J1 / power-entry GND region
+```
+
+Keep the second `SN74LVC2G08` in the low-voltage logic region. Place command TLP383 devices between logic and the IPS input region; place the `22k` pull-downs near IN1/IN2. Keep the FLT `2.2k + TLP383` network close enough to the IPS diagnostic pins that FLT nodes do not become long floating field-sensitive stubs.
+
+#### 3.4.12 DO firmware contract
+
+Firmware shall keep:
+
+```text
+DO_ENABLE_REQ = 0
+DO1_CMD = 0
+DO2_CMD = 0
+```
+
+through early boot and peripheral initialization. Only after the supervisor is healthy and firmware is ready to control outputs may it assert `DO_ENABLE_REQ`.
+
+Fault inputs are electrically active-low:
+
+```text
+GPIO22 / DO1_FAULT: 0 = fault, 1 = no fault
+GPIO23 / DO2_FAULT: 0 = fault, 1 = no fault
+```
+
+Logical fault values therefore use inverted raw GPIO semantics.
+
+Each DO channel should expose at least:
+
+- commanded state;
+- safe-enable state;
+- raw diagnostic input;
+- logical fault state;
+- startup/reset/watchdog safe-state status;
+- the qualified profile (`24 V nominal, supply-following, 1 A continuous target`).
+
+Firmware/configurator must not claim a regulated 24 V output when the main supply is 9/12/36 V.
+
+#### 3.4.13 DO schematic BOM additions
+
+```text
+1 × IPS2050HTR
+1 × SN74LVC2G08DCTR          second dual AND
+4 × TLP383                   two command + two fault interfaces
+2 × 390R                     command optocoupler LED resistors
+2 × 22k                      IPS_IN1/IPS_IN2 pull-downs
+2 × 220k                     IPD1/IPD2 LOW-threshold configuration
+2 × 2.2k                     FLT1/FLT2 diagnostic LED resistors
+2 × 10k                      DO1_FAULT/DO2_FAULT pull-ups
+1 × 100nF                    second SN74LVC2G08 bypass
+1 × 100nF / 100V             IPS VCC HF bypass
+1 × 2.2uF / 100V             IPS local field reservoir
+2 × 100nF / 100V             DO1_OUT/DO2_OUT HF capacitors
+1 × 0454005.MR               5 A slow-blow DO field fuse
+1 × 5.0SMDJ36CA              bidirectional VFIELD TVS
+1 × STPST10H100SBYTR         reverse-polarity Schottky
+2 × DG350-3.5-02P-14         DO output/GND terminal blocks
+```
+
+#### 3.4.14 Remaining DO qualification items
+
+The schematic topology is considered practically closed. Remaining items are validation/release work rather than open architecture decisions:
+
+- measure `VFIELD` and `VFIELD_OUT` during actual surge/EFT/ESD tests and verify VCC margin;
+- thermal-image `STPST10H100SBYTR` at `2 × 1 A` continuous load;
+- verify IPS2050H package/copper temperature at `2 × 1 A`;
+- perform single- and dual-channel hard-short tests;
+- verify `F_DO` does not nuisance-open during normal IPS current-limit/thermal cycling;
+- validate representative inductive load switching, including about `1 H @ 1 A` single turn-off;
+- validate representative capacitive load, including about `1000 uF @ 24 V`;
+- verify real connector/copper/fuse/Schottky/ground-return current capability;
+- do not claim IEC compliance/certification from the reference topology alone.
 
 ### 3.5 Universal inputs / counters / frequency / encoder
 
@@ -1191,14 +1690,19 @@ The existing firmware `adc_voltage` driver is architecturally reusable for these
 
 ```text
 J1 9–36 V
- -> TPS26600
- -> VIN_PROTECTED
-    +-> LM76003 -> +5V_PRE ~5.3 V
-    |   +-> TPS62130 -> +3V3_DIG
-    |   +-> TPS7A2033 -> +3V3_ANALOG
-    |   +-> TPS7A2050 -> +5V_ANALOG
+ -> VIN_RAW
+    +-> F1 / input protection / TPS26600 -> VIN_PROTECTED
+    |    +-> LM76003 -> +5V_PRE ~5.3 V
+    |    |   +-> TPS62130 -> +3V3_DIG
+    |    |   +-> TPS7A2033 -> +3V3_ANALOG
+    |    |   +-> TPS7A2050 -> +5V_ANALOG
+    |    |
+    |    +-> LT8362 SEPIC -> +15V_AO
     |
-    +-> LT8362 SEPIC -> +15V_AO
+    +-> F_DO 0454005.MR -> VFIELD
+         +-> 5.0SMDJ36CA -> GND_SYS
+         |
+         +-> STPST10H100SBYTR -> VFIELD_OUT -> IPS2050H
 ```
 
 Main rails/nets:
@@ -1224,12 +1728,17 @@ GND_RS485_ISO
 +3V3_RS485_ISO
 ```
 
+`VFIELD` is the separately fused raw DO field branch. `VFIELD_OUT` is the fused and reverse-polarity-protected supply delivered to IPS2050H.
+
 ### 5.2 Input protection — sheet `01_POWER_INPUT`
 
 Status: **practically closed**.
 
+System branch:
+
 ```text
 J1
+ -> VIN_RAW
  -> F1
  -> VIN_FUSED
  -> TVS
@@ -1238,6 +1747,19 @@ J1
  -> TPS26600
  -> VIN_PROTECTED
 ```
+
+DO branch:
+
+```text
+VIN_RAW
+ -> F_DO = 0454005.MR / 5A slow-blow
+ -> VFIELD
+ -> 5.0SMDJ36CA shunt to GND_SYS
+ -> STPST10H100SBYTR
+ -> VFIELD_OUT
+```
+
+The DO branch intentionally bypasses TPS26600 so normal IPS2050H short-circuit/current-limit behavior cannot brown out the system rail through the system eFuse.
 
 Critical rule:
 
@@ -1348,18 +1870,30 @@ MANUAL_RESET_N    -> 10k pull-up
 WD_ENABLE         -> 100k pull-down
 WD_KICK           -> 100k pull-down
 AO_ENABLE_REQ     -> 100k pull-down to GND_SYS
+DO_ENABLE_REQ     -> 100k pull-down to GND_SYS
+DO1_CMD           -> 100k pull-down to GND_SYS
+DO2_CMD           -> 100k pull-down to GND_SYS
 ```
 
-Hardware output gating uses `SN74LVC2G08DCTR`:
+Hardware output gating uses the original `SN74LVC2G08DCTR`:
 
 ```text
 AO_SAFE_EN = SYS_RESET_N AND AO_ENABLE_REQ
 DO_SAFE_EN = SYS_RESET_N AND DO_ENABLE_REQ
 ```
 
-For AO, `AO_SAFE_EN` is then inverted by `SN74LVC2G04DBVR` so reset/watchdog produces `AOx_CLEAR = 1`. The analog safe-state semantics are documented in section 3.2.3.
+For AO, `AO_SAFE_EN` is inverted by `SN74LVC2G04DBVR` so reset/watchdog produces `AOx_CLEAR = 1`.
 
-The physical output stages must therefore remain at their defined safe state while the MCU is in reset or the external supervisor is asserting reset.
+For DO, a second `SN74LVC2G08DCTR` on sheet 09 forms:
+
+```text
+AND1_OUT = DO_SAFE_EN AND DO1_CMD
+AND2_OUT = DO_SAFE_EN AND DO2_CMD
+```
+
+These then drive the TLP383 command interfaces documented in section 3.4.4.
+
+The physical output stages must remain at their defined safe state while the MCU is in reset or the external supervisor is asserting reset.
 
 ---
 
@@ -1461,15 +1995,18 @@ GPIO47 ADC7_MON_RESERVED / ADC7
 
 All RP2350 GPIOs remain allocated/reserved. `SENSOR_PWR_EN0..3` are no longer direct MCU pins; they move to the `TCAL9539`. GPIO39 is no longer a single combined sensor-power fault input; it is the expander interrupt `BOARD_IO_INT_N`.
 
-AO/DI-related board-level defaults on the MCU sheet:
+AO/DI/DO-related board-level defaults on the MCU sheet:
 
 ```text
 AO_LATCH      -> 10k -> +3V3_DIG
 BOARD_FAULT_N -> 10k -> +3V3_DIG
 AO_ENABLE_REQ -> 100k -> GND_SYS
+DO_ENABLE_REQ -> 100k -> GND_SYS
+DO1_CMD       -> 100k -> GND_SYS
+DO2_CMD       -> 100k -> GND_SYS
 ```
 
-Do not duplicate the `BOARD_FAULT_N` pull-up on either the AO or DI sheet.
+Do not duplicate the `BOARD_FAULT_N` pull-up on either the AO or DI sheet. DO faults are separate per-channel active-low GPIO inputs and use their own `10k -> +3V3_DIG` pull-ups after the TLP383 interfaces.
 
 ---
 
@@ -2111,6 +2648,7 @@ USB-C -> ESD -> series network -> RP2350
 W5500 -> MDI matching -> MagJack
 RS-485 connector -> TVS/termination -> isolated transceiver
 DI connector -> pulse-rated 2512 resistors -> MAX22190
+DO power entry -> F_DO -> VFIELD TVS -> reverse Schottky -> IPS2050H -> DO terminals
 ```
 
 Critical/high-current/high-speed/protection components remain on TOP where practical. Small noncritical configuration/bias/DNP components may be placed on BOTTOM.
@@ -2127,7 +2665,7 @@ The latest placement concept has been mechanically checked for:
 - board-edge violations;
 - mounting-hole keepout violations.
 
-The scripted concept predates the newly frozen `TCAL9539` + 2 × `TCA4307` addition, completed AI protection population, the AO output/sense/protection circuitry, and the finalized DI MAX22190 frontend. It must be regenerated after those parts and the ADC monitor networks are placed.
+The scripted concept predates the newly frozen `TCAL9539` + 2 × `TCA4307` addition, completed AI protection population, the AO output/sense/protection circuitry, the finalized DI MAX22190 frontend, and the finalized IPS2050H DO frontend. It must be regenerated after those parts and the ADC monitor networks are placed.
 
 The scripted concept is **not** a substitute for production Altium DRC, courtyard checks, exact footprint clearances, assembly access, or pin-level routing verification.
 
@@ -2220,6 +2758,38 @@ Rules:
 The actual footprint of `DG350-3.5-06P-14` must be checked for copper-to-copper clearance, not only nominal 3.5 mm pitch. Particular attention is required at the `DI3_IN` pin4 to `DI_COM` pin5 transition and around the 2512 resistor pads. ADI transient-testing experience showed that inadequate copper spacing can arc during high-voltage ESD even when the schematic topology is correct. Where footprint geometry permits, target at least approximately 2.5 mm local copper clearance in the field-exposed DI area rather than squeezing ground pours against field pads.
 
 Reference-design ESD/EFT/surge levels do not become board claims until this exact layout, connector and enclosure are tested.
+
+#### Digital outputs
+
+The DO block is a high-current field-power region and must be placed/routed as a power stage rather than as ordinary logic.
+
+Preferred power sequence:
+
+```text
+J1 VIN_RAW
+ -> 0454005.MR / F_DO
+ -> VFIELD
+ -> 5.0SMDJ36CA surge loop to power-entry GND
+ -> STPST10H100SBYTR
+ -> VFIELD_OUT
+ -> IPS2050H
+ -> DO1_OUT / DO2_OUT
+ -> output terminals
+```
+
+Rules:
+
+- keep the unfused `VIN_RAW` path to F_DO short;
+- keep the VFIELD TVS loop compact and outside MCU/supervisor ground-current paths;
+- give the STPST10H100SBYTR DPAK tab/cathode a substantial `VFIELD_OUT` copper area and thermal/current vias;
+- IPS2050H EPAD is `VFIELD_OUT`, never GND;
+- fan all eight OUT pins per channel directly into broad output copper;
+- place `100nF/100V + 2.2uF/100V` close to IPS VCC/GND;
+- place each `100nF/100V` output capacitor close to its corresponding output region;
+- route DO terminal return currents directly toward the power-entry GND region rather than through MCU/Flash/PSRAM/supervisor ground corridors;
+- keep command TLP383 interfaces between the low-voltage logic region and IPS IN region;
+- place the `22k` IPS input pull-downs close to IN1/IN2;
+- keep FLT `2.2k + TLP383` networks compact around the diagnostic pins.
 
 #### External I²C
 
@@ -2328,6 +2898,19 @@ Required DI firmware contract from the 2026-08-31 MAX22190 schematic:
 - when `BOARD_FAULT_N` asserts, query MAX22190 as well as the AD5422 devices because all three open-drain fault sources share the line;
 - do not claim sustained 36 V DI operation or final IEC/EMC certification until the assembled PCB is qualified.
 
+Required DO firmware contract from the 2026-09-02 IPS2050H schematic:
+
+- expose exactly two protected high-side channels using GPIO20/21 commands and GPIO22/23 fault inputs;
+- keep `DO_ENABLE_REQ`, `DO1_CMD` and `DO2_CMD` LOW throughout early boot;
+- only assert `DO_ENABLE_REQ` after initialization is complete and outputs are intentionally permitted;
+- treat `DO1_FAULT` / `DO2_FAULT` as electrically active-low (`0 = fault`);
+- advertise `24 V nominal, supply-following` behavior rather than a regulated 24 V source;
+- advertise the qualified continuous target as `1.0 A/channel` until the real PCB is validated for any higher rating;
+- treat IPS current limiting and thermal shutdown as the normal short-circuit protection path; do not assume the 5 A branch fuse opens on every short;
+- preserve hardware-safe OFF semantics across supervisor reset/watchdog, MCU reset/Hi-Z, loss of +3V3_DIG and loss of VFIELD_OUT;
+- expose commanded state, safe-enable state and logical fault state per channel;
+- do not claim IEC surge/inductive/capacitive-load limits until the assembled board is tested against the qualification points in section 3.4.
+
 ---
 
 ## 14. Minimum diploma demonstration
@@ -2357,7 +2940,7 @@ Not every physical channel must be simultaneously loaded during the defense, but
 Current status:
 
 ```text
-01_POWER_INPUT      practically closed
+01_POWER_INPUT      practically closed; DO field branch added and requires final footprint/layout/surge audit
 02_POWER_RAILS      practically closed
 02B_AO_POWER        practically closed
 03_MCU_RP2350       practically closed; GPIO39/44..47 service-I/O update still needs final cross-sheet audit
@@ -2366,7 +2949,7 @@ Current status:
 06_RS485            practically closed
 07_ANALOG_INPUTS    practically closed; final PTC/footprint/pulse-rating audit required
 08_ANALOG_OUTPUTS   practically closed; final annotate/ERC/footprint/ground-domain audit required
-09_DIGITAL_INPUTS   practically closed; final footprint/layout/clearance/firmware-driver audit required
+09_DIGITAL_IO       practically closed; DI + DO topology frozen, final annotate/ERC/footprint/layout/qualification audit required
 ```
 
 Before PCB release, `07_ANALOG_INPUTS` must still:
@@ -2396,9 +2979,10 @@ Before PCB release, `08_ANALOG_OUTPUTS` must still:
 - qualify the selected transient/EMC level; current protection is not a guaranteed sustained 24/36 V miswire solution.
 ```
 
-Before PCB release, `09_DIGITAL_INPUTS` must still:
+Before PCB release, `09_DIGITAL_IO` must still:
 
 ```text
+DI:
 - annotate all parts and remove placeholders;
 - verify MAX22190ATJ+ symbol pins 1..32 and EPAD33 against the final TQFN footprint pads;
 - verify EPAD33 is solidly connected to GND_SYS with the intended thermal/ground via pattern;
@@ -2407,13 +2991,31 @@ Before PCB release, `09_DIGITAL_INPUTS` must still:
 - complete DI_READY_N -> TCAL9539 P14 on the service-I/O sheet;
 - freeze exact orderable 7.50k REFDI, 24.0k REFWB and four DI LED parts;
 - verify all four field resistors are CRCW25121K50FKEGHP / 1.5k / 2512 pulse-withstanding parts;
-- verify DG350-3.5-06P-14 footprint, 3D body and real copper clearances, especially DI3_IN pin4 to DI_COM pin5;
+- verify DG350-3.5-06P-14 footprint, 3D body and real copper clearances;
 - ensure no external capacitors are present on IN1..IN4;
 - confirm LED1..LED4 drive fitted LEDs to GND_SYS with no ordinary series resistor and LED5..LED8 are tied to GND_SYS;
 - confirm IN5..IN8 are tied to GND_SYS and firmware disables them with INEN=0x0F;
 - run a complete BOARD_SPI/DI_CS_N/BOARD_FAULT_N/DI_READY_N cross-sheet net audit;
 - implement and verify the CRC-protected MAX22190 driver/startup sequence;
-- qualify 24 V operation, sustained 36 V behavior if it is to be claimed, and the final ESD/EFT/surge levels on the assembled PCB.
+- qualify nominal 24 V operation and final ESD/EFT/surge levels.
+
+DO:
+- annotate IPS2050H, second SN74LVC2G08, four TLP383 and all passives; remove placeholder comments such as MOSFET?;
+- verify PowerSSO-24 pin-to-pad mapping, including EPAD25 = VFIELD_OUT and all eight pins in each OUT group;
+- verify STPST10H100SBYTR pins 1+3 = VFIELD and pin2/TAB = VFIELD_OUT;
+- verify 5.0SMDJ36CA is on VFIELD after F_DO and before the Schottky;
+- verify 0454005.MR footprint and 5 A slow-blow BOM entry;
+- verify second SN74LVC2G08 local 100nF bypass and MCU pull-downs DO_ENABLE_REQ/DO1_CMD/DO2_CMD = 100k;
+- verify command TLP383 topology uses 390R LED resistors, collectors at VFIELD_OUT and 22k IN pull-downs;
+- verify IPD1/IPD2 each use 220k to the corresponding IPS_IN net;
+- verify FLT1/FLT2 each use 2.2k -> TLP383, with 10k +3V3_DIG pull-up and direct emitter-to-GND_SYS on the MCU side;
+- verify DO1_FAULT / DO2_FAULT active-low semantics in firmware;
+- verify VFIELD_OUT local 100nF/100V + 2.2uF/100V and 100nF/100V on each DO output;
+- verify no external per-output flyback diode or per-output TVS was accidentally added;
+- verify DG350-3.5-02P-14 output connector footprints/current path;
+- implement broad VFIELD_OUT/OUT1/OUT2 copper and EPAD/DPAK thermal via strategy;
+- keep DO load return current out of MCU/supervisor ground corridors;
+- qualify 2 x 1 A thermal behavior, single/dual hard short, fuse nuisance immunity, inductive load, capacitive inrush and final surge levels on the assembled PCB.
 ```
 
 The 2026-08-28 service-I/O architecture decision still requires schematic completion/audit for:
@@ -2446,23 +3048,22 @@ final BOM audit
 PCB DRC
 ```
 
-The discrete board-status LED circuitry, DI state LEDs, and service-I/O/I²C-recovery circuitry must also be represented in the schematic and included in this audit.
+The discrete board-status LED circuitry, DI state LEDs, DO indication, and service-I/O/I²C-recovery circuitry must also be represented in the schematic and included in this audit.
 
 ---
 
-## 16. Remaining schematic work after analog I/O and DI
+## 16. Remaining schematic work after analog I/O and digital I/O
 
-The analog input/output and digital-input sheets are now topology-complete enough to move on after the final cleanup listed in section 15.
+The analog input/output and sheet-09 digital-input/output topologies are now complete enough to move on after the final cleanup/qualification items listed in section 15.
 
 Remaining major hardware blocks still requiring schematic completion/finalization include:
 
-- protected high-side outputs around `IPS2050HTR`;
 - UIC/counter/frequency/encoder frontend and the decision on an actual analog path to ADC0..3;
 - external sensor connectors, their TPS2553 power switches, `TCAL9539`, and both `TCA4307` devices;
 - internal ADC4..ADC6 rail-monitor dividers/filters;
 - final board-status LED driver circuitry.
 
-Exact sheet numbering/order after `09_DIGITAL_INPUTS` should follow the Altium project organization; do not renumber already-completed sheets merely to match this document.
+Exact sheet numbering/order after `09_DIGITAL_IO` should follow the Altium project organization; do not renumber already-completed sheets merely to match this document.
 
 ---
 
@@ -2522,7 +3123,23 @@ Power    : 9–36 V DC input
            optional per-channel wire-break with valid field diagnostic current
            Type 2 deferred to a future board revision
 
-2 × DO   : protected 24 V high-side
+2 × DO   : IPS2050HTR protected high-side outputs
+           nominal 24 V, field voltage follows 9–36 V main supply
+           qualified continuous target = 1.0 A/channel, both simultaneous
+           separate VIN_RAW-derived field branch
+           F_DO = 0454005.MR / 5 A slow-blow
+           VFIELD TVS = 5.0SMDJ36CA
+           reverse polarity = STPST10H100SBYTR
+           IPS VCC1 + EPAD25 = VFIELD_OUT, GND24 = GND_SYS
+           LOW current-limit mode: IPDx -> 220k -> INx
+           DO_SAFE_EN + DOx_CMD -> second SN74LVC2G08 -> TLP383 -> IPS INx
+           IPS_INx -> 22k -> GND_SYS
+           FLTx -> 2.2k -> TLP383 -> active-low DOx_FAULT GPIO
+           VFIELD_OUT local 100nF/100V + 2.2uF/100V
+           100nF/100V from each DOx_OUT to GND_SYS
+           no external per-output flyback diode, no per-output TVS
+           internal IPS fast demagnetization / active clamp used for inductive loads
+
 4 × UIC  : counter / frequency / encoder / digital input
            ADC0..3 capability reserved; analog frontend path still to be finalized
 
@@ -2552,7 +3169,9 @@ ADC7 = reserved monitor
 Watchdog : TPS3851H33
 Safe AO  : AO_SAFE_EN = SYS_RESET_N AND AO_ENABLE_REQ
            AOx_CLEAR = !AO_SAFE_EN
-Safe DO  : SYS_RESET_N AND DO_ENABLE_REQ
+Safe DO  : DO_SAFE_EN = SYS_RESET_N AND DO_ENABLE_REQ
+           IPS_IN1 = DO_SAFE_EN AND DO1_CMD through TLP383 interface
+           IPS_IN2 = DO_SAFE_EN AND DO2_CMD through TLP383 interface
 
 LEDs     : PWR / RUN / FAULT / AO / DO / SENS / RS485
 DI LEDs  : DI0 / DI1 / DI2 / DI3, hardware-driven by MAX22190
