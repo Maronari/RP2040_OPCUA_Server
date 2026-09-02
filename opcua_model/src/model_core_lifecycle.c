@@ -60,10 +60,13 @@
  * on `OpcUaTask`. This ordering is safety-critical: `model_core_task` must
  * observe `g_model_initialized` before touching any model state, and every
  * `UA_ServerConfig` step that fails calls `vTaskDelete(NULL)` rather than
- * continuing with a partially-configured server -- including on a
- * restart-triggered rebuild, where a construction failure is treated
- * identically to a cold-boot one (logged, then the task exits) rather than
- * left to hang or silently retry; see `model_core_task`'s restart handling.
+ * continuing with a partially-configured server -- with one exception: a
+ * `model_build_address_space()` failure gets a single rollback-and-retry
+ * against `config_service`'s LAST_KNOWN_GOOD configuration
+ * (`config_service_rollback_running_to_last_known_good()`) before giving up,
+ * since that failure mode is specifically "the just-committed configuration
+ * cannot be brought up" rather than a construction-infrastructure fault; see
+ * `model_core_task`'s restart handling.
  */
 #include "opcua_model_internal.h"
 
@@ -837,7 +840,14 @@ void model_bind_open62541_allocators(void)
  * applies identically whether construction is cold boot's or a v0.5.0 T6
  * restart's rebuild -- see the `for (;;)` loop below: it is the same code
  * either way, so a rebuild failure is handled the same way a cold-boot
- * failure always has been (logged, task exits) rather than left undefined. */
+ * failure always has been (logged, task exits) rather than left undefined --
+ * with one deliberate exception: `model_build_address_space()` failing gets
+ * one rollback-and-retry against LAST_KNOWN_GOOD
+ * (`address_space_rollback_attempted`, below) before falling through to the
+ * same fail-fast `vTaskDelete(NULL)`, since that specific failure means "the
+ * configuration just committed cannot be brought up" and a known-good
+ * configuration may still exist to fall back to -- not a construction- or
+ * memory-infrastructure fault, where no such fallback would make sense. */
 void model_core_task(void *argument)
 {
     UA_Server *server = NULL;
@@ -848,6 +858,12 @@ void model_core_task(void *argument)
      * `for (;;)` loop below, i.e. every controlled-restart rebuild; false
      * only for the initial cold-boot pass. */
     bool is_restart = false;
+    /* Guards the one-shot address-space-build rollback below: true only for
+     * the single retry pass immediately after a LAST_KNOWN_GOOD rollback, so
+     * a LAST_KNOWN_GOOD that itself fails to build cannot loop forever. Reset
+     * to false the moment a build succeeds, so a later, unrelated failure
+     * still gets its own retry. */
+    bool address_space_rollback_attempted = false;
     TickType_t next_psram_stats_tick = 0;
     model_event_runtime_state_t event_runtime_state = {0};
     (void)argument;
@@ -1121,8 +1137,25 @@ void model_core_task(void *argument)
                UA_StatusCode_name(status));
         fflush(stdout);
         model_context_delete_server(server);
+        server = NULL;
+
+        if (!address_space_rollback_attempted &&
+            config_service_rollback_running_to_last_known_good())
+        {
+            printf("[OPC UA]\tRolled back to the last-known-good configuration; "
+                   "retrying address-space build\n");
+            fflush(stdout);
+            address_space_rollback_attempted = true;
+            is_restart = true;
+            continue;
+        }
+
+        printf("[OPC UA]\tNo usable last-known-good configuration to fall back "
+               "to; giving up\n");
+        fflush(stdout);
         vTaskDelete(NULL);
     }
+    address_space_rollback_attempted = false;
 
     {
         const device_profile_config_t *running_config = config_service_get();

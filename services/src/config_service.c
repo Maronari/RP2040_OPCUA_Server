@@ -971,6 +971,47 @@ bool config_service_apply(void)
     return true;
 }
 
+bool config_service_rollback_running_to_last_known_good(void)
+{
+    device_profile_config_t recovered_config;
+    config_store_record_info_t info = {0};
+    size_t payload_size = 0u;
+    bool unused_requires_migration = false;
+
+    if (!config_store_recover_fallback_to_last_known_good(NULL))
+    {
+        return false;
+    }
+
+    memset(g_persisted_payload, 0, sizeof(g_persisted_payload));
+    if (!config_store_load_active(g_persisted_payload,
+                                  sizeof(g_persisted_payload),
+                                  &payload_size,
+                                  &info) ||
+        info.payload_format != CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY ||
+        !config_compat_decode_versioned(info.schema_version,
+                                        g_persisted_payload,
+                                        payload_size,
+                                        &recovered_config,
+                                        &unused_requires_migration) ||
+        config_validate_service_validate_candidate(&recovered_config, NULL, 0u) !=
+            CONFIG_VALIDATE_RESULT_OK)
+    {
+        return false;
+    }
+
+    config_service_normalize(&recovered_config);
+
+    taskENTER_CRITICAL();
+    g_running_config = recovered_config;
+    g_staged_config = recovered_config;
+    g_running_revision = info.generation > 0u ? info.generation : (g_running_revision + 1u);
+    g_staged_revision = g_running_revision;
+    taskEXIT_CRITICAL();
+
+    return true;
+}
+
 bool config_service_set_timezone_offset_minutes(int16_t value)
 {
     if (!config_service_is_valid_timezone_offset_minutes(value))

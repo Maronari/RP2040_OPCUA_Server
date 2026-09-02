@@ -228,15 +228,13 @@ typedef void (*config_service_restart_fn)(const device_profile_config_t *new_con
  * `config_transaction_backend` boot-time classification T3 computes) and
  * reacts per the mapping documented next to that call site in
  * `config_service.c` — e.g. discarding a leftover uncommitted STAGED
- * record, or self-healing RUNNING from LAST_KNOWN_GOOD. Then, load order:
- * (1) the current-schema active config-store slot (`config_store_load_active()`
- * + `config_compat_decode_versioned()`); (2) on failure, a one-shot
- * read-only fallback via `flash_storage_driver_load_partial()` for
- * pre-config-store layouts, which — if it decodes and validates — is
- * immediately re-persisted through `config_store_save_payload()` so
- * subsequent boots use the normal path. If neither source yields a valid
+ * record, or self-healing RUNNING from LAST_KNOWN_GOOD. Then loads the
+ * current-schema active config-store slot (`config_store_load_active()` +
+ * `config_compat_decode_versioned()`). If that does not yield a valid
  * configuration, @p defaults (if non-NULL) remains the running/staged
- * configuration and nothing is treated as an error.
+ * configuration and nothing is treated as an error -- there is no older
+ * on-Flash format this firmware still reads; see
+ * docs/known_limits.md for why.
  *
  * @param defaults Compiled-in default profile; also becomes the source of
  * truth for `fw_revision`/`build_time`/`git_hash` on every subsequent
@@ -325,6 +323,31 @@ bool config_service_reset_to_defaults(void);
  * does not hold the configuration critical section while doing so.
  */
 bool config_service_apply(void);
+
+/**
+ * @brief Recovers from an unusable RUNNING configuration by restoring
+ * LAST_KNOWN_GOOD -- both on Flash and in this service's in-memory running/
+ * staged state.
+ *
+ * Intended for a caller that has already committed a new RUNNING
+ * configuration (directly or via `config_service_apply()`/
+ * `config_service_replace_and_save()`) and only discovers downstream of that
+ * commit that the committed configuration cannot actually be brought up
+ * (e.g. `opcua_model`'s namespace build fails against it) -- something
+ * `config_service_apply()`'s own pre-commit validation/runtime-apply gate
+ * cannot catch, since that gate runs *before* commit. Restores whatever
+ * configuration was RUNNING immediately before that commit, so the caller
+ * can retry bring-up against a configuration already known to work.
+ *
+ * @return true if LAST_KNOWN_GOOD held a committed, valid record and both
+ * Flash RUNNING and this service's in-memory running/staged state now
+ * reflect it; false if LAST_KNOWN_GOOD had nothing usable (e.g. no prior
+ * commit ever happened on this device) or the recovery write failed -- in
+ * either case, no state changes.
+ * @note Does not invoke the runtime-apply or restart callbacks: this is a
+ * config_service-only recovery step, not a transaction.
+ */
+bool config_service_rollback_running_to_last_known_good(void);
 
 /**
  * @brief Validates and immediately mutates both running and staged timezone
