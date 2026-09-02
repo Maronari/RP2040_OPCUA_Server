@@ -951,6 +951,8 @@ bool config_service_rollback_running_to_last_known_good(void)
     config_store_record_info_t info = {0};
     size_t payload_size = 0u;
     bool unused_requires_migration = false;
+    uint32_t recovered_revision;
+    config_service_runtime_apply_fn runtime_apply;
 
     if (!config_store_recover_fallback_to_last_known_good(NULL))
     {
@@ -975,11 +977,30 @@ bool config_service_rollback_running_to_last_known_good(void)
     }
 
     config_service_normalize(&recovered_config);
+    recovered_revision = info.generation > 0u ? info.generation : (g_running_revision + 1u);
+
+    taskENTER_CRITICAL();
+    runtime_apply = g_runtime_apply_callback;
+    taskEXIT_CRITICAL();
+
+    /* Flash RUNNING and g_running_config were already committed to the *new*
+     * (now-failed) candidate by the config_service_apply() that triggered the
+     * restart this is recovering from -- so runtime_apply's own state
+     * (channel_manager's live registry, active drivers) is still on that new
+     * candidate too, and must be brought back to the recovered configuration
+     * the same way config_service_apply() would activate any other
+     * candidate. Skipping this and only touching config_service's own state
+     * would rebuild the address space from a mixture: recovered device-level
+     * fields plus still-new channel/driver runtime state. */
+    if (runtime_apply != NULL && !runtime_apply(&recovered_config, recovered_revision))
+    {
+        return false;
+    }
 
     taskENTER_CRITICAL();
     g_running_config = recovered_config;
     g_staged_config = recovered_config;
-    g_running_revision = info.generation > 0u ? info.generation : (g_running_revision + 1u);
+    g_running_revision = recovered_revision;
     g_staged_revision = g_running_revision;
     taskEXIT_CRITICAL();
 

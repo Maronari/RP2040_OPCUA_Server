@@ -326,26 +326,39 @@ bool config_service_apply(void);
 
 /**
  * @brief Recovers from an unusable RUNNING configuration by restoring
- * LAST_KNOWN_GOOD -- both on Flash and in this service's in-memory running/
- * staged state.
+ * LAST_KNOWN_GOOD -- on Flash, in this service's in-memory running/staged
+ * state, and in the registered runtime-apply callback's own state
+ * (`channel_manager`'s live registry and active drivers, via
+ * `sensor_manager_activate_config()` as of v0.5.0).
  *
  * Intended for a caller that has already committed a new RUNNING
  * configuration (directly or via `config_service_apply()`/
- * `config_service_replace_and_save()`) and only discovers downstream of that
- * commit that the committed configuration cannot actually be brought up
- * (e.g. `opcua_model`'s namespace build fails against it) -- something
- * `config_service_apply()`'s own pre-commit validation/runtime-apply gate
- * cannot catch, since that gate runs *before* commit. Restores whatever
- * configuration was RUNNING immediately before that commit, so the caller
- * can retry bring-up against a configuration already known to work.
+ * `config_service_replace_and_save()`, which also already invoked the
+ * runtime-apply callback with that candidate) and only discovers downstream
+ * of that commit that the committed configuration cannot actually be
+ * brought up (e.g. `opcua_model`'s namespace build fails against it) --
+ * something `config_service_apply()`'s own pre-commit validation/
+ * runtime-apply gate cannot catch, since that gate runs *before* commit.
+ * Restores whatever configuration was RUNNING immediately before that
+ * commit -- reactivating it through the runtime-apply callback exactly as
+ * `config_service_apply()` would for any other candidate, not just updating
+ * this service's own records -- so the caller can retry bring-up against a
+ * configuration, and a matching runtime state, already known to work.
  *
- * @return true if LAST_KNOWN_GOOD held a committed, valid record and both
- * Flash RUNNING and this service's in-memory running/staged state now
+ * @return true if LAST_KNOWN_GOOD held a committed, valid record, the
+ * runtime-apply callback (if any is registered) accepted it, and Flash
+ * RUNNING plus this service's in-memory running/staged state now all
  * reflect it; false if LAST_KNOWN_GOOD had nothing usable (e.g. no prior
- * commit ever happened on this device) or the recovery write failed -- in
- * either case, no state changes.
- * @note Does not invoke the runtime-apply or restart callbacks: this is a
- * config_service-only recovery step, not a transaction.
+ * commit ever happened on this device), the recovery write failed, or the
+ * runtime-apply callback rejected the recovered configuration.
+ * @note On a runtime-apply rejection, Flash RUNNING has already been
+ * overwritten with LAST_KNOWN_GOOD's bytes (that write is not staged/
+ * transactional the way `config_service_apply()`'s is) but this service's
+ * in-memory running/staged state and the runtime-apply callback's own state
+ * are left exactly as they were -- the caller should treat this as fatal
+ * (no further fallback exists) rather than retry.
+ * @note Does not invoke the restart callback: this runs from inside the
+ * restart it is recovering, so arming another one would be meaningless.
  */
 bool config_service_rollback_running_to_last_known_good(void);
 

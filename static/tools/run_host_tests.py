@@ -25,6 +25,7 @@ SUITES = (
     "test_config_transaction_reboot_recovery.py",
     "test_config_compat.py",
     "test_config_service_identity.py",
+    "test_config_service_rollback.py",
     "test_config_validate.py",
     "test_stage_config_roundtrip.py",
     "test_verify_v050_helpers.py",
