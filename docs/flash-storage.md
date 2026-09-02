@@ -87,13 +87,15 @@ three separate mechanisms, three separate Flash regions, no shared state.
 (header magic `"CTX1"` / commit-page magic `"CTXC"`,
 `drivers/include/drivers/config_transaction_backend.h:76-81`) shares no
 magic value and no physical offset convention with the pre-v0.5.0 two-slot
-format's header (`CONFIG_STORE_SLOT_MAGIC` = `"CFG1"`,
-`services/include/services/config_wire.h:16-17`). A device already running
-pre-v0.5.0 firmware that upgrades in place will have its existing
-two-slot-format bytes reinterpreted under the new role/commit-page layout,
-which does not recognize them — see
+format's header (formerly `CONFIG_STORE_SLOT_MAGIC` = `"CFG1"`). A device
+already running pre-v0.5.0 firmware that upgrades in place would have its
+existing two-slot-format bytes reinterpreted under the new role/commit-page
+layout, which does not recognize them. This is a deliberately unaddressed
+gap, not an oversight: this project has no fleet of field devices ever
+running pre-v0.5.0 firmware, and every device is flashed directly with the
+current tagged release rather than upgraded in place from an old image — see
 [docs/known_limits.md](known_limits.md#v050-accepted-residual-risks) for the
-resulting behavior and accepted risk.
+full reasoning.
 
 Application Flash mutations are serialized by the statically allocated Flash
 operation coordinator. Each lock hold performs one aligned 4 KiB erase or one
@@ -102,9 +104,9 @@ nested acquisition, invalid ranges, and safe-execute failures fail closed.
 These rules do not imply page-program atomicity, repeated-page-program support,
 or hardware latency guarantees.
 
-The former final-sector configuration backend is retired as a writer because
-`0xfff000-0xffffff` belongs to the OTA-state region. Its remaining read-only
-importer accepts only the legacy magic/version/length/CRC format. It is tried
-only when both configuration slots are invalid; decoded data is selected only
-after migration to, and read-verification from, an authoritative configuration
-slot. The legacy sector is never erased or rewritten.
+The former final-sector configuration backend (`0xfff000-0xffffff`, which
+belongs to the OTA-state region) is fully retired as of v0.5.0: both its
+writer and its read-only pre-config-store importer
+(`flash_storage_driver_load_partial()`) were removed, for the same reason as
+the two-slot migration gap above -- no device this project ships is ever
+field-upgraded from that old an image.

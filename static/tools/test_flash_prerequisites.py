@@ -56,14 +56,6 @@ class FlashPrerequisiteTests(unittest.TestCase):
             self.assertIn("MAINTENANCE_JOURNAL", text)
             self.assertIn("HISTORY", text)
 
-    def test_legacy_driver_is_read_only(self):
-        header = (ROOT / "drivers/include/drivers/flash_storage_driver.h").read_text(encoding="utf-8")
-        source = (ROOT / "drivers/src/flash_storage_driver.c").read_text(encoding="utf-8")
-        self.assertNotIn("flash_storage_driver_save", header + source)
-        self.assertNotRegex(source, r"flash_range_(erase|program)|flash_safe_execute")
-        self.assertIn("FLASH_STORAGE_MAGIC", source)
-        self.assertIn("flash_storage_crc32", source)
-
     def test_flash_mutation_call_sites_are_audited(self):
         allowed = ROOT / "drivers/src/flash_operation_coordinator.c"
         bootloader = ROOT / "bootloader/main.c"

@@ -4,7 +4,6 @@
 #include "services/config_validate_service.h"
 #include "services/driver_catalog.h"
 #include "drivers/config_transaction_backend.h"
-#include "drivers/flash_storage_driver.h"
 #include "pico/unique_id.h"
 
 #include <assert.h>
@@ -117,23 +116,6 @@ bool config_store_commit_staged(config_store_record_info_t *out_info)
 {
     (void)out_info;
     return true;
-}
-
-bool flash_storage_driver_load(void *buffer, size_t size)
-{
-    (void)buffer;
-    (void)size;
-    return false;
-}
-
-bool flash_storage_driver_load_partial(void *buffer,
-                                       size_t buffer_size,
-                                       size_t *out_payload_size)
-{
-    (void)buffer;
-    (void)buffer_size;
-    (void)out_payload_size;
-    return false;
 }
 
 const driver_catalog_entry_t *driver_catalog_get_by_id(uint8_t driver_id)

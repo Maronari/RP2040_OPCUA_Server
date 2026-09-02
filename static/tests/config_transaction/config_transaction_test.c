@@ -204,8 +204,6 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
 { (void)message; (void)message_size; return candidate != NULL ? CONFIG_VALIDATE_RESULT_OK : CONFIG_VALIDATE_RESULT_INTERNAL_ERROR; }
 bool config_store_load_active(void *buffer, size_t size, size_t *payload_size, config_store_record_info_t *info)
 { (void)buffer; (void)size; (void)payload_size; (void)info; return false; }
-bool flash_storage_driver_load_partial(void *buffer, size_t size, size_t *payload_size)
-{ (void)buffer; (void)size; (void)payload_size; return false; }
 bool config_store_save_payload(const void *payload, size_t size, uint16_t format, uint32_t schema, config_store_record_info_t *info)
 { (void)payload; (void)size; (void)format; (void)schema; (void)info; return true; }
 

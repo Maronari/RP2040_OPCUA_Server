@@ -37,7 +37,6 @@
 #include <task.h>
 
 #include <config_store_limits.h>
-#include "drivers/flash_storage_driver.h"
 #include "services/alarm_service.h"
 #include "services/config_compat.h"
 #include "services/config_store_service.h"
@@ -54,7 +53,7 @@ _Static_assert(sizeof(device_profile_config_t) <= CONFIG_STORE_MAX_PAYLOAD_SIZE_
 
 /**
  * @brief Scratch decode buffer for the raw persisted payload read back from
- * `config_store_load_active()`/`flash_storage_driver_load_partial()`, sized
+ * `config_store_load_active()`, sized
  * to the current (largest) `device_profile_config_t` layout so any frozen
  * `config_compat` layout also fits.
  */
@@ -691,11 +690,14 @@ static void config_service_normalize(device_profile_config_t *config)
     config_service_apply_runtime_identity(config);
 }
 
-/* Two independent recovery layers: the current-schema config-store slot
- * pair (preferred), then a one-shot read-only legacy importer whose result
- * is immediately re-persisted through the normal config-store path so this
- * fallback is only ever exercised on the very first boot after upgrading
- * from a pre-config-store layout. */
+/* Loads the current-schema config-store slot pair (RUNNING, transparently
+ * falling back to LAST_KNOWN_GOOD); @p defaults seeds running/staged/default
+ * state for a device with no committed record yet (first boot) and remains
+ * in place if the persisted record is missing or fails validation. There is
+ * no on-Flash record older than the current config-store schema this
+ * firmware still reads: no device this project ships was ever, or will ever
+ * be, field-upgraded from a pre-transactional-config firmware image -- see
+ * docs/known_limits.md. */
 bool config_service_init(const device_profile_config_t *defaults)
 {
     bool persisted_requires_migration = false;
@@ -761,9 +763,8 @@ bool config_service_init(const device_profile_config_t *defaults)
      *   CONFIG_TXN_RECOVERY_INDETERMINATE / _FATAL:
      *       Nothing usable and/or mutations are blocked backend-side; no
      *       Flash write is attempted here. Boot falls through
-     *       config_store_load_active() (which will fail closed) to the
-     *       legacy importer and then to @p defaults, exactly as when no
-     *       persisted record exists at all.
+     *       config_store_load_active() (which will fail closed) to
+     *       @p defaults, exactly as when no persisted record exists at all.
      *
      * A transaction that reached commit (STAGED promoted to RUNNING) but
      * whose driver activation/verify was interrupted by a power loss before
@@ -800,33 +801,6 @@ bool config_service_init(const device_profile_config_t *defaults)
         g_staged_config = g_running_config;
         g_running_revision = persisted_info.generation > 0u ? persisted_info.generation : 1u;
         g_staged_revision = g_running_revision;
-    }
-    else if (flash_storage_driver_load_partial(g_persisted_payload,
-                                               sizeof(g_persisted_payload),
-                                               &persisted_payload_size) &&
-             config_compat_decode_binary(g_persisted_payload,
-                                         persisted_payload_size,
-                                         &g_running_config,
-                                         &persisted_requires_migration) &&
-             config_validate_service_validate_candidate(&g_running_config, NULL, 0u) ==
-                 CONFIG_VALIDATE_RESULT_OK &&
-             config_store_save_payload(&g_running_config,
-                                       sizeof(g_running_config),
-                                       CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
-                                       CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
-                                       NULL) &&
-             config_store_load_active(g_persisted_payload,
-                                      sizeof(g_persisted_payload),
-                                      &persisted_payload_size,
-                                      &persisted_info) &&
-             config_compat_decode_versioned(persisted_info.schema_version,
-                                            g_persisted_payload,
-                                            persisted_payload_size,
-                                            &g_running_config,
-                                            NULL))
-    {
-        g_staged_config = g_running_config;
-        persisted_requires_migration = false;
     }
 
     config_service_normalize(&g_running_config);

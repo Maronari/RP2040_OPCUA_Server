@@ -165,7 +165,7 @@ typedef struct
     uint32_t schema_version;
     uint32_t payload_size;
     uint32_t payload_crc32;
-    uint32_t generation; /**< Monotonic counter, meaningful for RUNNING; mirrors the pre-v0.5.0 config_store_slot_header_t::generation field callers already depend on. */
+    uint32_t generation; /**< Monotonic counter, meaningful for RUNNING; callers already depend on this field. */
 } config_transaction_record_info_t;
 
 /**

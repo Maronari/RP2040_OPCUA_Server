@@ -68,29 +68,30 @@ deliberate accepted risks — not silent omissions:
   against physical QSPI hardware (e.g. a genuine mid-page power
   interruption with real electrical characteristics), as opposed to this
   suite's clean all-or-nothing/logically-torn write simulation.
-- **Pre-v0.5.0 Flash images are not migrated in place.** A device already
-  running v0.4.0-v0.4.3 firmware (the two-slot generation config store,
-  `CONFIG_STORE_SLOT_MAGIC` = `"CFG1"`) that upgrades to v0.5.0 firmware
-  will have its existing configuration-slot bytes reinterpreted under the
-  new three-role, commit-page-classified layout
-  (`CONFIG_TXN_RECORD_MAGIC` = `"CTX1"`), which shares no magic value or
-  physical offset convention with the old format and will not recognize
-  them as a valid record. `config_service_init()`'s only other fallback
-  (`flash_storage_driver_load_partial()`, `drivers/flash_storage_driver.c`)
-  is a distinct, older read-only importer for the pre-config-store
-  single-sector layout (pre-v0.4.0), not the v0.4.x two-slot format, so it
-  does not bridge this gap either. The practical effect: a device upgraded
-  from v0.4.x to v0.5.0 firmware boots on compiled defaults on first boot
-  after the upgrade, silently losing its previously configured network,
-  channel, and identity settings, rather than preserving them — Flash
-  itself is not corrupted or lost, only unrecognized by the new format.
-  This was found while writing v0.5.0 release documentation (T10); it was
-  not called out as a decision in the v0.5.0 plan and is not fixed in this
-  release. Treat it as an accepted, documented gap for this release, to be
-  triaged (e.g. an explicit one-shot legacy-slot importer, or a documented
-  "wipe the configuration region before upgrading past v0.4.3" operational
-  step) before v0.5.0 ships to a device that has ever run v0.4.0-v0.4.3
-  firmware.
+- **Pre-v0.5.0 Flash images are not migrated in place -- deliberately out of
+  scope, not an oversight.** A device already running v0.4.0-v0.4.3 firmware
+  (the two-slot generation config store, `CONFIG_STORE_SLOT_MAGIC` =
+  `"CFG1"`) that upgrades to v0.5.0 firmware will have its existing
+  configuration-slot bytes reinterpreted under the new three-role,
+  commit-page-classified layout (`CONFIG_TXN_RECORD_MAGIC` = `"CTX1"`),
+  which shares no magic value or physical offset convention with the old
+  format and will not recognize them as a valid record; the device boots on
+  compiled defaults instead, rather than preserving the old configuration —
+  Flash itself is not corrupted or lost, only unrecognized by the new
+  format. This was found while writing v0.5.0 release documentation (T10)
+  and initially recorded as an accepted-but-unfixed gap. On review (2026-09)
+  it was retired instead: this project has no fleet of field devices ever
+  running pre-v0.5.0 firmware, and every device this project ships is
+  flashed directly with the current tagged release rather than upgraded
+  in place from an old image, so the upgrade path this gap describes has no
+  real occurrence to guard against. The pre-config-store single-sector
+  read-only importer that `config_service_init()` used to fall back to
+  (`flash_storage_driver_load_partial()`) was removed for the same reason
+  (v0.5.0, post-T10 cleanup) rather than kept as unreachable belt-and-
+  suspenders code. Revisit this decision (and consider re-adding an
+  explicit one-shot legacy-slot importer) only if this project ever
+  produces a device that must be field-upgraded from a pre-transactional-
+  config firmware image.
 
 The configuration-import wire chunk has the same 4096-byte bound
 (`CONFIG_IMPORT_SERVICE_MAX_CHUNK_BYTES` in

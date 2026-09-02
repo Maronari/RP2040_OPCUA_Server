@@ -141,8 +141,6 @@ bool history_service_record_channel_sample(const char *id, telemetry_channel_val
 { (void)id; (void)value_type; (void)value; (void)quality; (void)timestamp; (void)interval; return true; }
 bool history_service_clear_channel(const char *channel_id) { (void)channel_id; return true; }
 bool alarm_service_clear_channel(const char *channel_id) { (void)channel_id; return true; }
-bool flash_storage_driver_load_partial(void *buffer, size_t buffer_size, size_t *out_payload_size)
-{ (void)buffer; (void)buffer_size; (void)out_payload_size; return false; }
 config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate, char *message, size_t message_size)
 { (void)message; (void)message_size; return candidate != NULL ? CONFIG_VALIDATE_RESULT_OK : CONFIG_VALIDATE_RESULT_INTERNAL_ERROR; }
 

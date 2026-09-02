@@ -14,7 +14,6 @@ if(FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER)
 endif()
 
 add_library(FIRMWARE_DRIVERS STATIC
-        src/flash_storage_driver.c
         src/maintenance_journal_backend.c
         src/history_flash_backend.c
         src/config_transaction_backend.c
