@@ -424,6 +424,60 @@ static void test_point5_corrupted_running_falls_back_to_last_known_good(void)
     assert(config_store_get_recovery_state() == CONFIG_TXN_RECOVERY_OK);
 }
 
+/* ---- Review finding: config_service_init()'s own first-boot persist of
+ * compiled defaults is necessarily best-effort (init() cannot fail the
+ * whole boot over one transient Flash write) -- so a transient write
+ * failure there must not silently reopen the "first transaction has
+ * nothing to roll back to" gap. config_service_ensure_running_persisted()
+ * (config_service.c, used by config_service_apply()/replace_and_save())
+ * must retry and close it at the point it actually matters: before the
+ * first real transaction commits. ---- */
+static void test_first_transaction_recovers_from_failed_init_persist(void)
+{
+    simulated_media_t media;
+    const device_profile_config_t defaults = profile(1u);
+    uint32_t running_offset;
+
+    init_media(&media);
+    reboot_storage_only(&media);
+
+    /* Simulate config_service_init()'s own best-effort persist failing on
+     * its very first Flash program call -- exactly the transient fault this
+     * guard must recover from. */
+    media.fail_program_number = 1u;
+    media.apply_failed_program = false;
+    assert(config_service_init(&defaults));
+    media.fail_program_number = 0u;
+    assert(channel_manager_init());
+    assert(sensor_manager_init());
+    g_event_length = 0u; g_events[0] = '\0';
+
+    /* Confirm the injected fault really did stop config_service_init()'s own
+     * persist -- RUNNING must still be genuinely uncommitted here, or the
+     * rest of this scenario would not be exercising the gap at all. */
+    assert(!config_store_get_active_info(NULL));
+
+    /* The first real transaction must still succeed... */
+    stage_source(2u);
+    assert(config_service_apply());
+
+    /* ...and must leave LAST_KNOWN_GOOD holding the *original* defaults
+     * (source_index=1), not just move RUNNING on to profile(2) with nothing
+     * behind it. Prove it by corrupting RUNNING directly and confirming
+     * recovery genuinely falls back to profile(1), the same proof pattern
+     * as test_point5 above. */
+    running_offset = (uint32_t)CONFIG_TXN_ROLE_RUNNING * CONFIG_TXN_ROLE_SIZE_BYTES;
+    media.bytes[running_offset + CONFIG_TXN_PAGE_SIZE_BYTES] ^= 0xFFu;
+
+    reboot_storage_only(&media);
+    assert(config_store_get_recovery_state() == CONFIG_TXN_RECOVERY_FALLBACK_REQUIRED);
+    assert(config_service_init(&defaults));
+    assert(channel_manager_init());
+    assert(sensor_manager_init());
+    assert(config_service_get()->channels[0].source_index == 1u); /* LAST_KNOWN_GOOD's value. */
+    assert(config_store_get_recovery_state() == CONFIG_TXN_RECOVERY_OK);
+}
+
 /* ---- Point 6: an activate-phase (driver) failure leaves Flash state untouched. ---- */
 static void test_point6_activate_failure_leaves_flash_untouched(void)
 {
@@ -462,6 +516,7 @@ int main(void)
     test_point2_power_loss_at_stage_commit_page(stage_calls);
     test_point3_and_4_promotion_ordering_and_last_known_good(stage_calls, commit_calls_with_promotion);
     test_point5_corrupted_running_falls_back_to_last_known_good();
+    test_first_transaction_recovers_from_failed_init_persist();
     test_point6_activate_failure_leaves_flash_untouched();
     return 0;
 }

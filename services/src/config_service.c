@@ -830,17 +830,20 @@ bool config_service_init(const device_profile_config_t *defaults)
         /* No usable persisted record exists (a genuinely fresh device, or
          * one whose only record failed decode/validate) -- persist the
          * compiled defaults now running in RAM as RUNNING's first committed
-         * record. Without this, config_transaction_backend_commit()'s
-         * promote-RUNNING-to-LAST_KNOWN_GOOD step (drivers/config_transaction_backend.c)
-         * has nothing to promote on the very first real config_service_apply()
-         * transaction, so LAST_KNOWN_GOOD stays empty through that first
-         * transaction -- if it then fails downstream (e.g. opcua_model's
-         * namespace build), config_service_rollback_running_to_last_known_good()
-         * has nothing to recover to, even though the compiled defaults were
-         * a perfectly good configuration that really was running a moment
-         * ago. Best-effort: a failed write here leaves this boot running on
-         * the in-RAM defaults exactly as before, just as unpersisted as
-         * every prior release. */
+         * record, so config_transaction_backend_commit()'s promote-RUNNING-
+         * to-LAST_KNOWN_GOOD step (drivers/config_transaction_backend.c) has
+         * something to promote as early as possible, ideally before the
+         * very first real config_service_apply() transaction ever runs.
+         * Necessarily best-effort here: config_service_init() cannot fail
+         * the entire boot over one transient Flash write, so a failed write
+         * leaves this boot running on the in-RAM defaults, exactly as
+         * unpersisted as every prior release, until the guard below closes
+         * the gap for real. This is only ever a head start, never the sole
+         * guarantee -- config_service_ensure_running_persisted() (used by
+         * config_service_apply()/config_service_replace_and_save()) checks
+         * and retries this on every actual transaction attempt, so a
+         * failure here does not silently persist as a gap the way it would
+         * if this init()-time attempt were the only mechanism. */
         (void)config_store_save_payload(&g_running_config,
                                         sizeof(g_running_config),
                                         CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
@@ -888,6 +891,36 @@ bool config_service_reset_to_defaults(void)
     return true;
 }
 
+/* Guards a gap in config_service_init()'s own first-boot persist (see its
+ * doc comment): that persist is necessarily best-effort -- init() cannot
+ * fail the entire boot over one transient Flash write -- so it can leave
+ * Flash RUNNING uncommitted if that one write happened to fail. Without
+ * this guard, the first real transaction after such a failure would commit
+ * normally, but config_transaction_backend_commit()'s promote-RUNNING-to-
+ * LAST_KNOWN_GOOD step would still have nothing to promote (RUNNING was
+ * never committed), leaving LAST_KNOWN_GOOD empty exactly as if the
+ * init()-time fix had never existed. Retried on every apply-style call
+ * until it succeeds, rather than trusting a one-shot in-RAM flag that would
+ * go stale after a single failed write and never retry; cheap on the common
+ * path once RUNNING is committed (config_store_get_active_info() is a
+ * metadata-only read, no Flash write).
+ * @param current_running Snapshot of the configuration to persist as the
+ * baseline if RUNNING is not already committed -- the caller's own
+ * unmodified `previous_running`, never the candidate being applied. */
+static bool config_service_ensure_running_persisted(const device_profile_config_t *current_running)
+{
+    if (config_store_get_active_info(NULL))
+    {
+        return true;
+    }
+
+    return config_store_save_payload(current_running,
+                                     sizeof(*current_running),
+                                     CONFIG_STORE_PAYLOAD_FORMAT_RAW_BINARY,
+                                     CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
+                                     NULL);
+}
+
 bool config_service_apply(void)
 {
     device_profile_config_t normalized_config;
@@ -913,6 +946,12 @@ bool config_service_apply(void)
 
     if (config_validate_service_validate_candidate(&normalized_config, NULL, 0u) !=
         CONFIG_VALIDATE_RESULT_OK)
+    {
+        config_service_end_transaction();
+        return false;
+    }
+
+    if (!config_service_ensure_running_persisted(&previous_running))
     {
         config_service_end_transaction();
         return false;
@@ -1308,6 +1347,12 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
     runtime_apply = g_runtime_apply_callback;
     candidate_revision = g_running_revision + 1u;
     taskEXIT_CRITICAL();
+
+    if (!config_service_ensure_running_persisted(&previous_running))
+    {
+        config_service_end_transaction();
+        return false;
+    }
 
     /* v0.5.0 T4 frozen order: persist staged -> stop/activate/verify ->
      * commit/rollback. This function's old activate-before-persist order

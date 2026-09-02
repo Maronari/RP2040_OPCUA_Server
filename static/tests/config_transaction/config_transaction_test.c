@@ -206,6 +206,11 @@ bool config_store_load_active(void *buffer, size_t size, size_t *payload_size, c
 { (void)buffer; (void)size; (void)payload_size; (void)info; return false; }
 bool config_store_save_payload(const void *payload, size_t size, uint16_t format, uint32_t schema, config_store_record_info_t *info)
 { (void)payload; (void)size; (void)format; (void)schema; (void)info; return true; }
+/* Always "committed" -- this suite exercises apply()/replace_and_save()'s
+ * own commit semantics, not config_service_ensure_running_persisted()'s
+ * first-boot guard, so RUNNING is never made to look uncommitted here. */
+bool config_store_get_active_info(config_store_record_info_t *info)
+{ (void)info; return true; }
 
 /* v0.5.0 T4: the two-phase primitive config_service.c's transaction
  * pipeline now drives directly, faked here at the same config_store_service.h
