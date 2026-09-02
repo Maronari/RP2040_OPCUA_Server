@@ -68,6 +68,37 @@ their target commit SHA rather than the tag-object SHA.
   reconfiguration; this project does not currently claim that compliance
   bar. See `docs/releases/v0.5.0.md` scope decision 7 and
   `docs/channel_model.md`.
+- OPC UA server restart, root cause and fix (found on hardware 2026-08-31):
+  `UA_Server_run_shutdown()` could hang indefinitely during a controlled
+  restart because open62541's `UA_BinaryProtocolManager` network callback
+  accepts and fully activates new incoming connections even after being
+  told to stop, so any client reconnecting during the shutdown drain window
+  keeps the callback's SecureChannel-empty wait from ever completing —
+  upstream open62541 behavior (confirmed present in both v1.5.3 and the
+  v1.5.7 upgrade this release also carries, not a version-specific
+  regression). Fixed with an independent FreeRTOS one-shot timer around the
+  call; if it fires, falls back to the existing hardware-watchdog hard
+  reboot. Recovers in practice around 27-28s worst case (detection + reboot
+  + reconnect) instead of hanging forever, an accepted tradeoff versus a
+  fast in-process restart when no client is present. See
+  `docs/releases/v0.5.0-hardware-verification.md`.
+- Namespace-build-failure rollback: closes the one transaction phase T4/T9's
+  original scope left without a recovery path — `model_build_address_space()`
+  failing during the restart above now rolls the device back to
+  LAST_KNOWN_GOOD (Flash, `config_service`'s own running/staged state, and
+  `channel_manager`/driver runtime state via a re-invoked `runtime_apply`,
+  all three — an initial version that only restored the first two was
+  found and fixed under review) instead of leaving `OpcUaTask` dead with no
+  recovery. Two further review findings closed the same day: a genuinely
+  fresh device's compiled defaults are now persisted to Flash `RUNNING` at
+  first boot (previously RAM-only, so a first-ever transaction had nothing
+  to roll back to if it failed) and guaranteed persisted again, retried on
+  every transaction attempt, immediately before any transaction commits
+  (the first-boot persist alone is necessarily best-effort and could leave
+  the same gap open after one transient Flash failure); and a rollback that
+  changes Flash but cannot fully reconcile runtime state now forces a
+  hardware reboot instead of parking the device indefinitely with nothing
+  else ever rebooting it. See `docs/releases/v0.5.0.md`'s "T6/T4 addendum".
 - Fix found during implementation: `alarm_service`'s condition-slot
   allocator (`g_condition_count`) never reclaimed a freed slot, so a naive
   per-channel clear would have permanently shrunk available alarm capacity
@@ -87,20 +118,26 @@ their target commit SHA rather than the tag-object SHA.
   cannot catch: real Flash write-alignment/timing failure modes that only
   manifest against physical QSPI hardware. See
   `docs/known_limits.md#v050-accepted-residual-risks`.
-- Found while documenting this release (not fixed in this release — flagged
-  for follow-up): a device that has run v0.4.0-v0.4.3 firmware does not have
-  its configuration migrated in place when it upgrades to v0.5.0 firmware.
-  The old two-slot format's header magic and the new transaction backend's
-  header/commit-page magic and offsets are unrelated, so the new backend
-  does not recognize old-format bytes as a valid record, and the existing
-  legacy-importer fallback targets an even older, pre-config-store format,
-  not the v0.4.x two-slot layout. The device boots on compiled defaults
-  after such an upgrade instead of preserving its prior configuration. See
+- Found while documenting this release, then resolved as out of scope
+  (2026-09-02), not fixed: a device that has run v0.4.0-v0.4.3 firmware
+  does not have its configuration migrated in place when it upgrades to
+  v0.5.0 firmware, because the old two-slot format's header magic and the
+  new transaction backend's header/commit-page magic and offsets are
+  unrelated. On review, this gap was retired rather than closed with an
+  importer: this project has no fleet of field devices ever running
+  pre-v0.5.0 firmware, and every device is flashed directly with the
+  current tagged release rather than upgraded in place from an old image.
+  The pre-v0.4.0 legacy single-sector importer this device never actually
+  needed (`drivers/flash_storage_driver.c`/`.h`) and the dead v0.4.x
+  two-slot format's own on-Flash struct definition were removed entirely
+  rather than kept as unreachable code. See
   `docs/known_limits.md#v050-accepted-residual-risks`.
-- Verification: 35/35 deterministic host-test suites
-  (`static/tools/run_host_tests.py`) and first-party cppcheck
-  (`static/tools/run_first_party_cppcheck.py`) both pass on the integrated
-  v0.5.0 tree.
+- Verification: 38/38 deterministic host-test suites
+  (`static/tools/run_host_tests.py`, including new `config_service_rollback`
+  and `config_transaction_reboot_recovery` coverage for the rollback fixes
+  above) and first-party cppcheck (`static/tools/run_first_party_cppcheck.py`)
+  both pass on the integrated v0.5.0 tree; hardware-verified on the
+  reference RP2350 board (see `docs/releases/v0.5.0-hardware-verification.md`).
 - Release plan: `docs/releases/v0.5.0.md`.
 
 ## v0.4.3
