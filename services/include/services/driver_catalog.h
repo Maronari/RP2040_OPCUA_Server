@@ -22,7 +22,8 @@ typedef enum
     CONFIG_CHANNEL_DRIVER_NONE = 0,
     CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP = 1,
     CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE = 2,
-    CONFIG_CHANNEL_DRIVER_GPIO_INPUT = 3
+    CONFIG_CHANNEL_DRIVER_GPIO_INPUT = 3,
+    CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT = 4
 } config_channel_driver_id_t;
 
 /** @brief Bitmask helper: the single bit representing a telemetry_channel_value_type_t in a driver_catalog_entry_t::supported_value_types mask. */

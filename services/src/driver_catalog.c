@@ -40,6 +40,9 @@
 #ifndef FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER 1
 #endif
+#ifndef FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER 1
+#endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
 /** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP; delegates to the native driver's own source validation (drivers/native_channel_driver.h). */
@@ -65,11 +68,20 @@ static bool validate_gpio(uint8_t source_index, uint8_t source_flags)
 }
 #endif
 
-/* Vtable dispatch tables: bind each native driver's start/stop/read
- * operation functions (drivers/include/drivers/native_channel_driver.h)
- * into the telemetry_driver_vtbl_t shape channel_manager.c calls through.
- * No native driver defines .write -- none of these three drivers are
- * writable. */
+#if FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT; delegates to the native driver's own source validation. */
+static bool validate_gpio_output(uint8_t source_index, uint8_t source_flags)
+{
+    return native_gpio_output_source_is_valid(source_index, source_flags);
+}
+#endif
+
+/* Vtable dispatch tables: bind each native driver's operation functions
+ * (drivers/include/drivers/native_channel_driver.h) into the
+ * telemetry_driver_vtbl_t shape channel_manager.c/sensor_manager.c call
+ * through. internal_temp/adc_voltage/gpio_input are read-only (no .write/
+ * .configure/.self_test); gpio_output is the first writable native driver
+ * (v0.5.1 T1). */
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
 static const telemetry_driver_vtbl_t g_internal_temp_driver = {
     .start = native_internal_temperature_start,
@@ -89,6 +101,15 @@ static const telemetry_driver_vtbl_t g_gpio_input_driver = {
     .start = native_gpio_input_start,
     .stop = native_gpio_input_stop,
     .read = native_gpio_input_read,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+static const telemetry_driver_vtbl_t g_gpio_output_driver = {
+    .start = native_gpio_output_start,
+    .stop = native_gpio_output_stop,
+    .write = native_gpio_output_write,
+    .configure = native_gpio_output_configure,
+    .self_test = native_gpio_output_self_test,
 };
 #endif
 
@@ -146,6 +167,23 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
                         TELEMETRY_DRIVER_CAPABILITY_READ,
         .validate_source = validate_gpio,
         .driver = &g_gpio_input_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT,
+        .name = "gpio_output",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_CONFIGURE |
+                        TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_gpio_output,
+        .driver = &g_gpio_output_driver,
     },
 #endif
     /* Keeps the array valid when every optional native driver is excluded. */
@@ -241,7 +279,7 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
             .shared = true,
         };
     }
-    else if (driver_id == CONFIG_CHANNEL_DRIVER_GPIO_INPUT)
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_GPIO_INPUT || driver_id == CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT)
     {
         out_claims[0].type = DRIVER_CATALOG_RESOURCE_GPIO;
         out_claims[0].index = source_index;

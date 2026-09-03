@@ -16,6 +16,7 @@ import sys
 
 SUITES = (
     "test_channel_manager.py",
+    "test_gpio_output_driver.py",
     "test_channel_runtime.py",
     "test_history_service.py",
     "test_history_flash_backend.py",

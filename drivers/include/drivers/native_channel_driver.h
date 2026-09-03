@@ -1,23 +1,24 @@
 /**
  * @file
  * @brief Native (first-party, hardware-backed) channel driver operation
- *        table implementations: internal-temperature, ADC-voltage, and
- *        GPIO-input channels.
+ *        table implementations: internal-temperature, ADC-voltage,
+ *        GPIO-input, and GPIO-output channels.
  *
  * This header declares the concrete functions that
  * services/src/driver_catalog.c wires into telemetry_driver_vtbl_t
  * (services/include/services/telemetry_driver.h) instances -- one vtable
- * per driver, bound at compile time. Each driver here implements exactly
- * the vtable's `start`/`stop`/`read` slots; none implements
- * `write`/`configure`/`self_test` (all three are read-only, non-writable
- * hardware sources).
+ * per driver, bound at compile time. `internal_temperature`/`adc_voltage`/
+ * `gpio_input` implement exactly the vtable's `start`/`stop`/`read` slots
+ * (read-only, non-writable hardware sources). `gpio_output`
+ * (v0.5.1 T1, see docs/releases/v0.5.1.md) is the first native driver to
+ * implement `write`/`configure`/`self_test`.
  *
  * Vtable contract (see telemetry_driver_vtbl_t):
  * - `start(channel)`: validate `channel->driver_context` (cast to
  *   native_channel_source_t) and claim/configure the hardware resource
  *   (GPIO direction+pulls, ADC input enablement). Must be idempotent enough
  *   to be safely retried on TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT.
- * - `stop(channel)`: release logical ownership. None of these three drivers
+ * - `stop(channel)`: release logical ownership. None of these four drivers
  *   actually deconfigures hardware on stop (they are all no-ops beyond
  *   returning TELEMETRY_DRIVER_RESULT_OK) since the underlying peripherals
  *   (ADC, GPIO bank) have no meaningful "off" state to restore here.
@@ -25,16 +26,29 @@
  *   converted value into `channel->runtime.value` (the union member
  *   matching `channel->metadata.value_type`). Runs synchronously/blocking
  *   on the calling task; never sleeps or yields.
+ * - `write(channel, value)`: (gpio_output only) drive the channel's exact-
+ *   type value out to hardware and mirror it into `channel->runtime.value`
+ *   on success, so a subsequent `self_test` can compare commanded vs.
+ *   observed state.
+ * - `configure(channel, config)`: (gpio_output only) apply the driver's
+ *   declared safe/idle output level outside the normal write path (see
+ *   native_gpio_output_config_t).
+ * - `self_test(channel)`: (gpio_output only) verify the pad's observable
+ *   direction/level actually match the last commanded state.
  *
- * Execution context: per docs/code/hardware.md, `start`/`stop` are
- * dispatched from sensor_manager.c and `read` from channel_manager.c:545,
- * always from SensorTask, never from an ISR or open62541 callback context.
+ * Execution context: per docs/code/hardware.md, `start`/`stop`/`configure`/
+ * `self_test` are dispatched from sensor_manager.c, `read` from
+ * channel_manager.c:545, and `write` from channel_manager.c's write path
+ * (services/channel_manager.h `channel_manager_write_value()`) under a
+ * per-channel driver-operation lease -- always from SensorTask, never from
+ * an ISR or open62541 callback context.
  *
  * Concurrency: none of these drivers use locks. Hardware resource conflicts
- * (e.g. two channels claiming the same ADC input) are caught earlier, at
- * configuration time, by services/src/driver_catalog.c's resource-claim
- * bookkeeping -- this header's functions assume the caller has already
- * ensured no two active channels contend for the same physical resource.
+ * (e.g. two channels claiming the same ADC input or GPIO pin) are caught
+ * earlier, at configuration time, by services/src/driver_catalog.c's
+ * resource-claim bookkeeping -- this header's functions assume the caller
+ * has already ensured no two active channels contend for the same physical
+ * resource.
  */
 #ifndef DRIVERS_NATIVE_CHANNEL_DRIVER_H
 #define DRIVERS_NATIVE_CHANNEL_DRIVER_H
@@ -144,5 +158,83 @@ telemetry_driver_result_t native_gpio_input_stop(telemetry_channel_t *channel);
  *         otherwise, with `channel->runtime.value.boolean` updated.
  */
 telemetry_driver_result_t native_gpio_input_read(telemetry_channel_t *channel, uint32_t now_ms);
+
+/**
+ * @brief Optional configuration payload for native_gpio_output_configure().
+ *
+ * Every current caller (sensor_manager.c's channel activation/restart
+ * paths) invokes `configure()` with a NULL payload, which
+ * native_gpio_output_configure() treats as "apply the released/safe
+ * default" -- not an error. This struct exists for a future direct caller
+ * that wants to override that default; none exists today.
+ */
+typedef struct
+{
+    bool safe_level;
+} native_gpio_output_config_t;
+
+/**
+ * @brief Validate a GPIO-output channel's source selector.
+ * @return true only for source_index < NUM_BANK0_GPIOS, source_flags
+ *         containing no unknown bits (invert, open-drain).
+ */
+bool native_gpio_output_source_is_valid(uint8_t source_index, uint8_t source_flags);
+
+/**
+ * @brief Start (claim/configure) one GPIO output pin and drive it to its
+ *        released/not-asserted default (`false`, pre-invert) via
+ *        native_gpio_output_write().
+ * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid;
+ *         TELEMETRY_DRIVER_RESULT_OK otherwise.
+ * @note Hardware side effect: configures direction/pulls per open-drain
+ *       mode (see native_gpio_output_write()) and drives the pin.
+ */
+telemetry_driver_result_t native_gpio_output_start(telemetry_channel_t *channel);
+/** @brief No-op; always returns TELEMETRY_DRIVER_RESULT_OK (see file-level vtable contract). */
+telemetry_driver_result_t native_gpio_output_stop(telemetry_channel_t *channel);
+/**
+ * @brief Drive @p value out to the configured GPIO pin.
+ *
+ * Push-pull mode (default): `gpio_put()` the post-invert level directly.
+ * Open-drain mode (source_flags NATIVE_GPIO_OUTPUT_SOURCE_OPEN_DRAIN):
+ * asserted (post-invert `true`) actively drives the pin low
+ * (`GPIO_OUT`, level 0); released (post-invert `false`) switches the pin
+ * to high-impedance input (`GPIO_IN`), relying on the internal pull-up
+ * enabled in native_gpio_output_start() (or external wiring) to read high.
+ *
+ * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid,
+ *         @p value is NULL, or the channel's value type is not BOOLEAN;
+ *         TELEMETRY_DRIVER_RESULT_OK otherwise, with `channel->runtime.value.boolean`
+ *         updated to the pre-invert commanded value.
+ */
+telemetry_driver_result_t native_gpio_output_write(telemetry_channel_t *channel,
+                                                    const telemetry_channel_value_t *value);
+/**
+ * @brief Apply this channel's safe/idle output level via
+ *        native_gpio_output_write().
+ *
+ * @p config NULL (every current real call site) applies the released
+ * (`false`) default; a non-NULL native_gpio_output_config_t overrides it.
+ *
+ * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid;
+ *         otherwise the result of the underlying write.
+ */
+telemetry_driver_result_t native_gpio_output_configure(telemetry_channel_t *channel, const void *config);
+/**
+ * @brief Verify the pad's observable direction (open-drain) or
+ *        direction+level (push-pull) match the last commanded state.
+ *
+ * Push-pull: compares `gpio_get_dir()`/`gpio_get()` against the last
+ * commanded post-invert level. Open-drain: compares only `gpio_get_dir()`
+ * against the expected direction (`GPIO_OUT` when asserted, `GPIO_IN` when
+ * released) -- the released level depends on external wiring the reference
+ * board does not provide, so it is not part of this check.
+ *
+ * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid;
+ *         TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE if the observed pad state
+ *         does not match the commanded state; TELEMETRY_DRIVER_RESULT_OK
+ *         otherwise.
+ */
+telemetry_driver_result_t native_gpio_output_self_test(telemetry_channel_t *channel);
 
 #endif
