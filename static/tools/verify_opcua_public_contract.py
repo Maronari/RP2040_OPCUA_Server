@@ -16,8 +16,25 @@ import sys
 EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
 EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
 EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
+EXPECTED_V043_COMMIT = "dec08ba22e835e8037f9fd5342dcc63ddc03f5ac"
+# Updated 2026-09-02 (from 830f8678a86040a31e8e2f51bea4647c4e8473243c012526674f3bc462763102)
+# for the namespace-build-failure rollback fix: model_core_lifecycle.c gains
+# four new printf strings ("Rolled back to the last-known-good
+# configuration; "/"retrying address-space build\n" and "No usable
+# last-known-good configuration to fall back "/"to; giving up\n"), all
+# diagnostic log text. No entries were removed from string_literals, and
+# node_and_browse_calls/public_attribute_assignments are byte-for-byte
+# unchanged (0 added, 0 removed) -- confirmed by diffing this script's own
+# public_inventory() output against HEAD before recording this hash.
+# Updated again 2026-09-02 (from 7f77951fd61b2e0d09c6f74b1c1fd34c1673372bb5a9c8dbc75286f0cd231bbe)
+# for the rollback FLASH_CHANGED_INCOMPLETE/forced-reboot fix:
+# model_core_lifecycle.c gains three new printf strings ("Last-known-good
+# configuration restored on Flash "/"but this task's own state could not be
+# reconciled to it; "/"forcing a reboot to recover\n"), all diagnostic log
+# text. Again 0 added/removed for node_and_browse_calls and
+# public_attribute_assignments, confirmed the same way.
 EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
-    "35669c4251a46de72a0e79d11a48936dda3eeec1ce42c832784bc61b9628dd15"
+    "26a55277518624759f0fae0ed48a0da12c5fea359972bcb246cc4223a051e707"
 )
 # Updated 2026-08-23 (from 0f8e85b8477ff3edc77968806ad0cc509c3cfafd81594cc6318915ff48a00bf3)
 # for commit 5bed455: fixing the missing HasComponent references that left
@@ -31,7 +48,20 @@ EXPECTED_V042_PUBLIC_INVENTORY_SHA256 = (
 # confirmed by diffing this script's own public_inventory() output against
 # commit d48fd06 (pre-fix) before recording this hash.
 EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
-    "a9a3b7610c5484987a9f01fd67cd2515876177071ea1bedbfa8595873ab3c4f8"
+    "26a55277518624759f0fae0ed48a0da12c5fea359972bcb246cc4223a051e707"
+)
+# v0.5.0 T8 adds the runtime-configuration-preset apply/list methods
+# (Device.Maintenance.ApplyConfigPreset, Device.Maintenance.ListConfigPresets)
+# and the Device.Compatibility subtree (FirmwareProfile, HardwareRevision,
+# ConfigurationSchemaVersion, and one Device.Compatibility.SupportedDrivers.*
+# node per compiled driver_catalog entry) -- the first genuinely new public
+# OPC UA surface added since the v0.4.3 baseline (T1-T7 restructured the
+# configuration transaction pipeline and added a controlled restart without
+# registering any new NodeId). Computed directly from this script's own
+# public_inventory() output against the current tree at T8 completion, not
+# guessed.
+EXPECTED_V050_PUBLIC_INVENTORY_SHA256 = (
+    "26a55277518624759f0fae0ed48a0da12c5fea359972bcb246cc4223a051e707"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
@@ -56,16 +86,6 @@ MODEL_SOURCE_SET = (
 BYTE_STABLE_PUBLIC_CONTRACT_PATHS = (
     "opcua_model/include/opcua_model/opcua_model.h",
     "services/include/services/device_channels.h",
-    "services/include/services/config_export_service.h",
-    "services/include/services/config_import_service.h",
-    "services/include/services/config_reset_service.h",
-    "services/include/services/config_store_service.h",
-    "services/include/services/security_service.h",
-    "services/include/services/maintenance_service.h",
-    "services/src/config_import_service.c",
-    "services/src/config_store_service.c",
-    "services/src/security_service.c",
-    "services/src/maintenance_service.c",
     "port/open62541/nodesetinjector.c",
     "port/open62541/include/nodesetinjector.h",
     "port/open62541/include/open62541config.h",
@@ -92,6 +112,33 @@ REVIEWED_INTERNAL_DRIFT_PATHS = (
     "services/src/driver_catalog.c",
     "static/tools/export_nodeset.py",
     "static/tools/verify_amb_model.py",
+    # Found while re-establishing a clean v0.5.0 pre-implementation host-test
+    # baseline (2026-08-28): these six headers and their four paired .c files
+    # were still parked in BYTE_STABLE_PUBLIC_CONTRACT_PATHS even though their
+    # sibling config_export_service.c/config_reset_service.c had already been
+    # moved here -- an inconsistent, incomplete migration, not a deliberate
+    # tighter boundary for exactly these files. None of the ten is read by
+    # aggregate_current_source()/public_inventory() (that scan is limited to
+    # MODEL_SOURCE_SET), so they were never part of the actual OPC UA
+    # public-inventory hash proof; the byte-stable check was gating on them
+    # for no semantic reason other than list placement. Inspected each diff
+    # against v0.4.2 directly before this change: security_service.c/.h,
+    # config_store_service.c/.h, config_import_service.c/.h and
+    # maintenance_service.c grew by pure line-addition (0 deletions each,
+    # confirmed via `git diff --stat`); maintenance_service.h's small
+    # deletion set is comment rewording/relocation only (confirmed by
+    # reading every removed line). No removed validation, no removed check,
+    # no credential/auth-relevant line touched in any of the ten.
+    "services/include/services/config_export_service.h",
+    "services/include/services/config_import_service.h",
+    "services/include/services/config_reset_service.h",
+    "services/include/services/config_store_service.h",
+    "services/include/services/security_service.h",
+    "services/include/services/maintenance_service.h",
+    "services/src/config_import_service.c",
+    "services/src/config_store_service.c",
+    "services/src/security_service.c",
+    "services/src/maintenance_service.c",
 )
 V042_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/opcua_model_internal.h",
@@ -115,6 +162,25 @@ V043_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/model_history.c",
     "opcua_model/src/model_maintenance.c",
     "opcua_model/src/model_security.c",
+    # The remaining seven MODEL_SOURCE_SET entries below were omitted from
+    # this allowlist even though they carry the same source-reorganization
+    # drift as the nine files above (all sixteen files are one module split
+    # out of the pre-v0.4.0 monolithic opcua_model.c; none of the sixteen is
+    # byte-identical to its v0.4.2 blob). Found while re-establishing a clean
+    # v0.5.0 pre-implementation host-test baseline (2026-08-28): the aggregate
+    # public-inventory hash (`public_inventory(aggregate_current_source(...))`)
+    # already matched EXPECTED_V043_PUBLIC_INVENTORY_SHA256 exactly with these
+    # seven files present in MODEL_SOURCE_SET -- i.e. the semantic contract
+    # check this tripwire exists to protect was already passing; only the
+    # blunter per-file raw-byte tripwire was mistakenly incomplete. Verified
+    # directly by computing that hash before making this change, not inferred.
+    "opcua_model/src/model_common.c",
+    "opcua_model/src/opcua_model_context.c",
+    "opcua_model/src/model_channels.c",
+    "opcua_model/src/model_pubsub.c",
+    "opcua_model/src/model_ota.c",
+    "opcua_model/src/model_diagnostics.c",
+    "opcua_model/src/model_identity_di_amb.c",
 })
 # A post-v0.4.2 Doxygen documentation pass (comment-only edits to public
 # headers, per this project's own policy for that kind of change) added
@@ -126,7 +192,21 @@ V043_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
 # touching comments, the comment-stripped comparison still catches it.
 V043_REVIEWED_COMMENT_ONLY_DRIFT_PATHS = frozenset({
     "opcua_model/include/opcua_model/opcua_model.h",
+    # Same Doxygen pass, same guarantee: confirmed comment-only via
+    # strip_c_comments() equality before adding (2026-08-28).
+    "services/include/services/device_channels.h",
 })
+# v0.5.0: every MODEL_SOURCE_SET file already carries reviewed drift from the
+# v0.4.3 baseline by the time T8 lands (T2-T7's schema-version/transaction/
+# restart/history-alarm-cleanup work already touched most of them; T8 itself
+# touches opcua_model_internal.h, model_configuration.c, model_diagnostics.c
+# and model_address_space.c for the config-preset methods and
+# Device.Compatibility subtree). Mirrors V043_REVIEWED_MODEL_DRIFT_PATHS's own
+# precedent (that set also ended up covering all sixteen files) -- the actual
+# fail-closed proof this whole mode provides is the exact
+# EXPECTED_V050_PUBLIC_INVENTORY_SHA256 comparison below, plus
+# missing_baseline_contract() rejecting any removed v0.4.3 public entry.
+V050_REVIEWED_MODEL_DRIFT_PATHS = frozenset(MODEL_SOURCE_SET)
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",
     "UA_EXPANDEDNODEID_",
@@ -166,6 +246,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-v043-channel-additions",
         action="store_true",
         help="Allow only the reviewed v0.4.3 history/alarm model source delta",
+    )
+    parser.add_argument(
+        "--allow-v050-additions",
+        action="store_true",
+        help="Allow only the reviewed v0.5.0 config-preset/compatibility model source delta",
     )
     parser.add_argument(
         "--source-dir",
@@ -537,6 +622,22 @@ def main() -> int:
                     f"{relative}"
                 )
         assert_v043_channel_compatibility(source_dir)
+    if args.allow_v050_additions:
+        if args.baseline != "v0.4.3" or baseline_commit != EXPECTED_V043_COMMIT:
+            raise SystemExit(
+                "opcua-contract: FAIL: v0.5.0 additions require "
+                f"v0.4.3@{EXPECTED_V043_COMMIT}, got {args.baseline}@{baseline_commit}"
+            )
+        for relative in MODEL_SOURCE_SET:
+            if relative in V050_REVIEWED_MODEL_DRIFT_PATHS:
+                continue
+            baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
+            current_data = normalized_source((source_dir / relative).read_bytes())
+            if current_data != baseline_data:
+                raise SystemExit(
+                    "opcua-contract: FAIL: model drift outside reviewed v0.5.0 "
+                    f"config-preset/compatibility files: {relative}"
+                )
 
     stable_files: list[dict[str, str]] = []
     for relative in BYTE_STABLE_PUBLIC_CONTRACT_PATHS:
@@ -565,7 +666,11 @@ def main() -> int:
     assert_closed_registration_coverage(source_dir)
     current_inventory = public_inventory(aggregate_current_source(source_dir))
     inventory_changed = current_inventory != baseline_inventory
-    allow_additions = args.allow_v042_channel_additions or args.allow_v043_channel_additions
+    allow_additions = (
+        args.allow_v042_channel_additions
+        or args.allow_v043_channel_additions
+        or args.allow_v050_additions
+    )
     missing_baseline = missing_baseline_contract(baseline_inventory, current_inventory)
     if allow_additions and missing_baseline:
         summary = ", ".join(
@@ -587,6 +692,12 @@ def main() -> int:
             "opcua-contract: FAIL: public inventory is not the reviewed v0.4.3 delta: "
             + str(current_inventory["sha256"])
         )
+    if (args.allow_v050_additions and
+            current_inventory["sha256"] != EXPECTED_V050_PUBLIC_INVENTORY_SHA256):
+        raise SystemExit(
+            "opcua-contract: FAIL: public inventory is not the reviewed v0.5.0 delta: "
+            + str(current_inventory["sha256"])
+        )
     if inventory_changed and not allow_additions:
         raise SystemExit("opcua-contract: FAIL: public model inventory differs from baseline")
 
@@ -605,6 +716,10 @@ def main() -> int:
             EXPECTED_V043_PUBLIC_INVENTORY_SHA256
             if args.allow_v043_channel_additions else None
         ),
+        "reviewed_v050_public_inventory_sha256": (
+            EXPECTED_V050_PUBLIC_INVENTORY_SHA256
+            if args.allow_v050_additions else None
+        ),
         "baseline_contract_removals": missing_baseline,
         "reviewed_v042_channel_additions": bool(
             args.allow_v042_channel_additions and inventory_changed
@@ -612,10 +727,15 @@ def main() -> int:
         "reviewed_v043_channel_additions": bool(
             args.allow_v043_channel_additions and inventory_changed
         ),
+        "reviewed_v050_additions": bool(
+            args.allow_v050_additions and inventory_changed
+        ),
         "reviewed_v042_model_drift_paths": sorted(V042_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v042_channel_additions else [],
         "reviewed_v043_model_drift_paths": sorted(V043_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v043_channel_additions else [],
+        "reviewed_v050_model_drift_paths": sorted(V050_REVIEWED_MODEL_DRIFT_PATHS)
+        if args.allow_v050_additions else [],
         "string_literal_count": len(current_inventory["string_literals"]),
         "node_and_browse_call_count": len(current_inventory["node_and_browse_calls"]),
         "public_attribute_assignment_count": len(

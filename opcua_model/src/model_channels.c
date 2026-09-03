@@ -6,10 +6,11 @@
  *
  * Responsibilities:
  * - Decide whether a config change requires a full server rebuild/reboot
- *   (`model_config_requires_server_reboot`, `model_is_reboot_required`),
- *   compared against services' `config_service_get()` /
- *   `config_service_get_staged()` state only — this file owns no config
- *   state itself.
+ *   (`model_config_requires_server_reboot`,
+ *   `model_address_space_snapshot_requires_server_restart`,
+ *   `model_is_reboot_required`) against service-owned RUNNING/STAGED state;
+ *   only the controlled-restart helper ignores STAGED state. This file owns
+ *   no configuration state itself.
  * - Classify server-certificate and trust-list expiry into the
  *   `model_certificate_expiry_state_t` buckets consumed by
  *   `model_maintenance.c`'s runtime-event polling.
@@ -59,6 +60,9 @@ bool model_config_requires_server_reboot(const device_profile_config_t *lhs,
     if (lhs->opcua_port != rhs->opcua_port ||
         lhs->enable_mqtt_pubsub != rhs->enable_mqtt_pubsub ||
         lhs->mqtt_pubsub_use_json != rhs->mqtt_pubsub_use_json ||
+        lhs->enable_alarm_ack_method != rhs->enable_alarm_ack_method ||
+        lhs->enable_heap_diagnostics != rhs->enable_heap_diagnostics ||
+        lhs->enable_task_diagnostics != rhs->enable_task_diagnostics ||
         model_string_changed(lhs->device_name, rhs->device_name) ||
         model_string_changed(lhs->opcua_hostname, rhs->opcua_hostname) ||
         model_string_changed(lhs->ntp_server, rhs->ntp_server) ||
@@ -86,18 +90,34 @@ bool model_config_requires_server_reboot(const device_profile_config_t *lhs,
     return false;
 }
 
+bool model_address_space_snapshot_requires_server_restart(void)
+{
+    const device_profile_config_t *running = config_service_get();
+
+    if (!g_model_address_space_config_snapshot_valid || running == NULL)
+    {
+        return false;
+    }
+
+    return model_config_requires_server_reboot(&g_model_address_space_config_snapshot, running);
+}
+
 bool model_is_reboot_required(void)
 {
     const device_profile_config_t *running = config_service_get();
     const device_profile_config_t *staged = config_service_get_staged();
+    bool snapshot_differs;
+    bool staged_differs;
 
     if (!g_model_address_space_config_snapshot_valid || running == NULL || staged == NULL)
     {
         return false;
     }
 
-    return model_config_requires_server_reboot(&g_model_address_space_config_snapshot, running) ||
-           model_config_requires_server_reboot(running, staged);
+    snapshot_differs = model_address_space_snapshot_requires_server_restart();
+    staged_differs = model_config_requires_server_reboot(running, staged);
+
+    return snapshot_differs || staged_differs;
 }
 
 const char *model_security_mode_to_string(void)

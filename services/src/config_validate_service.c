@@ -16,8 +16,11 @@
  *   `cursor` only on success; on the first error the whole parse aborts and
  *   propagates that result up to
  *   `config_validate_service_parse_json_payload()`.
- * - Binary payload validation: decodes via `config_compat_decode_binary()`
- *   (schema/version migration) then re-uses the same semantic gate.
+ * - Binary payload validation: decodes via the `schema_version`-keyed
+ *   `config_compat_decode_versioned()` (schema/version migration; rejects an
+ *   unrecognized `schema_version` outright) then re-uses the same semantic
+ *   gate. The JSON `schemaVersion` field is checked against the same
+ *   migration table via `config_compat_schema_version_is_supported()`.
  *
  * Ownership: no persistent state; the JSON reader borrows the caller's
  * payload buffer and never copies it except into caller-supplied
@@ -1200,7 +1203,7 @@ static config_validate_service_result_t config_validate_service_parse_json_paylo
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
     result = config_json_expect_named_u32(&reader, true, "schemaVersion", "schemaVersion", &document_schema_version);
     if (result != CONFIG_VALIDATE_RESULT_OK) return result;
-    if (document_schema_version != CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY)
+    if (!config_compat_schema_version_is_supported(document_schema_version))
     {
         return config_json_reader_fail(&reader,
                                        CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA,
@@ -1324,16 +1327,27 @@ static config_validate_service_result_t config_validate_service_parse_json_paylo
 
 /* Checks run in a fixed order and short-circuit on the first failure:
  * timezone -> location paths -> port -> watchdog -> network mode/static
- * completeness -> per-channel driver/kind/value-type/writable-capability/
- * resource-claim validity plus pairwise duplicate-ID check -> aggregate
- * cross-channel hardware resource-claim compatibility
- * (`driver_catalog_claims_are_compatible()`). */
-config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate,
-                                                                             char *message,
-                                                                             size_t message_size)
+ * completeness -> per-channel unknown-driver/kind/value-type/writable-
+ * capability/resource-claim validity plus pairwise duplicate-ID check ->
+ * aggregate cross-channel hardware resource-claim compatibility
+ * (`driver_catalog_claims_are_compatible()`). Unknown-driver_id is the one
+ * exception: when @p out_missing_drivers is non-NULL, it is collected for
+ * every channel instead of stopping the whole function at the first one
+ * (see `config_validate_service_validate_candidate_collect_missing_drivers()`);
+ * every other condition here still stops the whole function immediately. */
+static config_validate_service_result_t config_validate_service_validate_candidate_impl(
+    const device_profile_config_t *candidate,
+    char *message,
+    size_t message_size,
+    config_validate_service_missing_driver_report_t *out_missing_drivers)
 {
     driver_catalog_resource_claim_t claims[PLATFORM_CHANNEL_LIMIT * DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
     size_t claim_count = 0u;
+    if (out_missing_drivers != NULL)
+    {
+        out_missing_drivers->count = 0u;
+        out_missing_drivers->resource_conflict = false;
+    }
     if (candidate == NULL)
     {
         config_validate_service_set_message(message, message_size, "configuration candidate is unavailable");
@@ -1402,8 +1416,26 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
         }
 
         driver = driver_catalog_get_by_id(channel->driver_id);
-        if (driver == NULL ||
-            (driver->validate_source != NULL && !driver->validate_source(channel->source_index, channel->source_flags)) ||
+        if (driver == NULL)
+        {
+            if (out_missing_drivers != NULL)
+            {
+                if (out_missing_drivers->count < PLATFORM_CHANNEL_LIMIT)
+                {
+                    out_missing_drivers->entries[out_missing_drivers->count].channel_index = (uint8_t)index;
+                    out_missing_drivers->entries[out_missing_drivers->count].driver_id = channel->driver_id;
+                    ++out_missing_drivers->count;
+                }
+                continue;
+            }
+            config_validate_service_set_message(message,
+                                                message_size,
+                                                "channel %u references unknown driver_id %u",
+                                                (unsigned)index,
+                                                (unsigned)channel->driver_id);
+            return CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER;
+        }
+        if ((driver->validate_source != NULL && !driver->validate_source(channel->source_index, channel->source_flags)) ||
             channel->kind > (uint8_t)TELEMETRY_CHANNEL_KIND_COMPUTED ||
             channel->value_type > (uint8_t)TELEMETRY_CHANNEL_VALUE_STRING)
         {
@@ -1474,6 +1506,50 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
         }
     }
 
+    if (out_missing_drivers != NULL && out_missing_drivers->count > 0u)
+    {
+        /* Resource-claim compatibility only covers channels whose driver was
+         * resolved (claims[] was only ever populated for those) -- computing
+         * it here, rather than skipping straight to UNKNOWN_DRIVER, is what
+         * lets a candidate with both problems surface both diagnostics in
+         * one call instead of only the first one found. */
+        char driver_list[80] = {0};
+        size_t list_offset = 0u;
+
+        for (size_t missing = 0u; missing < out_missing_drivers->count; ++missing)
+        {
+            int written = snprintf(driver_list + list_offset,
+                                   list_offset < sizeof(driver_list) ? sizeof(driver_list) - list_offset : 0u,
+                                   "%schannel %u driver_id %u",
+                                   missing == 0u ? "" : ", ",
+                                   (unsigned)out_missing_drivers->entries[missing].channel_index,
+                                   (unsigned)out_missing_drivers->entries[missing].driver_id);
+            if (written <= 0)
+            {
+                break;
+            }
+            list_offset += (size_t)written;
+            if (list_offset >= sizeof(driver_list))
+            {
+                break;
+            }
+        }
+
+        out_missing_drivers->resource_conflict = !driver_catalog_claims_are_compatible(claims, claim_count);
+        if (out_missing_drivers->resource_conflict)
+        {
+            config_validate_service_set_message(message,
+                                                message_size,
+                                                "unknown driver_id: %s; channel hardware resource claims also conflict",
+                                                driver_list);
+        }
+        else
+        {
+            config_validate_service_set_message(message, message_size, "unknown driver_id: %s", driver_list);
+        }
+        return CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER;
+    }
+
     if (!driver_catalog_claims_are_compatible(claims, claim_count))
     {
         config_validate_service_set_message(message,
@@ -1485,19 +1561,42 @@ config_validate_service_result_t config_validate_service_validate_candidate(cons
     return CONFIG_VALIDATE_RESULT_OK;
 }
 
+config_validate_service_result_t config_validate_service_validate_candidate(const device_profile_config_t *candidate,
+                                                                             char *message,
+                                                                             size_t message_size)
+{
+    return config_validate_service_validate_candidate_impl(candidate, message, message_size, NULL);
+}
+
+config_validate_service_result_t config_validate_service_validate_candidate_collect_missing_drivers(
+    const device_profile_config_t *candidate,
+    char *message,
+    size_t message_size,
+    config_validate_service_missing_driver_report_t *out_missing_drivers)
+{
+    /* Always run in collecting mode, even if the caller doesn't want the
+     * structured list -- a local report keeps that mode (not stopping at the
+     * first missing driver) unconditional for this entry point. */
+    config_validate_service_missing_driver_report_t local_report = {0};
+
+    return config_validate_service_validate_candidate_impl(
+        candidate, message, message_size, out_missing_drivers != NULL ? out_missing_drivers : &local_report);
+}
+
 /**
- * @brief Decodes an opaque-binary config-import payload
- * (`config_compat_decode_binary()`, which also handles frozen prior-version
- * layouts) and runs it through
+ * @brief Decodes a binary config-import payload against the
+ * `schema_version`-keyed migration table (`config_compat_decode_versioned()`,
+ * which also handles frozen prior-version layouts under the current schema
+ * version) and runs the result through
  * `config_validate_service_validate_candidate()`.
- * @param schema_version Must equal `CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY`;
- * any other value is rejected without attempting to decode.
+ * @param schema_version Dispatch key; any value with no migration-table
+ * entry is rejected without attempting to decode.
  * @param out_candidate Filled with the decoded configuration only on
  * success; optional (may be NULL).
- * @return `CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA` for a wrong
+ * @return `CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA` for an unrecognized
  * @p schema_version; `CONFIG_VALIDATE_RESULT_INVALID_SIZE` if @p payload_size
- * doesn't match any known layout (current or frozen v0.4.0/v0.4.1/v0.4.2);
- * otherwise the semantic validation result.
+ * doesn't match any known layout for that version (current or frozen
+ * v0.4.0/v0.4.1/v0.4.2); otherwise the semantic validation result.
  */
 static config_validate_service_result_t config_validate_service_validate_binary_payload(const uint8_t *payload,
                                                                                         size_t payload_size,
@@ -1508,17 +1607,19 @@ static config_validate_service_result_t config_validate_service_validate_binary_
 {
     device_profile_config_t candidate = {0};
 
-    if (schema_version != CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY)
+    if (!config_compat_schema_version_is_supported(schema_version))
     {
         config_validate_service_set_message(message,
                                             message_size,
-                                            "only opaque binary config schema is supported for binary payloads");
+                                            "binary config schema version %lu is not supported",
+                                            (unsigned long)schema_version);
         return CONFIG_VALIDATE_RESULT_UNSUPPORTED_SCHEMA;
     }
-    if (!config_compat_decode_binary(payload,
-                                     payload_size,
-                                     &candidate,
-                                     NULL))
+    if (!config_compat_decode_versioned(schema_version,
+                                        payload,
+                                        payload_size,
+                                        &candidate,
+                                        NULL))
     {
         config_validate_service_set_message(message,
                                             message_size,
@@ -1556,6 +1657,7 @@ const char *config_validate_service_result_to_string(config_validate_service_res
     case CONFIG_VALIDATE_RESULT_INVALID_LOCATION_PATH: return "INVALID_LOCATION_PATH";
     case CONFIG_VALIDATE_RESULT_RESOURCE_CONFLICT: return "RESOURCE_CONFLICT";
     case CONFIG_VALIDATE_RESULT_UNSUPPORTED_VALUE_TYPE: return "UNSUPPORTED_VALUE_TYPE";
+    case CONFIG_VALIDATE_RESULT_UNKNOWN_DRIVER: return "UNKNOWN_DRIVER";
     default: return "UNKNOWN";
     }
 }

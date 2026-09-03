@@ -16,6 +16,7 @@ def main() -> int:
             f"-I{root / 'drivers' / 'include'}", f"-I{root / 'port' / 'psram'}",
             str(root / "services" / "src" / "config_service.c"),
             str(root / "services" / "src" / "config_compat.c"),
+            str(root / "services" / "src" / "config_presets.c"),
             str(root / "services" / "src" / "channel_manager.c"),
             str(root / "services" / "src" / "sensor_manager.c"),
             str(test_dir / "config_transaction_test.c"), "-o", str(executable),

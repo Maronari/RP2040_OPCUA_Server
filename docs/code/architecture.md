@@ -79,10 +79,13 @@ graph TD
    в этой кодовой базе, взаимодействующий с оборудованием, вместо этого
    обращается через заголовок `drivers/*`. См.
    [modules/services.md](modules/services.md#confirmed-architecture-boundary-observations).
-2. **`services/src/config_store_service.c` читает слоты конфигурации Flash
-   через прямое разыменование указателя XIP**, а не через вызов чтения
-   драйвера. Записи корректно проходят через
-   `flash_operation_coordinator`.
+2. ~~`services/src/config_store_service.c` читает слоты конфигурации Flash
+   через прямое разыменование указателя XIP~~ — **разрешено в v0.5.0**:
+   `config_store_service.c` больше не обращается к Flash напрямую; всё
+   физическое чтение/запись переехало в `drivers/src/
+   config_transaction_backend.c` (staged/running/last-known-good роли,
+   v0.5.0 T3) — XIP-чтение всё ещё существует там, но `drivers/` — это тот
+   слой, которому и положено обращаться к оборудованию напрямую.
 3. **`services/src/security_certificate_group_service.h`/`.c` напрямую
    раскрывают типы open62541** (`UA_CertificateGroup *`, `UA_StatusCode`,
    `UA_NodeId`, `UA_TrustListDataType`) в публичном API `services/`, что

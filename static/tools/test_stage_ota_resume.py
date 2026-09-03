@@ -41,6 +41,77 @@ def expect_rejected(field, value):
     raise AssertionError(f"unsafe resume status was accepted: {field}={value!r}")
 
 
+def write_local_build_tree(build_dir, *, ota_build_bootloader="ON", layout_overrides=None, manifest_overrides=None):
+    ota_dir = build_dir / "ota_artifacts"
+    generated_dir = build_dir / "generated" / "ota_layout"
+    ota_dir.mkdir(parents=True, exist_ok=True)
+    generated_dir.mkdir(parents=True, exist_ok=True)
+
+    payload = ota_dir / "ota_payload.bin"
+    payload_bytes = b"bounded OTA payload"
+    payload.write_bytes(payload_bytes)
+    payload_crc32 = zlib.crc32(payload_bytes) & 0xFFFFFFFF
+    payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
+
+    cache_text = "\n".join(
+        [
+            f"OTA_BUILD_BOOTLOADER:BOOL={ota_build_bootloader}",
+            "PICO_BOARD:STRING=waveshare_core2350b_16mb_psram8mb",
+            "PICO_PLATFORM:STRING=rp2350-arm-s",
+            "RP2_FIRMWARE_VERSION:INTERNAL=0.5.0",
+            "RP2_FIRMWARE_VERSION_NUMBER:INTERNAL=327680",
+            "",
+        ]
+    )
+    (build_dir / "CMakeCache.txt").write_text(cache_text, encoding="utf-8")
+
+    layout = {
+        "board": "waveshare_core2350b_16mb_psram8mb",
+        "platform": "rp2350-arm-s",
+        "firmware": {
+            "version": "0.5.0",
+            "version_number": 327680,
+        },
+        "regions": {
+            "bank_a": {"origin": "0x10010000"},
+            "bank_b": {"offset_bytes": 0x7B4000},
+        },
+    }
+    if layout_overrides:
+        for key, value in layout_overrides.items():
+            if key == "firmware":
+                layout["firmware"].update(value)
+            elif key == "regions":
+                for region_name, region_value in value.items():
+                    layout["regions"][region_name].update(region_value)
+            else:
+                layout[key] = value
+    (generated_dir / "ota_layout.json").write_text(
+        json.dumps(layout),
+        encoding="utf-8",
+    )
+
+    manifest = {
+        "format_version": 1,
+        "board": layout["board"],
+        "platform": layout["platform"],
+        "payload_file": payload.name,
+        "payload_size_bytes": len(payload_bytes),
+        "payload_sha256": payload_sha256,
+        "payload_crc32": f"0x{payload_crc32:08x}",
+        "execution_origin": layout["regions"]["bank_a"]["origin"],
+        "staging_offset": f"0x{layout['regions']['bank_b']['offset_bytes']:x}",
+        "firmware_version": layout["firmware"]["version"],
+        "version_number": layout["firmware"]["version_number"],
+        "git_hash": "deadbeefcafe",
+    }
+    if manifest_overrides:
+        manifest.update(manifest_overrides)
+    manifest_path = ota_dir / "ota_payload.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path, payload
+
+
 def main():
     assert resolve_resume_offset(STATUS, PAYLOAD, 4096) == 4096
     inactive = copy.deepcopy(STATUS)
@@ -93,6 +164,72 @@ def main():
             assert "CRC32 mismatch" in str(exc)
         else:
             raise AssertionError("same-size corrupted resume payload was accepted")
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        build_dir = Path(temporary_directory) / "build"
+        manifest, _payload = write_local_build_tree(build_dir)
+        loaded = load_manifest(manifest)
+        assert loaded["firmware_version"] == "0.5.0"
+        assert loaded["version_number"] == 327680
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        archive_dir = Path(temporary_directory) / "release_bundle"
+        manifest, _payload = write_local_build_tree(archive_dir)
+        (archive_dir / "CMakeCache.txt").unlink()
+        (archive_dir / "generated" / "ota_layout" / "ota_layout.json").unlink()
+        loaded = load_manifest(manifest)
+        assert loaded["firmware_version"] == "0.5.0"
+        assert loaded["version_number"] == 327680
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        build_dir = Path(temporary_directory) / "build"
+        manifest, _payload = write_local_build_tree(build_dir, ota_build_bootloader="OFF")
+        try:
+            load_manifest(manifest)
+        except ValueError as exc:
+            assert "OTA_BUILD_BOOTLOADER=OFF" in str(exc)
+        else:
+            raise AssertionError("stale local build OTA manifest was accepted with OTA_BUILD_BOOTLOADER=OFF")
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        build_dir = Path(temporary_directory) / "build"
+        manifest, _payload = write_local_build_tree(
+            build_dir,
+            manifest_overrides={"firmware_version": "0.4.3"},
+        )
+        try:
+            load_manifest(manifest)
+        except ValueError as exc:
+            assert "firmware_version mismatch" in str(exc)
+        else:
+            raise AssertionError("local build OTA manifest with mismatched firmware version was accepted")
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        build_dir = Path(temporary_directory) / "build"
+        manifest, _payload = write_local_build_tree(
+            build_dir,
+            manifest_overrides={"execution_origin": "0x10020000"},
+        )
+        try:
+            load_manifest(manifest)
+        except ValueError as exc:
+            assert "execution_origin mismatch" in str(exc)
+        else:
+            raise AssertionError("local build OTA manifest with mismatched layout origin was accepted")
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        build_dir = Path(temporary_directory) / "build"
+        manifest, _payload = write_local_build_tree(
+            build_dir,
+            layout_overrides={"firmware": {"version": "0.4.3", "version_number": 262147}},
+            manifest_overrides={"firmware_version": "0.4.3", "version_number": 262147},
+        )
+        try:
+            load_manifest(manifest)
+        except ValueError as exc:
+            assert "layout firmware_version mismatch" in str(exc)
+        else:
+            raise AssertionError("local OTA manifest matching a stale layout but not CMakeCache was accepted")
 
     print("OTA resume validation host suite: PASS")
     return 0

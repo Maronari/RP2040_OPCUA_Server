@@ -5,6 +5,7 @@
 #include "services/sensor_manager.h"
 #include "psram_allocator.h"
 #include "FreeRTOS.h"
+#include "semphr.h"
 
 #include <assert.h>
 #include <setjmp.h>
@@ -26,6 +27,28 @@ void vTaskDelayUntil(TickType_t *last_wake_time, TickType_t period)
     (void)last_wake_time;
     (void)period;
     longjmp(g_delay_exit, 1);
+}
+void vTaskDelay(TickType_t ticks) { (void)ticks; }
+
+SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *storage)
+{
+    storage->locked = 0;
+    return storage;
+}
+int xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t ticks)
+{
+    (void)ticks;
+    if (semaphore->locked)
+    {
+        return pdFALSE;
+    }
+    semaphore->locked = 1;
+    return pdTRUE;
+}
+int xSemaphoreGive(SemaphoreHandle_t semaphore)
+{
+    semaphore->locked = 0;
+    return pdTRUE;
 }
 
 const device_profile_config_t *config_service_get(void) { return &g_profile; }

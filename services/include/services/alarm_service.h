@@ -161,6 +161,25 @@ void alarm_service_acknowledge_all(void);
 bool alarm_service_acknowledge_channel(const char *channel_id);
 
 /**
+ * @brief Free the alarm condition instance bound to @p channel_id, if any.
+ *
+ * v0.5.0 T7: called from `config_service`'s commit-step extension point for
+ * every channel deleted or modified (same channel id, different driver/
+ * value_type) by a just-committed transaction, so a reused channel id never
+ * surfaces a stranger's stale process_state/acknowledged/quality_fault.
+ * Zeroes the slot in place (including its `in_use` flag) rather than
+ * shifting other slots, and the slot becomes reclaimable: the next
+ * `alarm_service_find_or_bind_snapshot()` call scans for a freed slot below
+ * `g_condition_count` before extending the allocation cursor, so capacity is
+ * not permanently lost across repeated delete/modify cycles on reused ids.
+ *
+ * @param channel_id Channel id to clear; never registry index.
+ * @return true if @p channel_id named a bound condition (now cleared); false
+ *         if it was not found or the arguments were invalid.
+ */
+bool alarm_service_clear_channel(const char *channel_id);
+
+/**
  * @brief Alarm eligibility rule (T5 scope decision): every numeric or
  *        Boolean channel value type is eligible; String is not.
  *

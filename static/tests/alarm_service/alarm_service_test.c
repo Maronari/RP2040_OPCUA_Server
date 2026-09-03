@@ -10,7 +10,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#define TEST_MAX_CHANNELS 8u
+/* Must be >= ALARM_SERVICE_MAX_CONDITIONS (== PLATFORM_CHANNEL_LIMIT, up to
+ * 16) so the v0.5.0 T7 allocator-reclamation regression test below can fill
+ * every condition slot in one round regardless of which PLATFORM_CHANNEL_LIMIT
+ * this translation unit was built with (see test_alarm_service.py's 16/4
+ * matrix). */
+#define TEST_MAX_CHANNELS 16u
 
 static telemetry_channel_snapshot_t g_test_channels[TEST_MAX_CHANNELS];
 static size_t g_test_channel_count;
@@ -408,6 +413,80 @@ int main(void)
     {
         alarm_condition_status_t out_of_range = {0};
         assert(!alarm_service_get_condition_by_index(alarm_service_get_condition_count(), &out_of_range));
+    }
+
+    /* --- v0.5.0 T7: alarm_service_clear_channel() basic contract --- */
+    assert(alarm_service_init());
+    g_test_channel_count = 1u;
+    set_numeric_channel(0u, "chan.clear", "Clear", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                        60.0, 75.0, 0.0, 0.0, 0.0, 0u, 20.0, SERVICE_QUALITY_GOOD, true);
+    alarm_service_evaluate_all(90000u);
+    assert(alarm_service_get_condition_count() == 1u);
+    /* Bad arguments never crash and never report success. */
+    assert(!alarm_service_clear_channel(NULL));
+    assert(!alarm_service_clear_channel(""));
+    /* Clearing an id that was never bound reports false, no-op. */
+    assert(!alarm_service_clear_channel("chan.never-bound"));
+    assert(alarm_service_get_condition_count() == 1u);
+    /* Clearing a bound channel succeeds and its condition becomes
+     * unreachable by channel id afterward. */
+    assert(alarm_service_clear_channel("chan.clear"));
+    {
+        alarm_condition_status_t after_clear = {0};
+        assert(!alarm_service_get_condition_by_channel_id("chan.clear", &after_clear));
+    }
+    /* Clearing twice in a row is a safe, reported no-op the second time. */
+    assert(!alarm_service_clear_channel("chan.clear"));
+
+    /* --- v0.5.0 T7 regression: alarm_service_clear_channel() must reclaim
+     * its slot for reuse, not just mark it unused, or repeated delete/
+     * modify cycles on reused channel ids would permanently shrink
+     * available condition capacity (the exact bug this release's plan
+     * (docs/releases/v0.5.0.md T7) found in the original allocator, which
+     * only ever extended g_condition_count and never reclaimed a freed
+     * slot). Bind ALARM_SERVICE_MAX_CONDITIONS distinct channels to fill
+     * every slot, clear all of them, then repeat with an entirely
+     * different set of ids for several rounds. A naive non-reclaiming
+     * allocator exhausts capacity after the very first round -- every
+     * channel in round 2+ would silently fail to bind; the fix keeps
+     * every round fully bindable. --- */
+    assert(alarm_service_init());
+    {
+        const unsigned rounds = 5u;
+
+        for (unsigned round = 0u; round < rounds; ++round)
+        {
+            g_test_channel_count = ALARM_SERVICE_MAX_CONDITIONS;
+            for (size_t index = 0u; index < ALARM_SERVICE_MAX_CONDITIONS; ++index)
+            {
+                char id[TELEMETRY_CHANNEL_ID_MAX_LEN];
+
+                (void)snprintf(id, sizeof(id), "chan.round%u.%u", round, (unsigned)index);
+                set_numeric_channel(index, id, id, TELEMETRY_CHANNEL_VALUE_FLOAT,
+                                    60.0, 75.0, 0.0, 0.0, 0.0, 0u, 20.0, SERVICE_QUALITY_GOOD, true);
+            }
+            alarm_service_evaluate_all(100000u + round);
+
+            /* Every channel this round got a real, reachable condition slot
+             * -- proof capacity was not already exhausted by an earlier
+             * round's clears. */
+            assert(alarm_service_get_condition_count() == ALARM_SERVICE_MAX_CONDITIONS);
+            for (size_t index = 0u; index < ALARM_SERVICE_MAX_CONDITIONS; ++index)
+            {
+                char id[TELEMETRY_CHANNEL_ID_MAX_LEN];
+                alarm_condition_status_t status = {0};
+
+                (void)snprintf(id, sizeof(id), "chan.round%u.%u", round, (unsigned)index);
+                assert(alarm_service_get_condition_by_channel_id(id, &status));
+                assert(status.in_use);
+
+                /* Clear every slot so the next round's entirely different
+                 * ids must reclaim them. */
+                assert(alarm_service_clear_channel(id));
+                assert(!alarm_service_get_condition_by_channel_id(id, &status));
+            }
+            g_test_channel_count = 0u;
+        }
     }
 
     assert(g_critical_entries > 0u);

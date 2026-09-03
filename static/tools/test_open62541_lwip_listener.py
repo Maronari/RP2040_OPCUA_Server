@@ -10,6 +10,25 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
+def function_body(source: str, signature: str) -> str:
+    """Extract one function's body by brace-matching, so an ordering check
+    below can't be fooled by the same call names appearing in a doc comment
+    that precedes the function (a real recurrence: `main()`'s own doc
+    comment documents its call sequence in prose, and a naive whole-file
+    substring search matches that prose before the real, later call)."""
+    start = source.index(signature)
+    body_start = source.index("{", start)
+    depth = 0
+    for index in range(body_start, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise SystemExit(f"lwip-listener: FAIL: unterminated function: {signature}")
+
+
 def main() -> int:
     source = (ROOT / "port/open62541/open62541.c").read_text(encoding="utf-8")
     lwipopts = (ROOT / "port/lwip/lwipopts.h").read_text(encoding="utf-8")
@@ -32,9 +51,10 @@ def main() -> int:
         raise SystemExit(
             "lwip-listener: FAIL: bounded lwIP PSRAM allocation is missing"
         )
-    psram_init = app_main.find("app_init_psram_allocator();")
-    heap_init = app_main.find("lwip_psram_heap_init()")
-    task_start = app_main.find("xTaskCreate(app_init_task")
+    main_body = function_body(app_main, "int main(void)")
+    psram_init = main_body.find("app_init_psram_allocator();")
+    heap_init = main_body.find("lwip_psram_heap_init()")
+    task_start = main_body.find("xTaskCreate(app_init_task")
     if psram_init < 0 or heap_init <= psram_init or task_start <= heap_init:
         raise SystemExit(
             "lwip-listener: FAIL: lwIP arena is not reserved after PSRAM and before network tasks"

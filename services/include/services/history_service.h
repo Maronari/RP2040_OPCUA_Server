@@ -271,4 +271,26 @@ size_t history_service_read_channel_samples(const char *channel_id,
                                             bool *out_more,
                                             bool *out_busy);
 
+/**
+ * @brief Drop @p channel_id's PSRAM ring and un-claim its Flash-backed slot.
+ *
+ * v0.5.0 T7: called from `config_service`'s commit-step extension point for
+ * every channel deleted or modified (same channel id, different driver/
+ * value_type) by a just-committed transaction, so a reused channel id never
+ * surfaces a stranger's retained history. Reuses the same `bind_channel(slot,
+ * NULL)` unbind shape already used once, boot-only, inside
+ * history_service_init() -- but unlike that one-time call, this entry point
+ * runs post-boot and therefore takes `g_history_mutex` (bounded timeout, see
+ * HISTORY_SERVICE_LOCK_TIMEOUT_MS) around both the PSRAM ring reset and the
+ * Flash unbind, since it can run concurrently with `SensorTask` writes
+ * (history_service_record_channel_sample()) and OPC UA HistoryRead
+ * (history_service_read_channel_samples()).
+ *
+ * @param channel_id Stable channel id string to clear.
+ * @return true if @p channel_id had a claimed ring (now cleared); false if
+ *         it had none, the arguments were invalid, the service is not
+ *         initialized, or the lock could not be acquired.
+ */
+bool history_service_clear_channel(const char *channel_id);
+
 #endif

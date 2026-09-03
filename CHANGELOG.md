@@ -1,8 +1,144 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.4.2`. Historical tag
+This file tracks the firmware release line through `v0.5.0`. Historical tag
 SHAs below are resolved from peeled Git tags, so annotated tags are reported by
 their target commit SHA rather than the tag-object SHA.
+
+## v0.5.0
+
+- Release metadata: synchronizes the repository current-release instructions
+  and the authoritative firmware/runtime/OTA version source to `0.5.0` before
+  hardware verification. The version-integrity gate now checks the optional
+  OTA payload manifest only when the current CMake configuration enables
+  `OTA_BUILD_BOOTLOADER`; this prevents a stale artifact from a previous build
+  mode causing a false failure, while still requiring the manifest when enabled.
+  OTA staging now independently rejects a local build manifest unless the
+  sibling CMake cache enables bootloader artifacts and its version, board,
+  platform and Flash origins match the current generated layout.
+- Configuration transaction pipeline: restructures `config_service_apply()`/
+  `config_service_replace_and_save()` into a real validate -> persist staged
+  -> stop -> activate -> verify (driver init plus at least one valid
+  per-channel read, each bounded by an explicit timeout) -> commit/rollback
+  transaction, fixing the previous activate-before-persist ordering. Adds an
+  explicit `SemaphoreHandle_t` mutex around driver activation and ensures a
+  transaction that activates the first channel on a channel-less device
+  correctly creates/hands off to `SensorTask` (previously boot-only-gated on
+  `channel_manager_count() > 0`; `SensorTask` is now always created at boot).
+- Flash backend: replaces the two-slot generation config store with a
+  staged/running/last-known-good transaction backend
+  (`drivers/config_transaction_backend.c`) inside the existing 128 KiB
+  configuration budget — no new Flash region, no OTA-bank shrink. Follows
+  the maintenance journal's commit-page/CRC physical-read-back
+  classification pattern, one physical copy per role. See
+  `docs/flash-storage.md`.
+- Schema versioning: gives `schema_version` real discriminating meaning with
+  a migration-function table shared by the Flash-binary decode path, JSON
+  export, and JSON import (previously a single hardcoded literal duplicated
+  across three call sites); rejects an incompatible/future schema version
+  with a diagnostic.
+- Validation: splits the missing-driver condition out of a combined
+  generic-error check into its own dedicated result code and collects every
+  missing `driver_id` in a rejected candidate configuration, not just the
+  first, via an additive (non-breaking) API extension.
+- OPC UA server restart: consumes the previously-computed
+  `model_config_requires_server_reboot()` diagnostic to trigger an actual
+  controlled full server restart, synchronously from within the same
+  transaction commit step, reusing the exact cold-boot address-space
+  construction codepath. A transaction that does not require a restart
+  leaves existing sessions/subscriptions untouched.
+- Presets and compatibility: adds three runtime configuration presets
+  (`sensor_node`, `remote_io` and `dev_benchmark`) applied through the normal transaction pipeline via new
+  `Device.Maintenance.ListConfigPresets`/`ApplyConfigPreset` methods, and
+  exposes firmware/configuration compatibility data (firmware profile,
+  hardware revision, configuration schema version, supported drivers and
+  their capabilities/resources) through a new `Device.Compatibility`
+  subtree.
+- **In addition to `ROADMAP.md`'s literal v0.5.0 scope**: per-channel
+  history/alarm state cleanup on channel delete/modify. Deleting a channel,
+  or modifying it with a different driver/value type (same `channel_id`),
+  now zeroes that channel's Flash-backed history ring and alarm condition
+  instance/acknowledgement state, treated uniformly as delete+recreate. This
+  requirement was not derived from `ROADMAP.md` text; it was identified
+  during v0.5.0 planning because a reused `channel_id` could otherwise
+  surface a stranger's stale history/alarm state. It is a conscious,
+  documented tradeoff, not an implicit byproduct: discarding alarm
+  acknowledgement history on every qualifying reconfiguration has no
+  retention/audit-trail guarantee, which industrial alarm-management
+  practice (e.g. ISA-18.2) often expects independent of point
+  reconfiguration; this project does not currently claim that compliance
+  bar. See `docs/releases/v0.5.0.md` scope decision 7 and
+  `docs/channel_model.md`.
+- OPC UA server restart, root cause and fix (found on hardware 2026-08-31):
+  `UA_Server_run_shutdown()` could hang indefinitely during a controlled
+  restart because open62541's `UA_BinaryProtocolManager` network callback
+  accepts and fully activates new incoming connections even after being
+  told to stop, so any client reconnecting during the shutdown drain window
+  keeps the callback's SecureChannel-empty wait from ever completing —
+  upstream open62541 behavior (confirmed present in both v1.5.3 and the
+  v1.5.7 upgrade this release also carries, not a version-specific
+  regression). Fixed with an independent FreeRTOS one-shot timer around the
+  call; if it fires, falls back to the existing hardware-watchdog hard
+  reboot. Recovers in practice around 27-28s worst case (detection + reboot
+  + reconnect) instead of hanging forever, an accepted tradeoff versus a
+  fast in-process restart when no client is present. See
+  `docs/releases/v0.5.0-hardware-verification.md`.
+- Namespace-build-failure rollback: closes the one transaction phase T4/T9's
+  original scope left without a recovery path — `model_build_address_space()`
+  failing during the restart above now rolls the device back to
+  LAST_KNOWN_GOOD (Flash, `config_service`'s own running/staged state, and
+  `channel_manager`/driver runtime state via a re-invoked `runtime_apply`,
+  all three — an initial version that only restored the first two was
+  found and fixed under review) instead of leaving `OpcUaTask` dead with no
+  recovery. Two further review findings closed the same day: a genuinely
+  fresh device's compiled defaults are now persisted to Flash `RUNNING` at
+  first boot (previously RAM-only, so a first-ever transaction had nothing
+  to roll back to if it failed) and guaranteed persisted again, retried on
+  every transaction attempt, immediately before any transaction commits
+  (the first-boot persist alone is necessarily best-effort and could leave
+  the same gap open after one transient Flash failure); and a rollback that
+  changes Flash but cannot fully reconcile runtime state now forces a
+  hardware reboot instead of parking the device indefinitely with nothing
+  else ever rebooting it. See `docs/releases/v0.5.0.md`'s "T6/T4 addendum".
+- Fix found during implementation: `alarm_service`'s condition-slot
+  allocator (`g_condition_count`) never reclaimed a freed slot, so a naive
+  per-channel clear would have permanently shrunk available alarm capacity
+  by one per delete/modify cycle on the same channel, eventually exhausting
+  `ALARM_SERVICE_MAX_CONDITIONS` (16) even though live channel occupancy
+  never exceeds `PLATFORM_CHANNEL_LIMIT`. `alarm_service_clear_channel()`
+  fixes the allocator itself (reclaims the first freed slot below the
+  cursor) rather than adding a setter on top of the bug.
+- Accepted residual risk: no physical hardware power-cut test was performed
+  against the configuration transaction pipeline — this implementation
+  environment had no access to the reference RP2350 board or any other
+  hardware. Coverage is three layers of deterministic, automatable host-test
+  fault injection (Flash-backend-level, `config_service.c`-level, and an
+  end-to-end real-chain-plus-simulated-reboot suite), which found no
+  correctness bug in the frozen commit-ordering guarantee or the
+  recovery-state-to-boot-decision mapping. The specific gap host simulation
+  cannot catch: real Flash write-alignment/timing failure modes that only
+  manifest against physical QSPI hardware. See
+  `docs/known_limits.md#v050-accepted-residual-risks`.
+- Found while documenting this release, then resolved as out of scope
+  (2026-09-02), not fixed: a device that has run v0.4.0-v0.4.3 firmware
+  does not have its configuration migrated in place when it upgrades to
+  v0.5.0 firmware, because the old two-slot format's header magic and the
+  new transaction backend's header/commit-page magic and offsets are
+  unrelated. On review, this gap was retired rather than closed with an
+  importer: this project has no fleet of field devices ever running
+  pre-v0.5.0 firmware, and every device is flashed directly with the
+  current tagged release rather than upgraded in place from an old image.
+  The pre-v0.4.0 legacy single-sector importer this device never actually
+  needed (`drivers/flash_storage_driver.c`/`.h`) and the dead v0.4.x
+  two-slot format's own on-Flash struct definition were removed entirely
+  rather than kept as unreachable code. See
+  `docs/known_limits.md#v050-accepted-residual-risks`.
+- Verification: 38/38 deterministic host-test suites
+  (`static/tools/run_host_tests.py`, including new `config_service_rollback`
+  and `config_transaction_reboot_recovery` coverage for the rollback fixes
+  above) and first-party cppcheck (`static/tools/run_first_party_cppcheck.py`)
+  both pass on the integrated v0.5.0 tree; hardware-verified on the
+  reference RP2350 board (see `docs/releases/v0.5.0-hardware-verification.md`).
+- Release plan: `docs/releases/v0.5.0.md`.
 
 ## v0.4.3
 

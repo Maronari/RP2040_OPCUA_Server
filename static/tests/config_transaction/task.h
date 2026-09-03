@@ -5,5 +5,6 @@
 
 TickType_t xTaskGetTickCount(void);
 void vTaskDelayUntil(TickType_t *last_wake_time, TickType_t period);
+void vTaskDelay(TickType_t ticks);
 
 #endif

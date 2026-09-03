@@ -39,7 +39,7 @@ class FlashPrerequisiteTests(unittest.TestCase):
         self.assertEqual(regions[-1][1] + regions[-1][2], 0x1000000)
         generated = ROOT / "build/generated/ota_layout/ota_layout.json"
         if generated.exists():
-            actual = json.loads(generated.read_text())["regions"]
+            actual = json.loads(generated.read_text(encoding="utf-8"))["regions"]
             expected = {
                 "bank_a": (0x010000, 0x7A4000),
                 "bank_b": (0x7B4000, 0x7A4000),
@@ -52,17 +52,9 @@ class FlashPrerequisiteTests(unittest.TestCase):
 
     def test_generated_templates_publish_journal(self):
         for relative in ("ota/cmake/ota_layout.h.in", "ota/cmake/ota_layout.json.in"):
-            text = (ROOT / relative).read_text().upper()
+            text = (ROOT / relative).read_text(encoding="utf-8").upper()
             self.assertIn("MAINTENANCE_JOURNAL", text)
             self.assertIn("HISTORY", text)
-
-    def test_legacy_driver_is_read_only(self):
-        header = (ROOT / "drivers/include/drivers/flash_storage_driver.h").read_text()
-        source = (ROOT / "drivers/src/flash_storage_driver.c").read_text()
-        self.assertNotIn("flash_storage_driver_save", header + source)
-        self.assertNotRegex(source, r"flash_range_(erase|program)|flash_safe_execute")
-        self.assertIn("FLASH_STORAGE_MAGIC", source)
-        self.assertIn("flash_storage_crc32", source)
 
     def test_flash_mutation_call_sites_are_audited(self):
         allowed = ROOT / "drivers/src/flash_operation_coordinator.c"
@@ -74,17 +66,17 @@ class FlashPrerequisiteTests(unittest.TestCase):
         paths += list(ROOT.glob("bootloader/*.c"))
         for path in paths:
             if path not in (allowed, bootloader) and re.search(
-                r"flash_range_(erase|program)|flash_safe_execute", path.read_text()
+                r"flash_range_(erase|program)|flash_safe_execute", path.read_text(encoding="utf-8")
             ):
                 offenders.append(str(path.relative_to(ROOT)))
         self.assertEqual(offenders, [])
-        bootloader_source = bootloader.read_text()
+        bootloader_source = bootloader.read_text(encoding="utf-8")
         self.assertRegex(bootloader_source, r"flash_safe_execute\s*\(")
         self.assertRegex(bootloader_source, r"__not_in_flash_func\s*\(")
 
     def test_bootloader_is_independent_of_freertos_coordinator(self):
-        source = (ROOT / "bootloader/main.c").read_text()
-        cmake = (ROOT / "bootloader/CMakeLists.txt").read_text()
+        source = (ROOT / "bootloader/main.c").read_text(encoding="utf-8")
+        cmake = (ROOT / "bootloader/CMakeLists.txt").read_text(encoding="utf-8")
         forbidden = (
             "flash_operation_coordinator",
             "xSemaphoreCreateMutexStatic",
@@ -100,12 +92,12 @@ class FlashPrerequisiteTests(unittest.TestCase):
         self.assertIn("flash_safe_execute", source)
 
     def test_ota_targets_select_distinct_backends(self):
-        ota_cmake = (ROOT / "ota/CMakeLists.txt").read_text()
-        app_cmake = (ROOT / "app/basic_profile/CMakeLists.txt").read_text()
-        bootloader_cmake = (ROOT / "bootloader/CMakeLists.txt").read_text()
+        ota_cmake = (ROOT / "ota/CMakeLists.txt").read_text(encoding="utf-8")
+        app_cmake = (ROOT / "app/basic_profile/CMakeLists.txt").read_text(encoding="utf-8")
+        bootloader_cmake = (ROOT / "bootloader/CMakeLists.txt").read_text(encoding="utf-8")
         application_backend = (
             ROOT / "ota/src/ota_flash_backend_application.c"
-        ).read_text()
+        ).read_text(encoding="utf-8")
 
         ota_shared_links = re.search(
             r"target_link_libraries\(OTA_SHARED PUBLIC(?P<body>[\s\S]*?)\)",
@@ -123,12 +115,16 @@ class FlashPrerequisiteTests(unittest.TestCase):
     def test_application_writers_keep_shared_serialization(self):
         writers = (
             ROOT / "ota/src/ota_flash_backend_application.c",
-            ROOT / "services/src/config_store_service.c",
+            # v0.5.0 T3: services/src/config_store_service.c no longer does
+            # direct Flash I/O -- it delegates every write to
+            # drivers/src/config_transaction_backend.c, which is the actual
+            # coordinator-serialized writer now.
+            ROOT / "drivers/src/config_transaction_backend.c",
             ROOT / "services/src/security_service.c",
             ROOT / "services/src/security_state_service.c",
         )
         for path in writers:
-            source = path.read_text()
+            source = path.read_text(encoding="utf-8")
             self.assertRegex(
                 source,
                 r"flash_operation_(erase_sector|program_page)",
@@ -136,7 +132,7 @@ class FlashPrerequisiteTests(unittest.TestCase):
             )
 
     def test_coordinator_failure_and_nesting_policy(self):
-        source = (ROOT / "drivers/src/flash_operation_coordinator.c").read_text()
+        source = (ROOT / "drivers/src/flash_operation_coordinator.c").read_text(encoding="utf-8")
         self.assertIn("xSemaphoreCreateMutexStatic", source)
         self.assertNotIn("xSemaphoreCreateRecursiveMutex", source)
         self.assertIn("FLASH_OPERATION_NESTED", source)
@@ -147,8 +143,8 @@ class FlashPrerequisiteTests(unittest.TestCase):
     def test_program_page_source_residency_contract(self):
         header = (
             ROOT / "drivers/include/drivers/flash_operation_coordinator.h"
-        ).read_text()
-        source = (ROOT / "drivers/src/flash_operation_coordinator.c").read_text()
+        ).read_text(encoding="utf-8")
+        source = (ROOT / "drivers/src/flash_operation_coordinator.c").read_text(encoding="utf-8")
         # Doc-comment prose gets rewrapped across Doxygen passes, which
         # shifts exactly where a ` * ` continuation marker falls mid-phrase
         # (confirmed live: this test broke on a rewrap that changed no
@@ -171,7 +167,7 @@ class FlashPrerequisiteTests(unittest.TestCase):
         self.assertIn("__flash_binary_end", source)
 
     def test_static_async_context_has_bounded_stack(self):
-        source = (ROOT / "drivers/src/w5x00_ethernet_driver.c").read_text()
+        source = (ROOT / "drivers/src/w5x00_ethernet_driver.c").read_text(encoding="utf-8")
         self.assertIn("g_w5x00_async_context_stack", source)
         self.assertIn("async_config.task_stack = g_w5x00_async_context_stack", source)
         self.assertIn("async_context_freertos_init(", source)

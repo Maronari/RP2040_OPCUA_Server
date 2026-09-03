@@ -60,18 +60,28 @@ bool config_reset_service_execute(config_reset_scope_t scope)
         return false;
     }
 
-    if (!config_service_apply())
+    /* Order is deliberate and safety-critical, reversed from the pre-v0.5.0
+     * sequence: the Flash store is wiped *before* defaults are committed.
+     * config_service_apply() below unconditionally promotes whatever RUNNING
+     * currently holds into LAST_KNOWN_GOOD as part of its own commit
+     * (config_transaction_backend_commit()) -- if it ran first, against the
+     * still-intact pre-reset RUNNING, LAST_KNOWN_GOOD would durably capture
+     * the exact configuration this reset is meant to discard. A later
+     * corrupted/erased RUNNING (power loss, bad sector, or nothing else ever
+     * writing RUNNING again) would then auto-heal via
+     * config_store_recover_fallback_to_last_known_good() on a future boot,
+     * silently resurrecting it. Erasing every role first means RUNNING is not
+     * CONFIG_TXN_COMMIT_COMMITTED when config_service_apply() commits
+     * defaults, so config_transaction_backend_commit() skips the
+     * promote-to-LAST_KNOWN_GOOD step entirely (see its own comment) and
+     * LAST_KNOWN_GOOD stays empty -- there is nothing left for any later
+     * failure to resurrect. */
+    if (!config_store_reset())
     {
         return false;
     }
 
-    /* Order is deliberate: the running configuration is switched to
-     * defaults (config_service_apply(), in PSRAM/RAM) *before* the config
-     * store's Flash slots are erased below. If this erase step fails, the
-     * running configuration is already defaults but the persisted Flash
-     * record has not been touched yet (not statically confirmed what a
-     * subsequent boot does with a *partially* erased slot pair). */
-    if (!config_store_reset())
+    if (!config_service_apply())
     {
         return false;
     }

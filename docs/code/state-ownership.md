@@ -81,20 +81,39 @@
 
 | Symbol | File:line | Owner |
 | --- | --- | --- |
-| `g_config_state` / `g_config_state_fallback` | `config_service.c:37,39` | `config_service` — один блок PSRAM, содержащий `g_running_config`, `g_staged_config`, `g_default_config` |
-| `g_running_revision`, `g_staged_revision` | `config_service.c:47-48` | `config_service` |
-| `g_runtime_apply_callback` | `config_service.c:49` | устанавливается один раз из `sensor_manager_init` — хук применения на этапе выполнения |
-| `g_transaction_active` | `config_service.c:50` | `config_service`, защита «по одному применению за раз» |
-| `g_default_config_valid` | `config_service.c:46` | `config_service` |
+| `g_config_state` / `g_config_state_fallback` | `config_service.c:85,87` | `config_service` — один блок PSRAM, содержащий `g_running_config`, `g_staged_config`, `g_default_config` |
+| `g_running_revision`, `g_staged_revision` | `config_service.c:95-96` | `config_service` |
+| `g_runtime_apply_callback` | `config_service.c:97` | устанавливается один раз из `sensor_manager_init` — хук применения на этапе выполнения (шаги stop/activate/verify) |
+| `g_restart_callback` (v0.5.0 T6) | `config_service.c:98` | устанавливается один раз из `opcua_model` (`config_service_set_restart_callback()`) — хук управляемого перезапуска сервера, вызывается безусловно из commit-шага; сам решает, нужен ли перезапуск, через `model_config_requires_server_reboot()` |
+| `g_transaction_active` | `config_service.c:99` | `config_service`, защита «по одной транзакции за раз» |
+| `g_default_config_valid` | `config_service.c:94` | `config_service` |
 
 `config_service_get()`/`get_staged()` — **единственные** два API в этом
 файле, возвращающие «живой» указатель на состояние сервиса — все прочие
-методы доступа возвращают копию. Применение — пятишаговая транзакция:
-начало (критическая секция) → нормализация+валидация (без блокировки) →
-синхронный вызов `g_runtime_apply_callback` без удержания блокировки
-конфигурации → фиксация `g_running_config` (критическая секция) →
-завершение транзакции. См.
-[modules/services.md](modules/services.md#config_service).
+методы доступа возвращают копию. С v0.5.0 применение — конвейер
+транзакции validate → persist staged → stop → activate → verify →
+commit/rollback (v0.5.0 T2-T4, заменивший pre-v0.5.0 порядок «activate
+before persist» и пятишаговую RAM-only транзакцию): валидация →
+`config_store_stage_payload()` (Flash, T3) → `g_runtime_apply_callback`
+(stop+activate+verify, БЕЗ удержания блокировки конфигурации) →
+`config_store_commit_staged()` (Flash) → фиксация `g_running_config`
+(критическая секция) →
+`config_service_run_commit_extensions()` (`:210-225`, T7: очистка
+истории/тревог удалённых/изменённых каналов; T6: безусловный вызов
+`g_restart_callback`) → завершение транзакции. Полную диаграмму см. в
+[runtime-flows.md](runtime-flows.md#config-transaction-flow)
+и [modules/services.md](modules/services.md#config_service).
+
+## Хранилище конфигурации (`services/src/config_store_service.c`, v0.5.0)
+
+| Symbol | File:line | Owner |
+| --- | --- | --- |
+| `g_config_store_backend` | `config_store_service.c:47` | `config_store_service` — единственный статический экземпляр `config_transaction_backend_t` (internal SRAM, не PSRAM); лениво инициализируется и восстанавливается (`recover()`) при первом использовании |
+| `g_config_store_backend_ready` | `config_store_service.c:48` | `config_store_service` — флаг ленивой инициализации |
+
+Без внутренней блокировки на этом уровне — все мутации Flash сериализуются
+общим `flash_operation_coordinator` внутри `drivers/config_transaction_backend.c`.
+См. [persistence.md](persistence.md#config-persistence).
 
 ## Обслуживание (`services/src/maintenance_service.c`)
 

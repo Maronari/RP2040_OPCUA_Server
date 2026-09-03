@@ -793,3 +793,41 @@ size_t history_service_read_channel_samples(const char *channel_id,
     }
     return collected;
 }
+
+bool history_service_clear_channel(const char *channel_id)
+{
+    size_t ring_index;
+    bool found = false;
+
+    if (!g_initialized || !history_service_channel_id_is_bounded(channel_id))
+    {
+        return false;
+    }
+    if (!history_service_lock())
+    {
+        return false;
+    }
+
+    ring_index = history_service_find_ring_locked(channel_id);
+    if (ring_index != HISTORY_SERVICE_MAX_CHANNELS)
+    {
+        /* Zeroing channel_id[0] to '\0' is what history_service_claim_ring_locked()
+         * treats as "unclaimed" -- this makes the slot reclaimable exactly
+         * like a never-used one. */
+        memset(&g_store->channels[ring_index], 0, sizeof(g_store->channels[ring_index]));
+#if defined(PICO_ON_DEVICE)
+        /* bind_channel(slot, NULL) is a pure in-memory reset (no Flash I/O,
+         * see history_flash_backend_bind_channel()) -- cheap enough to do
+         * while still holding the lock, unlike history_flash_backend_append()
+         * which is deliberately called outside it. */
+        if (g_flash_ready)
+        {
+            (void)history_flash_backend_bind_channel(&g_flash_backend, (uint8_t)ring_index, NULL);
+        }
+#endif
+        found = true;
+    }
+
+    history_service_unlock();
+    return found;
+}

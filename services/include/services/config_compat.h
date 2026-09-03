@@ -14,6 +14,18 @@
  * This header intentionally exposes only the decode entry point and the two
  * frozen-size accessors used by callers that need to distinguish "this was
  * a migration" from "this was already current" without decoding twice.
+ *
+ * `config_compat_decode_versioned()` adds a `schema_version`-keyed migration
+ * table on top of `config_compat_decode_binary()`: every record ever written
+ * by this codebase (current and every frozen prior layout above) was stamped
+ * with the same `CONFIG_STORE_SCHEMA_VERSION_CURRENT` value, since the field
+ * had no real discriminating meaning before this table existed, so
+ * `config_compat_decode_binary()`'s payload-size dispatch remains that
+ * version's decode function unchanged — it is not superseded, only wrapped.
+ * The table's job is the *next* schema bump: a future `schema_version` gets
+ * its own table entry (a new migration function, or a rejection if no
+ * migration is offered), and any value with no entry is refused outright
+ * rather than blindly decoded.
  */
 #ifndef SERVICES_CONFIG_COMPAT_H
 #define SERVICES_CONFIG_COMPAT_H
@@ -63,5 +75,50 @@ bool config_compat_decode_binary(const uint8_t *payload,
 size_t config_compat_v040_payload_size(void);
 /** @brief Returns the exact byte size of the frozen v0.4.1/v0.4.2 on-Flash profile layout. */
 size_t config_compat_v042_payload_size(void);
+
+/**
+ * @brief Signature shared by every entry in `config_compat_decode_versioned()`'s
+ * migration table: decode/migrate @p payload into @p out_config, exactly
+ * like `config_compat_decode_binary()`.
+ */
+typedef bool (*config_compat_migrate_fn)(const uint8_t *payload,
+                                         size_t payload_size,
+                                         device_profile_config_t *out_config,
+                                         bool *out_migrated);
+
+/**
+ * @brief Returns true if @p schema_version has a decode entry in the
+ * migration table (i.e. is not an unknown/future schema this firmware would
+ * have to reject). Shared by every caller that needs to accept-or-reject a
+ * declared schema version without necessarily decoding yet -- the Flash
+ * boot path, JSON export/import, and `config_compat_decode_versioned()`
+ * itself all agree on this one answer.
+ */
+bool config_compat_schema_version_is_supported(uint32_t schema_version);
+
+/**
+ * @brief Decodes @p payload according to @p schema_version, dispatching
+ * through the migration-function table keyed on schema version instead of
+ * assuming the current format.
+ *
+ * `CONFIG_STORE_SCHEMA_VERSION_CURRENT` dispatches to
+ * `config_compat_decode_binary()`, which keeps deciding the concrete layout
+ * (current, or a frozen pre-mechanism size) by @p payload_size exactly as it
+ * does today -- that payload-size fallback is preserved unconditionally for
+ * records predating this table, not replaced by it.
+ *
+ * @param schema_version Declared schema version to dispatch on (e.g. from a
+ * Flash slot header or a JSON document's `schemaVersion` field).
+ * @param payload,payload_size,out_config,out_migrated Forwarded to the
+ * matched migration function; semantics match `config_compat_decode_binary()`.
+ * @return false if @p schema_version has no table entry (unknown/future
+ * schema, rejected without attempting to decode) or if the matched
+ * function's own decode fails; true on successful decode.
+ */
+bool config_compat_decode_versioned(uint32_t schema_version,
+                                    const uint8_t *payload,
+                                    size_t payload_size,
+                                    device_profile_config_t *out_config,
+                                    bool *out_migrated);
 
 #endif

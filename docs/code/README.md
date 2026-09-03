@@ -4,7 +4,7 @@
 lwIP, open62541, PSRAM и собственный загрузчик OTA. Документирует кодовую
 базу в том виде, в каком она существует на ветке `docs/architecture-map`
 (картирование выполнено по тому же дереву, что и
-`refactor/opcua-model-modularization`), текущая цель релиза — `v0.4.3`
+`refactor/opcua-model-modularization`), текущая цель релиза — `v0.5.0`
 согласно [ROADMAP.md](../../ROADMAP.md).
 
 Сначала прочитайте [AGENTS.md](../../AGENTS.md) и

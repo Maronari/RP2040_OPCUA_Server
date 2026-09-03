@@ -49,12 +49,6 @@ void model_ua_logger_log(void *context,
                          const char *msg,
                          va_list args)
 {
-    /* Implementation note: formats into a fixed 768-byte stack buffer via
-     * UA_String_vformat and truncates rather than growing it, since this
-     * runs on OpcUaTask and must not allocate. UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED
-     * from UA_String_vformat is treated as a successful (truncated) format,
-     * not an error, so long open62541 log lines still print instead of being
-     * dropped. */
     /*
      * This logger runs in the single OPC UA task.  USB CDC can apply its
      * configured write timeout when the host is absent, so formatting and
@@ -68,6 +62,11 @@ void model_ua_logger_log(void *context,
         return;
     }
 
+    /* Formats into a fixed 768-byte stack buffer and truncates rather than
+     * growing it, since this runs on OpcUaTask and must not allocate.
+     * UA_STATUSCODE_BADENCODINGLIMITSEXCEEDED from the formatter below is
+     * treated as a successful (truncated) format, not an error, so long
+     * open62541 log lines still print instead of being dropped. */
     char message_buffer[768];
     UA_String formatted = {
         .length = sizeof(message_buffer) - 1u,

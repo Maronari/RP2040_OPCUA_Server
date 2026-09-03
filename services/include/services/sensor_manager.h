@@ -61,30 +61,44 @@ bool sensor_manager_init(void);
 
 /**
  * @brief Runtime-owner half of the configuration transaction: validates,
- *        starts, and publishes a candidate channel/driver configuration.
+ *        stops the old configuration, starts and verifies a candidate
+ *        channel/driver configuration, and publishes it.
  *
  * Performs all driver lifecycle work (validate -> stop active -> start
- * candidate -> publish to `channel_manager`) synchronously and preserves
- * the prior registry and hardware on any failure path, restarting the
- * previously-active bank's drivers before returning. If that restart
- * itself fails, the manager is left uninitialized (`g_initialized = false`)
- * rather than reporting success with an inconsistent hardware/registry
- * state.
+ * candidate -> publish to `channel_manager` -> verify at least one valid
+ * read from every new/changed enabled channel, each bounded by a short
+ * per-channel retry budget -- see `SENSOR_MANAGER_VERIFY_MAX_ATTEMPTS_PER_CHANNEL`
+ * in sensor_manager.c) synchronously and preserves the prior registry and
+ * hardware on any failure path (including a stop() failure or a failed
+ * verify), restarting the previously-active bank's drivers before
+ * returning. If that restart itself fails, the manager is left
+ * uninitialized (`g_initialized = false`) rather than reporting success
+ * with an inconsistent hardware/registry state.
+ *
+ * Deliberately does **not** touch the OPC UA namespace -- that remains
+ * `config_service`'s commit-step extension point's job (v0.5.0 T6),
+ * invoked only after this call's caller has also persisted/committed the
+ * candidate to Flash.
  *
  * @param candidate New configuration to activate; validated internally
  *        (bounded strings, driver/source compatibility, resource-claim
  *        conflicts) before any hardware/driver call is made.
  * @param candidate_revision Config revision number to record as applied on
  *        success.
- * @return true if the candidate was validated, started, and published as
- *         the active bank; false on any validation or driver-lifecycle
- *         failure (previous configuration remains active where possible).
+ * @return true if the candidate was validated, started, verified, and
+ *         published as the active bank; false on any validation,
+ *         driver-lifecycle, or verify failure (previous configuration
+ *         remains active where possible).
  * @note Invoked either from sensor_manager_init()/sensor_manager_task()
  *       (activating the current running config) or synchronously as
  *       `config_service`'s runtime apply callback during a config
- *       transaction; not safe to call concurrently with itself.
+ *       transaction. As of v0.5.0 T4, internally serialized by an explicit
+ *       bounded-timeout mutex (`g_activate_mutex`,
+ *       `SENSOR_MANAGER_ACTIVATE_LOCK_TIMEOUT_MS`) -- safe to call from
+ *       multiple tasks, though `config_service`'s own transaction lock
+ *       already prevents concurrent calls reached through it.
  * @note Touches hardware indirectly through the channel drivers' `start`/
- *       `stop`/`configure`/`self_test` vtable entries.
+ *       `stop`/`configure`/`self_test`/`read` vtable entries.
  */
 bool sensor_manager_activate_config(const device_profile_config_t *candidate,
                                     uint32_t candidate_revision);

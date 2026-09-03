@@ -19,9 +19,11 @@ try:
     from asyncua.crypto.cert_gen import setup_self_signed_certificate
     from cryptography.x509.oid import ExtendedKeyUsageOID
 except ImportError:
-    print('ERROR: asyncua library not installed')
-    print(r'Install with: C:\Python312\python.exe -m pip install --user asyncua')
-    sys.exit(1)
+    Client = None
+    ua = None
+    security_policies = None
+    setup_self_signed_certificate = None
+    ExtendedKeyUsageOID = None
 
 DEFAULT_MANIFEST_PATH = Path('build/ota_artifacts/ota_payload.json')
 DEFAULT_CHUNK_SIZE = 4096
@@ -33,6 +35,14 @@ METHOD_WRITE = 'ns=1;s=Device.Maintenance.WriteFirmwareChunk'
 METHOD_FINALIZE = 'ns=1;s=Device.Maintenance.FinalizeFirmwareUpdate'
 METHOD_ABORT = 'ns=1;s=Device.Maintenance.AbortFirmwareUpdate'
 METHOD_REBOOT = 'ns=1;s=Device.Maintenance.Reboot'
+
+
+def require_asyncua():
+    if Client is None or ua is None or security_policies is None or setup_self_signed_certificate is None:
+        raise RuntimeError(
+            'asyncua library not installed\n'
+            r'Install with: C:\Python312\python.exe -m pip install --user asyncua'
+        )
 
 
 def parse_args():
@@ -155,9 +165,115 @@ def compute_payload_integrity(payload_path):
     return crc32 & 0xFFFFFFFF, sha256.hexdigest()
 
 
+def parse_cmake_cache_bool(cache_value):
+    if cache_value is None:
+        raise ValueError('missing OTA_BUILD_BOOTLOADER in sibling CMakeCache.txt')
+    return str(cache_value).strip().upper() in {'1', 'ON', 'TRUE', 'YES', 'Y'}
+
+
+def load_json_file(path):
+    return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+def load_cmake_cache(cache_path):
+    cache = {}
+    for raw_line in Path(cache_path).read_text(encoding='utf-8').splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or line.startswith('//'):
+            continue
+        if '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.split(':', 1)[0]
+        cache[key] = value
+    return cache
+
+
+def parse_manifest_u32_field(manifest, field_name):
+    if field_name not in manifest:
+        raise ValueError(f'Manifest is missing required field {field_name}')
+    return parse_u32(manifest[field_name], field_name)
+
+
+def validate_local_build_manifest(manifest_path, manifest, version_number):
+    manifest_path = Path(manifest_path).resolve()
+    if manifest_path.parent.name != 'ota_artifacts':
+        return
+
+    build_dir = manifest_path.parent.parent
+    cache_path = build_dir / 'CMakeCache.txt'
+    layout_path = build_dir / 'generated' / 'ota_layout' / 'ota_layout.json'
+    is_default_manifest = manifest_path == DEFAULT_MANIFEST_PATH.resolve()
+    has_local_build_metadata = cache_path.exists() or layout_path.exists()
+    if not is_default_manifest and not has_local_build_metadata:
+        return
+
+    if not cache_path.is_file():
+        raise ValueError(
+            f'Local build OTA manifest requires sibling CMakeCache.txt: {cache_path}'
+        )
+    if not layout_path.is_file():
+        raise ValueError(
+            f'Local build OTA manifest requires sibling ota_layout.json: {layout_path}'
+        )
+
+    cache = load_cmake_cache(cache_path)
+    if not parse_cmake_cache_bool(cache.get('OTA_BUILD_BOOTLOADER')):
+        raise ValueError(
+            'Local build OTA manifest is unusable because sibling CMakeCache.txt '
+            'has OTA_BUILD_BOOTLOADER=OFF'
+        )
+
+    layout = load_json_file(layout_path)
+    cache_layout_fields = {
+        'firmware_version': (
+            str(layout['firmware']['version']),
+            str(cache.get('RP2_FIRMWARE_VERSION', '')),
+        ),
+        'version_number': (
+            int(layout['firmware']['version_number']),
+            parse_u32(cache.get('RP2_FIRMWARE_VERSION_NUMBER', ''), 'RP2_FIRMWARE_VERSION_NUMBER'),
+        ),
+        'board': (str(layout['board']), str(cache.get('PICO_BOARD', ''))),
+        'platform': (str(layout['platform']), str(cache.get('PICO_PLATFORM', ''))),
+    }
+    for field_name, (layout_value, cache_value) in cache_layout_fields.items():
+        if cache_value != layout_value:
+            raise ValueError(
+                f'Local build OTA layout {field_name} mismatch: '
+                f'layout={layout_value!r} CMakeCache={cache_value!r}'
+            )
+
+    expected_fields = {
+        'firmware_version': str(layout['firmware']['version']),
+        'version_number': int(layout['firmware']['version_number']),
+        'board': str(layout['board']),
+        'platform': str(layout['platform']),
+        'execution_origin': parse_u32(layout['regions']['bank_a']['origin'], 'execution_origin'),
+        'staging_offset': parse_u32(layout['regions']['bank_b']['offset_bytes'], 'staging_offset'),
+    }
+
+    actual_fields = {
+        'firmware_version': str(manifest.get('firmware_version', '')),
+        'version_number': version_number,
+        'board': str(manifest.get('board', '')),
+        'platform': str(manifest.get('platform', '')),
+        'execution_origin': parse_manifest_u32_field(manifest, 'execution_origin'),
+        'staging_offset': parse_manifest_u32_field(manifest, 'staging_offset'),
+    }
+
+    for field_name, expected_value in expected_fields.items():
+        actual_value = actual_fields[field_name]
+        if actual_value != expected_value:
+            raise ValueError(
+                f'Local build OTA manifest {field_name} mismatch: '
+                f'manifest={actual_value!r} layout={expected_value!r}'
+            )
+
+
 def load_manifest(manifest_path, payload_override=None, version_override=None):
     manifest_path = Path(manifest_path).resolve()
-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    manifest = load_json_file(manifest_path)
     payload_path = (
         Path(payload_override).resolve()
         if payload_override
@@ -169,6 +285,7 @@ def load_manifest(manifest_path, payload_override=None, version_override=None):
         version_override if version_override is not None else manifest['version_number'],
         'version_number',
     )
+    validate_local_build_manifest(manifest_path, manifest, version_number)
     payload_size = payload_path.stat().st_size
     if payload_size != image_size:
         raise ValueError(
@@ -364,6 +481,7 @@ async def stage_payload(client, args, payload_info):
 
 
 async def main_async():
+    require_asyncua()
     args = parse_args()
     if args.chunk_size <= 0 or args.chunk_size > DEFAULT_CHUNK_SIZE:
         raise ValueError('--chunk-size must be between 1 and 4096 bytes')

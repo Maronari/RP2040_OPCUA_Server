@@ -26,7 +26,7 @@ staged/running конфигурации, историей, тревогами, �
 | `alarm_service` | Экземпляры условий тревог по каждому каналу — см. §Тревоги |
 | `history_service` | Кольца истории в PSRAM + Flash по каждому каналу — см. §История |
 | `config_service` | Транзакция staged/running конфигурации устройства — см. §Конфигурация |
-| `config_store_service` | Двухслотовая запись во Flash с счётчиком генерации для сохранённого профиля |
+| `config_store_service` | Тонкая обёртка над `drivers/config_transaction_backend` (staged/running/last-known-good роли, v0.5.0) — сама не обращается к Flash |
 | `config_validate_service`, `config_compat`, `config_export_service`, `config_reset_service` | Бессостояниевые валидация, декодирование binary/JSON, экспорт и оркестрация сброса |
 | `config_import_service` | Сессия чанковой загрузки импорта конфигурации (одна статическая структура сессии) |
 | `maintenance_service` | Конечный автомат обслуживания AMB + связь с журналом — см. §Обслуживание |
@@ -93,6 +93,7 @@ Flash фиксируется по каждому каналу, а не молч�
 подтверждение никогда не затирают друг друга. См.
 [docs/channel_model.md](../../channel_model.md#alarms-v043).
 
+<a id="config-service-and-config-store-service"></a>
 ## Конфигурация (`config_service` + `config_store_service` и сопутствующие)
 
 `config_service` хранит три полные копии `device_profile_config_t`
@@ -100,13 +101,22 @@ Flash фиксируется по каждому каналу, а не молч�
 своим независимым монотонным счётчиком ревизии. `config_service_get()`/
 `get_staged()` — единственные API, возвращающие живой указатель; каждый
 мутатор работает с локальной копией и фиксирует изменения в критической
-секции. Применение — пятишаговая транзакция: начало → нормализация и
-валидация (без блокировки) → синхронный вызов зарегистрированного
-коллбэка применения на уровне выполнения (`sensor_manager_activate_config`)
-без удержания блокировки конфигурации → фиксация в критической секции →
-завершение. `config_store_service` сохраняет результат как двухслотовую
-запись во Flash со счётчиком генерации. См.
-[persistence.md](../persistence.md#config-persistence-servicesconfig_store_servicec).
+секции. С v0.5.0 применение — полный конвейер транзакции (T2-T4,
+заменивший pre-v0.5.0 «activate before persist» и пятишаговую RAM-only
+транзакцию): validate → persist staged → stop → activate → verify →
+commit/rollback, реализованный в `config_service.c` и опирающийся на
+staged/running/last-known-good Flash-бэкенд
+`config_store_service`/`drivers/config_transaction_backend` (v0.5.0 T3)
+вместо старой двухслотовой схемы со счётчиком генерации. Синхронный вызов
+зарегистрированного коллбэка применения на уровне выполнения
+(`sensor_manager_activate_config`, шаги stop+activate+verify) выполняется
+без удержания блокировки конфигурации. Сразу после успешной фиксации тот
+же commit-шаг синхронно очищает историю/тревоги удалённых или изменённых
+каналов (v0.5.0 T7) и, если `model_config_requires_server_reboot()`
+возвращает true, вызывает управляемый перезапуск OPC UA сервера (v0.5.0
+T6) — см.
+[modules/opcua_model.md](opcua_model.md#server-lifecycle). См.
+[persistence.md](../persistence.md#config-persistence).
 
 ## Обслуживание (`maintenance_service`)
 
@@ -161,9 +171,14 @@ Flash фиксируется по каждому каналу, а не молч�
    (`watchdog_caused_reboot`, `watchdog_reboot`) — каждый другой связанный
    с аппаратурой вызов сервиса на этом уровне вместо этого проходит через
    заголовок `drivers/*`.
-2. `config_store_service.c` читает слоты конфигурации во Flash через
-   разыменование сырого указателя XIP, а не через вызов чтения драйвера
-   (записи корректно проходят через `flash_operation_coordinator`).
+2. ~~`config_store_service.c` читает слоты конфигурации во Flash через
+   разыменование сырого указателя XIP~~ — **разрешено в v0.5.0**: физическое
+   чтение/запись Flash переехало целиком в
+   `drivers/config_transaction_backend.c` (staged/running/last-known-good
+   роли); `config_store_service.c` теперь только вызывает
+   `config_transaction_backend_*()` и сам не касается Flash. XIP-чтение всё
+   ещё существует (`config_transaction_backend.c`'s `flash_read()`), но
+   теперь в правильном слое — `drivers/`.
 3. `security_certificate_group_service.h`/`.c` напрямую раскрывают в своём
    публичном API `UA_CertificateGroup *`, `UA_StatusCode`, `UA_NodeId`,
    `UA_Logger`, `UA_TrustListDataType`, что противоречит цели

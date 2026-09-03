@@ -3,7 +3,7 @@
 #include "services/config_wire.h"
 #include "services/config_validate_service.h"
 #include "services/driver_catalog.h"
-#include "drivers/flash_storage_driver.h"
+#include "drivers/config_transaction_backend.h"
 #include "pico/unique_id.h"
 
 #include <assert.h>
@@ -72,21 +72,50 @@ bool config_store_reset(void)
     return false;
 }
 
-bool flash_storage_driver_load(void *buffer, size_t size)
+/* v0.5.0 T4: config_service_init() consults the recovery classification and
+ * discards any leftover staged record on every boot -- this test does not
+ * exercise a power-loss scenario itself (see static/tests/config_transaction/
+ * for that), so a fixed CONFIG_TXN_RECOVERY_OK / no-op discard is enough to
+ * satisfy the call without changing this test's own persisted-identity
+ * assertions. */
+config_transaction_recovery_state_t config_store_get_recovery_state(void)
 {
-    (void)buffer;
-    (void)size;
-    return false;
+    return CONFIG_TXN_RECOVERY_OK;
 }
 
-bool flash_storage_driver_load_partial(void *buffer,
-                                       size_t buffer_size,
-                                       size_t *out_payload_size)
+bool config_store_discard_staged(void)
 {
-    (void)buffer;
-    (void)buffer_size;
-    (void)out_payload_size;
-    return false;
+    return true;
+}
+
+bool config_store_recover_fallback_to_last_known_good(config_store_record_info_t *out_info)
+{
+    (void)out_info;
+    return true;
+}
+
+/* v0.5.0 T4: config_service_apply()/config_service_replace_and_save() now
+ * drive the two-phase stage/commit primitive directly; this test never
+ * calls either (it only exercises config_service_init()), but both symbols
+ * are still referenced by config_service.c and must resolve at link time. */
+bool config_store_stage_payload(const void *payload,
+                                size_t payload_size,
+                                uint16_t payload_format,
+                                uint32_t schema_version,
+                                config_store_record_info_t *out_info)
+{
+    (void)payload;
+    (void)payload_size;
+    (void)payload_format;
+    (void)schema_version;
+    (void)out_info;
+    return true;
+}
+
+bool config_store_commit_staged(config_store_record_info_t *out_info)
+{
+    (void)out_info;
+    return true;
 }
 
 const driver_catalog_entry_t *driver_catalog_get_by_id(uint8_t driver_id)
@@ -110,6 +139,23 @@ const driver_catalog_entry_t *driver_catalog_get_by_index(size_t index)
 {
     (void)index;
     return NULL;
+}
+
+/* v0.5.0 T7: config_service_run_commit_extensions() references these, but
+ * this test only exercises config_service_init() (never apply()/
+ * replace_and_save()), so they are never actually invoked -- present solely
+ * to satisfy the link, like config_store_stage_payload()/commit_staged()
+ * above. */
+bool history_service_clear_channel(const char *channel_id)
+{
+    (void)channel_id;
+    return false;
+}
+
+bool alarm_service_clear_channel(const char *channel_id)
+{
+    (void)channel_id;
+    return false;
 }
 
 void pico_get_unique_board_id(pico_unique_board_id_t *id_out)
