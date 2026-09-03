@@ -2,7 +2,8 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.4.3`, merge commit `dec08ba22e835e8037f9fd5342dcc63ddc03f5ac`.
+> **Current baseline:** `v0.5.0`, merge commit `c6da6c4` (PR #19,
+> `v0.5.0/transactional-config` → `main`; no `v0.5.0` tag exists yet).
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 
@@ -1073,14 +1074,25 @@ Codex must not implement the following before a roadmap revision assigns an exac
 ## 8. Immediate next action
 
 The next implementation target is
-**`v0.5.0 — Transactional Runtime Configuration`**.
+**`v0.5.1 — Driver SDK and Industrial Board Driver Integration`**.
 
 Before coding, Codex must:
 
-1. use merged `v0.4.3` (`dec08ba22e835e8037f9fd5342dcc63ddc03f5ac`) as the implementation and compatibility baseline;
-2. inspect the current configuration service, channel manager, driver catalog/capability API, persistence layout and OPC UA configuration methods before changing code;
-3. create and then follow a file-level execution plan in `docs/releases/v0.5.0.md`;
-4. freeze the configuration transaction states, staged/running/last-known-good persistence contract, resource-conflict model and rollback semantics before implementation;
-5. verify valid apply, unavailable-driver rejection, resource conflicts, driver-start failure, namespace/model rebuild failure and power loss at every transaction phase;
-6. keep industrial-board driver implementation out of `v0.5.0`; those drivers are scheduled for `v0.5.1` and consume the configuration/resource machinery built here;
-7. only then start implementation limited to `v0.5.0`.
+1. use merged `v0.5.0` (`c6da6c4`, PR #19) as the implementation and
+   compatibility baseline;
+2. inspect the current driver vtable (`telemetry_driver_vtbl_t`), driver
+   catalog/resource-claim API, and native reference drivers before changing
+   code — `write`/`configure`/`self_test` are declared but have no shipped
+   implementation yet, and no SPI/I²C/UART bus abstraction exists;
+3. create and then follow a file-level execution plan in
+   `docs/releases/v0.5.1.md`;
+4. treat the pre-1.0 driver API "freeze" this version requires as the
+   *outcome* of a pilot phase (a native GPIO output driver, then the
+   `ADS8688` industrial ADC driver plus a new SPI transport abstraction), not
+   its starting assumption; do not begin implementing any other industrial
+   driver until that pilot phase's review gate closes;
+5. keep this release explicitly pre-hardware: `RP2350_INDUSTRIAL_MVP_V1`
+   does not physically exist yet, so industrial drivers must be
+   source-complete and host/mock-validated, never claimed as hardware
+   qualified;
+6. only then start implementation limited to `v0.5.1`.

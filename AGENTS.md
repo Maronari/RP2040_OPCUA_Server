@@ -13,7 +13,7 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.5.0 — Transactional Runtime Configuration**.
+  **v0.5.1 — Driver SDK and Industrial Board Driver Integration**.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -88,15 +88,20 @@ Delegation rules:
 8. Subagent work does not expand authorization or roadmap scope. Preserve
    unrelated user changes shared through the working tree.
 
-For v0.5.0 implementation and verification, keep assignments aligned with
-`docs/releases/v0.5.0.md`. The configuration transaction chain is serialized:
-`embedded-systems` owns the service/native transaction, driver lifecycle and
-Flash-backend behavior; `iot-engineer` owns the OPC UA restart adapter,
-compatibility model, configuration Methods and automated client verification;
-`build-engineer` owns version propagation, build/artifact, size and Flash-layout
-checks; and `code-reviewer` performs the final independent review. The isolated
-missing-driver validation work may run independently only where the release plan
-explicitly permits it.
+For v0.5.1 implementation and verification, keep assignments aligned with
+`docs/releases/v0.5.1.md`. This release runs pilot-first, not freeze-first:
+`embedded-systems` owns the driver/bus implementation (native GPIO output
+driver, SPI transport abstraction, `ADS8688` driver, and every later
+industrial driver in the Phase 1 backlog); `iot-engineer` owns any OPC UA
+capability-model work (`SupportedDrivers`/`DriverCapabilities`) once Phase 1
+reaches it — the pilot tasks (T0-T2) add no OPC UA model code, so
+`iot-engineer` is not engaged until then; `build-engineer` owns the new
+CMake driver-enable options, catalog/CMake wiring, and dual-build proof
+(driver enabled vs. disabled) for each new driver; and `code-reviewer`
+performs the final independent review, including the pilot-phase API/
+resource-claim review gate before any Phase 1 task starts. Do not begin
+Phase 1 driver work before that review gate closes and this file or the
+release plan records the outcome.
 
 ## Architecture boundaries
 
@@ -131,57 +136,54 @@ explicitly permits it.
 - Use a single version source for runtime firmware revision, OTA metadata,
   configuration export, artifacts, tags, and documentation.
 
-## v0.5.0 constraints
+## v0.5.1 constraints
 
-- Treat tag `v0.4.3` and commit
-  `dec08ba22e835e8037f9fd5342dcc63ddc03f5ac` as the immutable implementation
-  and compatibility baseline.
-- Follow `docs/releases/v0.5.0.md`. The transaction order is validate ->
-  persist staged -> stop -> activate -> verify at least one valid read per
-  new/changed channel -> commit or rollback. `config_service` remains the sole
-  transaction owner and `sensor_manager` remains the driver-lifecycle executor.
-- Keep staged, running and last-known-good configuration in distinct,
-  power-loss-recoverable roles inside the existing bounded configuration Flash
-  region. Recovery must expose a complete old or new configuration, never a
-  mixture.
-- Treat configuration schema version as real persisted/imported data. Migrate
-  supported older forms and reject incompatible or future schemas
-  deterministically.
-- Report every missing driver and resource conflict in a rejected candidate;
-  do not stop at the first missing `driver_id`.
-- A transaction that changes the running information model triggers a
-  controlled full OPC UA server restart. Do not implement live namespace
-  mutation. A transaction that does not require restart must leave sessions
-  and subscriptions intact.
-- Deleting a channel, or modifying its driver/value type under the same stable
-  channel ID, clears its history ring and alarm condition/acknowledgement state
-  as documented in the release plan and changelog.
-- Expose the three runtime configuration presets and bounded compatibility data
-  required by the release plan. Do not confuse runtime presets with compile-time
-  driver packs.
-- Preserve all unrelated v0.4.3 public NodeIds, BrowseNames, method signatures,
-  events, permissions and configuration fields. Do not start later-release
-  dynamic driver loading, signed OTA, Historical Event Access, Modbus or
-  industrial-board driver work.
-
-## v0.5.0 OTA verification authorization
-
-For v0.5.0 verification only, Codex is authorized to stage and upload a
-verified firmware artifact to the user-designated reference test device through
-the existing authenticated OTA workflow in `static/tools/stage_ota.py`, finalize
-the update and reboot with the explicit `--reboot-after-finalize` option when a
-planned transaction recovery or reconnect check requires it.
-
-Before upload, record and verify the endpoint/device identity, board/profile,
-artifact version, hash/CRC and current OTA status. Use the matching generated
-manifest and payload. Do not target an unidentified or production device,
-weaken authentication or integrity checks, alter security/trust/commissioning,
-or add/change OTA functionality. Abort staging on failure where the existing
-workflow permits it, and record transfer, finalize, reboot, reconnect, health
-and recovery/rollback outcomes. If network OTA fails, fall back to direct USB
-BOOTSEL flashing and record which path was used. Preserve the known-good
-configuration unless a test explicitly requires a documented configuration
-change. This authorization expires when v0.5.0 work is complete.
+- Treat `main` at `c6da6c4` (v0.5.0, `Transactional Runtime Configuration`,
+  merged via PR #19) as the implementation and compatibility baseline.
+- Follow `docs/releases/v0.5.1.md`. This release is pilot-first, not
+  freeze-first: implement T0 (datasheet), T1 (native GPIO output driver —
+  first real `write`/`configure`/`self_test` implementation) and T2 (`ADS8688`
+  SPI driver + new SPI transport abstraction) before touching any other
+  industrial driver. Do not start a Phase 1 driver (`AD5422`, `MAX22190`,
+  `IPS2050`, UIC, the `TCAL9539`/`TCA4307`/`TPS2553` board-power block,
+  `ISOW1432`, `TPS3851`, W5500 board rebind, driver-level board diagnostics)
+  before the pilot-phase API/resource-claim review gate in
+  `docs/releases/v0.5.1.md` has closed and its outcome is recorded.
+- Design one minimal bus-transport interface per physical bus (SPI, I²C,
+  UART) as each is first needed by a real driver. Do not build one unified
+  transport abstraction across all three; that was explicitly rejected as
+  premature during release planning.
+- Once Phase 1 starts, implement the remaining industrial drivers strictly in
+  `ROADMAP.md`'s own listed order (`ROADMAP.md:556-582`), not reordered by
+  inferred hardware/power-sequencing dependency.
+- `config_channel_driver_id_t` (`services/include/services/driver_catalog.h`)
+  is persisted in Flash and the config-wire format: append new driver IDs
+  only, never renumber or reuse existing ones. `driver_catalog_resource_type_t`
+  is not persisted and may be extended freely as new bus/resource claim types
+  are needed.
+- OPC UA exposure boundary for this release: AI/AO/DI/DO channel *values*
+  flow through the existing generic channel model automatically once a driver
+  is catalog-registered and configured — add no new OPC UA model code for
+  channel values. `SupportedDrivers`/`DriverCapabilities` is new, explicitly
+  in scope. Board-level diagnostics (power/fault/watchdog signals) stay
+  driver/vtable-internal only (`self_test`/diagnostic return codes); their
+  OPC UA exposure is `v0.6.2` scope, not this release.
+- Fetch each driver's datasheet into `docs/datasheets/` only as that driver's
+  implementation begins, not in bulk up front.
+- `RP2350_INDUSTRIAL_MVP_V1`'s schematic is near-final but may still change.
+  Isolate each industrial driver's pin/bus/resource-index assignment into one
+  small board-binding unit, separate from register/protocol logic.
+- This release is explicitly pre-hardware: `RP2350_INDUSTRIAL_MVP_V1` does
+  not physically exist. Industrial drivers must be source-complete,
+  statically analyzed, and host/mock-tested, but must never claim electrical,
+  timing, calibration, or real-device validation. `self_test` must
+  distinguish "supported and passed" from "supported but hardware
+  unavailable/not present" from "failed" — never report absent hardware as a
+  passed test or a board fault. Label every verification artifact for this
+  release **compile/mock validated, not hardware qualified**.
+- The reference RP2350 + W5500 profile remains the hardware used for release
+  builds and runnable verification; industrial drivers must not probe or
+  initialize on a reference-board boot.
 
 ## Build and verification
 
@@ -200,20 +202,28 @@ For every feature:
 
 - Add positive, negative, authorization, illegal-state, and resource-limit tests.
   Add reboot/power-loss tests when persistence is involved.
-- For v0.5.0, run the complete gate in `docs/releases/v0.5.0.md`, including
-  schema migration, transaction-phase and Flash power-loss injection,
-  driver-init/verification rollback, exhaustive missing-driver/resource
-  conflicts, restart/no-restart session behavior, history/alarm cleanup,
-  all three presets, version integrity and automated reconnect checks.
+- For v0.5.1, run the pilot-phase gate in `docs/releases/v0.5.1.md`:
+  `static/tools/run_host_tests.py` and `static/tools/run_first_party_cppcheck.py`
+  green including every new suite, a reference-profile Debug build with each
+  new driver both enabled and disabled, a new mock bus device addable without
+  editing chip-specific or core channel-manager/OPC UA code, and `ADS8688`
+  self-test correctly reporting "hardware unavailable" rather than a false
+  pass or board fault on the reference board (no such chip attached). Do not
+  claim hardware verification for this release's industrial drivers; record
+  compile/mock-validation results in
+  `docs/releases/v0.5.1-driver-verification.md` instead of a hardware report.
 - Verification scripts must exit nonzero on failure. CI release gates must
   actually fail; do not use `continue-on-error`, unconditional `|| true`, or
   smoke tests that assert no behavior.
 - Complete one Debug build for the reference target with no new first-party
   warnings.
 - Confirm affected behavior with an automated open62541/asyncua client and
-  UaExpert when public OPC UA behavior is touched. Compare the public contract
-  and exported NodeSet/inventory against tag v0.4.3 and document every intended
-  addition.
+  UaExpert when public OPC UA behavior is touched. This release's pilot tasks
+  (T0-T2) add no OPC UA model code, so this bullet applies once Phase 1's
+  `SupportedDrivers`/`DriverCapabilities` capability model is implemented.
+  Compare the public contract and exported NodeSet/inventory against the
+  v0.5.0 baseline (`main` at `c6da6c4`; no `v0.5.0` tag exists yet) and
+  document every intended addition.
 - Record artifact sizes and memory/stack impact. Update public NodeId/schema
   documentation, README, release notes, and tools when affected.
 - Report commands actually run and any validation that could not be run. Do not
