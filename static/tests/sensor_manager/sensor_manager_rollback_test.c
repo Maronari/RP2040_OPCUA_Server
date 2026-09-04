@@ -121,21 +121,86 @@ static const driver_catalog_entry_t g_entry = {
     .validate_source = fake_validate_source,
     .driver = &g_driver,
 };
+
+/* v0.5.1 T1 regression: a write-only driver (no `.read`), modeling
+ * gpio_output_channel_driver.c. Found via live hardware verification --
+ * sensor_manager_verify_candidate_channels() previously required a
+ * SERVICE_QUALITY_GOOD read from every new/changed channel regardless of
+ * read capability, so activating any write-only channel exhausted the
+ * verify retry budget and rolled back the whole transaction every time. */
+static telemetry_driver_result_t write_only_start(telemetry_channel_t *channel)
+{
+    (void)channel;
+    return TELEMETRY_DRIVER_RESULT_OK;
+}
+static telemetry_driver_result_t write_only_stop(telemetry_channel_t *channel)
+{
+    (void)channel;
+    return TELEMETRY_DRIVER_RESULT_OK;
+}
+static telemetry_driver_result_t write_only_configure(telemetry_channel_t *channel, const void *config)
+{
+    (void)channel; (void)config;
+    return TELEMETRY_DRIVER_RESULT_OK;
+}
+static telemetry_driver_result_t write_only_self_test(telemetry_channel_t *channel)
+{
+    (void)channel;
+    return TELEMETRY_DRIVER_RESULT_OK;
+}
+static telemetry_driver_result_t write_only_write(telemetry_channel_t *channel,
+                                                   const telemetry_channel_value_t *value)
+{
+    channel->runtime.value = *value;
+    return TELEMETRY_DRIVER_RESULT_OK;
+}
+static const telemetry_driver_vtbl_t g_write_only_driver = {
+    .start = write_only_start, .stop = write_only_stop,
+    .configure = write_only_configure, .self_test = write_only_self_test,
+    .write = write_only_write,
+    /* .read intentionally omitted (NULL) -- this is the write-only case. */
+};
+static const driver_catalog_entry_t g_write_only_entry = {
+    .driver_id = CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT,
+    .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+    .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                    TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_CONFIGURE |
+                    TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+    .validate_source = fake_validate_source,
+    .driver = &g_write_only_driver,
+};
+
 const driver_catalog_entry_t *driver_catalog_get_by_id(uint8_t id)
 {
-    return id == g_entry.driver_id ? &g_entry : NULL;
+    if (id == g_entry.driver_id)
+    {
+        return &g_entry;
+    }
+    if (id == g_write_only_entry.driver_id)
+    {
+        return &g_write_only_entry;
+    }
+    return NULL;
 }
 bool driver_catalog_supports_value_type(const driver_catalog_entry_t *entry,
                                         telemetry_channel_value_type_t type)
 {
-    return entry == &g_entry && type == TELEMETRY_CHANNEL_VALUE_FLOAT;
+    if (entry == &g_entry)
+    {
+        return type == TELEMETRY_CHANNEL_VALUE_FLOAT;
+    }
+    if (entry == &g_write_only_entry)
+    {
+        return type == TELEMETRY_CHANNEL_VALUE_BOOLEAN;
+    }
+    return false;
 }
 bool driver_catalog_get_resource_claims(uint8_t id, uint8_t source, uint8_t flags,
                                         driver_catalog_resource_claim_t *claims, size_t capacity,
                                         size_t *out_count)
 {
-    if (id != g_entry.driver_id || flags != 0u || source == 0u || source > 3u ||
-        claims == NULL || capacity == 0u || out_count == NULL)
+    if ((id != g_entry.driver_id && id != g_write_only_entry.driver_id) || flags != 0u ||
+        source == 0u || source > 3u || claims == NULL || capacity == 0u || out_count == NULL)
     {
         return false;
     }
@@ -159,6 +224,20 @@ static void set_channel(size_t index, const char *id, uint8_t source)
     channel->source_index = source;
     channel->value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
     channel->flags = TELEMETRY_CHANNEL_FLAG_ENABLED;
+    channel->settings.enabled = true;
+    strcpy(channel->id, id);
+    strcpy(channel->name, id);
+}
+
+static void set_write_only_channel(size_t index, const char *id, uint8_t source)
+{
+    config_channel_definition_t *channel = &g_profile.channels[index];
+    *channel = (config_channel_definition_t){0};
+    channel->in_use = 1u;
+    channel->driver_id = CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT;
+    channel->source_index = source;
+    channel->value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN;
+    channel->flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE;
     channel->settings.enabled = true;
     strcpy(channel->id, id);
     strcpy(channel->name, id);
@@ -200,5 +279,28 @@ int main(void)
     sensor_manager_get_snapshot(&compatibility);
     assert(!compatibility.enabled);
     assert(compatibility.quality == SERVICE_QUALITY_BAD);
+
+    /* v0.5.1 T1 regression: adding a write-only channel (no `.read`)
+     * alongside the unchanged active one must activate successfully -- the
+     * verify gate must not wait for a read that this driver can never
+     * produce. Found via live hardware verification: before the fix,
+     * activating any write-only channel exhausted the verify retry budget
+     * and rolled back the whole transaction, leaving channel_manager_count()
+     * unchanged. g_active_bank/g_active_count are still whatever the last
+     * successful activation left them (the single "channel.temperature.1"
+     * @ source 1 from sensor_manager_init() above) -- both double-fault
+     * attempts above failed to replace it. */
+    g_fail_start_mask = 0u;
+    memset(&g_profile, 0, sizeof(g_profile));
+    set_channel(0u, "channel.temperature.1", 1u); /* unchanged from the currently-active channel */
+    set_write_only_channel(1u, "channel.gpio_output.1", 2u);
+    ++g_revision;
+    if (setjmp(g_delay_exit) == 0)
+    {
+        sensor_manager_task(NULL);
+    }
+    assert(channel_manager_count() == 2u);
+    assert(channel_manager_copy_snapshot_by_id("channel.gpio_output.1", &snapshot));
+    assert(source_of(&snapshot.channel) == 2u);
     return 0;
 }

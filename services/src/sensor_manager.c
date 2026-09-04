@@ -461,8 +461,8 @@ static bool sensor_manager_channel_is_new_or_changed(uint8_t old_bank, size_t ol
 }
 
 /**
- * @brief Verify gate: for every new/changed, enabled channel already
- *        published into `channel_manager` at [0, @p prepared) of
+ * @brief Verify gate: for every new/changed, enabled, *read-capable* channel
+ *        already published into `channel_manager` at [0, @p prepared) of
  *        @p candidate_bank, obtain at least one `SERVICE_QUALITY_GOOD` read
  *        within a bounded number of attempts.
  *
@@ -475,13 +475,23 @@ static bool sensor_manager_channel_is_new_or_changed(uint8_t old_bank, size_t ol
  * bank) are intentionally not re-verified -- they were already proven live
  * by a prior activation.
  *
+ * A channel whose driver has no `read` (a write-only channel, e.g. v0.5.1's
+ * `gpio_output`) is excluded from this gate entirely rather than waiting out
+ * its full retry budget for a read that will structurally never arrive --
+ * confirmed as a real activation failure during v0.5.1 T1 live hardware
+ * verification (docs/releases/v0.5.1.md). `sensor_manager_start_candidates()`
+ * already ran that channel's `start`/`configure`/`self_test` before this
+ * function is reached; for a write-only driver, `self_test` is the
+ * equivalent real-hardware confirmation a read would have provided for a
+ * readable one.
+ *
  * @param candidate_bank Bank index just published to `channel_manager`.
  * @param prepared Number of occupied slots in @p candidate_bank (and, since
  *        channel_manager_register_from_config() registers 1:1 in order, the
  *        number of leading channel_manager registry slots to check).
- * @return true if every new/changed enabled channel produced a valid read
- *         within its budget (or there were none to check); false if any
- *         channel's budget was exhausted first.
+ * @return true if every new/changed, read-capable, enabled channel produced
+ *         a valid read within its budget (or there were none to check);
+ *         false if any such channel's budget was exhausted first.
  * @note Touches hardware indirectly via channel_manager_poll_all() (driver
  *       `read`); may sleep between attempts (vTaskDelay()).
  */
@@ -496,6 +506,14 @@ static bool sensor_manager_verify_candidate_channels(uint8_t candidate_bank, siz
 
         if (!candidate_channel->settings.enabled)
         {
+            continue;
+        }
+        if (candidate_channel->driver == NULL || candidate_channel->driver->read == NULL)
+        {
+            /* Write-only channel: no read exists to verify against.
+             * start()/configure()/self_test() already ran in
+             * sensor_manager_start_candidates() and are this channel's only
+             * hardware-facing confirmation. */
             continue;
         }
         if (sensor_manager_channel_is_new_or_changed(g_active_bank, g_active_count, candidate_channel))
