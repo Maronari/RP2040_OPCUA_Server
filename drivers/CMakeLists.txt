@@ -5,6 +5,7 @@ option(FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER "Build the native GPIO-output (
 option(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER "Build the native ADS8688 industrial SPI ADC channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER "Build the native AD5422 industrial analog-output channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER "Build the native MAX22190 industrial digital-input channel driver (pre-hardware: compile/mock validated only)" ON)
+option(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER "Build the native IPS2050 protected high-side digital-output channel driver (pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
@@ -27,6 +28,9 @@ if(FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER)
 endif()
 if(FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER)
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/max22190_driver.c)
+endif()
+if(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/ips2050_driver.c)
 endif()
 if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER OR FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER OR FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER)
     # Shared RP2350 SPI board-binding, reused by every SPI-based industrial
@@ -82,6 +86,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER}>
+        FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC

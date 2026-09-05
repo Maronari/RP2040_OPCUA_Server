@@ -21,6 +21,7 @@ SUITES = (
     "test_ads8688_driver.py",
     "test_ad5422_driver.py",
     "test_max22190_driver.py",
+    "test_ips2050_driver.py",
     "test_channel_runtime.py",
     "test_history_service.py",
     "test_history_flash_backend.py",

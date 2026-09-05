@@ -31,6 +31,7 @@
 
 #include "drivers/ad5422_driver.h"
 #include "drivers/ads8688_driver.h"
+#include "drivers/ips2050_driver.h"
 #include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
 
@@ -54,6 +55,9 @@
 #endif
 #ifndef FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER 1
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -109,6 +113,14 @@ static bool validate_ad5422(uint8_t source_index, uint8_t source_flags)
 static bool validate_max22190(uint8_t source_index, uint8_t source_flags)
 {
     return native_max22190_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_IPS2050; delegates to the native driver's own source validation. */
+static bool validate_ips2050(uint8_t source_index, uint8_t source_flags)
+{
+    return native_ips2050_source_is_valid(source_index, source_flags);
 }
 #endif
 
@@ -170,6 +182,14 @@ static const telemetry_driver_vtbl_t g_max22190_driver = {
     .stop = native_max22190_stop,
     .read = native_max22190_read,
     .self_test = native_max22190_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+static const telemetry_driver_vtbl_t g_ips2050_driver = {
+    .start = native_ips2050_start,
+    .stop = native_ips2050_stop,
+    .write = native_ips2050_write,
+    .self_test = native_ips2050_self_test,
 };
 #endif
 
@@ -294,6 +314,22 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
                         TELEMETRY_DRIVER_CAPABILITY_READ | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
         .validate_source = validate_max22190,
         .driver = &g_max22190_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_IPS2050,
+        .name = "ips2050",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_ips2050,
+        .driver = &g_ips2050_driver,
     },
 #endif
     /* Keeps the array valid when every optional native driver is excluded. */
@@ -447,6 +483,17 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
             .index = 0u,
             .shared = true,
         };
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_IPS2050)
+    {
+        /* source_index selects DO0/DO1, one of this board's two protected
+         * high-side output channels -- exclusive, so two configured
+         * channels cannot both bind the same DO. A plain GPIO frontend
+         * (HARDWARE_MVP.md 3.4.4), not a shared-bus chip like ADS8688/
+         * AD5422/MAX22190, so no second shared claim is needed. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
     }
     return true;
 }

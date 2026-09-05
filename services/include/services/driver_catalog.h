@@ -26,7 +26,8 @@ typedef enum
     CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT = 4,
     CONFIG_CHANNEL_DRIVER_ADS8688 = 5,
     CONFIG_CHANNEL_DRIVER_AD5422 = 6,
-    CONFIG_CHANNEL_DRIVER_MAX22190 = 7
+    CONFIG_CHANNEL_DRIVER_MAX22190 = 7,
+    CONFIG_CHANNEL_DRIVER_IPS2050 = 8
 } config_channel_driver_id_t;
 
 /** @brief Bitmask helper: the single bit representing a telemetry_channel_value_type_t in a driver_catalog_entry_t::supported_value_types mask. */
@@ -52,7 +53,9 @@ typedef enum
     /** @brief One AD5422 daisy-chain position (v0.5.1 Phase 1, AO0/AO1); exclusive per channel index (0-1). Distinct from DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT because the two AD5422 devices on this board share one LATCH line (no per-device chip-select pin exists) -- see docs/datasheets/AD5422-register-notes.md. */
     DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL,
     /** @brief One MAX22190 wired digital-input line (v0.5.1 Phase 1, DI0-DI3); exclusive per channel index (0-3). Distinct from DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT/AD5422_CHANNEL because none of those name the same physical resource -- a MAX22190 DI channel and an ADS8688/AD5422 channel at the same numeric index must not falsely conflict; see docs/datasheets/MAX22190-register-notes.md. */
-    DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL
+    DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL,
+    /** @brief One IPS2050 protected high-side output channel (v0.5.1 Phase 1, DO0-DO1); exclusive per channel index (0-1). A plain GPIO frontend, not a shared-bus chip like ADS8688/AD5422/MAX22190 -- no accompanying shared claim exists (see drivers/include/drivers/ips2050_driver.h); the underlying fixed GPIO pins are not separately claimed as DRIVER_CATALOG_RESOURCE_GPIO, matching this catalog's existing precedent of not modeling cross-type physical-pin awareness for dedicated-chip drivers. */
+    DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL
 } driver_catalog_resource_type_t;
 
 /** @brief Upper bound on driver_catalog_get_resource_claims() output per channel; sizes caller-side claim arrays. */
