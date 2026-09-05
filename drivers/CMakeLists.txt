@@ -7,6 +7,7 @@ option(FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER "Build the native AD5422 industrial 
 option(FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER "Build the native MAX22190 industrial digital-input channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER "Build the native IPS2050 protected high-side digital-output channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER "Build the native UIC universal-input channel driver (digital input/pulse count/frequency/period; pre-hardware: compile/mock validated only)" ON)
+option(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE "Build the TCAL9539/TCA4307/TPS2553 board-power-service block (pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
@@ -36,6 +37,13 @@ endif()
 if(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER)
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/uic_driver.c src/rp2350_pio_edge_counter.c)
 endif()
+if(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE)
+    # tcal9539_driver.c/rp2350_i2c_bus.c are this feature's real hardware
+    # backing; i2c_transport.c (the generic, dependency-free bus contract,
+    # mirroring spi_transport.c) is always built below regardless of this
+    # option, matching that precedent.
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/tcal9539_driver.c src/rp2350_i2c_bus.c)
+endif()
 if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER OR FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER OR FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER)
     # Shared RP2350 SPI board-binding, reused by every SPI-based industrial
     # driver; excluded from the ELF only when none of them are enabled.
@@ -50,6 +58,7 @@ add_library(FIRMWARE_DRIVERS STATIC
         src/led_driver.c
         src/platform_clock.c
         src/rtc_driver.c
+        src/i2c_transport.c
         src/spi_transport.c
         src/temp_sensor_driver.c
         src/w5x00_ethernet_driver.c
@@ -100,6 +109,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_UIC_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_UIC_DRIVER}>
+        FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE=$<BOOL:${FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC
@@ -110,6 +120,7 @@ target_link_libraries(FIRMWARE_DRIVERS PUBLIC
         hardware_adc
         hardware_clocks
         hardware_dma
+        hardware_i2c
         hardware_pio
         hardware_spi
         hardware_watchdog

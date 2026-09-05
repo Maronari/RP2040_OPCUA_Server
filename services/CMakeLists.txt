@@ -24,6 +24,10 @@ set(FIRMWARE_SERVICES_SOURCES
         src/time_service.c
         )
 
+if(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE)
+    list(APPEND FIRMWARE_SERVICES_SOURCES src/board_power_service.c)
+endif()
+
 if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
     list(APPEND FIRMWARE_SERVICES_SOURCES
             src/security_identity_import_service.c
