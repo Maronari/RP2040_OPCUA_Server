@@ -6,6 +6,7 @@ option(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER "Build the native ADS8688 industria
 option(FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER "Build the native AD5422 industrial analog-output channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER "Build the native MAX22190 industrial digital-input channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER "Build the native IPS2050 protected high-side digital-output channel driver (pre-hardware: compile/mock validated only)" ON)
+option(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER "Build the native UIC universal-input channel driver (digital input/pulse count/frequency/period; pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
@@ -31,6 +32,9 @@ if(FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER)
 endif()
 if(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER)
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/ips2050_driver.c)
+endif()
+if(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/uic_driver.c src/rp2350_pio_edge_counter.c)
 endif()
 if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER OR FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER OR FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER)
     # Shared RP2350 SPI board-binding, reused by every SPI-based industrial
@@ -74,6 +78,14 @@ target_include_directories(FIRMWARE_DRIVERS PUBLIC
         ${PICO_SDK_PATH}/src/rp2_common/pico_rand/include
         )
 
+if(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER)
+    # Generates uic_pulse_counter.pio.h (pio_program_t + default-config
+    # helper) into the build tree and adds it as a public include dir of
+    # FIRMWARE_DRIVERS -- see src/uic_pulse_counter.pio and
+    # src/rp2350_pio_edge_counter.c.
+    pico_generate_pio_header(FIRMWARE_DRIVERS ${CMAKE_CURRENT_SOURCE_DIR}/src/uic_pulse_counter.pio)
+endif()
+
 ota_layout_apply_to_target(FIRMWARE_DRIVERS)
 
 target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
@@ -87,6 +99,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER}>
+        FIRMWARE_ENABLE_NATIVE_UIC_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_UIC_DRIVER}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC
@@ -97,6 +110,7 @@ target_link_libraries(FIRMWARE_DRIVERS PUBLIC
         hardware_adc
         hardware_clocks
         hardware_dma
+        hardware_pio
         hardware_spi
         hardware_watchdog
         hardware_flash

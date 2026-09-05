@@ -34,6 +34,7 @@
 #include "drivers/ips2050_driver.h"
 #include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
+#include "drivers/uic_driver.h"
 
 #ifndef FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER 1
@@ -58,6 +59,9 @@
 #endif
 #ifndef FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_UIC_DRIVER 1
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -121,6 +125,14 @@ static bool validate_max22190(uint8_t source_index, uint8_t source_flags)
 static bool validate_ips2050(uint8_t source_index, uint8_t source_flags)
 {
     return native_ips2050_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_UIC; delegates to the native driver's own source validation. */
+static bool validate_uic(uint8_t source_index, uint8_t source_flags)
+{
+    return native_uic_source_is_valid(source_index, source_flags);
 }
 #endif
 
@@ -190,6 +202,13 @@ static const telemetry_driver_vtbl_t g_ips2050_driver = {
     .stop = native_ips2050_stop,
     .write = native_ips2050_write,
     .self_test = native_ips2050_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+static const telemetry_driver_vtbl_t g_uic_driver = {
+    .start = native_uic_start,
+    .stop = native_uic_stop,
+    .read = native_uic_read,
 };
 #endif
 
@@ -330,6 +349,23 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
                         TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
         .validate_source = validate_ips2050,
         .driver = &g_ips2050_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_UIC,
+        .name = "uic",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN) |
+                                 TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_READ,
+        .validate_source = validate_uic,
+        .driver = &g_uic_driver,
     },
 #endif
     /* Keeps the array valid when every optional native driver is excluded. */
@@ -492,6 +528,15 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
          * (HARDWARE_MVP.md 3.4.4), not a shared-bus chip like ADS8688/
          * AD5422/MAX22190, so no second shared claim is needed. */
         out_claims[0].type = DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_UIC)
+    {
+        /* source_index selects UIC0-UIC3 -- exclusive regardless of the
+         * channel's configured mode, since every mode binds the same
+         * physical GPIO40..GPIO43 pin. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_UIC_CHANNEL;
         out_claims[0].index = source_index;
         out_claims[0].shared = false;
     }

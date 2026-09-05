@@ -1,0 +1,30 @@
+;
+; Counts full low-to-high pulse transitions on one input pin via the state
+; machine's X scratch register, used as a free-running down-counter --
+; the PIO instruction set has no direct increment, only `JMP X--`
+; (unconditionally decrements X, branches only if the pre-decrement value
+; was non-zero). Firmware (drivers/rp2350_pio_edge_counter.c) initializes
+; X to 0xFFFFFFFF on start and reads the running total as
+; `0xFFFFFFFF - X`, snapshotting X on demand via pio_sm_exec()-injected
+; instructions rather than a continuous FIFO/DMA stream, since a channel
+; read() is a low-rate periodic poll, not a high-rate capture.
+;
+; `jmp x-- top` as the loop's last instruction, immediately followed by
+; `.wrap`, is deliberate: when X is non-zero the jump is taken straight
+; back to `top`; when X was zero (wrapping to 0xFFFFFFFF) the jump is not
+; taken, but falling through past the last instruction before `.wrap`
+; triggers the same wrap-to-`top` -- both paths land back at the loop
+; start either way, so the loop is unconditional regardless of which path
+; is taken.
+;
+; Correctness caveat: this program has not been run against real RP2350
+; PIO hardware or a simulator -- see drivers/include/drivers/uic_driver.h
+; and docs/releases/v0.5.1.md T6 for the project's standing pre-hardware
+; disclosure convention.
+.program uic_pulse_counter
+.wrap_target
+top:
+    wait 0 pin, 0
+    wait 1 pin, 0
+    jmp x-- top
+.wrap
