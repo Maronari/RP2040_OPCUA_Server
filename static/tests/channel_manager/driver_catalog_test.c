@@ -1,5 +1,6 @@
 #include "drivers/ad5422_driver.h"
 #include "drivers/ads8688_driver.h"
+#include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
 #include "services/driver_catalog.h"
 
@@ -41,6 +42,14 @@ telemetry_driver_result_t native_ad5422_start(telemetry_channel_t *c) { (void)c;
 telemetry_driver_result_t native_ad5422_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *c, const telemetry_channel_value_t *v) { (void)c; (void)v; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_ad5422_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+bool native_max22190_source_is_valid(uint8_t index, uint8_t flags)
+{
+    return index <= 3u && (flags & (uint8_t)~0x0Fu) == 0u;
+}
+telemetry_driver_result_t native_max22190_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_max22190_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_max22190_read(telemetry_channel_t *c, uint32_t n) { (void)c; (void)n; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_max22190_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 
 int main(void)
 {
@@ -49,6 +58,7 @@ int main(void)
     const driver_catalog_entry_t *gpio_output = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT);
     const driver_catalog_entry_t *ads8688 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_ADS8688);
     const driver_catalog_entry_t *ad5422 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_AD5422);
+    const driver_catalog_entry_t *max22190 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_MAX22190);
     driver_catalog_resource_claim_t claims[4];
     driver_catalog_resource_claim_t temp_claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
     size_t claim_count = 0u;
@@ -156,5 +166,32 @@ int main(void)
     assert(!driver_catalog_claims_are_compatible(claims, 4u));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 2u, 0x0u, claims, 2u, &claim_count));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x4u, claims, 2u, &claim_count));
+
+    /* v0.5.1 Phase 1: max22190 (DI0-DI3) is a third chip on the same shared
+     * SPI bus as ads8688/ad5422 -- read-only, no WRITE capability. */
+    assert(max22190 != NULL);
+    assert((max22190->capabilities & TELEMETRY_DRIVER_CAPABILITY_READ) != 0u);
+    assert((max22190->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) != 0u);
+    assert((max22190->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u);
+    assert(max22190->driver->read != NULL && max22190->driver->self_test != NULL &&
+           max22190->driver->write == NULL);
+    assert(driver_catalog_supports_value_type(max22190, TELEMETRY_CHANNEL_VALUE_BOOLEAN));
+    assert(!driver_catalog_supports_value_type(max22190, TELEMETRY_CHANNEL_VALUE_FLOAT));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x03u, claims, 2u, &claim_count));
+    assert(claim_count == 2u && claims[0].type == DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL && claims[0].index == 0u &&
+           !claims[0].shared && claims[1].type == DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL && claims[1].index == 0u &&
+           claims[1].shared);
+    /* An ads8688 channel on mux index 0 and a max22190 channel on DI0 (also
+     * index 0) must NOT conflict -- distinct claim types, same shared bus. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x0u, &claims[2], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 4u));
+    /* An ad5422 channel on AO0 (also index 0) must likewise not conflict. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, &claims[2], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 4u));
+    /* Two max22190 channels both claiming DI0 do conflict. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x00u, &claims[2], 2u, &claim_count));
+    assert(!driver_catalog_claims_are_compatible(claims, 4u));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 4u, 0x0u, claims, 2u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x10u, claims, 2u, &claim_count));
     return 0;
 }

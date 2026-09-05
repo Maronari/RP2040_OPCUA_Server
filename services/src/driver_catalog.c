@@ -31,6 +31,7 @@
 
 #include "drivers/ad5422_driver.h"
 #include "drivers/ads8688_driver.h"
+#include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
 
 #ifndef FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -50,6 +51,9 @@
 #endif
 #ifndef FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER 1
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -97,6 +101,14 @@ static bool validate_ads8688(uint8_t source_index, uint8_t source_flags)
 static bool validate_ad5422(uint8_t source_index, uint8_t source_flags)
 {
     return native_ad5422_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_MAX22190; delegates to the native driver's own source validation. */
+static bool validate_max22190(uint8_t source_index, uint8_t source_flags)
+{
+    return native_max22190_source_is_valid(source_index, source_flags);
 }
 #endif
 
@@ -150,6 +162,14 @@ static const telemetry_driver_vtbl_t g_ad5422_driver = {
     .stop = native_ad5422_stop,
     .write = native_ad5422_write,
     .self_test = native_ad5422_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+static const telemetry_driver_vtbl_t g_max22190_driver = {
+    .start = native_max22190_start,
+    .stop = native_max22190_stop,
+    .read = native_max22190_read,
+    .self_test = native_max22190_self_test,
 };
 #endif
 
@@ -260,6 +280,22 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
         .driver = &g_ad5422_driver,
     },
 #endif
+#if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_MAX22190,
+        .name = "max22190",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_READ | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_max22190,
+        .driver = &g_max22190_driver,
+    },
+#endif
     /* Keeps the array valid when every optional native driver is excluded. */
     {0},
 };
@@ -325,7 +361,7 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
         return false;
     }
     if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE || driver_id == CONFIG_CHANNEL_DRIVER_ADS8688 ||
-        driver_id == CONFIG_CHANNEL_DRIVER_AD5422)
+        driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
     {
         required = 2u;
     }
@@ -386,6 +422,24 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
          * bus (HARDWARE_MVP.md), so the shared claim correctly does not
          * conflict between them. */
         out_claims[0].type = DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL,
+            .index = 0u,
+            .shared = true,
+        };
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
+    {
+        /* source_index selects DI0-DI3, one of this board's four wired
+         * physical input lines on the single MAX22190 chip in scope for this
+         * release -- exclusive, so two configured channels cannot both bind
+         * the same DI line. Shares the same SPI_PERIPHERAL index as ADS8688/
+         * AD5422: all three chips sit on the industrial board's one shared
+         * physical SPI bus (HARDWARE_MVP.md), so the shared claim correctly
+         * does not conflict between them. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL;
         out_claims[0].index = source_index;
         out_claims[0].shared = false;
         out_claims[1] = (driver_catalog_resource_claim_t){
