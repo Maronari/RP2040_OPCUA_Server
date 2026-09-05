@@ -2,6 +2,7 @@ option(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER "Build the native internal-te
 option(FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER "Build the native ADC-voltage channel driver" ON)
 option(FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER "Build the native GPIO-input channel driver" ON)
 option(FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER "Build the native GPIO-output (writable) channel driver" ON)
+option(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER "Build the native ADS8688 industrial SPI ADC channel driver (pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
@@ -16,6 +17,9 @@ endif()
 if(FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER)
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/gpio_output_channel_driver.c)
 endif()
+if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/ads8688_driver.c src/rp2350_spi_bus.c)
+endif()
 
 add_library(FIRMWARE_DRIVERS STATIC
         src/maintenance_journal_backend.c
@@ -25,6 +29,7 @@ add_library(FIRMWARE_DRIVERS STATIC
         src/led_driver.c
         src/platform_clock.c
         src/rtc_driver.c
+        src/spi_transport.c
         src/temp_sensor_driver.c
         src/w5x00_ethernet_driver.c
         src/watchdog_driver.c
@@ -61,6 +66,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER}>
+        FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC

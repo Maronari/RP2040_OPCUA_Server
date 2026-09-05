@@ -1,3 +1,4 @@
+#include "drivers/ads8688_driver.h"
 #include "drivers/native_channel_driver.h"
 #include "services/driver_catalog.h"
 
@@ -23,12 +24,21 @@ telemetry_driver_result_t native_gpio_output_stop(telemetry_channel_t *c) { (voi
 telemetry_driver_result_t native_gpio_output_write(telemetry_channel_t *c, const telemetry_channel_value_t *v) { (void)c; (void)v; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_gpio_output_configure(telemetry_channel_t *c, const void *cfg) { (void)c; (void)cfg; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_gpio_output_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+bool native_ads8688_source_is_valid(uint8_t index, uint8_t flags)
+{
+    return index <= 7u && (flags == 0x0u || flags == 0x1u || flags == 0x2u || flags == 0x5u || flags == 0x6u);
+}
+telemetry_driver_result_t native_ads8688_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_ads8688_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_ads8688_read(telemetry_channel_t *c, uint32_t n) { (void)c; (void)n; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_ads8688_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 
 int main(void)
 {
     const driver_catalog_entry_t *adc = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE);
     const driver_catalog_entry_t *gpio = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
     const driver_catalog_entry_t *gpio_output = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT);
+    const driver_catalog_entry_t *ads8688 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_ADS8688);
     driver_catalog_resource_claim_t claims[4];
     driver_catalog_resource_claim_t temp_claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
     size_t claim_count = 0u;
@@ -86,5 +96,29 @@ int main(void)
                                                &claim_count));
     assert(!driver_catalog_claims_are_compatible(claims, 2u));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT, 1u, 4u, claims, 2u, &claim_count));
+
+    /* v0.5.1 T2: ads8688 is the first driver claiming SPI resources. */
+    assert(ads8688 != NULL);
+    assert((ads8688->capabilities & TELEMETRY_DRIVER_CAPABILITY_READ) != 0u);
+    assert((ads8688->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) != 0u);
+    assert((ads8688->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u);
+    assert(ads8688->driver->read != NULL && ads8688->driver->self_test != NULL && ads8688->driver->write == NULL);
+    assert(driver_catalog_supports_value_type(ads8688, TELEMETRY_CHANNEL_VALUE_FLOAT));
+    assert(driver_catalog_supports_value_type(ads8688, TELEMETRY_CHANNEL_VALUE_DOUBLE));
+    assert(!driver_catalog_supports_value_type(ads8688, TELEMETRY_CHANNEL_VALUE_BOOLEAN));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 3u, 0x1u, claims, 1u, &claim_count));
+    assert(claim_count == 2u);
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 3u, 0x1u, claims, 2u, &claim_count));
+    assert(claim_count == 2u && claims[0].type == DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT && claims[0].index == 3u &&
+           !claims[0].shared && claims[1].type == DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL && claims[1].index == 0u &&
+           claims[1].shared);
+    /* Two ads8688 channels on different mux inputs share the SPI peripheral
+     * claim but do not conflict; the same mux input claimed twice does. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 5u, 0x0u, &claims[2], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 4u));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 3u, 0x2u, &claims[2], 2u, &claim_count));
+    assert(!driver_catalog_claims_are_compatible(claims, 4u));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 8u, 0x0u, claims, 2u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x3u, claims, 2u, &claim_count));
     return 0;
 }

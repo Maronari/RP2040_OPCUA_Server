@@ -23,7 +23,8 @@ typedef enum
     CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP = 1,
     CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE = 2,
     CONFIG_CHANNEL_DRIVER_GPIO_INPUT = 3,
-    CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT = 4
+    CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT = 4,
+    CONFIG_CHANNEL_DRIVER_ADS8688 = 5
 } config_channel_driver_id_t;
 
 /** @brief Bitmask helper: the single bit representing a telemetry_channel_value_type_t in a driver_catalog_entry_t::supported_value_types mask. */
@@ -41,7 +42,11 @@ typedef enum
     DRIVER_CATALOG_RESOURCE_NONE = 0,
     DRIVER_CATALOG_RESOURCE_ADC_INPUT,
     DRIVER_CATALOG_RESOURCE_ADC_PERIPHERAL,
-    DRIVER_CATALOG_RESOURCE_GPIO
+    DRIVER_CATALOG_RESOURCE_GPIO,
+    /** @brief One ADS8688 mux input (v0.5.1 T2); exclusive per channel index (0-7) so two configured channels cannot bind the same physical input. */
+    DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT,
+    /** @brief The ADS8688's shared SPI bus (v0.5.1 T2); shared across every channel on that one chip, mirroring DRIVER_CATALOG_RESOURCE_ADC_PERIPHERAL's role for the native ADC-voltage driver. */
+    DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL
 } driver_catalog_resource_type_t;
 
 /** @brief Upper bound on driver_catalog_get_resource_claims() output per channel; sizes caller-side claim arrays. */
