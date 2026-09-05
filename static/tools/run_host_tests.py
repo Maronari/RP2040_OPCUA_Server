@@ -26,6 +26,7 @@ SUITES = (
     "test_i2c_transport.py",
     "test_tcal9539_driver.py",
     "test_board_power_service.py",
+    "test_uart_transport.py",
     "test_channel_runtime.py",
     "test_history_service.py",
     "test_history_flash_backend.py",

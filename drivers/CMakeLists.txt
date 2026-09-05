@@ -8,6 +8,7 @@ option(FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER "Build the native MAX22190 industr
 option(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER "Build the native IPS2050 protected high-side digital-output channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER "Build the native UIC universal-input channel driver (digital input/pulse count/frequency/period; pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE "Build the TCAL9539/TCA4307/TPS2553 board-power-service block (pre-hardware: compile/mock validated only)" ON)
+option(FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT "Build the real RP2350 UART-backed half-duplex RS-485 transport binding for ISOW1432 (pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
@@ -44,6 +45,13 @@ if(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE)
     # option, matching that precedent.
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/tcal9539_driver.c src/rp2350_i2c_bus.c)
 endif()
+if(FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT)
+    # uart_transport.c (the generic, dependency-free bus contract,
+    # mirroring spi_transport.c/i2c_transport.c) is always built below
+    # regardless of this option; only the real hardware_uart-backed
+    # binding is conditional.
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/rp2350_rs485_uart.c)
+endif()
 if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER OR FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER OR FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER)
     # Shared RP2350 SPI board-binding, reused by every SPI-based industrial
     # driver; excluded from the ELF only when none of them are enabled.
@@ -60,6 +68,7 @@ add_library(FIRMWARE_DRIVERS STATIC
         src/rtc_driver.c
         src/i2c_transport.c
         src/spi_transport.c
+        src/uart_transport.c
         src/temp_sensor_driver.c
         src/w5x00_ethernet_driver.c
         src/watchdog_driver.c
@@ -110,6 +119,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_UIC_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_UIC_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE=$<BOOL:${FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE}>
+        FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT=$<BOOL:${FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC
@@ -123,6 +133,7 @@ target_link_libraries(FIRMWARE_DRIVERS PUBLIC
         hardware_i2c
         hardware_pio
         hardware_spi
+        hardware_uart
         hardware_watchdog
         hardware_flash
         pico_async_context_freertos
