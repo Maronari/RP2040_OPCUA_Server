@@ -1,3 +1,4 @@
+#include "drivers/ad5422_driver.h"
 #include "drivers/ads8688_driver.h"
 #include "drivers/native_channel_driver.h"
 #include "services/driver_catalog.h"
@@ -32,6 +33,14 @@ telemetry_driver_result_t native_ads8688_start(telemetry_channel_t *c) { (void)c
 telemetry_driver_result_t native_ads8688_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_ads8688_read(telemetry_channel_t *c, uint32_t n) { (void)c; (void)n; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_ads8688_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+bool native_ad5422_source_is_valid(uint8_t index, uint8_t flags)
+{
+    return index <= 1u && flags != 0x4u && flags <= 0x7u;
+}
+telemetry_driver_result_t native_ad5422_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_ad5422_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *c, const telemetry_channel_value_t *v) { (void)c; (void)v; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_ad5422_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 
 int main(void)
 {
@@ -39,6 +48,7 @@ int main(void)
     const driver_catalog_entry_t *gpio = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
     const driver_catalog_entry_t *gpio_output = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT);
     const driver_catalog_entry_t *ads8688 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_ADS8688);
+    const driver_catalog_entry_t *ad5422 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_AD5422);
     driver_catalog_resource_claim_t claims[4];
     driver_catalog_resource_claim_t temp_claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
     size_t claim_count = 0u;
@@ -120,5 +130,31 @@ int main(void)
     assert(!driver_catalog_claims_are_compatible(claims, 4u));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 8u, 0x0u, claims, 2u, &claim_count));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x3u, claims, 2u, &claim_count));
+
+    /* v0.5.1 Phase 1: ad5422 shares the same physical SPI bus as ads8688
+     * (both claim DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL index 0, shared)
+     * but has no chip-select pin of its own -- its exclusive claim is a
+     * distinct resource type (daisy-chain position), so it must not
+     * false-conflict with an ads8688 channel bound to the same numeric
+     * mux index. */
+    assert(ad5422 != NULL);
+    assert((ad5422->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) != 0u);
+    assert((ad5422->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) != 0u);
+    assert((ad5422->capabilities & TELEMETRY_DRIVER_CAPABILITY_READ) == 0u);
+    assert(ad5422->driver->write != NULL && ad5422->driver->self_test != NULL && ad5422->driver->read == NULL);
+    assert((ad5422->default_flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u);
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, claims, 2u, &claim_count));
+    assert(claim_count == 2u && claims[0].type == DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL && claims[0].index == 0u &&
+           !claims[0].shared && claims[1].type == DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL && claims[1].index == 0u &&
+           claims[1].shared);
+    /* An ads8688 channel on mux index 0 and an ad5422 channel on AO0 (also
+     * index 0) must NOT conflict -- different claim types, same shared bus. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x0u, &claims[2], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 4u));
+    /* Two ad5422 channels both claiming AO0 do conflict. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x2u, &claims[2], 2u, &claim_count));
+    assert(!driver_catalog_claims_are_compatible(claims, 4u));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 2u, 0x0u, claims, 2u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x4u, claims, 2u, &claim_count));
     return 0;
 }

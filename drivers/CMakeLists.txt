@@ -3,6 +3,7 @@ option(FIRMWARE_ENABLE_NATIVE_ADC_VOLTAGE_DRIVER "Build the native ADC-voltage c
 option(FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER "Build the native GPIO-input channel driver" ON)
 option(FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER "Build the native GPIO-output (writable) channel driver" ON)
 option(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER "Build the native ADS8688 industrial SPI ADC channel driver (pre-hardware: compile/mock validated only)" ON)
+option(FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER "Build the native AD5422 industrial analog-output channel driver (pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
@@ -18,7 +19,15 @@ if(FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER)
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/gpio_output_channel_driver.c)
 endif()
 if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER)
-    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/ads8688_driver.c src/rp2350_spi_bus.c)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/ads8688_driver.c)
+endif()
+if(FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/ad5422_driver.c)
+endif()
+if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER OR FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER)
+    # Shared RP2350 SPI board-binding, reused by every SPI-based industrial
+    # driver; excluded from the ELF only when none of them are enabled.
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/rp2350_spi_bus.c)
 endif()
 
 add_library(FIRMWARE_DRIVERS STATIC
@@ -67,6 +76,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER}>
+        FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC

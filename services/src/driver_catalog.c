@@ -29,6 +29,7 @@
 
 #include <string.h>
 
+#include "drivers/ad5422_driver.h"
 #include "drivers/ads8688_driver.h"
 #include "drivers/native_channel_driver.h"
 
@@ -46,6 +47,9 @@
 #endif
 #ifndef FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER 1
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -85,6 +89,14 @@ static bool validate_gpio_output(uint8_t source_index, uint8_t source_flags)
 static bool validate_ads8688(uint8_t source_index, uint8_t source_flags)
 {
     return native_ads8688_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_AD5422; delegates to the native driver's own source validation. */
+static bool validate_ad5422(uint8_t source_index, uint8_t source_flags)
+{
+    return native_ad5422_source_is_valid(source_index, source_flags);
 }
 #endif
 
@@ -130,6 +142,14 @@ static const telemetry_driver_vtbl_t g_ads8688_driver = {
     .stop = native_ads8688_stop,
     .read = native_ads8688_read,
     .self_test = native_ads8688_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+static const telemetry_driver_vtbl_t g_ad5422_driver = {
+    .start = native_ad5422_start,
+    .stop = native_ad5422_stop,
+    .write = native_ad5422_write,
+    .self_test = native_ad5422_self_test,
 };
 #endif
 
@@ -223,6 +243,23 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
         .driver = &g_ads8688_driver,
     },
 #endif
+#if FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_AD5422,
+        .name = "ad5422",
+        .default_unit = "V",
+        .default_kind = TELEMETRY_CHANNEL_KIND_ANALOG,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_FLOAT,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE,
+        .analog = true,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
+                                 TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_ad5422,
+        .driver = &g_ad5422_driver,
+    },
+#endif
     /* Keeps the array valid when every optional native driver is excluded. */
     {0},
 };
@@ -287,7 +324,8 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
     {
         return false;
     }
-    if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE || driver_id == CONFIG_CHANNEL_DRIVER_ADS8688)
+    if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE || driver_id == CONFIG_CHANNEL_DRIVER_ADS8688 ||
+        driver_id == CONFIG_CHANNEL_DRIVER_AD5422)
     {
         required = 2u;
     }
@@ -331,6 +369,23 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
          * docs/releases/v0.5.1.md T2 for the multi-chip caveat this leaves
          * unaddressed. */
         out_claims[0].type = DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL,
+            .index = 0u,
+            .shared = true,
+        };
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_AD5422)
+    {
+        /* source_index selects AO0/AO1 (a daisy-chain position, not a
+         * chip-select pin -- both AD5422 devices share one LATCH line).
+         * Shares the same SPI_PERIPHERAL index as CONFIG_CHANNEL_DRIVER_ADS8688:
+         * both chips sit on the industrial board's one shared physical SPI
+         * bus (HARDWARE_MVP.md), so the shared claim correctly does not
+         * conflict between them. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL;
         out_claims[0].index = source_index;
         out_claims[0].shared = false;
         out_claims[1] = (driver_catalog_resource_claim_t){
