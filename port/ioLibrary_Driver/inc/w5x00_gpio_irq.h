@@ -12,8 +12,18 @@
  * Macros
  * ----------------------------------------------------------------------------------------------------
  */
-/* GPIO */
+/* GPIO
+ *
+ * Default matches a generic W5x00 reference module. RP2350_INDUSTRIAL_MVP_V1
+ * assigns GPIO8 (ETH_INT_N) instead -- see FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS
+ * in port/CMakeLists.txt (v0.5.1 T10). Not currently wired into any live
+ * init path in this firmware (wizchip_gpio_interrupt_initialize() has no
+ * caller), so this override has no observed behavioral effect yet -- kept
+ * consistent with w5x00_spi.h's pins for completeness against
+ * HARDWARE_MVP.md's frozen GPIO map. */
+#ifndef PIN_INT
 #define PIN_INT 21
+#endif
 
 /**
  * ----------------------------------------------------------------------------------------------------
