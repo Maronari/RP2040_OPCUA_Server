@@ -9,6 +9,7 @@ option(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER "Build the native IPS2050 protected
 option(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER "Build the native UIC universal-input channel driver (digital input/pulse count/frequency/period; pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE "Build the TCAL9539/TCA4307/TPS2553 board-power-service block (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT "Build the real RP2350 UART-backed half-duplex RS-485 transport binding for ISOW1432 (pre-hardware: compile/mock validated only)" ON)
+option(FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER "Build the TPS3851 external supervisor/watchdog GPIO driver (pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER)
@@ -51,6 +52,9 @@ if(FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT)
     # regardless of this option; only the real hardware_uart-backed
     # binding is conditional.
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/rp2350_rs485_uart.c)
+endif()
+if(FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER)
+    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/tps3851_watchdog_driver.c)
 endif()
 if(FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER OR FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER OR FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER)
     # Shared RP2350 SPI board-binding, reused by every SPI-based industrial
@@ -120,6 +124,7 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_UIC_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_UIC_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE=$<BOOL:${FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE}>
         FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT=$<BOOL:${FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT}>
+        FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER}>
         )
 
 target_link_libraries(FIRMWARE_DRIVERS PUBLIC
