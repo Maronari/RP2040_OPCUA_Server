@@ -125,6 +125,50 @@ endif()
 add_definitions(-DUA_ARCHITECTURE_FREERTOSLWIP)
 add_definitions(-DSET_TRUSTED_CERT_IN_SAMPLES)
 
+# --- Driver-pack manifest (ROADMAP.md 5.1 "driver-pack manifests") --------
+# Named, buildable sets of native drivers. Only "base" (the generic
+# reference drivers that predate v0.5.1 and apply to any board) and
+# "industrial" (RP2350_INDUSTRIAL_MVP_V1's full v0.5.1 T3-T13 driver set)
+# are defined today -- "environmental"/"motion"/"development" remain open
+# (docs/releases/v0.5.1.md ROADMAP.md:553 tracking) since their actual
+# driver composition is not specified by any project document and needs a
+# product-scope decision, not a guess.
+#
+# Selecting "base" defaults every v0.5.1 industrial-only
+# FIRMWARE_ENABLE_NATIVE_*/FIRMWARE_ENABLE_INDUSTRIAL_* option to OFF
+# unless a caller has already set it explicitly (via -D or a prior cache
+# entry, checked with DEFINED before this ever touches the cache) --
+# giving ROADMAP.md:552's "keep the reference-board profile and
+# RP2350_INDUSTRIAL_MVP_V1 board profile separate" a real, working build
+# path for the first time. Selecting "industrial" (the default, matching
+# what has always been compiled in by default since v0.5.1 began) leaves
+# every one of those options at its own existing default (ON) --
+# untouched here.
+set(FIRMWARE_DRIVER_PACK "industrial" CACHE STRING
+    "Named driver-pack manifest: base (generic reference drivers only) or industrial (RP2350_INDUSTRIAL_MVP_V1's full v0.5.1 driver set)")
+set_property(CACHE FIRMWARE_DRIVER_PACK PROPERTY STRINGS base industrial)
+if(NOT FIRMWARE_DRIVER_PACK STREQUAL "base" AND NOT FIRMWARE_DRIVER_PACK STREQUAL "industrial")
+    message(FATAL_ERROR "FIRMWARE_DRIVER_PACK must be 'base' or 'industrial', got '${FIRMWARE_DRIVER_PACK}'")
+endif()
+if(FIRMWARE_DRIVER_PACK STREQUAL "base")
+    set(FIRMWARE_INDUSTRIAL_ONLY_OPTIONS
+        FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
+        FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+        FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+        FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+        FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+        FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE
+        FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT
+        FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER
+        FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE
+        )
+    foreach(_firmware_industrial_option ${FIRMWARE_INDUSTRIAL_ONLY_OPTIONS})
+        if(NOT DEFINED ${_firmware_industrial_option})
+            set(${_firmware_industrial_option} OFF CACHE BOOL "Defaulted OFF by FIRMWARE_DRIVER_PACK=base")
+        endif()
+    endforeach()
+endif()
+
 # Add libraries in subdirectories
 add_subdirectory(${CMAKE_SOURCE_DIR}/libraries)
 add_subdirectory(${PORT_DIR})

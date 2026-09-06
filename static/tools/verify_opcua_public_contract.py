@@ -76,10 +76,20 @@ EXPECTED_V050_PUBLIC_INVENTORY_SHA256 = (
 # dump: node_and_browse_calls and public_attribute_assignments are
 # byte-for-byte unchanged from the v0.5.0 baseline (0 added, 0 removed);
 # only string_literals gained exactly the six new resource-type-name
-# strings above. Computed directly from this script's own
-# public_inventory() output against the tree at T13 completion.
+# strings above.
+# Updated 2026-09-06 (from 26e59fa340af6192d85b0b524168591ad62b6d925cdffc5eda8f1c61fb27bb41)
+# for v0.5.1 T14: opcua_model_internal.h's MODEL_FIRMWARE_DRIVER_PACK_NAME
+# fallback default corrected from the stale "base" to "industrial" (the
+# real value is now supplied by the top-level FIRMWARE_DRIVER_PACK CMake
+# option at build time; the header's own fallback only matters for a
+# build that never sets that option). A one-for-one string-literal swap,
+# not an addition -- string_literal_count stayed at 1735,
+# node_and_browse_call_count (387) and public_attribute_assignment_count
+# (66) unchanged, confirmed the same way as the T13 update above.
+# Computed directly from this script's own public_inventory() output
+# against the tree at T14 completion.
 EXPECTED_V051_PUBLIC_INVENTORY_SHA256 = (
-    "26e59fa340af6192d85b0b524168591ad62b6d925cdffc5eda8f1c61fb27bb41"
+    "3b174c69b66ebd6e012e01bc3fc3bf9b3b9b6aaa2e554e6fc67768cb57d7292a"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.

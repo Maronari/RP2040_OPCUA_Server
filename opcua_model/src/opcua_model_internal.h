@@ -71,12 +71,18 @@ UA_ConnectionManager *UA_ConnectionManager_new_MQTT(const UA_String eventSourceN
  * Distinct from a runtime configuration preset (`services/config_presets.h`):
  * this names which fixed set of native drivers this firmware image was
  * built with, not which of those drivers a device's running configuration
- * actually uses. Only "base" (internal temperature, generic ADC, GPIO
- * input) is compiled today; overridable via a compile definition once more
- * than one driver pack exists.
+ * actually uses. Set from the top-level `FIRMWARE_DRIVER_PACK` CMake cache
+ * variable (see `CMakeLists.txt`/`opcua_model/CMakeLists.txt`, v0.5.1
+ * T14) -- `"base"` (the generic reference drivers: internal temperature,
+ * ADC voltage, GPIO input/output) or `"industrial"`
+ * (`RP2350_INDUSTRIAL_MVP_V1`'s full v0.5.1 driver set).
+ * `"environmental"`/`"motion"`/`"development"` are not yet defined -- see
+ * `docs/releases/v0.5.1.md`'s still-open `ROADMAP.md:553` tracking.
+ * `#ifndef`-guarded so a standalone build of this header (e.g. a host
+ * test) that never passes the CMake definition still compiles.
  */
 #ifndef MODEL_FIRMWARE_DRIVER_PACK_NAME
-#define MODEL_FIRMWARE_DRIVER_PACK_NAME "base"
+#define MODEL_FIRMWARE_DRIVER_PACK_NAME "industrial"
 #endif
 
 /**

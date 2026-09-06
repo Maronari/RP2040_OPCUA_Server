@@ -21,6 +21,13 @@ target_include_directories(OPCUA_DEVICE_MODEL PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         )
 
+# Ties Device.Compatibility.FirmwareProfile (opcua_model_internal.h's
+# MODEL_FIRMWARE_DRIVER_PACK_NAME) to the actual top-level FIRMWARE_DRIVER_PACK
+# selection, instead of that macro's own stale hardcoded "base" default.
+target_compile_definitions(OPCUA_DEVICE_MODEL PRIVATE
+        MODEL_FIRMWARE_DRIVER_PACK_NAME=\"${FIRMWARE_DRIVER_PACK}\"
+        )
+
 target_include_directories(OPCUA_DEVICE_MODEL PRIVATE
         ${PICO_SDK_PATH}/lib/mbedtls/tests/src
         )
