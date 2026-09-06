@@ -99,6 +99,13 @@ jobs:
           arm-none-eabi-size build/app/basic_profile/device_profile_basic.elf | tee build/reports/size.txt
           arm-none-eabi-size -A build/app/basic_profile/device_profile_basic.elf | tee build/reports/sections.txt
 
+      - name: Label industrial driver hardware-qualification status
+        run: |
+          python3 static/tools/label_driver_qualification_status.py \
+            --driver-pack industrial \
+            --report docs/releases/v0.5.1-driver-verification.md \
+            --output build/reports/driver_qualification_status.json | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Verify version integrity
         env:
           EXPECTED_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
@@ -155,6 +162,7 @@ jobs:
             build/reports/sections.txt
             build/reports/version_integrity.json
             build/reports/artifact_check.json
+            build/reports/driver_qualification_status.json
             build/CMakeCache.txt
             build/compile_commands.json
           if-no-files-found: error
