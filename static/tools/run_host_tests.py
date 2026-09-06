@@ -28,6 +28,7 @@ SUITES = (
     "test_board_power_service.py",
     "test_uart_transport.py",
     "test_tps3851_watchdog_driver.py",
+    "test_board_diagnostics_service.py",
     "test_channel_runtime.py",
     "test_history_service.py",
     "test_history_flash_backend.py",

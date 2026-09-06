@@ -53,10 +53,12 @@
  *
  * Scope note: this driver exposes each channel's *commanded* state (via
  * `write()`'s echo into `channel->runtime.value`) and *logical fault*
- * state (via `self_test()`); the shared `DO_ENABLE_REQ`/safe-enable state
- * itself is not exposed as a channel here -- per `ROADMAP.md`'s Phase 1
- * backlog item 9, board-level diagnostics get their own future
- * driver/vtable-internal collection, not per-channel OPC UA nodes.
+ * state (via `self_test()`, and via `native_ips2050_read_fault()` for a
+ * non-channel caller -- see `services/board_diagnostics_service.h`, v0.5.1
+ * T11); the shared `DO_ENABLE_REQ`/safe-enable state itself is not exposed
+ * anywhere -- per `ROADMAP.md`'s Phase 1 backlog item 9, board-level
+ * diagnostics are driver/vtable-internal only, never per-channel OPC UA
+ * nodes.
  *
  * Ownership: `driver_context` carries only this channel's
  * `native_channel_source_t` (source_index = 0-1 for `DO0`/`DO1`;
@@ -118,5 +120,16 @@ telemetry_driver_result_t native_ips2050_write(telemetry_channel_t *channel, con
  *         currently asserted; TELEMETRY_DRIVER_RESULT_OK otherwise.
  */
 telemetry_driver_result_t native_ips2050_self_test(telemetry_channel_t *channel);
+/**
+ * @brief Raw diagnostic query: this channel's `DOx_FAULT` GPIO state,
+ *        without requiring a `telemetry_channel_t` -- for a non-channel
+ *        caller like `services/board_diagnostics_service.c` (v0.5.1 T11).
+ *        Reads the same physical pin as `native_ips2050_self_test()`, just
+ *        through a plainer signature.
+ * @return false if @p source_index > 1 or @p out_fault_active is NULL;
+ *         true otherwise, with @p *out_fault_active set (electrically
+ *         active-low; this function already inverts it).
+ */
+bool native_ips2050_read_fault(uint8_t source_index, bool *out_fault_active);
 
 #endif

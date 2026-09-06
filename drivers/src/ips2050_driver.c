@@ -102,3 +102,13 @@ telemetry_driver_result_t native_ips2050_self_test(telemetry_channel_t *channel)
     fault_asserted = !gpio_get(g_fault_gpio[source->source_index]);
     return fault_asserted ? TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE : TELEMETRY_DRIVER_RESULT_OK;
 }
+
+bool native_ips2050_read_fault(uint8_t source_index, bool *out_fault_active)
+{
+    if (source_index > IPS2050_MAX_CHANNEL_INDEX || out_fault_active == NULL)
+    {
+        return false;
+    }
+    *out_fault_active = !gpio_get(g_fault_gpio[source_index]);
+    return true;
+}

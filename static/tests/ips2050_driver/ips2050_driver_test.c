@@ -119,6 +119,28 @@ static void test_self_test_reads_real_fault_line(void)
     assert(g_gpio_stub_pins[DO0_FAULT_GPIO].external_level == true);
 }
 
+static void test_read_fault_raw_query(void)
+{
+    native_channel_source_t source = {.source_index = DO0_INDEX, .source_flags = 0u};
+    telemetry_channel_t channel = make_channel(&source);
+    bool fault_active = true;
+
+    gpio_stub_reset();
+    assert(native_ips2050_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_ips2050_read_fault(DO0_INDEX, &fault_active));
+    assert(fault_active == false);
+
+    g_gpio_stub_pins[DO0_FAULT_GPIO].external_level = false;
+    assert(native_ips2050_read_fault(DO0_INDEX, &fault_active));
+    assert(fault_active == true);
+    /* The other channel's fault line is unaffected. */
+    assert(native_ips2050_read_fault(DO1_INDEX, &fault_active));
+    assert(fault_active == false);
+
+    assert(!native_ips2050_read_fault(2u, &fault_active));
+    assert(!native_ips2050_read_fault(DO0_INDEX, NULL));
+}
+
 static void test_invalid_arguments_rejected(void)
 {
     native_channel_source_t bad_source = {.source_index = 5u, .source_flags = 0u};
@@ -145,6 +167,7 @@ int main(void)
     test_write_commands_output_and_stop_forces_safe_state();
     test_write_does_not_disturb_the_other_channel();
     test_self_test_reads_real_fault_line();
+    test_read_fault_raw_query();
     test_invalid_arguments_rejected();
     return 0;
 }
