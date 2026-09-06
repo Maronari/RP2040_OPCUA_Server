@@ -11,10 +11,12 @@
 #include "services/board_diagnostics_service.h"
 
 #include "drivers/ips2050_driver.h"
+#include "drivers/native_channel_driver.h"
 #include "hardware/gpio.h"
 #include "services/board_power_service.h"
 
 #include <assert.h>
+#include <math.h>
 
 #define PWR_IN_FAULT_N_GPIO 11u
 #define BOARD_FAULT_N_GPIO 19u
@@ -27,6 +29,8 @@ static bool g_sensor_fault[4];
 static bool g_sensor_fault_read_ok[4] = {true, true, true, true};
 static bool g_i2c_ready[2];
 static bool g_i2c_ready_read_ok[2] = {true, true};
+static double g_adc_volts[8];
+static bool g_adc_read_ok[8] = {true, true, true, true, true, true, true, true};
 
 bool native_ips2050_read_fault(uint8_t source_index, bool *out_fault_active)
 {
@@ -58,6 +62,16 @@ bool board_power_get_i2c_ready(board_power_i2c_isolation_bus_t bus, bool *out_re
     return true;
 }
 
+bool native_adc_voltage_read_raw(uint8_t adc_index, double *out_volts)
+{
+    if (adc_index > 7u || out_volts == NULL || !g_adc_read_ok[adc_index])
+    {
+        return false;
+    }
+    *out_volts = g_adc_volts[adc_index];
+    return true;
+}
+
 static void reset_fakes(void)
 {
     size_t index;
@@ -75,6 +89,16 @@ static void reset_fakes(void)
         g_sensor_fault[index] = false;
         g_sensor_fault_read_ok[index] = true;
     }
+    for (index = 0u; index < 8u; ++index)
+    {
+        g_adc_volts[index] = 0.0;
+        g_adc_read_ok[index] = true;
+    }
+}
+
+static void assert_close(double a, double b)
+{
+    assert(fabs(a - b) < 0.001);
 }
 
 static void test_direct_gpio_polarity_and_mapping(void)
@@ -142,11 +166,47 @@ static void test_null_rejected(void)
     assert(!board_diagnostics_collect(NULL));
 }
 
+static void test_rail_voltages_pass_through_correct_adc_index(void)
+{
+    board_diagnostics_snapshot_t snapshot;
+
+    reset_fakes();
+    board_diagnostics_service_init();
+    g_adc_volts[4] = 3.1;  /* VIN_PROTECTED_MON */
+    g_adc_volts[5] = 1.65; /* AO_15V_MON */
+    g_adc_volts[6] = 0.9;  /* ANA_5V_MON */
+    g_adc_volts[0] = 2.5;  /* unrelated ADC index -- must not leak into any rail field */
+
+    assert(board_diagnostics_collect(&snapshot));
+    assert(snapshot.rail_read_ok[0] && snapshot.rail_read_ok[1] && snapshot.rail_read_ok[2]);
+    assert_close(snapshot.rail_vin_protected_volts, 3.1);
+    assert_close(snapshot.rail_ao_15v_volts, 1.65);
+    assert_close(snapshot.rail_ana_5v_volts, 0.9);
+}
+
+static void test_rail_read_failure_leaves_field_false_and_zero(void)
+{
+    board_diagnostics_snapshot_t snapshot;
+
+    reset_fakes();
+    board_diagnostics_service_init();
+    g_adc_volts[5] = 1.65;
+    g_adc_read_ok[5] = false; /* simulate the read itself failing */
+
+    assert(board_diagnostics_collect(&snapshot));
+    assert(snapshot.rail_read_ok[0] == true);
+    assert(snapshot.rail_read_ok[1] == false);
+    assert(snapshot.rail_ao_15v_volts == 0.0); /* not the true value -- the read never succeeded */
+    assert(snapshot.rail_read_ok[2] == true);
+}
+
 int main(void)
 {
     test_direct_gpio_polarity_and_mapping();
     test_do_and_sensor_and_i2c_fields_pass_through();
     test_failing_underlying_read_leaves_field_false();
     test_null_rejected();
+    test_rail_voltages_pass_through_correct_adc_index();
+    test_rail_read_failure_leaves_field_false_and_zero();
     return 0;
 }

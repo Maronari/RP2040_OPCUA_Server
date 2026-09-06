@@ -26,6 +26,7 @@ def main() -> int:
             str(root / "services" / "src" / "board_diagnostics_service.c"),
             str(test_dir / "hardware_gpio_stub.c"),
             str(test_dir / "board_diagnostics_service_test.c"),
+            "-lm",
             "-o", str(executable),
         ]
         subprocess.run(command, check=True)

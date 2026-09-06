@@ -2,16 +2,21 @@
  * @file
  * @brief Board-diagnostics-service implementation. See
  *        services/include/services/board_diagnostics_service.h for the
- *        full contract and scope note (driver/vtable-internal only, no
- *        OPC UA nodes).
+ *        full contract, scope note (driver/vtable-internal only, no
+ *        OPC UA nodes), and the raw-vs-real rail-voltage caveat.
  */
 #include "services/board_diagnostics_service.h"
 
 #include "drivers/ips2050_driver.h"
+#include "drivers/native_channel_driver.h"
 #include "hardware/gpio.h"
 #include "services/board_power_service.h"
 
 #include <string.h>
+
+#define ADC_VIN_PROTECTED_MON 4u
+#define ADC_AO_15V_MON 5u
+#define ADC_ANA_5V_MON 6u
 
 #define PWR_IN_FAULT_N_GPIO 11u
 #define BOARD_FAULT_N_GPIO 19u
@@ -75,5 +80,10 @@ bool board_diagnostics_collect(board_diagnostics_snapshot_t *out_snapshot)
             out_snapshot->i2c_isolation_ready[index] = ready;
         }
     }
+
+    out_snapshot->rail_read_ok[0] =
+        native_adc_voltage_read_raw(ADC_VIN_PROTECTED_MON, &out_snapshot->rail_vin_protected_volts);
+    out_snapshot->rail_read_ok[1] = native_adc_voltage_read_raw(ADC_AO_15V_MON, &out_snapshot->rail_ao_15v_volts);
+    out_snapshot->rail_read_ok[2] = native_adc_voltage_read_raw(ADC_ANA_5V_MON, &out_snapshot->rail_ana_5v_volts);
     return true;
 }

@@ -3,11 +3,23 @@
  * @brief Board-level diagnostics collection for `RP2350_INDUSTRIAL_MVP_V1`
  *        (`HARDWARE_MVP.md`): `PWR_IN_FAULT_N`, `PWR_3V3_PGOOD_N`,
  *        `PWR_5V_PGOOD_N`, `BOARD_FAULT_N` (four direct MCU GPIOs), plus
- *        `IPS2050` DO faults and `TCAL9539`-mediated sensor-power/I2C-
+ *        `IPS2050` DO faults, `TCAL9539`-mediated sensor-power/I2C-
  *        isolation state (re-queried from their owning drivers/services,
- *        not re-implemented here). Pre-hardware: source-complete and
- *        host/mock-tested, but not hardware qualified -- see `ROADMAP.md`
- *        section 5.2.
+ *        not re-implemented here), and raw `ADC4..ADC6` rail-monitor
+ *        voltages (`VIN_PROTECTED_MON`/`AO_15V_MON`/`ANA_5V_MON`, via
+ *        `native_adc_voltage_read_raw()`). Pre-hardware: source-complete
+ *        and host/mock-tested, but not hardware qualified -- see
+ *        `ROADMAP.md` section 5.2.
+ *
+ * **Rail-voltage caveat**: `rail_*_volts` fields are the raw pin voltage
+ * (`0..3.3V`, 12-bit ADC resolution), *not* the actual rail voltage --
+ * `HARDWARE_MVP.md` requires these to be "diagnostic analog nodes" but
+ * documents no divider-ratio/resistor values for any of the three
+ * monitors, so no confirmed scale factor exists to convert pin volts into
+ * real rail volts. Converting correctly is deferred until the schematic
+ * documents the actual divider network; treat these fields as relative/
+ * bring-up-only values until then, the same standing-caveat convention
+ * as `TCAL9539`'s I2C address and `MAX22190`'s CRC.
  *
  * Scope, per `ROADMAP.md`'s Phase 1 backlog item 9: **driver/vtable-
  * internal only -- no OPC UA nodes.** This module exists to give a future
@@ -51,6 +63,10 @@ typedef struct
     bool do_fault[2];         /**< IPS2050 DO0/DO1 fault, via native_ips2050_read_fault(). */
     bool sensor_power_fault[4]; /**< TPS2553 sensor-power ports I2C0/I2C1/SPI/UART, via board_power_get_sensor_fault(). */
     bool i2c_isolation_ready[2]; /**< TCA4307 external I2C buses 0/1, via board_power_get_i2c_ready(). */
+    bool rail_read_ok[3];        /**< Whether each rail_*_volts field below actually reflects a fresh ADC read (see this header's rail-voltage caveat re: raw vs. real volts). Indexed the same as the *_volts fields (0=VIN_PROTECTED_MON, 1=AO_15V_MON, 2=ANA_5V_MON). */
+    double rail_vin_protected_volts; /**< ADC4 (VIN_PROTECTED_MON), raw pin volts -- see rail-voltage caveat above. */
+    double rail_ao_15v_volts;        /**< ADC5 (AO_15V_MON), raw pin volts. */
+    double rail_ana_5v_volts;        /**< ADC6 (ANA_5V_MON), raw pin volts. */
 } board_diagnostics_snapshot_t;
 
 /**

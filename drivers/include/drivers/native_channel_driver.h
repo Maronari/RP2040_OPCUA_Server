@@ -140,6 +140,24 @@ telemetry_driver_result_t native_adc_voltage_stop(telemetry_channel_t *channel);
  *       applies `channel->settings.scale`/`offset`.
  */
 telemetry_driver_result_t native_adc_voltage_read(telemetry_channel_t *channel, uint32_t now_ms);
+/**
+ * @brief Raw diagnostic query: sample any ADC input (0-7, the full
+ *        RP2350B/`RP2350_INDUSTRIAL_MVP_V1` range -- not limited to
+ *        `native_adc_voltage_source_is_valid()`'s 0-3 channel range)
+ *        without requiring a `telemetry_channel_t`, for a non-channel
+ *        caller like `services/board_diagnostics_service.c` (v0.5.1,
+ *        raw `ADC4..ADC6` rail monitoring). Shares the same lazy
+ *        `adc_init()` state as `native_adc_voltage_start()`.
+ * @param adc_index ADC channel 0-7.
+ * @param out_volts Receives the raw pin voltage (3.3V/4095 counts,
+ *        `channel->settings.scale`/`offset` are NOT applied -- there is
+ *        no channel here to carry them, and no confirmed divider ratio
+ *        exists for the industrial board's monitored rails; see
+ *        `docs/releases/v0.5.1.md` T12).
+ * @return false if @p adc_index > 7 or @p out_volts is NULL; true
+ *         otherwise.
+ */
+bool native_adc_voltage_read_raw(uint8_t adc_index, double *out_volts);
 
 /**
  * @brief Start (claim/configure) one GPIO input pin.
