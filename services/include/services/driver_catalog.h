@@ -28,7 +28,8 @@ typedef enum
     CONFIG_CHANNEL_DRIVER_AD5422 = 6,
     CONFIG_CHANNEL_DRIVER_MAX22190 = 7,
     CONFIG_CHANNEL_DRIVER_IPS2050 = 8,
-    CONFIG_CHANNEL_DRIVER_UIC = 9
+    CONFIG_CHANNEL_DRIVER_UIC = 9,
+    CONFIG_CHANNEL_DRIVER_SYNTHETIC = 10
 } config_channel_driver_id_t;
 
 /** @brief Bitmask helper: the single bit representing a telemetry_channel_value_type_t in a driver_catalog_entry_t::supported_value_types mask. */

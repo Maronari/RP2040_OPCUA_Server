@@ -34,6 +34,7 @@
 #include "drivers/ips2050_driver.h"
 #include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
+#include "drivers/synthetic_driver.h"
 #include "drivers/uic_driver.h"
 
 #ifndef FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -62,6 +63,9 @@
 #endif
 #ifndef FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_UIC_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER 1
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -133,6 +137,14 @@ static bool validate_ips2050(uint8_t source_index, uint8_t source_flags)
 static bool validate_uic(uint8_t source_index, uint8_t source_flags)
 {
     return native_uic_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_SYNTHETIC; delegates to the native driver's own source validation. */
+static bool validate_synthetic(uint8_t source_index, uint8_t source_flags)
+{
+    return native_synthetic_source_is_valid(source_index, source_flags);
 }
 #endif
 
@@ -209,6 +221,13 @@ static const telemetry_driver_vtbl_t g_uic_driver = {
     .start = native_uic_start,
     .stop = native_uic_stop,
     .read = native_uic_read,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+static const telemetry_driver_vtbl_t g_synthetic_driver = {
+    .start = native_synthetic_start,
+    .stop = native_synthetic_stop,
+    .read = native_synthetic_read,
 };
 #endif
 
@@ -366,6 +385,23 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
                         TELEMETRY_DRIVER_CAPABILITY_READ,
         .validate_source = validate_uic,
         .driver = &g_uic_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_SYNTHETIC,
+        .name = "synthetic",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_ANALOG,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_DOUBLE,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED,
+        .analog = true,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
+                                 TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_READ,
+        .validate_source = validate_synthetic,
+        .driver = &g_synthetic_driver,
     },
 #endif
     /* Keeps the array valid when every optional native driver is excluded. */

@@ -3,6 +3,7 @@
 #include "drivers/ips2050_driver.h"
 #include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
+#include "drivers/synthetic_driver.h"
 #include "drivers/uic_driver.h"
 #include "services/driver_catalog.h"
 
@@ -61,6 +62,10 @@ bool native_uic_source_is_valid(uint8_t index, uint8_t flags) { return index <= 
 telemetry_driver_result_t native_uic_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_uic_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_uic_read(telemetry_channel_t *c, uint32_t n) { (void)c; (void)n; return TELEMETRY_DRIVER_RESULT_OK; }
+bool native_synthetic_source_is_valid(uint8_t index, uint8_t flags) { return index <= 7u && flags == 0u; }
+telemetry_driver_result_t native_synthetic_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_synthetic_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_synthetic_read(telemetry_channel_t *c, uint32_t n) { (void)c; (void)n; return TELEMETRY_DRIVER_RESULT_OK; }
 
 int main(void)
 {
@@ -72,6 +77,7 @@ int main(void)
     const driver_catalog_entry_t *max22190 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_MAX22190);
     const driver_catalog_entry_t *ips2050 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_IPS2050);
     const driver_catalog_entry_t *uic = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_UIC);
+    const driver_catalog_entry_t *synthetic = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_SYNTHETIC);
     driver_catalog_resource_claim_t claims[4];
     driver_catalog_resource_claim_t temp_claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
     size_t claim_count = 0u;
@@ -250,5 +256,23 @@ int main(void)
     assert(driver_catalog_claims_are_compatible(claims, 2u));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 4u, 0u, claims, 2u, &claim_count));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 0u, 0x04u, claims, 2u, &claim_count));
+
+    /* v0.5.1 T16: synthetic has no hardware dependency and claims no
+     * physical resource at all -- the default NONE/shared claim applies,
+     * so two synthetic channels at the same index never conflict. */
+    assert(synthetic != NULL);
+    assert((synthetic->capabilities & TELEMETRY_DRIVER_CAPABILITY_READ) != 0u);
+    assert((synthetic->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u);
+    assert((synthetic->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) == 0u);
+    assert(synthetic->driver->read != NULL && synthetic->driver->write == NULL);
+    assert(driver_catalog_supports_value_type(synthetic, TELEMETRY_CHANNEL_VALUE_FLOAT));
+    assert(driver_catalog_supports_value_type(synthetic, TELEMETRY_CHANNEL_VALUE_DOUBLE));
+    assert(!driver_catalog_supports_value_type(synthetic, TELEMETRY_CHANNEL_VALUE_BOOLEAN));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_SYNTHETIC, 3u, 0u, claims, 2u, &claim_count));
+    assert(claim_count == 1u && claims[0].type == DRIVER_CATALOG_RESOURCE_NONE && claims[0].shared);
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_SYNTHETIC, 3u, 0u, &claims[1], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 2u));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_SYNTHETIC, 8u, 0u, claims, 2u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_SYNTHETIC, 0u, 1u, claims, 2u, &claim_count));
     return 0;
 }

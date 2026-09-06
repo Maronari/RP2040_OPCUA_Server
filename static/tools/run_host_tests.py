@@ -17,6 +17,7 @@ import sys
 SUITES = (
     "test_channel_manager.py",
     "test_gpio_output_driver.py",
+    "test_synthetic_driver.py",
     "test_spi_transport.py",
     "test_ads8688_driver.py",
     "test_ad5422_driver.py",
