@@ -86,11 +86,12 @@ telemetry_driver_result_t native_ads8688_stop(telemetry_channel_t *channel);
  * @brief Sample this channel's mux input and store the scaled voltage in
  *        @p channel.
  *
- * Issues `MAN_Ch_n` twice (the ADS8688 result pipeline is delayed by one
- * data frame -- see docs/datasheets/ADS8688-register-notes.md) to guarantee
- * a valid result for this channel regardless of which channel was
- * previously selected, then applies the range's full-scale voltage and
- * `channel->settings.scale`/`offset`.
+ * Issues `MAN_Ch_n` twice in complete 32-SCLK frames (the ADS8688 result
+ * pipeline is delayed by one data frame -- see
+ * docs/datasheets/ADS8688-register-notes.md) to guarantee a valid result for
+ * this channel regardless of which channel was previously selected. The
+ * driver reads the final 16 clocks of the second frame and applies the
+ * range's full-scale voltage and `channel->settings.scale`/`offset`.
  *
  * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid
  *         or the channel's value type is neither FLOAT nor DOUBLE;
@@ -113,8 +114,9 @@ telemetry_driver_result_t native_ads8688_read(telemetry_channel_t *channel, uint
  * - TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE: the echoes changed but did
  *   not match what was written -- present but malfunctioning.
  *
- * Restores the channel's actual configured range on exit regardless of
- * outcome (best-effort on transport failure).
+ * Restores the channel's actual configured range on exit. If the restoration
+ * transfer or its echo fails, returns TELEMETRY_DRIVER_RESULT_TIMEOUT because
+ * the active range is then unknown.
  */
 telemetry_driver_result_t native_ads8688_self_test(telemetry_channel_t *channel);
 

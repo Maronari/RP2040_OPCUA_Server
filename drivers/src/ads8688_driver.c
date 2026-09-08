@@ -102,11 +102,18 @@ static bool ads8688_write_register(uint8_t address, uint8_t data, uint8_t *out_e
     return true;
 }
 
-/** @brief 16-bit (2-byte) full-duplex command-register transfer; @p out_result receives the previous frame's pipelined conversion result. */
+/**
+ * @brief 32-clock MAN_Ch_n frame. The command occupies the first 16 clocks;
+ *        the conversion result is clocked out during the final 16 clocks.
+ *
+ * The ADS8688 accepts a command-only 16-clock frame, but a manual-channel
+ * conversion must use all 32 clocks so the selected input is acquired and
+ * converted. See Figure 83/84 in the datasheet.
+ */
 static bool ads8688_command(uint16_t command, uint16_t *out_result)
 {
-    uint8_t tx[2];
-    uint8_t rx[2] = {0};
+    uint8_t tx[4] = {0};
+    uint8_t rx[4] = {0};
 
     tx[0] = (uint8_t)(command >> 8);
     tx[1] = (uint8_t)(command & 0xFFu);
@@ -116,7 +123,7 @@ static bool ads8688_command(uint16_t command, uint16_t *out_result)
     }
     if (out_result != NULL)
     {
-        *out_result = (uint16_t)(((uint16_t)rx[0] << 8) | rx[1]);
+        *out_result = (uint16_t)(((uint16_t)rx[2] << 8) | rx[3]);
     }
     return true;
 }
@@ -193,7 +200,8 @@ telemetry_driver_result_t native_ads8688_read(telemetry_channel_t *channel, uint
     }
     if (range->bipolar)
     {
-        voltage = ((double)(int16_t)raw / 32768.0) * range->full_scale_volts;
+        /* ADS8688 bipolar data is offset binary: 0x8000 is zero volts. */
+        voltage = ((double)((int32_t)raw - 32768) / 32768.0) * range->full_scale_volts;
     }
     else
     {
@@ -253,7 +261,15 @@ telemetry_driver_result_t native_ads8688_self_test(telemetry_channel_t *channel)
     {
         result = TELEMETRY_DRIVER_RESULT_OK;
     }
-    /* Best-effort restore of the channel's actual configured range regardless of outcome. */
-    (void)ads8688_write_register(address, source->source_flags, &echo_restore);
+    /* A failed restore leaves an unknown range active, so it must override
+     * an otherwise successful probe. */
+    if (!ads8688_write_register(address, source->source_flags, &echo_restore))
+    {
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
+    }
+    if (echo_restore != source->source_flags && result == TELEMETRY_DRIVER_RESULT_OK)
+    {
+        return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+    }
     return result;
 }

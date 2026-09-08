@@ -115,7 +115,8 @@ telemetry_driver_result_t native_max22190_read(telemetry_channel_t *channel, uin
  *   malfunctioning.
  *
  * Restores the channel's actual configured filter setting on exit
- * regardless of outcome (best-effort on transport failure).
+ * regardless of probe outcome; failed restore transport/readback cannot
+ * return OK. TIMEOUT also covers transport errors, not only absent chips.
  */
 telemetry_driver_result_t native_max22190_self_test(telemetry_channel_t *channel);
 

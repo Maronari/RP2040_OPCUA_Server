@@ -11,7 +11,7 @@
  * GPIO, no datasheet, no hardware dependency of any kind -- just the bare
  * `start`/`stop`/`read` vtable slots (see `native_channel_driver.h`'s
  * file-level doc for the full contract every driver implements against)
- * and one file-static array of per-channel counter state. See
+ * and one caller-owned per-channel counter. See
  * `docs/code/adding-a-driver.md` (v0.5.1 T16) for the full walkthrough
  * this driver is the running example for.
  *
@@ -34,8 +34,9 @@
  * `native_channel_source_t` (`source_index` = 0-7, one of eight
  * independent synthetic channels so several can be configured at once
  * without interfering; `source_flags` must be 0 -- no configuration
- * exists). Per-channel counter state is process-wide file-static,
- * indexed by `source_index`, like `ad5422_driver.c`'s `g_last_code[]`.
+ * exists). Mutable counter state lives in native_channel_source_t, owned
+ * by the sensor-manager context bank, and is reset by start(). No private
+ * permanent SRAM pool is reserved for inactive synthetic drivers.
  *
  * Resource claims: none -- `driver_catalog_get_resource_claims()`
  * (`services/driver_catalog.c`) falls through to its default
@@ -45,8 +46,8 @@
  * its own independent counter via `driver_context`, they simply count the
  * same number of `read()` calls).
  *
- * Concurrency: none; per `native_channel_driver.h`'s file-level doc, all
- * calls arrive serialized from SensorTask.
+ * Concurrency: the channel-manager operation lease serializes operations
+ * on each instance. Separate contexts never share mutable counter state.
  */
 #ifndef DRIVERS_SYNTHETIC_DRIVER_H
 #define DRIVERS_SYNTHETIC_DRIVER_H

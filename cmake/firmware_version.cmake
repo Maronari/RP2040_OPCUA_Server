@@ -1,4 +1,4 @@
-set(RP2_FIRMWARE_VERSION "0.5.0" CACHE INTERNAL "Authoritative firmware semantic version" FORCE)
+set(RP2_FIRMWARE_VERSION "0.5.1" CACHE INTERNAL "Authoritative firmware semantic version" FORCE)
 
 function(rp2_pack_firmware_version version_text out_version_number)
     string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _version_match "${version_text}")

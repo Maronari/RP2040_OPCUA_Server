@@ -32,6 +32,8 @@ typedef struct
     bool corrupt_response_crc;
     bool force_transfer_failure;
     bool reject_bad_request_crc;
+    unsigned transfers;
+    unsigned fail_transfer;
 } fake_chip_t;
 
 static fake_chip_t g_chip;
@@ -67,6 +69,7 @@ static void chip_reset(void)
 static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t length)
 {
     fake_chip_t *chip = (fake_chip_t *)context;
+    if (++chip->transfers == chip->fail_transfer) return false;
     uint32_t frame24;
     uint32_t request_bits19;
     uint8_t request_crc;
@@ -264,6 +267,17 @@ static void test_transfer_failure_maps_to_expected_results(void)
 
 int main(void)
 {
+    /* Four probe transfers followed by restore write/readback: failure
+     * at any step must not be reported as a passed self-test. */
+    spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
+    native_channel_source_t source = {.source_index = 0u, .source_flags = 1u};
+    telemetry_channel_t channel = make_channel(&source);
+    for (unsigned step = 1u; step <= 6u; ++step) {
+        chip_reset();
+        native_max22190_bind_bus(&bus);
+        g_chip.fail_transfer = step;
+        assert(native_max22190_self_test(&channel) != TELEMETRY_DRIVER_RESULT_OK);
+    }
     test_source_validation();
     test_no_bus_bound();
     test_start_writes_filter_register();

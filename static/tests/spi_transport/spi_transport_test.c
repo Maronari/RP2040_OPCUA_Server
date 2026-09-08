@@ -14,6 +14,36 @@ static int g_transfer_calls;
 static bool g_transfer_result;
 static uint8_t g_last_tx[4];
 static size_t g_last_length;
+static bool g_locked;
+static int g_release_calls;
+static void fake_cs_assert(void *context);
+static void fake_cs_deassert(void *context);
+
+static bool acquire(void *context)
+{
+    (void)context;
+    if (g_locked) return false;
+    g_locked = true;
+    return true;
+}
+
+static void release(void *context)
+{
+    (void)context;
+    assert(g_locked);
+    assert(g_assert_calls == g_deassert_calls);
+    g_locked = false;
+    ++g_release_calls;
+}
+
+static bool contended_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t length);
+static const spi_bus_vtbl_t locked_vtbl = {
+    .cs_assert = fake_cs_assert,
+    .cs_deassert = fake_cs_deassert,
+    .transfer = contended_transfer,
+    .acquire = acquire,
+    .release = release,
+};
 
 static void fake_cs_assert(void *context)
 {
@@ -52,6 +82,34 @@ static const spi_bus_vtbl_t g_fake_vtbl = {
     .cs_deassert = fake_cs_deassert,
     .transfer = fake_transfer,
 };
+
+static bool contended_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t length)
+{
+    spi_bus_t other_chip = {.vtbl = &locked_vtbl, .context = NULL};
+    assert(g_locked);
+    const int edges = g_assert_calls;
+    /* A competing device must never assert CS inside our transaction. */
+    assert(!spi_bus_transfer_framed(&other_chip, tx, rx, length));
+    assert(edges == g_assert_calls);
+    return fake_transfer(context, tx, rx, length);
+}
+
+static void test_shared_bus_lock_and_cleanup(void)
+{
+    spi_bus_vtbl_t vtbl = locked_vtbl;
+    spi_bus_t bus = {.vtbl = &vtbl, .context = NULL};
+    uint8_t tx = 0xAA;
+    g_release_calls = 0;
+    for (unsigned success = 0; success < 2; ++success) {
+        g_transfer_result = success != 0;
+        assert(spi_bus_transfer_framed(&bus, &tx, NULL, 1) == g_transfer_result);
+        assert(!g_locked);
+    }
+    assert(g_release_calls == 2);
+    vtbl.release = NULL;
+    assert(!spi_bus_transfer_framed(&bus, &tx, NULL, 1));
+    assert(!g_locked);
+}
 
 static void reset_counters(void)
 {
@@ -116,5 +174,6 @@ int main(void)
     test_null_and_incomplete_vtbl_rejected();
     test_successful_transfer_frames_correctly();
     test_failed_transfer_still_deasserts();
+    test_shared_bus_lock_and_cleanup();
     return 0;
 }

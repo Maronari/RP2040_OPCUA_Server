@@ -12,12 +12,13 @@
  * indexed by source_index, like ad5422_driver.c's g_last_code[].
  */
 #include "drivers/uic_driver.h"
+#include "drivers/industrial_board_pins.h"
 
 #include "hardware/gpio.h"
 
 #include <stddef.h>
 
-#define UIC_BASE_GPIO 40u
+#define UIC_BASE_GPIO INDUSTRIAL_UIC_BASE_GPIO
 #define UIC_MAX_CHANNEL_INDEX 3u
 #define UIC_MODE_MASK 0x07u
 

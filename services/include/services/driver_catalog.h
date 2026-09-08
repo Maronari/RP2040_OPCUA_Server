@@ -56,14 +56,14 @@ typedef enum
     DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL,
     /** @brief One MAX22190 wired digital-input line (v0.5.1 Phase 1, DI0-DI3); exclusive per channel index (0-3). Distinct from DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT/AD5422_CHANNEL because none of those name the same physical resource -- a MAX22190 DI channel and an ADS8688/AD5422 channel at the same numeric index must not falsely conflict; see docs/datasheets/MAX22190-register-notes.md. */
     DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL,
-    /** @brief One IPS2050 protected high-side output channel (v0.5.1 Phase 1, DO0-DO1); exclusive per channel index (0-1). A plain GPIO frontend, not a shared-bus chip like ADS8688/AD5422/MAX22190 -- no accompanying shared claim exists (see drivers/include/drivers/ips2050_driver.h); the underlying fixed GPIO pins are not separately claimed as DRIVER_CATALOG_RESOURCE_GPIO, matching this catalog's existing precedent of not modeling cross-type physical-pin awareness for dedicated-chip drivers. */
+    /** @brief One protected output. Additional GPIO claims cover its command, fault and shared enable pins. */
     DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL,
     /** @brief One UIC universal-input channel (v0.5.1 Phase 1, UIC0-UIC3); exclusive per channel index (0-3), regardless of the channel's configured mode (digital input/pulse count/frequency/period all bind the same physical GPIO40..GPIO43 pin) -- see drivers/include/drivers/uic_driver.h. */
     DRIVER_CATALOG_RESOURCE_UIC_CHANNEL
 } driver_catalog_resource_type_t;
 
 /** @brief Upper bound on driver_catalog_get_resource_claims() output per channel; sizes caller-side claim arrays. */
-#define DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL 2u
+#define DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL 4u
 
 /**
  * @brief One physical/peripheral resource claim made by a channel's driver

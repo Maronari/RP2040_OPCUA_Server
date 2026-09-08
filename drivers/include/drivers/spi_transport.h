@@ -43,6 +43,11 @@ typedef struct
      *         mismatch, which the caller detects from the received data.
      */
     bool (*transfer)(void *context, const uint8_t *tx, uint8_t *rx, size_t length);
+    /** Optional paired hooks. Hardware backends sharing a peripheral must
+     * acquire its lock with bounded waiting before any CS edge. Both NULL
+     * is valid only for a transport serialized by its caller (e.g. a mock). */
+    bool (*acquire)(void *context);
+    void (*release)(void *context);
 } spi_bus_vtbl_t;
 
 /** @brief One bound SPI device: an operation table plus its private context. */

@@ -20,11 +20,15 @@ typedef struct
 {
     uint16_t data_reg[2];
     uint16_t control_reg[2];
+    uint16_t status_reg[2];
     uint8_t readback_select[2];
     bool readback_pending[2];
     bool device_present[2];
     bool corrupt_echo[2];
     bool force_transfer_failure;
+    unsigned transfers;
+    unsigned fail_transfer;
+    unsigned mutations;
 } fake_chain_t;
 
 static fake_chain_t g_chip;
@@ -48,7 +52,11 @@ static void process_device(fake_chain_t *chip, uint8_t device_index, const uint8
     {
         uint16_t value = 0u;
 
-        if (chip->readback_select[device_index] == 0x1u)
+        if (chip->readback_select[device_index] == 0x0u)
+        {
+            value = chip->status_reg[device_index];
+        }
+        else if (chip->readback_select[device_index] == 0x1u)
         {
             value = chip->data_reg[device_index];
         }
@@ -70,10 +78,12 @@ static void process_device(fake_chain_t *chip, uint8_t device_index, const uint8
 
     if (address == 0x01u)
     {
+        ++chip->mutations;
         chip->data_reg[device_index] = data;
     }
     else if (address == 0x55u)
     {
+        ++chip->mutations;
         chip->control_reg[device_index] = data;
     }
     else if (address == 0x02u)
@@ -88,7 +98,7 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
 {
     fake_chain_t *chip = (fake_chain_t *)context;
 
-    if (chip->force_transfer_failure || length != 6u)
+    if (++chip->transfers == chip->fail_transfer || chip->force_transfer_failure || length != 6u)
     {
         return false;
     }
@@ -227,10 +237,29 @@ static void test_self_test_passed_unavailable_failed(void)
 
     chip_reset();
     native_ad5422_bind_bus(&bus);
+    assert(native_ad5422_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
     assert(native_ad5422_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OK);
+    const uint16_t original_data = g_chip.data_reg[AO1_INDEX];
+    const uint16_t original_control = g_chip.control_reg[AO1_INDEX];
+    const unsigned mutations = g_chip.mutations;
     assert(native_ad5422_self_test(&channel) == TELEMETRY_DRIVER_RESULT_OK);
-    /* The channel's actual last-commanded code must be restored afterward. */
-    assert(g_chip.data_reg[AO1_INDEX] != 0x1234u && g_chip.data_reg[AO1_INDEX] != 0xABCDu);
+    assert(g_chip.data_reg[AO1_INDEX] == original_data);
+    assert(g_chip.control_reg[AO1_INDEX] == original_control);
+    assert(g_chip.mutations == mutations);
+    for (unsigned step = 1u; step <= 4u; ++step) {
+        g_chip.transfers = 0;
+        g_chip.fail_transfer = step;
+        assert(native_ad5422_self_test(&channel) == TELEMETRY_DRIVER_RESULT_TIMEOUT);
+        assert(g_chip.mutations == mutations);
+    }
+    g_chip.fail_transfer = 0;
+    g_chip.status_reg[AO1_INDEX] = 2u; /* Slew active is not a fault. */
+    assert(native_ad5422_self_test(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+    for (unsigned fault = 1u; fault <= 4u; fault *= 4u) {
+        g_chip.status_reg[AO1_INDEX] = (uint16_t)fault;
+        assert(native_ad5422_self_test(&channel) == TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE);
+    }
+    g_chip.status_reg[AO1_INDEX] = 0;
 
     g_chip.device_present[AO1_INDEX] = false;
     assert(native_ad5422_self_test(&channel) == TELEMETRY_DRIVER_RESULT_TIMEOUT);

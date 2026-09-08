@@ -9,7 +9,7 @@
 
 #include "drivers/ips2050_driver.h"
 #include "drivers/native_channel_driver.h"
-#include "hardware/gpio.h"
+#include "drivers/board_fault_inputs.h"
 #include "services/board_power_service.h"
 
 #include <string.h>
@@ -18,24 +18,9 @@
 #define ADC_AO_15V_MON 5u
 #define ADC_ANA_5V_MON 6u
 
-#define PWR_IN_FAULT_N_GPIO 11u
-#define BOARD_FAULT_N_GPIO 19u
-#define PWR_3V3_PGOOD_N_GPIO 34u
-#define PWR_5V_PGOOD_N_GPIO 35u
-
-static void init_active_low_input(uint8_t gpio)
-{
-    gpio_init(gpio);
-    gpio_set_dir(gpio, GPIO_IN);
-    gpio_disable_pulls(gpio);
-}
-
 void board_diagnostics_service_init(void)
 {
-    init_active_low_input(PWR_IN_FAULT_N_GPIO);
-    init_active_low_input(BOARD_FAULT_N_GPIO);
-    init_active_low_input(PWR_3V3_PGOOD_N_GPIO);
-    init_active_low_input(PWR_5V_PGOOD_N_GPIO);
+    board_fault_inputs_init();
 }
 
 bool board_diagnostics_collect(board_diagnostics_snapshot_t *out_snapshot)
@@ -48,10 +33,11 @@ bool board_diagnostics_collect(board_diagnostics_snapshot_t *out_snapshot)
     }
     memset(out_snapshot, 0, sizeof(*out_snapshot));
 
-    out_snapshot->power_input_fault = !gpio_get(PWR_IN_FAULT_N_GPIO);
-    out_snapshot->board_fault = !gpio_get(BOARD_FAULT_N_GPIO);
-    out_snapshot->rail_3v3_fault = !gpio_get(PWR_3V3_PGOOD_N_GPIO);
-    out_snapshot->rail_5v_fault = !gpio_get(PWR_5V_PGOOD_N_GPIO);
+    const board_fault_inputs_t inputs = board_fault_inputs_read();
+    out_snapshot->power_input_fault = inputs.power_input_fault;
+    out_snapshot->board_fault = inputs.board_fault;
+    out_snapshot->rail_3v3_fault = inputs.rail_3v3_fault;
+    out_snapshot->rail_5v_fault = inputs.rail_5v_fault;
 
     for (index = 0u; index < 2u; ++index)
     {

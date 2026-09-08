@@ -47,7 +47,7 @@ static void test_start_resets_and_read_increments(void)
 static void test_channels_are_independent(void)
 {
     native_channel_source_t source_a = {.source_index = 0u, .source_flags = 0u};
-    native_channel_source_t source_b = {.source_index = 1u, .source_flags = 0u};
+    native_channel_source_t source_b = {.source_index = 0u, .source_flags = 0u};
     telemetry_channel_t channel_a = make_channel(&source_a, TELEMETRY_CHANNEL_VALUE_DOUBLE);
     telemetry_channel_t channel_b = make_channel(&source_b, TELEMETRY_CHANNEL_VALUE_DOUBLE);
 
@@ -58,6 +58,13 @@ static void test_channels_are_independent(void)
     assert(native_synthetic_read(&channel_b, 0u) == TELEMETRY_DRIVER_RESULT_OK);
     assert(channel_a.runtime.value.f64 == 2.0);
     assert(channel_b.runtime.value.f64 == 1.0);
+    assert(native_synthetic_start(&channel_b) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_synthetic_read(&channel_a, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(channel_a.runtime.value.f64 == 3.0);
+    source_a.synthetic_read_count = UINT32_MAX;
+    assert(native_synthetic_read(&channel_a, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(channel_a.runtime.value.f64 == 0.0);
+    assert(source_a.synthetic_read_count == 0u);
 }
 
 static void test_float_value_type_supported(void)
@@ -77,6 +84,7 @@ static void test_unsupported_value_type_rejected(void)
 
     assert(native_synthetic_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
     assert(native_synthetic_read(&channel, 0u) == TELEMETRY_DRIVER_RESULT_UNSUPPORTED);
+    assert(source.synthetic_read_count == 0u);
 }
 
 static void test_invalid_source_rejected(void)

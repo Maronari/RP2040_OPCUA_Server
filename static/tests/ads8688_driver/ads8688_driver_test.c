@@ -1,9 +1,10 @@
 /**
  * @file
  * @brief Host tests for the real drivers/src/ads8688_driver.c against a
- *        fake ADS8688 chip model (register echo-on-write, one-frame
- *        conversion pipeline) -- proves the actual register/command byte
- *        framing and voltage scaling, not just that the vtable dispatches.
+ *        fake ADS8688 chip model (register echo-on-write, 32-clock manual
+ *        conversion frame, one-frame pipeline) -- proves the actual
+ *        register/command byte framing and voltage scaling, not just that
+ *        the vtable dispatches.
  */
 #include "drivers/ads8688_driver.h"
 
@@ -19,6 +20,10 @@ typedef struct
     bool chip_present;
     bool corrupt_echo;
     bool force_transfer_failure;
+    size_t transfer_count;
+    size_t fail_at_transfer;
+    size_t last_command_length;
+    bool last_command_padding_zero;
 } fake_chip_t;
 
 static fake_chip_t g_chip;
@@ -33,7 +38,9 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
 {
     fake_chip_t *chip = (fake_chip_t *)context;
 
-    if (chip->force_transfer_failure)
+    ++chip->transfer_count;
+    if (chip->force_transfer_failure ||
+        (chip->fail_at_transfer != 0u && chip->transfer_count == chip->fail_at_transfer))
     {
         return false;
     }
@@ -63,13 +70,16 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
         }
         return true;
     }
-    if (length == 2u)
+    if (length == 4u)
     {
-        /* Command register / MAN_Ch_n frame: 16-bit full duplex. SDO
-         * carries the PREVIOUS frame's pipelined conversion result for
-         * whichever channel was selected before this command. */
+        /* Complete 32-clock MAN_Ch_n frame: command occupies the first
+         * 16 clocks; SDO carries the PREVIOUS pipelined conversion only
+         * during clocks 17-32. */
         uint16_t command = (uint16_t)(((uint16_t)tx[0] << 8) | tx[1]);
         uint16_t previous_result = chip->channel_raw[chip->selected_channel];
+
+        chip->last_command_length = length;
+        chip->last_command_padding_zero = tx[2] == 0u && tx[3] == 0u;
 
         if ((command & 0xE000u) == 0xC000u) /* MAN_Ch_0..MAN_Ch_7 */
         {
@@ -77,8 +87,8 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
         }
         if (rx != NULL && chip->chip_present)
         {
-            rx[0] = (uint8_t)(previous_result >> 8);
-            rx[1] = (uint8_t)(previous_result & 0xFFu);
+            rx[2] = (uint8_t)(previous_result >> 8);
+            rx[3] = (uint8_t)(previous_result & 0xFFu);
         }
         return true;
     }
@@ -138,6 +148,8 @@ static void test_start_writes_range_and_selects_channel(void)
     assert(native_ads8688_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
     assert(g_chip.registers[0x05u + 3u] == 0x1u);
     assert(g_chip.selected_channel == 3u);
+    assert(g_chip.last_command_length == 4u);
+    assert(g_chip.last_command_padding_zero);
     assert(native_ads8688_stop(&channel) == TELEMETRY_DRIVER_RESULT_OK);
 }
 
@@ -157,15 +169,24 @@ static void test_read_scales_bipolar_and_unipolar(void)
     chip_reset();
     native_ads8688_bind_bus(&bus);
 
-    /* Positive half-scale: 16384/32768 * 5.12 = 2.56 V. */
+    /* ADS8688 bipolar data is offset binary: 0x8000 is zero volts. */
+    g_chip.channel_raw[2] = 0x8000u;
+    assert(native_ads8688_read(&bipolar_channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+    assert_close((double)bipolar_channel.runtime.value.f32, 0.0);
+
+    /* One quarter below/above midscale maps to -/+ half full-scale. */
     g_chip.channel_raw[2] = 0x4000u;
     assert(native_ads8688_read(&bipolar_channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
-    assert_close((double)bipolar_channel.runtime.value.f32, 2.56);
-
-    /* Negative half-scale (2's complement -16384): -16384/32768 * 5.12 = -2.56 V. */
+    assert_close((double)bipolar_channel.runtime.value.f32, -2.56);
     g_chip.channel_raw[2] = 0xC000u;
     assert(native_ads8688_read(&bipolar_channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
-    assert_close((double)bipolar_channel.runtime.value.f32, -2.56);
+    assert_close((double)bipolar_channel.runtime.value.f32, 2.56);
+    g_chip.channel_raw[2] = 0x0000u;
+    assert(native_ads8688_read(&bipolar_channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+    assert_close((double)bipolar_channel.runtime.value.f32, -5.12);
+    g_chip.channel_raw[2] = 0xFFFFu;
+    assert(native_ads8688_read(&bipolar_channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+    assert_close((double)bipolar_channel.runtime.value.f32, 5.12);
 
     /* Unipolar half-scale: 32768/65536 * 10.24 = 5.12 V. */
     g_chip.channel_raw[5] = 0x8000u;
@@ -196,8 +217,8 @@ static void test_read_reselects_after_other_channel(void)
      * pipelined result for channel 1 -- proves the double-select priming. */
     assert(native_ads8688_read(&channel_a, 0u) == TELEMETRY_DRIVER_RESULT_OK);
     assert(native_ads8688_read(&channel_b, 0u) == TELEMETRY_DRIVER_RESULT_OK);
-    assert_close((double)channel_a.runtime.value.f32, ((double)0x1000 / 32768.0) * 10.24);
-    assert_close((double)channel_b.runtime.value.f32, ((double)0x2000 / 32768.0) * 10.24);
+    assert_close((double)channel_a.runtime.value.f32, -8.96);
+    assert_close((double)channel_b.runtime.value.f32, -7.68);
 }
 
 static void test_self_test_passed_unavailable_failed(void)
@@ -238,6 +259,19 @@ static void test_transfer_failure_maps_to_timeout(void)
     assert(native_ads8688_self_test(&channel) == TELEMETRY_DRIVER_RESULT_TIMEOUT);
 }
 
+static void test_self_test_restore_failure_is_not_ok(void)
+{
+    spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
+    native_channel_source_t source = {.source_index = 1u, .source_flags = 0x1u};
+    telemetry_channel_t channel = make_channel(&source, TELEMETRY_CHANNEL_VALUE_FLOAT);
+
+    chip_reset();
+    native_ads8688_bind_bus(&bus);
+    /* probe A, probe B, then restoration of the configured range */
+    g_chip.fail_at_transfer = 3u;
+    assert(native_ads8688_self_test(&channel) == TELEMETRY_DRIVER_RESULT_TIMEOUT);
+}
+
 static void test_invalid_arguments(void)
 {
     spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
@@ -263,6 +297,7 @@ int main(void)
     test_read_reselects_after_other_channel();
     test_self_test_passed_unavailable_failed();
     test_transfer_failure_maps_to_timeout();
+    test_self_test_restore_failure_is_not_ok();
     test_invalid_arguments();
     return 0;
 }

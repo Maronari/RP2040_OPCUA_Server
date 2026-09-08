@@ -13,14 +13,15 @@
  * adc_voltage_channel_driver.c's g_adc_ready convention.
  */
 #include "drivers/ips2050_driver.h"
+#include "drivers/industrial_board_pins.h"
 
 #include "hardware/gpio.h"
 
-#define IPS2050_ENABLE_GPIO 10u
+#define IPS2050_ENABLE_GPIO INDUSTRIAL_DO_ENABLE_GPIO
 #define IPS2050_MAX_CHANNEL_INDEX 1u
 
-static const uint8_t g_cmd_gpio[2] = {20u, 21u};
-static const uint8_t g_fault_gpio[2] = {22u, 23u};
+static const uint8_t g_cmd_gpio[2] = {INDUSTRIAL_DO_COMMAND_BASE_GPIO, INDUSTRIAL_DO_COMMAND_BASE_GPIO + 1u};
+static const uint8_t g_fault_gpio[2] = {INDUSTRIAL_DO_FAULT_BASE_GPIO, INDUSTRIAL_DO_FAULT_BASE_GPIO + 1u};
 
 static bool g_enable_asserted;
 

@@ -119,21 +119,19 @@ telemetry_driver_result_t native_ad5422_stop(telemetry_channel_t *channel);
 telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *channel,
                                               const telemetry_channel_value_t *value);
 /**
- * @brief Verify the chip echoes back distinct written data-register values
- *        via the datasheet's readback sequence, distinguishing three
- *        outcomes exactly like `native_ads8688_self_test()`:
+ * @brief Read CONTROL and STATUS without modifying DATA, CONTROL or OUTEN.
+ *        Call after successful start().
  *
- * - TELEMETRY_DRIVER_RESULT_OK: both readbacks matched exactly written
- *   values (supported and passed).
+ * - TELEMETRY_DRIVER_RESULT_OK: configured control matches and no status
+ *   fault is set (slew-active alone is informational).
  * - TELEMETRY_DRIVER_RESULT_TIMEOUT: constant/non-tracking readback --
  *   supported but hardware unavailable/not present (or, on the real
  *   board, possibly a structural MISO-wiring limitation -- see the
  *   file-level hardware caveat).
- * - TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE: readback changed but never
- *   matched -- present but malfunctioning.
+ * - TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE: control mismatch, status fault
+ *   or unexpected reserved status bits.
  *
- * Restores the channel's actual commanded output value on exit regardless
- * of outcome (best-effort on transport failure). Does not change `OUTEN`.
+ * No diagnostic output pulses or restoration writes occur, even on failure.
  */
 telemetry_driver_result_t native_ad5422_self_test(telemetry_channel_t *channel);
 

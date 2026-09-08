@@ -13,12 +13,13 @@ noted below); this project only targets the 8-channel ADS8688 per
 
 - Full-duplex, MSB-first, CPOL/CPHA per datasheet timing diagrams (mode 1:
   CPOL=0, CPHA=1 — verify against `Figure 1` before implementation).
-- Every data frame starts on the falling edge of `CS` and is 16 SCLK cycles
-  (command register) or a minimum of 24 SCLK cycles (program register
-  read/write). `CS` must stay low for the entire frame; if `CS` goes high
-  before the 16th/24th bit, the device enters `FRAME_ABORT` (`INVALID`
-  state) and all subsequent reads return invalid data until a valid command
-  is written.
+- Every data frame starts on the falling edge of `CS`. Program-register
+  read/write frames require a minimum of 24 SCLK cycles. A command-only
+  frame may end after its first 16 clocks, but `MAN_Ch_n` must use a complete
+  32-SCLK data frame to acquire and convert the selected channel; its result
+  is clocked out during clocks 17-32. `CS` must stay low for the complete
+  selected frame; an early rising edge enters `FRAME_ABORT` (`INVALID`) and
+  subsequent reads return invalid data until a valid command is written.
 - The device executes the command written in frame *N* starting at the
   `CS` rising edge that ends frame *N*; the result is read back during
   frame *N+1* (pipeline delay of one frame).
@@ -73,8 +74,9 @@ concretely: ±10.24 V, ±5.12 V, ±2.56 V, 0–10.24 V, 0–5.12 V.
 ## SDO output format (`SDO[2:0]` in Feature Select register, `03h`)
 
 Selects how much metadata rides alongside the 16-bit conversion result in
-the 24-bit `AUTO_RST`/`MAN_Ch_n` read frame (bits 24-9 = conversion result,
-MSB-first, always):
+the final 16 clocks of a 32-clock `AUTO_RST`/`MAN_Ch_n` data frame. With the
+default `000` format, all 16 result bits are conversion data; enabled
+metadata occupies low-order result-frame bits as below:
 
 | `SDO[2:0]` | Bits 8-5 | Bits 4-3 | Bits 2-0 |
 |---|---|---|---|
@@ -84,6 +86,15 @@ MSB-first, always):
 | `011` | channel address | device address | input range |
 
 Channel address encoding (bits 8-5): `0000`=CH0 .. `0111`=CH7.
+
+## Conversion coding
+
+Unipolar ranges use straight binary (`0000h` = 0 V, `FFFFh` approaches full
+scale). Bipolar ranges use **offset binary**, not two's complement:
+`0000h` = negative full scale, `8000h` = 0 V, and `FFFFh` approaches positive
+full scale. The driver therefore converts bipolar samples as
+`(code - 32768) / 32768 * full_scale_volts` in a signed type wide enough to
+represent the subtraction.
 
 ## Self-test / diagnostics — no dedicated status register
 

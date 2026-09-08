@@ -27,6 +27,15 @@ def main() -> int:
         ]
         subprocess.run(command, check=True)
         subprocess.run([str(executable)], check=True)
+        backend = pathlib.Path(directory) / "rp2350_spi_bus_test.exe"
+        subprocess.run([
+            args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            f"-I{test_dir}", f"-I{root / 'drivers' / 'include'}",
+            str(root / "drivers" / "src" / "spi_transport.c"),
+            str(root / "drivers" / "src" / "rp2350_spi_bus.c"),
+            str(test_dir / "rp2350_spi_bus_test.c"), "-o", str(backend),
+        ], check=True)
+        subprocess.run([str(backend)], check=True)
 
     print("SPI transport framing host suite: PASS")
     return 0

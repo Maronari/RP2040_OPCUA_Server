@@ -76,6 +76,9 @@ typedef struct
 {
     uint8_t source_index;
     uint8_t source_flags;
+    /** Mutable, service-owned per-instance synthetic state. Not serialized;
+     * reset by start(). Other drivers leave it unused. */
+    uint32_t synthetic_read_count;
 } native_channel_source_t;
 
 /**

@@ -26,6 +26,7 @@
  */
 
 #include "services/driver_catalog.h"
+#include "drivers/industrial_board_pins.h"
 
 #include <string.h>
 
@@ -469,9 +470,14 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
         return false;
     }
     if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE || driver_id == CONFIG_CHANNEL_DRIVER_ADS8688 ||
-        driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
+        driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_MAX22190 ||
+        driver_id == CONFIG_CHANNEL_DRIVER_UIC)
     {
         required = 2u;
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_IPS2050)
+    {
+        required = 4u;
     }
     *out_claim_count = required;
     if (out_claims == NULL || claims_capacity < required)
@@ -562,10 +568,25 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
          * high-side output channels -- exclusive, so two configured
          * channels cannot both bind the same DO. A plain GPIO frontend
          * (HARDWARE_MVP.md 3.4.4), not a shared-bus chip like ADS8688/
-         * AD5422/MAX22190, so no second shared claim is needed. */
+         * AD5422/MAX22190. Physical GPIO claims prevent cross-driver aliases. */
         out_claims[0].type = DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL;
         out_claims[0].index = source_index;
         out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = (uint8_t)(INDUSTRIAL_DO_COMMAND_BASE_GPIO + source_index),
+            .shared = false,
+        };
+        out_claims[2] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = (uint8_t)(INDUSTRIAL_DO_FAULT_BASE_GPIO + source_index),
+            .shared = false,
+        };
+        out_claims[3] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = INDUSTRIAL_DO_ENABLE_GPIO,
+            .shared = true,
+        };
     }
     else if (driver_id == CONFIG_CHANNEL_DRIVER_UIC)
     {
@@ -575,6 +596,11 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
         out_claims[0].type = DRIVER_CATALOG_RESOURCE_UIC_CHANNEL;
         out_claims[0].index = source_index;
         out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = (uint8_t)(INDUSTRIAL_UIC_BASE_GPIO + source_index),
+            .shared = false,
+        };
     }
     return true;
 }

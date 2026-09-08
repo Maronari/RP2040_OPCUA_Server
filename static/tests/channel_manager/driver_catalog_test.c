@@ -78,7 +78,7 @@ int main(void)
     const driver_catalog_entry_t *ips2050 = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_IPS2050);
     const driver_catalog_entry_t *uic = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_UIC);
     const driver_catalog_entry_t *synthetic = driver_catalog_get_by_id(CONFIG_CHANNEL_DRIVER_SYNTHETIC);
-    driver_catalog_resource_claim_t claims[4];
+    driver_catalog_resource_claim_t claims[8];
     driver_catalog_resource_claim_t temp_claims[DRIVER_CATALOG_MAX_RESOURCE_CLAIMS_PER_CHANNEL];
     size_t claim_count = 0u;
     size_t temp_claim_count = 0u;
@@ -213,9 +213,7 @@ int main(void)
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 4u, 0x0u, claims, 2u, &claim_count));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x10u, claims, 2u, &claim_count));
 
-    /* v0.5.1 Phase 1: ips2050 (DO0-DO1) is a plain GPIO frontend, not a
-     * shared-bus chip -- writable, no READ capability, and a single
-     * exclusive claim per channel (no accompanying shared claim). */
+    /* Physical claims must reject generic GPIO aliases before activation. */
     assert(ips2050 != NULL);
     assert((ips2050->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) != 0u);
     assert((ips2050->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) != 0u);
@@ -224,20 +222,6 @@ int main(void)
     assert((ips2050->default_flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u);
     assert(driver_catalog_supports_value_type(ips2050, TELEMETRY_CHANNEL_VALUE_BOOLEAN));
     assert(!driver_catalog_supports_value_type(ips2050, TELEMETRY_CHANNEL_VALUE_FLOAT));
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 0u, 0u, claims, 2u, &claim_count));
-    assert(claim_count == 1u && claims[0].type == DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL && claims[0].index == 0u &&
-           !claims[0].shared);
-    /* Two ips2050 channels both claiming DO0 do conflict. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 0u, 0u, &claims[1], 2u, &claim_count));
-    assert(!driver_catalog_claims_are_compatible(claims, 2u));
-    /* DO0 and DO1 do not conflict with each other. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 1u, 0u, &claims[1], 2u, &claim_count));
-    assert(driver_catalog_claims_are_compatible(claims, 2u));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 2u, 0u, claims, 2u, &claim_count));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 0u, 1u, claims, 2u, &claim_count));
-
-    /* v0.5.1 Phase 1: uic (UIC0-UIC3) supports multiple modes via
-     * source_flags but claims its GPIO exclusively regardless of mode. */
     assert(uic != NULL);
     assert((uic->capabilities & TELEMETRY_DRIVER_CAPABILITY_READ) != 0u);
     assert((uic->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u);
@@ -246,16 +230,41 @@ int main(void)
     assert(driver_catalog_supports_value_type(uic, TELEMETRY_CHANNEL_VALUE_BOOLEAN));
     assert(driver_catalog_supports_value_type(uic, TELEMETRY_CHANNEL_VALUE_DOUBLE));
     assert(!driver_catalog_supports_value_type(uic, TELEMETRY_CHANNEL_VALUE_FLOAT));
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 0u, 0x02u, claims, 2u, &claim_count));
-    assert(claim_count == 1u && claims[0].type == DRIVER_CATALOG_RESOURCE_UIC_CHANNEL && claims[0].index == 0u &&
-           !claims[0].shared);
-    /* Two uic channels both claiming UIC0 conflict, even with different modes. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 0u, 0x01u, &claims[1], 2u, &claim_count));
-    assert(!driver_catalog_claims_are_compatible(claims, 2u));
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 1u, 0x03u, &claims[1], 2u, &claim_count));
-    assert(driver_catalog_claims_are_compatible(claims, 2u));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 0u, 0u, claims, 4u, &claim_count));
+    assert(claim_count == 4u && claims[0].type == DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL);
+    assert(claims[1].type == DRIVER_CATALOG_RESOURCE_GPIO && claims[1].index == 20u && !claims[1].shared);
+    assert(claims[2].index == 22u && !claims[2].shared);
+    assert(claims[3].index == 10u && claims[3].shared);
+    for (uint8_t i = 0u; i < 3u; ++i) {
+        const uint8_t pins[] = {20u, 22u, 10u};
+        assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT, pins[i], 0u, claims + 4, 1u, &claim_count));
+        assert(!driver_catalog_claims_are_compatible(claims, 5u));
+    }
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 1u, 0u, claims + 4, 4u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 8u));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 0u, 0u, claims + 4, 4u, &claim_count));
+    assert(!driver_catalog_claims_are_compatible(claims, 8u));
+    /* Capacity failure reports the full count and does not modify output. */
+    driver_catalog_resource_claim_t before[8];
+    memcpy(before, claims, sizeof(claims));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 1u, 0u, claims, 3u, &claim_count));
+    assert(claim_count == 4u && memcmp(before, claims, sizeof(claims)) == 0);
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 2u, 0u, claims, 4u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_IPS2050, 0u, 1u, claims, 4u, &claim_count));
+    for (uint8_t index = 0u; index < 4u; ++index) {
+        assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, index, 0u, claims, 2u, &claim_count));
+        assert(claim_count == 2u && claims[0].type == DRIVER_CATALOG_RESOURCE_UIC_CHANNEL);
+        assert(claims[1].type == DRIVER_CATALOG_RESOURCE_GPIO && claims[1].index == 40u + index && !claims[1].shared);
+        assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT, 40u + index, 0u, claims + 2, 2u, &claim_count));
+        assert(!driver_catalog_claims_are_compatible(claims, 3u));
+        assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, index, 1u, claims + 2, 2u, &claim_count));
+        assert(!driver_catalog_claims_are_compatible(claims, 4u));
+    }
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 0u, 0u, claims, 2u, &claim_count));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 1u, 0u, claims + 2, 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 4u));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 4u, 0u, claims, 2u, &claim_count));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 0u, 0x04u, claims, 2u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_UIC, 0u, 4u, claims, 2u, &claim_count));
 
     /* v0.5.1 T16: synthetic has no hardware dependency and claims no
      * physical resource at all -- the default NONE/shared claim applies,

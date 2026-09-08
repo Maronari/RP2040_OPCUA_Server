@@ -11,8 +11,14 @@
 
 #include "hardware/gpio.h"
 #include "hardware/spi.h"
+#include <FreeRTOS.h>
+#include <semphr.h>
 
 static bool g_spi_peripheral_initialized[2];
+/* One lazily created mutex per active physical peripheral, shared by all
+ * chip selects. Board init runs serially before channel activation. */
+static SemaphoreHandle_t g_spi_mutex[2];
+#define RP2350_SPI_LOCK_TIMEOUT_MS 20u
 
 static spi_inst_t *spi_instance_handle(uint8_t spi_instance)
 {
@@ -21,7 +27,7 @@ static spi_inst_t *spi_instance_handle(uint8_t spi_instance)
 
 bool rp2350_spi_bus_init(rp2350_spi_bus_state_t *state, const rp2350_spi_bus_config_t *config)
 {
-    if (state == NULL || config == NULL || config->spi_instance > 1u)
+    if (state == NULL || config == NULL || config->spi_instance > 1u || config->baudrate_hz == 0u)
     {
         return false;
     }
@@ -29,6 +35,12 @@ bool rp2350_spi_bus_init(rp2350_spi_bus_state_t *state, const rp2350_spi_bus_con
     if (!g_spi_peripheral_initialized[config->spi_instance])
     {
         spi_inst_t *instance = spi_instance_handle(config->spi_instance);
+
+        g_spi_mutex[config->spi_instance] = xSemaphoreCreateMutex();
+        if (g_spi_mutex[config->spi_instance] == NULL)
+        {
+            return false;
+        }
 
         (void)spi_init(instance, config->baudrate_hz);
         spi_set_format(instance, 8, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);
@@ -41,6 +53,24 @@ bool rp2350_spi_bus_init(rp2350_spi_bus_state_t *state, const rp2350_spi_bus_con
     gpio_set_dir(config->cs_gpio, GPIO_OUT);
     gpio_put(config->cs_gpio, 1u); /* idle high (inactive) */
     return true;
+}
+
+static bool rp2350_spi_bus_acquire(void *context)
+{
+    const rp2350_spi_bus_state_t *state = (const rp2350_spi_bus_state_t *)context;
+    if (state == NULL || state->config.spi_instance > 1u ||
+        g_spi_mutex[state->config.spi_instance] == NULL)
+    {
+        return false;
+    }
+    const TickType_t ticks = pdMS_TO_TICKS(RP2350_SPI_LOCK_TIMEOUT_MS);
+    return xSemaphoreTake(g_spi_mutex[state->config.spi_instance], ticks > 0u ? ticks : 1u) == pdTRUE;
+}
+
+static void rp2350_spi_bus_release(void *context)
+{
+    const rp2350_spi_bus_state_t *state = (const rp2350_spi_bus_state_t *)context;
+    (void)xSemaphoreGive(g_spi_mutex[state->config.spi_instance]);
 }
 
 static void rp2350_spi_bus_cs_assert(void *context)
@@ -84,4 +114,6 @@ const spi_bus_vtbl_t rp2350_spi_bus_vtbl = {
     .cs_assert = rp2350_spi_bus_cs_assert,
     .cs_deassert = rp2350_spi_bus_cs_deassert,
     .transfer = rp2350_spi_bus_transfer,
+    .acquire = rp2350_spi_bus_acquire,
+    .release = rp2350_spi_bus_release,
 };

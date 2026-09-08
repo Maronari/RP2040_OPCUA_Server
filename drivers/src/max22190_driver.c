@@ -227,7 +227,16 @@ telemetry_driver_result_t native_max22190_self_test(telemetry_channel_t *channel
     {
         result = TELEMETRY_DRIVER_RESULT_OK;
     }
-    /* Best-effort restore of the channel's actual configured filter setting. */
-    (void)max22190_transact(true, address, source->source_flags, NULL, NULL);
+    /* A successful probe is not successful diagnostics if restore fails. */
+    uint8_t restored = 0u;
+    if (!max22190_transact(true, address, source->source_flags, NULL, NULL) ||
+        !max22190_transact(false, address, 0u, NULL, &restored))
+    {
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
+    }
+    if (restored != source->source_flags && result == TELEMETRY_DRIVER_RESULT_OK)
+    {
+        return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+    }
     return result;
 }

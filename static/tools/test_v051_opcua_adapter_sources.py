@@ -146,11 +146,11 @@ def main() -> int:
 
     result = subprocess.run(
         [sys.executable, "static/tools/verify_opcua_public_contract.py",
-         "--baseline", "v0.4.3", "--allow-v051-additions"],
+         "--baseline", "c6da6c44326e6b1fe67b06656ac8a3518c12ea9e", "--allow-v051-additions"],
         cwd=ROOT,
         check=False,
     )
-    require(result.returncode == 0, "v0.4.3 public-contract comparison failed")
+    require(result.returncode == 0, "v0.5.0 public-contract comparison failed")
     print("v0.5.1-opcua-source: PASS")
     return 0
 

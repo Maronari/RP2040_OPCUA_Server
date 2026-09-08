@@ -17,6 +17,7 @@ EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
 EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
 EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
 EXPECTED_V043_COMMIT = "dec08ba22e835e8037f9fd5342dcc63ddc03f5ac"
+EXPECTED_V050_COMMIT = "c6da6c44326e6b1fe67b06656ac8a3518c12ea9e"
 # Updated 2026-09-02 (from 830f8678a86040a31e8e2f51bea4647c4e8473243c012526674f3bc462763102)
 # for the namespace-build-failure rollback fix: model_core_lifecycle.c gains
 # four new printf strings ("Rolled back to the last-known-good
@@ -241,7 +242,30 @@ V050_REVIEWED_MODEL_DRIFT_PATHS = frozenset(MODEL_SOURCE_SET)
 # allowlist -- the actual fail-closed proof is
 # EXPECTED_V051_PUBLIC_INVENTORY_SHA256 below, plus
 # missing_baseline_contract() rejecting any removed v0.4.3 public entry.
-V051_REVIEWED_MODEL_DRIFT_PATHS = frozenset(MODEL_SOURCE_SET)
+V051_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
+    "opcua_model/src/opcua_model_internal.h",
+    "opcua_model/src/model_configuration.c",
+})
+
+
+def assert_v051_inventory_delta(baseline: dict, current: dict) -> None:
+    """Allow exactly the reviewed resource names and pack fallback change.
+
+    Unlike older baselines, v0.5.0 needs no registration-call replacements:
+    every NodeId/BrowseName call and public attribute must remain identical.
+    """
+    for key in ("node_and_browse_calls", "public_attribute_assignments"):
+        if Counter(baseline[key]) != Counter(current[key]):
+            raise SystemExit(f"opcua-contract: FAIL: v0.5.1 changed {key}")
+    expected = Counter(baseline["string_literals"])
+    expected['"base"'] -= 1
+    if expected['"base"'] < 0:
+        raise SystemExit("opcua-contract: FAIL: v0.5.0 pack fallback missing")
+    for name in ("industrial", "spi_chip_select", "spi_peripheral", "ad5422_channel",
+                 "max22190_channel", "ips2050_channel", "uic_channel"):
+        expected[f'"{name}"'] += 1
+    if +expected != Counter(current["string_literals"]):
+        raise SystemExit("opcua-contract: FAIL: unreviewed v0.5.1 string delta")
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",
     "UA_EXPANDEDNODEID_",
@@ -679,10 +703,10 @@ def main() -> int:
                     f"config-preset/compatibility files: {relative}"
                 )
     if args.allow_v051_additions:
-        if args.baseline != "v0.4.3" or baseline_commit != EXPECTED_V043_COMMIT:
+        if baseline_commit != EXPECTED_V050_COMMIT:
             raise SystemExit(
                 "opcua-contract: FAIL: v0.5.1 additions require "
-                f"v0.4.3@{EXPECTED_V043_COMMIT}, got {args.baseline}@{baseline_commit}"
+                f"v0.5.0@{EXPECTED_V050_COMMIT}, got {args.baseline}@{baseline_commit}"
             )
         for relative in MODEL_SOURCE_SET:
             if relative in V051_REVIEWED_MODEL_DRIFT_PATHS:
@@ -729,6 +753,10 @@ def main() -> int:
         or args.allow_v051_additions
     )
     missing_baseline = missing_baseline_contract(baseline_inventory, current_inventory)
+    if args.allow_v051_additions:
+        assert_v051_inventory_delta(baseline_inventory, current_inventory)
+        # Exact delta check above permits only the reviewed pack fallback.
+        missing_baseline = {}
     if allow_additions and missing_baseline:
         summary = ", ".join(
             f"{key}={len(items)}" for key, items in sorted(missing_baseline.items())

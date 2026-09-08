@@ -106,9 +106,9 @@ integration/qualification must not claim the other ranges.
 
 - Unipolar voltage: `VOUT = (D / 65536) * Gain * 5.0`
 - Bipolar voltage: `VOUT = (D / 65536) * Gain * 5.0 - (Gain * 5.0 / 2)` —
-  **straight/unsigned 16-bit code** (0-65535), *not* 2's-complement (unlike
-  `ADS8688`'s bipolar ADC input coding — do not reuse that sign convention
-  here).
+  **straight/unsigned 16-bit code** (0-65535), *not* 2's-complement.
+  ADS8688 bipolar ADC coding is also offset binary; the older notes claiming
+  two's-complement ADS8688 data were incorrect.
 - 0-20 mA: `IOUT = (D / 65536) * 20 mA`
 - 0-24 mA: `IOUT = (D / 65536) * 24 mA`
 - 4-20 mA: `IOUT = 4 mA + (D / 65536) * 16 mA`
@@ -143,13 +143,12 @@ condition; the status register above is how a driver distinguishes which.
    previously-addressed register's 16-bit value is clocked out on `SDO`
    during this second frame.
 
-This project's now-established self-test pattern (`ADS8688`: write two
-distinct values, confirm the echo tracks each) does not map directly onto
-AD5422's readback (it reads an explicit register value, not a write-cycle
-echo) — the natural equivalent here: write two distinct values to the
-*data register*, read each back via the readback sequence above, and apply
-the same three-way classification (matches / constant-wrong / varies-but-
-wrong) used for `ADS8688`.
+Self-test must not write diagnostic values to DATA: OUTEN may already be
+enabled, and such probes would actuate the output. Read CONTROL and STATUS
+instead, checking the configured range/DCEN/OUTEN and fault bits. Healthy
+STATUS alone is zero and cannot prove presence; a valid nonzero CONTROL
+readback is required. Transport/absent-device results remain distinct from
+control/status mismatches. No restoration writes are necessary.
 
 ## Notes for the driver implementation
 
@@ -171,4 +170,4 @@ wrong) used for `ADS8688`.
   (computed from the OPC UA channel's engineering-unit value via the
   inverse of the scaling formulas above) to the target device, `NOP` to
   the other.
-- `self_test()`: the two-distinct-values readback probe described above.
+- `self_test()`: non-invasive CONTROL/STATUS readback described above.

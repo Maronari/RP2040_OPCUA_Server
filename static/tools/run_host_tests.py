@@ -46,6 +46,7 @@ SUITES = (
     "test_verify_v050_helpers.py",
     "test_v051_opcua_adapter_sources.py",
     "test_driver_catalog_opcua_contract.py",
+    "test_v051_public_contract.py",
     "test_driver_descriptors_contract.py",
     "test_label_driver_qualification_status.py",
     "test_channel_model_contract.py",

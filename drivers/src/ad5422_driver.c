@@ -8,11 +8,9 @@
  * reference this implementation follows.
  *
  * Ownership: the SPI bus binding (native_ad5422_bind_bus()) and the
- * per-channel last-commanded-code cache (g_last_code[]) are process-wide
- * file-static state -- both `AO0` and `AO1` share one physical bus
- * (daisy-chained), and `driver_context` has no room for driver-specific
- * extra fields beyond `native_channel_source_t` (see the v0.5.1 T1/T2
- * finding recorded in `sensor_manager.c`).
+ * board-level binding flag are process-wide state -- both AO0 and AO1
+ * share one daisy-chained bus. Self-test only reads registers, so no
+ * per-channel DAC cache is required.
  */
 #include "drivers/ad5422_driver.h"
 
@@ -24,7 +22,8 @@
 #define AD5422_ADDR_READBACK 0x02u
 #define AD5422_ADDR_CONTROL 0x55u
 
-#define AD5422_READ_ADDR_DATA 0x1u
+#define AD5422_READ_ADDR_STATUS 0x0u
+#define AD5422_READ_ADDR_CONTROL 0x2u
 
 #define AD5422_CTRL_OUTEN (1u << 12)
 #define AD5422_CTRL_DCEN (1u << 5)
@@ -58,7 +57,6 @@ static const ad5422_range_entry_t g_ranges[] = {
 
 static spi_bus_t g_bus;
 static bool g_bus_bound;
-static uint16_t g_last_code[AD5422_CHANNEL_COUNT];
 
 void native_ad5422_bind_bus(const spi_bus_t *bus)
 {
@@ -111,7 +109,7 @@ static void ad5422_pack_word(uint8_t address, uint16_t data, uint8_t out[3])
  * @param out_target_rx Optional; receives the 16-bit data-field bytes
  *        clocked back at @p target_index's own slot during this same
  *        transfer (meaningful only as the second step of a readback
- *        sequence -- see ad5422_probe_readback()).
+ *        sequence -- see ad5422_read_register()).
  */
 static bool ad5422_transact(uint8_t target_index, uint8_t address, uint16_t data, uint16_t *out_target_rx)
 {
@@ -144,14 +142,10 @@ static bool ad5422_transact(uint8_t target_index, uint8_t address, uint16_t data
     return true;
 }
 
-/** @brief Write @p probe_code to the data register, then read it back via the datasheet's two-step readback sequence. */
-static bool ad5422_probe_readback(uint8_t target_index, uint16_t probe_code, uint16_t *out_echo)
+/** @brief Non-invasive register read; never modifies DAC DATA or CONTROL. */
+static bool ad5422_read_register(uint8_t target_index, uint16_t read_address, uint16_t *out_echo)
 {
-    if (!ad5422_transact(target_index, AD5422_ADDR_DATA, probe_code, NULL))
-    {
-        return false;
-    }
-    if (!ad5422_transact(target_index, AD5422_ADDR_READBACK, AD5422_READ_ADDR_DATA, NULL))
+    if (!ad5422_transact(target_index, AD5422_ADDR_READBACK, read_address, NULL))
     {
         return false;
     }
@@ -199,7 +193,8 @@ telemetry_driver_result_t native_ad5422_start(telemetry_channel_t *channel)
     {
         return TELEMETRY_DRIVER_RESULT_INVALID_STATE;
     }
-    control = (uint16_t)(AD5422_CTRL_OUTEN | AD5422_CTRL_DCEN | source->source_flags);
+    /* Configure with output disabled before loading the initial DAC code. */
+    control = (uint16_t)(AD5422_CTRL_DCEN | source->source_flags);
     if (!ad5422_transact(source->source_index, AD5422_ADDR_CONTROL, control, NULL))
     {
         return TELEMETRY_DRIVER_RESULT_TIMEOUT;
@@ -209,7 +204,12 @@ telemetry_driver_result_t native_ad5422_start(telemetry_channel_t *channel)
     {
         return TELEMETRY_DRIVER_RESULT_TIMEOUT;
     }
-    g_last_code[source->source_index] = 0u;
+    if (!ad5422_transact(source->source_index, AD5422_ADDR_CONTROL,
+                         (uint16_t)(control | AD5422_CTRL_OUTEN), NULL))
+    {
+        (void)ad5422_transact(source->source_index, AD5422_ADDR_CONTROL, control, NULL);
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
+    }
     channel->runtime.value.f64 = 0.0;
     return TELEMETRY_DRIVER_RESULT_OK;
 }
@@ -265,7 +265,6 @@ telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *channel, cons
     {
         return TELEMETRY_DRIVER_RESULT_TIMEOUT;
     }
-    g_last_code[source->source_index] = code;
     if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_FLOAT)
     {
         channel->runtime.value.f32 = (float)engineering_value;
@@ -280,11 +279,8 @@ telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *channel, cons
 telemetry_driver_result_t native_ad5422_self_test(telemetry_channel_t *channel)
 {
     const native_channel_source_t *source = ad5422_source(channel);
-    const uint16_t probe_a = 0x1234u;
-    const uint16_t probe_b = 0xABCDu;
-    uint16_t echo_a = 0u;
-    uint16_t echo_b = 0u;
-    telemetry_driver_result_t result;
+    uint16_t control = 0u;
+    uint16_t status = 0u;
 
     if (source == NULL || !native_ad5422_source_is_valid(source->source_index, source->source_flags))
     {
@@ -294,28 +290,23 @@ telemetry_driver_result_t native_ad5422_self_test(telemetry_channel_t *channel)
     {
         return TELEMETRY_DRIVER_RESULT_INVALID_STATE;
     }
-    if (!ad5422_probe_readback(source->source_index, probe_a, &echo_a) ||
-        !ad5422_probe_readback(source->source_index, probe_b, &echo_b))
+    if (!ad5422_read_register(source->source_index, AD5422_READ_ADDR_CONTROL, &control) ||
+        !ad5422_read_register(source->source_index, AD5422_READ_ADDR_STATUS, &status))
     {
-        result = TELEMETRY_DRIVER_RESULT_TIMEOUT;
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
     }
-    else if (echo_a == echo_b)
+    /* Healthy status alone may be zero. CONTROL must contain the nonzero
+     * DCEN/OUTEN signature set by start, so absent SDO cannot pass. */
+    if ((control == 0u && status == 0u) || (control == UINT16_MAX && status == UINT16_MAX))
     {
-        /* Constant, non-tracking readback: the datasheet-documented
-         * signature of no live chip responding on SDO (or, on the real
-         * board, a possible structural MISO-wiring limitation -- see
-         * ad5422_driver.h's file-level hardware caveat). */
-        result = TELEMETRY_DRIVER_RESULT_TIMEOUT;
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
     }
-    else if (echo_a != probe_a || echo_b != probe_b)
+    if (control != (uint16_t)(AD5422_CTRL_OUTEN | AD5422_CTRL_DCEN | source->source_flags) ||
+        (status & (uint16_t)~0x0002u) != 0u)
     {
-        result = TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+        /* Status bit 1 (slew active) is informational; faults/reserved
+         * bits or a changed control register fail deterministically. */
+        return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
     }
-    else
-    {
-        result = TELEMETRY_DRIVER_RESULT_OK;
-    }
-    /* Best-effort restore of the channel's actual last commanded output. */
-    (void)ad5422_transact(source->source_index, AD5422_ADDR_DATA, g_last_code[source->source_index], NULL);
-    return result;
+    return TELEMETRY_DRIVER_RESULT_OK;
 }

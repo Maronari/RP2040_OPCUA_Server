@@ -24,6 +24,7 @@ def main() -> int:
             f"-I{root / 'drivers' / 'include'}",
             f"-I{root / 'services' / 'include'}",
             str(root / "services" / "src" / "board_diagnostics_service.c"),
+            str(root / "drivers" / "src" / "board_fault_inputs.c"),
             str(test_dir / "hardware_gpio_stub.c"),
             str(test_dir / "board_diagnostics_service_test.c"),
             "-lm",
