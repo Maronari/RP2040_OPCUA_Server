@@ -589,6 +589,53 @@ int main(void)
                                                   SERVICE_QUALITY_GOOD, 1900000001000000ULL, 1u));
     assert(history_service_get_channel_restore_status("channel.float") ==
            HISTORY_SERVICE_RESTORE_STATUS_READY);
+
+    /* MEM-02 regression: a channel history_service_bind_configured_channels_locked()
+     * never saw at boot (e.g. because sensor_manager's activation verify-gate
+     * had not yet reported it SERVICE_QUALITY_GOOD) must not be left with its
+     * Flash slot permanently bound to "no channel" forever. The first lazy
+     * PSRAM-ring claim for a never-before-seen channel_id must also bind and
+     * restore its Flash slot. */
+    {
+        const unsigned bind_calls_before = g_bind_calls;
+
+        g_flash_bind_result = HISTORY_FLASH_BACKEND_OK;
+        g_flash_restore_result = HISTORY_FLASH_BACKEND_OK;
+        g_tick = 9000u;
+        assert(history_service_record_channel_sample("channel.lazy_bind", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                                                      &(history_service_value_t){.f32 = 21.0f},
+                                                      SERVICE_QUALITY_GOOD, 1900000002000000ULL, 1u));
+        assert(g_bind_calls == bind_calls_before + 1u);
+        assert(!g_last_bind_channel_id_was_null);
+        assert(history_service_get_channel_restore_status("channel.lazy_bind") ==
+               HISTORY_SERVICE_RESTORE_STATUS_READY);
+    }
+
+    /* Same scenario, but the Flash slot's bind itself fails: the channel
+     * must be reported degraded rather than silently READY. */
+    {
+        g_flash_bind_result = HISTORY_FLASH_BACKEND_IO;
+        g_tick = 9001u;
+        assert(history_service_record_channel_sample("channel.lazy_bind_fails", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                                                      &(history_service_value_t){.f32 = 22.0f},
+                                                      SERVICE_QUALITY_GOOD, 1900000002001000ULL, 1u));
+        assert(history_service_get_channel_restore_status("channel.lazy_bind_fails") ==
+               HISTORY_SERVICE_RESTORE_STATUS_FLASH_BIND_FAILED);
+        g_flash_bind_result = HISTORY_FLASH_BACKEND_OK;
+    }
+
+    /* Same scenario, but the restore (of nonexistent prior data, since this
+     * slot was never bound before) fails: also degraded, not silently READY. */
+    {
+        g_flash_restore_result = HISTORY_FLASH_BACKEND_IO;
+        g_tick = 9002u;
+        assert(history_service_record_channel_sample("channel.lazy_restore_fails", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                                                      &(history_service_value_t){.f32 = 23.0f},
+                                                      SERVICE_QUALITY_GOOD, 1900000002002000ULL, 1u));
+        assert(history_service_get_channel_restore_status("channel.lazy_restore_fails") ==
+               HISTORY_SERVICE_RESTORE_STATUS_FLASH_RESTORE_FAILED);
+        g_flash_restore_result = HISTORY_FLASH_BACKEND_OK;
+    }
 #endif
 
     /* --- v0.5.0 T7: history_service_clear_channel() --- */

@@ -448,6 +448,7 @@ bool history_service_record_channel_sample(const char *channel_id,
     bool recorded = false;
     size_t ring_index = HISTORY_SERVICE_MAX_CHANNELS;
 #if defined(PICO_ON_DEVICE)
+    bool freshly_claimed = false;
     history_flash_backend_record_t flash_record;
 #endif
 
@@ -468,7 +469,70 @@ bool history_service_record_channel_sample(const char *channel_id,
     if (ring_index == HISTORY_SERVICE_MAX_CHANNELS)
     {
         ring_index = history_service_claim_ring_locked(channel_id, value_type);
+#if defined(PICO_ON_DEVICE)
+        freshly_claimed = (ring_index != HISTORY_SERVICE_MAX_CHANNELS);
+#endif
     }
+#if defined(PICO_ON_DEVICE)
+    if (freshly_claimed && g_flash_ready)
+    {
+        /* This channel became historizable only after history_service_init()'s
+         * one-time boot Flash-bind/restore pass already ran -- e.g. its
+         * driver's first reading was not yet SERVICE_QUALITY_GOOD when
+         * sensor_manager's activation verify-gate first ran, so
+         * channel_manager did not yet report it as eligible at that exact
+         * moment (MEM-02). Without this, the channel's Flash slot is left
+         * permanently bound to "no channel" from that one-time boot pass,
+         * and every future append fails NOT_BOUND forever, gating
+         * HistoryRead shut for the rest of the device's uptime even though
+         * the PSRAM ring itself is otherwise fine.
+         *
+         * Bind and restore now, exactly as the boot pass would have. Held
+         * under the same lock as the boot pass's equivalent scan would
+         * have implicitly had exclusivity for (nothing else has ever seen
+         * this ring_index yet, since it was just claimed above) -- kept
+         * inside the lock here specifically because, unlike at boot,
+         * other tasks (e.g. OpcUaTask serving a concurrent HistoryRead)
+         * are already running and could otherwise race a lock-free replay
+         * into this same ring. This is safe unconditionally: reaching this
+         * branch means no ring existed for this channel_id moments ago, so
+         * the boot pass's fallback loop is guaranteed to have already
+         * bound this exact slot to "no channel" and never restored or
+         * wrote to it -- there is no armed write cursor or prior data here
+         * to clobber. */
+        history_service_channel_ring_t *ring = &g_store->channels[ring_index];
+
+        if (history_flash_backend_bind_channel(&g_flash_backend, (uint8_t)ring_index, channel_id) !=
+            HISTORY_FLASH_BACKEND_OK)
+        {
+            ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_FLASH_BIND_FAILED;
+        }
+        else
+        {
+            history_flash_backend_scan_entry_t *restore_scratch =
+                (history_flash_backend_scan_entry_t *)psram_malloc(HISTORY_SERVICE_CHANNEL_CAPACITY *
+                                                                    sizeof(*restore_scratch));
+
+            if (restore_scratch == NULL)
+            {
+                ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_SCRATCH_ALLOCATION_FAILED;
+            }
+            else
+            {
+                history_service_restore_context_t restore_context = {.ring = ring};
+                const history_flash_backend_result_t restore_result = history_flash_backend_restore(
+                    &g_flash_backend, (uint8_t)ring_index, restore_scratch, HISTORY_SERVICE_CHANNEL_CAPACITY,
+                    history_service_restore_sample, &restore_context);
+
+                if (restore_result != HISTORY_FLASH_BACKEND_OK)
+                {
+                    ring->restore_status = HISTORY_SERVICE_RESTORE_STATUS_FLASH_RESTORE_FAILED;
+                }
+                psram_free(restore_scratch);
+            }
+        }
+    }
+#endif
     if (ring_index != HISTORY_SERVICE_MAX_CHANNELS)
     {
         history_service_channel_ring_t *ring = &g_store->channels[ring_index];
@@ -501,8 +565,10 @@ bool history_service_record_channel_sample(const char *channel_id,
         /* Best-effort persistence performed outside the PSRAM lock so a slow
          * Flash program/erase never blocks other channels' reads/writes.
          * PSRAM already holds the sample regardless of this call's result. */
-        if (history_flash_backend_append(&g_flash_backend, (uint8_t)ring_index, &flash_record) !=
-            HISTORY_FLASH_BACKEND_OK)
+        const history_flash_backend_result_t append_result =
+            history_flash_backend_append(&g_flash_backend, (uint8_t)ring_index, &flash_record);
+
+        if (append_result != HISTORY_FLASH_BACKEND_OK)
         {
             /* A failed append means that persistence is no longer known
              * complete; do not hide it behind the PSRAM cache. */
