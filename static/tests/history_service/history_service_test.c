@@ -578,6 +578,17 @@ int main(void)
     assert(history_service_get_channel_restore_status("channel.float") ==
            HISTORY_SERVICE_RESTORE_STATUS_FLASH_APPEND_FAILED);
     g_flash_append_result = HISTORY_FLASH_BACKEND_OK;
+
+    /* MEM-02 regression: a transient append failure (e.g. the shared Flash
+     * coordinator momentarily busy with another channel) must not
+     * permanently gate HistoryRead for this channel -- the very next
+     * successful append clears the degraded status back to READY. */
+    g_tick = 8000u;
+    assert(history_service_record_channel_sample("channel.float", TELEMETRY_CHANNEL_VALUE_FLOAT,
+                                                  &(history_service_value_t){.f32 = 100.0f},
+                                                  SERVICE_QUALITY_GOOD, 1900000001000000ULL, 1u));
+    assert(history_service_get_channel_restore_status("channel.float") ==
+           HISTORY_SERVICE_RESTORE_STATUS_READY);
 #endif
 
     /* --- v0.5.0 T7: history_service_clear_channel() --- */

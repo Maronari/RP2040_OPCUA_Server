@@ -983,7 +983,10 @@ void model_core_task(void *argument)
 
     /* PSRAM profile: keep connection counts bounded, but allow a realistic
        number of monitored items now that open62541 long-lived allocations live
-       outside the internal SRAM heap. */
+       outside the internal SRAM heap.
+       maxSecureChannels below must stay within the real TCP-connection
+       budget lwIP was actually given -- see port/lwip/lwipopts.h's
+       MEMP_NUM_TCP_PCB comment (MEM-01) before raising this value. */
     config->maxSecureChannels = 4;
     config->maxSessions = 4;
     config->maxSubscriptions = 4;

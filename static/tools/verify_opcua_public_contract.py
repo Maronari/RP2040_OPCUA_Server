@@ -242,9 +242,16 @@ V050_REVIEWED_MODEL_DRIFT_PATHS = frozenset(MODEL_SOURCE_SET)
 # allowlist -- the actual fail-closed proof is
 # EXPECTED_V051_PUBLIC_INVENTORY_SHA256 below, plus
 # missing_baseline_contract() rejecting any removed v0.4.3 public entry.
+# Updated 2026-09-09 for MEM-01: model_core_lifecycle.c gained a
+# comment-only cross-reference to port/lwip/lwipopts.h's MEMP_NUM_TCP_PCB
+# budget next to config->maxSecureChannels. public_inventory() strips
+# comments before hashing (see strip_comments() in public_inventory()
+# below), so EXPECTED_V051_PUBLIC_INVENTORY_SHA256 is unchanged by this --
+# confirmed by re-running this file's own inventory before/after the edit.
 V051_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/opcua_model_internal.h",
     "opcua_model/src/model_configuration.c",
+    "opcua_model/src/model_core_lifecycle.c",
 })
 
 

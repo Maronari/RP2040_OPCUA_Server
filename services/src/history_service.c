@@ -516,6 +516,25 @@ bool history_service_record_channel_sample(const char *channel_id,
                 history_service_unlock();
             }
         }
+        else if (history_service_lock())
+        {
+            /* A Flash append failure can be transient (the shared Flash
+             * coordinator momentarily busy with another channel/subsystem,
+             * not a hardware fault). Without this, one such hiccup would
+             * permanently gate this channel out of HistoryRead for the rest
+             * of the device's uptime even though every following sample
+             * persists fine -- MEM-02. Clearing back to READY only on a
+             * ring this call itself found degraded, and only via a real
+             * subsequent success, keeps the fail-closed HistoryRead contract
+             * (services/include/services/history_service.h) intact: it still
+             * fails closed for as long as persistence is actually degraded. */
+            if (ring_index < HISTORY_SERVICE_MAX_CHANNELS &&
+                g_store->channels[ring_index].restore_status == HISTORY_SERVICE_RESTORE_STATUS_FLASH_APPEND_FAILED)
+            {
+                g_store->channels[ring_index].restore_status = HISTORY_SERVICE_RESTORE_STATUS_READY;
+            }
+            history_service_unlock();
+        }
     }
 #endif
 
