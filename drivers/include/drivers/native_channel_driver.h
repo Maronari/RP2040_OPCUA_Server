@@ -58,6 +58,19 @@
 #include "services/telemetry_driver.h"
 
 /**
+ * @brief `UIC` counter-mode derived-state scratch: the last-sampled edge
+ *        count/timestamp baseline frequency/period modes diff against.
+ *        Lives in `native_channel_source_t::scratch`, not a driver-private
+ *        static -- see that union's doc comment.
+ */
+typedef struct
+{
+    bool have_baseline;
+    uint32_t baseline_count;
+    uint32_t baseline_time_ms;
+} uic_derived_state_t;
+
+/**
  * @brief Per-channel hardware source selector copied into driver_context.
  *
  * Configuration data copied into sensor-manager-owned storage before
@@ -76,9 +89,20 @@ typedef struct
 {
     uint8_t source_index;
     uint8_t source_flags;
-    /** Mutable, service-owned per-instance synthetic state. Not serialized;
-     * reset by start(). Other drivers leave it unused. */
-    uint32_t synthetic_read_count;
+    /** Mutable, service-owned per-instance scratch state (v0.5.1 T16/T19+:
+     * lives here, in the already-existing per-channel allocation, rather
+     * than a driver-private file-static array, so a compiled-but-unused
+     * driver holds none of it -- ROADMAP.md:602). Meaning is entirely
+     * driver-specific and not serialized; a driver resets its own member
+     * in start() and must never read a member a different driver last
+     * wrote -- the union itself does not track which one applies, only
+     * each channel's own `driver_id` (looked up separately) does. Drivers
+     * that need none of this leave it unused. */
+    union
+    {
+        uint32_t synthetic_read_count;
+        uic_derived_state_t uic_derived;
+    } scratch;
 } native_channel_source_t;
 
 /**

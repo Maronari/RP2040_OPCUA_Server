@@ -7,9 +7,12 @@
  * including the deliberate quadrature-encoder scope decision.
  *
  * Ownership: g_counter is a single file-static binding shared by every UIC
- * channel instance (mirrors ads8688_driver.c's g_bus); g_derived is
- * process-wide file-static per-channel frequency/period sampling state,
- * indexed by source_index, like ad5422_driver.c's g_last_code[].
+ * channel instance (mirrors ads8688_driver.c's g_bus -- a genuine
+ * board-wide singleton, not per-channel, so it stays file-static).
+ * Per-channel frequency/period derived state lives in each channel's own
+ * service-owned native_channel_source_t::scratch.uic_derived (v0.5.1
+ * T19+ static-allocation audit correction), not a driver-private array --
+ * a compiled-but-unconfigured UIC driver therefore holds none of it.
  */
 #include "drivers/uic_driver.h"
 #include "drivers/industrial_board_pins.h"
@@ -30,21 +33,13 @@ typedef enum
     UIC_MODE_PERIOD = 3
 } uic_mode_t;
 
-typedef struct
-{
-    bool have_baseline;
-    uint32_t baseline_count;
-    uint32_t baseline_time_ms;
-} uic_derived_state_t;
-
 static pio_edge_counter_t g_counter;
 static bool g_counter_bound;
-static uic_derived_state_t g_derived[UIC_MAX_CHANNEL_INDEX + 1u];
 
 /** @brief Reinterpret channel->driver_context as this driver's source selector, or NULL. */
-static const native_channel_source_t *uic_source(const telemetry_channel_t *channel)
+static native_channel_source_t *uic_source(const telemetry_channel_t *channel)
 {
-    return channel != NULL ? (const native_channel_source_t *)channel->driver_context : NULL;
+    return channel != NULL ? (native_channel_source_t *)channel->driver_context : NULL;
 }
 
 static uint8_t uic_mode(uint8_t source_flags)
@@ -73,7 +68,7 @@ bool native_uic_source_is_valid(uint8_t source_index, uint8_t source_flags)
 
 telemetry_driver_result_t native_uic_start(telemetry_channel_t *channel)
 {
-    const native_channel_source_t *source = uic_source(channel);
+    native_channel_source_t *source = uic_source(channel);
     uint8_t gpio;
 
     if (source == NULL || !native_uic_source_is_valid(source->source_index, source->source_flags))
@@ -96,7 +91,7 @@ telemetry_driver_result_t native_uic_start(telemetry_channel_t *channel)
     {
         return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
     }
-    g_derived[source->source_index] = (uic_derived_state_t){0};
+    source->scratch.uic_derived = (uic_derived_state_t){0};
     return TELEMETRY_DRIVER_RESULT_OK;
 }
 
@@ -119,7 +114,7 @@ telemetry_driver_result_t native_uic_stop(telemetry_channel_t *channel)
 
 telemetry_driver_result_t native_uic_read(telemetry_channel_t *channel, uint32_t now_ms)
 {
-    const native_channel_source_t *source = uic_source(channel);
+    native_channel_source_t *source = uic_source(channel);
     uint8_t gpio;
     uint8_t mode;
     uint32_t current;
@@ -155,7 +150,7 @@ telemetry_driver_result_t native_uic_read(telemetry_channel_t *channel, uint32_t
         channel->runtime.value.f64 = (double)current;
         return TELEMETRY_DRIVER_RESULT_OK;
     }
-    derived = &g_derived[source->source_index];
+    derived = &source->scratch.uic_derived;
     if (!derived->have_baseline)
     {
         derived->have_baseline = true;

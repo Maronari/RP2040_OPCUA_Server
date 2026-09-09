@@ -59,14 +59,14 @@
  * for any of these modes, matching `gpio_input`'s convention of no
  * `self_test` either).
  *
- * Ownership: `driver_context` carries only this channel's
- * `native_channel_source_t` (source_index = 0-3 for `UIC0..UIC3`;
- * source_flags\[2:0\] = mode, remaining bits must be 0). Per-channel
- * counter-mode derived state (the last-sampled edge count and timestamp,
- * needed to compute frequency/period deltas) is process-wide file-static
- * state indexed by source_index, like `ad5422_driver.c`'s `g_last_code[]`
- * -- `driver_context` cannot carry extra mutable fields (a fixed,
- * driver-agnostic struct shared by every native driver).
+ * Ownership: `driver_context` carries this channel's `native_channel_source_t`
+ * (source_index = 0-3 for `UIC0..UIC3`; source_flags\[2:0\] = mode,
+ * remaining bits must be 0). Per-channel counter-mode derived state (the
+ * last-sampled edge count and timestamp, needed to compute frequency/
+ * period deltas) lives in that same struct's `scratch.uic_derived` member
+ * (v0.5.1 T19+ static-allocation audit correction) -- not a driver-private
+ * file-static array, so a compiled-but-unconfigured `UIC` driver holds
+ * none of it (`ROADMAP.md:602`).
  *
  * Concurrency: none; per `native_channel_driver.h`'s file-level doc, all
  * calls arrive serialized from SensorTask.

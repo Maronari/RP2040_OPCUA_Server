@@ -32,7 +32,7 @@ telemetry_driver_result_t native_synthetic_start(telemetry_channel_t *channel)
     {
         return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT;
     }
-    source->synthetic_read_count = 0u;
+    source->scratch.synthetic_read_count = 0u;
     return TELEMETRY_DRIVER_RESULT_OK;
 }
 
@@ -57,7 +57,7 @@ telemetry_driver_result_t native_synthetic_read(telemetry_channel_t *channel, ui
     {
         return TELEMETRY_DRIVER_RESULT_UNSUPPORTED;
     }
-    value = ++source->synthetic_read_count;
+    value = ++source->scratch.synthetic_read_count;
     if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_FLOAT)
     {
         channel->runtime.value.f32 = (float)value;
