@@ -25,10 +25,11 @@
  * Board topology: `UIC0..UIC3` sit behind a `TLV3214PWR` comparator
  * frontend (`HARDWARE_MVP.md` section 3.5) that already produces a clean
  * digital signal on `GPIO40..GPIO43` -- this driver reads/counts that
- * digital signal directly; it does not use the RP2350 ADC (the comparator
- * path does not preserve analog amplitude, so `ADC0..ADC3` are reserved
- * for a possible *future* analog UIC path, not touched by this driver at
- * all).
+ * digital signal directly. The UIC block is **input-only digital** as of
+ * the 2026-09-10 `HARDWARE_MVP.md` freeze: the comparator path does not
+ * preserve analog amplitude, and `GPIO40..GPIO43`'s ADC capability is
+ * explicitly not part of the UIC hardware contract -- there is no analog
+ * or bidirectional UIC mode to implement.
  *
  * Per-channel mode selection lives in `source_flags` (bits 0-2, matching
  * the v0.5.1 T1 finding that a channel with no runtime `configure()`

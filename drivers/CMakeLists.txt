@@ -8,10 +8,9 @@ option(FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER "Build the native AD5422 industrial 
 option(FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER "Build the native MAX22190 industrial digital-input channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER "Build the native IPS2050 protected high-side digital-output channel driver (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER "Build the native UIC universal-input channel driver (digital input/pulse count/frequency/period; pre-hardware: compile/mock validated only)" ON)
-option(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE "Build the TCAL9539/TCA4307/TPS2553 board-power-service block (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT "Build the real RP2350 UART-backed half-duplex RS-485 transport binding for ISOW1432 (pre-hardware: compile/mock validated only)" ON)
 option(FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER "Build the TPS3851 external supervisor/watchdog GPIO driver (pre-hardware: compile/mock validated only)" ON)
-option(FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE "Build the board-level diagnostics collection service (requires FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER and FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE; pre-hardware: compile/mock validated only)" ON)
+option(FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE "Build the board-level diagnostics collection service (requires FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER; pre-hardware: compile/mock validated only)" ON)
 
 set(FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES)
 if(FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE)
@@ -47,13 +46,6 @@ endif()
 if(FIRMWARE_ENABLE_NATIVE_UIC_DRIVER)
     list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/uic_driver.c src/rp2350_pio_edge_counter.c)
 endif()
-if(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE)
-    # tcal9539_driver.c/rp2350_i2c_bus.c are this feature's real hardware
-    # backing; i2c_transport.c (the generic, dependency-free bus contract,
-    # mirroring spi_transport.c) is always built below regardless of this
-    # option, matching that precedent.
-    list(APPEND FIRMWARE_NATIVE_CHANNEL_DRIVER_SOURCES src/tcal9539_driver.c src/rp2350_i2c_bus.c)
-endif()
 if(FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT)
     # uart_transport.c (the generic, dependency-free bus contract,
     # mirroring spi_transport.c/i2c_transport.c) is always built below
@@ -78,7 +70,16 @@ add_library(FIRMWARE_DRIVERS STATIC
         src/led_driver.c
         src/platform_clock.c
         src/rtc_driver.c
+        # I2C SDK surface with no consumer on RP2350_INDUSTRIAL_MVP_V1 since
+        # the 2026-09-10 hardware change removed every I2C device from the
+        # board (HARDWARE_MVP.md). Both are board-agnostic and stay
+        # unconditionally compiled so they cannot rot before the next I2C
+        # device driver needs them. This costs nothing in the image: with
+        # nothing referencing them, --gc-sections drops both entirely
+        # (verified -- no i2c_bus/i2c_transport symbol survives into the
+        # linked ELF, including rp2350_i2c_bus.c's 2-byte init latch).
         src/i2c_transport.c
+        src/rp2350_i2c_bus.c
         src/spi_transport.c
         src/uart_transport.c
         src/temp_sensor_driver.c
@@ -131,7 +132,6 @@ target_compile_definitions(FIRMWARE_DRIVERS PUBLIC
         FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_UIC_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_UIC_DRIVER}>
-        FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE=$<BOOL:${FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE}>
         FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT=$<BOOL:${FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT}>
         FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER=$<BOOL:${FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER}>
         FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE=$<BOOL:${FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE}>

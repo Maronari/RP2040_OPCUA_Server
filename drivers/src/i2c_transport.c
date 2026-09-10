@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-/** @brief Upper bound on a single i2c_bus_write_register() payload -- generous for every known consumer (TCAL9539 registers are 1 byte). */
+/** @brief Upper bound on a single i2c_bus_write_register() payload -- generous for typical 1-2 byte device registers. */
 #define I2C_BUS_WRITE_REGISTER_MAX_LENGTH 8u
 
 bool i2c_bus_read_register(const i2c_bus_t *bus, uint8_t addr, uint8_t reg, uint8_t *data, size_t length)

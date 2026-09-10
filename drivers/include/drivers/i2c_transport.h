@@ -9,8 +9,11 @@
  * UART) transport was considered and explicitly rejected as premature
  * during v0.5.1 release planning -- see docs/releases/v0.5.1.md scope
  * decision 2; each bus gets its own minimal interface designed against its
- * first real consumer (here, `services/board_power_service.c`'s
- * `TCAL9539` I2C GPIO expander).
+ * first real consumer -- here the `TCAL9539` I2C GPIO expander, whose
+ * driver was removed with the 2026-09-10 `HARDWARE_MVP.md` change that
+ * deleted every I2C device from `RP2350_INDUSTRIAL_MVP_V1`. This contract
+ * and its `rp2350_i2c_bus.h` binding are deliberately retained as driver-
+ * SDK surface for the next I2C device; they have no in-tree consumer today.
  */
 #ifndef DRIVERS_I2C_TRANSPORT_H
 #define DRIVERS_I2C_TRANSPORT_H
@@ -60,7 +63,7 @@ typedef struct
 /**
  * @brief Convenience wrapper: write a device's 8-bit register pointer, then
  *        read back @p length bytes (the common "set pointer, read" register
- *        access pattern, e.g. `TCAL9539`'s auto-incrementing register file).
+ *        access pattern used by auto-incrementing register files).
  * @return false if @p bus, its vtbl, or a required vtbl entry is NULL, or
  *         if either the pointer write or the read itself fails.
  */
@@ -68,8 +71,8 @@ bool i2c_bus_read_register(const i2c_bus_t *bus, uint8_t addr, uint8_t reg, uint
 /**
  * @brief Convenience wrapper: write a device's 8-bit register pointer
  *        immediately followed by @p length bytes of data, as one
- *        transaction (register pointer + data concatenated, matching
- *        `TCAL9539`'s expected write framing).
+ *        transaction (register pointer + data concatenated, the usual
+ *        register-write framing).
  * @return false if @p bus, its vtbl, or `write` is NULL, @p length exceeds
  *         the internal framing buffer, or the write itself fails.
  */

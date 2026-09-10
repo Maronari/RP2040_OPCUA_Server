@@ -10,7 +10,6 @@
 #include "drivers/ips2050_driver.h"
 #include "drivers/native_channel_driver.h"
 #include "drivers/board_fault_inputs.h"
-#include "services/board_power_service.h"
 
 #include <string.h>
 
@@ -46,24 +45,6 @@ bool board_diagnostics_collect(board_diagnostics_snapshot_t *out_snapshot)
         if (native_ips2050_read_fault(index, &fault_active))
         {
             out_snapshot->do_fault[index] = fault_active;
-        }
-    }
-    for (index = 0u; index < 4u; ++index)
-    {
-        bool fault_active = false;
-
-        if (board_power_get_sensor_fault((board_power_sensor_port_t)index, &fault_active))
-        {
-            out_snapshot->sensor_power_fault[index] = fault_active;
-        }
-    }
-    for (index = 0u; index < 2u; ++index)
-    {
-        bool ready = false;
-
-        if (board_power_get_i2c_ready((board_power_i2c_isolation_bus_t)index, &ready))
-        {
-            out_snapshot->i2c_isolation_ready[index] = ready;
         }
     }
 

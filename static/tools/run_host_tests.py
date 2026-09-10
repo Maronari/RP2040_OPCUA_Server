@@ -25,8 +25,6 @@ SUITES = (
     "test_ips2050_driver.py",
     "test_uic_driver.py",
     "test_i2c_transport.py",
-    "test_tcal9539_driver.py",
-    "test_board_power_service.py",
     "test_uart_transport.py",
     "test_tps3851_watchdog_driver.py",
     "test_board_diagnostics_service.py",

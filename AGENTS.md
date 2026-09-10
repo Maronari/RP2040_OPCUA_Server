@@ -145,8 +145,8 @@ release plan records the outcome.
   first real `write`/`configure`/`self_test` implementation) and T2 (`ADS8688`
   SPI driver + new SPI transport abstraction) before touching any other
   industrial driver. Do not start a Phase 1 driver (`AD5422`, `MAX22190`,
-  `IPS2050`, UIC, the `TCAL9539`/`TCA4307`/`TPS2553` board-power block,
-  `ISOW1432`, `TPS3851`, W5500 board rebind, driver-level board diagnostics)
+  `IPS2050`, UIC, `ISOW1432`, `TPS3851`, W5500 board rebind, driver-level
+  board diagnostics)
   before the pilot-phase API/resource-claim review gate in
   `docs/releases/v0.5.1.md` has closed and its outcome is recorded.
 - Design one minimal bus-transport interface per physical bus (SPI, I²C,

@@ -24,15 +24,11 @@ set(FIRMWARE_SERVICES_SOURCES
         src/time_service.c
         )
 
-if(FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE)
-    list(APPEND FIRMWARE_SERVICES_SOURCES src/board_power_service.c)
-endif()
-
-if(FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE AND FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER AND FIRMWARE_ENABLE_NATIVE_BOARD_POWER_SERVICE)
-    # board_diagnostics_service.c calls into both ips2050_driver.h
-    # (native_ips2050_read_fault()) and board_power_service.h directly, so
-    # it is only ever compiled in when both of its dependencies are --
-    # never link-fails from a partial dependency set.
+if(FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE AND FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER)
+    # board_diagnostics_service.c calls into ips2050_driver.h
+    # (native_ips2050_read_fault()) directly, so it is only ever compiled in
+    # when that dependency is -- never link-fails from a partial dependency
+    # set.
     list(APPEND FIRMWARE_SERVICES_SOURCES src/board_diagnostics_service.c)
 endif()
 

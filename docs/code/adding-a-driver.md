@@ -173,8 +173,7 @@ stub for it (section 6).
   `gpio_set_dir(..., GPIO_OUT)`, so the pad is never briefly asserted at
   its power-on level once it becomes an output. Every GPIO-driving driver
   in this codebase follows this ordering (`gpio_output_channel_driver.c`,
-  `ips2050_driver.c`, `tps3851_watchdog_driver.c`,
-  `board_power_service.c`'s register-level equivalent for `TCAL9539`).
+  `ips2050_driver.c`, `tps3851_watchdog_driver.c`).
 - **A shared physical resource (an ADC peripheral, an SPI/I2C bus) gets
   lazy, once-only initialization via a file-static flag**, not
   initialized per-channel. See `g_adc_ready` in

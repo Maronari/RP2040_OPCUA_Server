@@ -18,8 +18,7 @@
  * receiver enabled -- this binding's `rp2350_rs485_uart_init()` explicitly
  * drives the same safe (receive) level rather than relying on the
  * external pull-down alone, matching every other board-safe-state
- * convention this release established (`gpio_output`/`IPS2050`/
- * `board_power_service`).
+ * convention this release established (`gpio_output`/`IPS2050`).
  *
  * **UART peripheral instance**: which RP2350 hardware UART instance
  * `GPIO36`/`GPIO37` route to via `GPIO_FUNC_UART` is a fixed silicon
