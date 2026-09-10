@@ -20,10 +20,15 @@ def main() -> int:
         executable = pathlib.Path(directory) / "max22190_driver_test.exe"
         command = [
             args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            # test_dir first so its hardware/gpio.h shadows the Pico SDK's --
+            # the driver reads DI_READY_N (GPIO24) directly, same technique
+            # as static/tools/test_ips2050_driver.py.
+            f"-I{test_dir}",
             f"-I{root / 'drivers' / 'include'}",
             f"-I{root / 'services' / 'include'}",
             str(root / "drivers" / "src" / "max22190_driver.c"),
             str(root / "drivers" / "src" / "spi_transport.c"),
+            str(test_dir / "hardware_gpio_stub.c"),
             str(test_dir / "max22190_driver_test.c"),
             "-lm",
             "-o", str(executable),

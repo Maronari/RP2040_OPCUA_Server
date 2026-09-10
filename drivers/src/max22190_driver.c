@@ -8,11 +8,17 @@
  * reference this implementation follows -- including the important CRC
  * caveat (unverified against real silicon or a datasheet worked example).
  *
- * Ownership: the SPI bus binding (native_max22190_bind_bus()) is process-
- * wide file-static state -- one physical `MAX22190` chip is in scope for
- * this release; every channel using this driver shares it.
+ * Ownership: the SPI bus binding (native_max22190_bind_bus()) and the
+ * g_chip_ready latch are process-wide file-static state -- one physical
+ * `MAX22190` chip is in scope for this release; every channel using this
+ * driver shares it. DI0..DI3 are four logical views of that one chip, so
+ * chip-level startup (the /READY gate and the presence check) runs once,
+ * not once per channel.
  */
 #include "drivers/max22190_driver.h"
+#include "drivers/industrial_board_pins.h"
+
+#include "hardware/gpio.h"
 
 #include <stddef.h>
 
@@ -25,8 +31,29 @@
 #define MAX22190_MAX_CHANNEL_INDEX 3u
 #define MAX22190_FLT_FLAGS_MASK 0x0Fu /**< FLTn bits 3-0: FBP + DELAY[2:0]. */
 
+/**
+ * @brief How many times the chip-startup gate samples `DI_READY_N` before
+ * giving up.
+ *
+ * Deliberately a poll count, not a millisecond timeout: drivers in this
+ * codebase have no time source (`start()` is not handed `now_ms`, and
+ * nothing here may block SensorTask), and no confirmed `t_READY` figure
+ * for this part exists in `docs/datasheets/MAX22190-register-notes.md` to
+ * calibrate one against. The bound is small on purpose. Any channel start
+ * happens long after board power-up -- FreeRTOS, the network stack and
+ * configuration load all precede it -- so a healthy chip has asserted
+ * `/READY` well before this runs and the very first sample succeeds. The
+ * slack covers a marginal edge; a line stuck high means the chip is
+ * absent, unpowered or broken, and that must fail fast rather than stall
+ * the sensor task. Bring-up records the real assertion behavior
+ * (`docs/releases/v0.5.1-hardware-bring-up-checklists.md` section 3).
+ */
+#define MAX22190_READY_POLL_ATTEMPTS 1000u
+
 static spi_bus_t g_bus;
 static bool g_bus_bound;
+/** @brief Set once the one physical chip has passed its /READY gate and presence check; see native_max22190_start(). */
+static bool g_chip_ready;
 
 void native_max22190_bind_bus(const spi_bus_t *bus)
 {
@@ -39,6 +66,9 @@ void native_max22190_bind_bus(const spi_bus_t *bus)
     {
         g_bus_bound = false;
     }
+    /* A (re)binding means a different bus/board context, so the previous
+     * chip's startup result no longer applies. */
+    g_chip_ready = false;
 }
 
 bool native_max22190_source_is_valid(uint8_t source_index, uint8_t source_flags)
@@ -128,10 +158,51 @@ static bool max22190_transact(bool write, uint8_t address, uint8_t data, uint8_t
     return true;
 }
 
+/**
+ * @brief One-time startup for the single physical chip: bring up the
+ *        `DI_READY_N` input, wait (bounded) for the chip to report ready,
+ *        then prove it communicates.
+ *
+ * `HARDWARE_MVP.md`'s initialization sequence requires observing
+ * `DI_READY_N == LOW` before relying on any register access, so this runs
+ * strictly before the first SPI transaction rather than alongside it.
+ * @return TELEMETRY_DRIVER_RESULT_OK on success; TELEMETRY_DRIVER_RESULT_TIMEOUT
+ *         if `/READY` never asserts within the poll bound;
+ *         TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE if the presence read fails.
+ */
+static telemetry_driver_result_t max22190_start_chip(void)
+{
+    uint8_t fault1 = 0u;
+    uint32_t attempt;
+
+    /* Input, internal pulls off: the board already provides an external
+     * 10k -> +3V3_DIG pull-up on this open-drain line (HARDWARE_MVP.md),
+     * and this codebase's convention is not to duplicate one. */
+    gpio_init(INDUSTRIAL_DI_READY_GPIO);
+    gpio_set_dir(INDUSTRIAL_DI_READY_GPIO, GPIO_IN);
+    gpio_disable_pulls(INDUSTRIAL_DI_READY_GPIO);
+    for (attempt = 0u; gpio_get(INDUSTRIAL_DI_READY_GPIO); ++attempt)
+    {
+        if (attempt >= MAX22190_READY_POLL_ATTEMPTS)
+        {
+            return TELEMETRY_DRIVER_RESULT_TIMEOUT;
+        }
+    }
+    /* Real communication check: a CRC-validated read confirms the chip is
+     * present and responding before any channel is trusted. FAULT1EN/INEN
+     * are deliberately left at their POR defaults (0xC0/0xFF) -- 0xC0
+     * already keeps the VDD24-related fault enables masked, satisfying
+     * HARDWARE_MVP.md's requirement without an extra write. */
+    if (!max22190_transact(false, MAX22190_ADDR_FAULT1, 0u, NULL, &fault1))
+    {
+        return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+    }
+    return TELEMETRY_DRIVER_RESULT_OK;
+}
+
 telemetry_driver_result_t native_max22190_start(telemetry_channel_t *channel)
 {
     const native_channel_source_t *source = max22190_source(channel);
-    uint8_t fault1 = 0u;
 
     if (source == NULL || !native_max22190_source_is_valid(source->source_index, source->source_flags))
     {
@@ -141,14 +212,19 @@ telemetry_driver_result_t native_max22190_start(telemetry_channel_t *channel)
     {
         return TELEMETRY_DRIVER_RESULT_INVALID_STATE;
     }
-    /* Real communication check: a CRC-validated read confirms the chip is
-     * present and responding before this channel is trusted. FAULT1EN/INEN
-     * are deliberately left at their POR defaults (0xC0/0xFF) -- 0xC0
-     * already keeps the VDD24-related fault enables masked, satisfying
-     * HARDWARE_MVP.md's requirement without an extra write. */
-    if (!max22190_transact(false, MAX22190_ADDR_FAULT1, 0u, NULL, &fault1))
+    /* DI0..DI3 are four logical views of one chip, so chip-level startup
+     * runs once rather than four times. Per-channel communication is still
+     * proven every time: the FLTn write below is itself a CRC-checked
+     * transaction that fails loudly if this channel cannot reach the chip. */
+    if (!g_chip_ready)
     {
-        return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+        telemetry_driver_result_t chip_result = max22190_start_chip();
+
+        if (chip_result != TELEMETRY_DRIVER_RESULT_OK)
+        {
+            return chip_result;
+        }
+        g_chip_ready = true;
     }
     if (!max22190_transact(true, (uint8_t)(MAX22190_FLT_BASE + 2u * source->source_index), source->source_flags,
                             NULL, NULL))

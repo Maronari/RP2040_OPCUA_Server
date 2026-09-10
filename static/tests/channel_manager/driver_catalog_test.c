@@ -1,5 +1,6 @@
 #include "drivers/ad5422_driver.h"
 #include "drivers/ads8688_driver.h"
+#include "drivers/industrial_board_pins.h"
 #include "drivers/ips2050_driver.h"
 #include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
@@ -196,22 +197,41 @@ int main(void)
            max22190->driver->write == NULL);
     assert(driver_catalog_supports_value_type(max22190, TELEMETRY_CHANNEL_VALUE_BOOLEAN));
     assert(!driver_catalog_supports_value_type(max22190, TELEMETRY_CHANNEL_VALUE_FLOAT));
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x03u, claims, 2u, &claim_count));
-    assert(claim_count == 2u && claims[0].type == DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL && claims[0].index == 0u &&
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x03u, claims, 3u, &claim_count));
+    assert(claim_count == 3u && claims[0].type == DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL && claims[0].index == 0u &&
            !claims[0].shared && claims[1].type == DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL && claims[1].index == 0u &&
            claims[1].shared);
+    /* DI_READY_N (GPIO24), read directly by native_max22190_start()'s
+     * one-time chip startup since the 2026-09-10 hardware revision moved
+     * /READY off the deleted TCAL9539. Shared, so the four DI channels can
+     * coexist while still colliding with an exclusive GPIO claim. */
+    assert(claims[2].type == DRIVER_CATALOG_RESOURCE_GPIO && claims[2].index == INDUSTRIAL_DI_READY_GPIO &&
+           claims[2].shared);
+    /* A two-claim buffer no longer suffices, and the required count is still reported. */
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x03u, claims, 2u,
+                                               &temp_claim_count));
+    assert(temp_claim_count == 3u);
     /* An ads8688 channel on mux index 0 and a max22190 channel on DI0 (also
      * index 0) must NOT conflict -- distinct claim types, same shared bus. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x0u, &claims[2], 2u, &claim_count));
-    assert(driver_catalog_claims_are_compatible(claims, 4u));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x0u, &claims[3], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 5u));
     /* An ad5422 channel on AO0 (also index 0) must likewise not conflict. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, &claims[2], 2u, &claim_count));
-    assert(driver_catalog_claims_are_compatible(claims, 4u));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, &claims[3], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 5u));
     /* Two max22190 channels both claiming DI0 do conflict. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x00u, &claims[2], 2u, &claim_count));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x00u, &claims[3], 3u, &claim_count));
+    assert(!driver_catalog_claims_are_compatible(claims, 6u));
+    /* But two DIFFERENT DI channels must not be rejected merely for both
+     * observing the one shared DI_READY_N pin. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 1u, 0x00u, &claims[3], 3u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 6u));
+    /* A gpio_input channel claiming GPIO24 exclusively does conflict with
+     * the shared READY claim -- the reason that claim exists. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_GPIO_INPUT, INDUSTRIAL_DI_READY_GPIO, 0x0u,
+                                              &claims[3], 2u, &claim_count));
     assert(!driver_catalog_claims_are_compatible(claims, 4u));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 4u, 0x0u, claims, 2u, &claim_count));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x10u, claims, 2u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 4u, 0x0u, claims, 3u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x10u, claims, 3u, &claim_count));
 
     /* Physical claims must reject generic GPIO aliases before activation. */
     assert(ips2050 != NULL);

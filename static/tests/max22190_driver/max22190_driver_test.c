@@ -12,6 +12,9 @@
  *        between the two is real evidence, not a tautology.
  */
 #include "drivers/max22190_driver.h"
+#include "drivers/industrial_board_pins.h"
+
+#include "hardware/gpio.h"
 
 #include <assert.h>
 #include <string.h>
@@ -55,9 +58,20 @@ static uint8_t fake_crc5(uint32_t bits19)
     return (uint8_t)(reg & 0x1Fu);
 }
 
+/** @brief Drive the active-low DI_READY_N line: ready == chip reports itself ready. */
+static void set_chip_ready_line(bool ready)
+{
+    g_gpio_stub_pins[INDUSTRIAL_DI_READY_GPIO].external_level = !ready;
+}
+
 static void chip_reset(void)
 {
     memset(&g_chip, 0, sizeof(g_chip));
+    /* gpio_stub_reset() leaves every pin high, i.e. DI_READY_N de-asserted
+     * ("not ready"); the default fixture models a healthy chip, so pull it
+     * low here. Tests that want the not-ready case say so explicitly. */
+    gpio_stub_reset();
+    set_chip_ready_line(true);
     g_chip.chip_present = true;
     g_chip.registers[REG_FAULT1] = 0x46u;
     g_chip.registers[REG_FLT1] = 0x08u;
@@ -265,6 +279,72 @@ static void test_transfer_failure_maps_to_expected_results(void)
     assert(native_max22190_self_test(&channel) == TELEMETRY_DRIVER_RESULT_TIMEOUT);
 }
 
+static void test_ready_gate_runs_before_any_spi(void)
+{
+    spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
+    native_channel_source_t source = {.source_index = DI0_INDEX, .source_flags = 0x04u};
+    telemetry_channel_t channel = make_channel(&source);
+
+    chip_reset();
+    set_chip_ready_line(false); /* /READY stuck de-asserted: chip absent/unpowered/broken. */
+    native_max22190_bind_bus(&bus);
+    assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_TIMEOUT);
+    /* The whole point of the gate: not one SPI frame may be attempted
+     * before the chip says it is ready. */
+    assert(g_chip.transfers == 0u);
+    /* Input, with internal pulls off -- the board's external 10k pull-up
+     * already holds this open-drain line. */
+    assert(gpio_get_dir(INDUSTRIAL_DI_READY_GPIO) == GPIO_IN);
+    assert(g_gpio_stub_pins[INDUSTRIAL_DI_READY_GPIO].pulls_disabled);
+
+    /* A failed gate is not latched: once the line asserts, a later start
+     * gets through and does its work. */
+    set_chip_ready_line(true);
+    assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(g_chip.registers[REG_FLT1] == 0x04u);
+}
+
+static void test_chip_startup_runs_once_not_per_channel(void)
+{
+    spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
+    native_channel_source_t sources[4] = {
+        {.source_index = 0u, .source_flags = 0x01u},
+        {.source_index = 1u, .source_flags = 0x02u},
+        {.source_index = 2u, .source_flags = 0x03u},
+        {.source_index = 3u, .source_flags = 0x04u},
+    };
+    unsigned index;
+
+    chip_reset();
+    native_max22190_bind_bus(&bus);
+
+    /* DI0..DI3 are four logical views of one chip: the first start pays for
+     * chip startup (FAULT1 presence read) plus its own FLTn write; each
+     * later channel pays only for its own FLTn write. */
+    for (index = 0u; index < 4u; ++index)
+    {
+        telemetry_channel_t channel = make_channel(&sources[index]);
+        unsigned before = g_chip.transfers;
+
+        assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+        assert(g_chip.transfers - before == (index == 0u ? 2u : 1u));
+    }
+    for (index = 0u; index < 4u; ++index)
+    {
+        assert(g_chip.registers[REG_FLT1 + 2u * index] == sources[index].source_flags);
+    }
+
+    /* Rebinding the bus is a new chip context, so startup runs again. */
+    native_max22190_bind_bus(&bus);
+    {
+        telemetry_channel_t channel = make_channel(&sources[0]);
+        unsigned before = g_chip.transfers;
+
+        assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+        assert(g_chip.transfers - before == 2u);
+    }
+}
+
 int main(void)
 {
     /* Four probe transfers followed by restore write/readback: failure
@@ -286,5 +366,7 @@ int main(void)
     test_chip_rejects_bad_request_crc();
     test_self_test_passed_unavailable_failed();
     test_transfer_failure_maps_to_expected_results();
+    test_ready_gate_runs_before_any_spi();
+    test_chip_startup_runs_once_not_per_channel();
     return 0;
 }

@@ -470,10 +470,13 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
         return false;
     }
     if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE || driver_id == CONFIG_CHANNEL_DRIVER_ADS8688 ||
-        driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_MAX22190 ||
-        driver_id == CONFIG_CHANNEL_DRIVER_UIC)
+        driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_UIC)
     {
         required = 2u;
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
+    {
+        required = 3u;
     }
     else if (driver_id == CONFIG_CHANNEL_DRIVER_IPS2050)
     {
@@ -559,6 +562,17 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
         out_claims[1] = (driver_catalog_resource_claim_t){
             .type = DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL,
             .index = 0u,
+            .shared = true,
+        };
+        /* DI_READY_N (GPIO24), the chip's /READY line, read directly by
+         * native_max22190_start()'s one-time chip startup since the
+         * 2026-09-10 hardware revision. Shared, because all four DI
+         * channels observe the same single pin and must not conflict with
+         * each other -- but an exclusive gpio_input/gpio_output claim on
+         * GPIO24 still conflicts with it, which is the point. */
+        out_claims[2] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = INDUSTRIAL_DI_READY_GPIO,
             .shared = true,
         };
     }

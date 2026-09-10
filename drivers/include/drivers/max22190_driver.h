@@ -15,9 +15,23 @@
  * must be the first thing verified during hardware bring-up.
  *
  * Bus binding: depends only on `drivers/spi_transport.h`'s generic
- * `spi_bus_t`, never on `hardware_spi`/`hardware_gpio` directly.
+ * `spi_bus_t`, never on `hardware_spi` directly.
  * `native_max22190_bind_bus()` supplies the bus; a host test binds a fake
  * one directly.
+ *
+ * One direct GPIO: `DI_READY_N` (`INDUSTRIAL_DI_READY_GPIO`, `GPIO24`),
+ * the chip's open-drain active-low `/READY` output. It became a direct MCU
+ * input in the 2026-09-10 `HARDWARE_MVP.md` revision (it previously reached
+ * the MCU through the now-deleted `TCAL9539` expander), so this driver
+ * reads it through `hardware/gpio.h` -- a host test shadows that header
+ * with a stub, the same technique `ips2050_driver.c`'s test uses.
+ *
+ * Chip-level vs. per-channel startup: `DI0..DI3` are four logical views of
+ * one physical chip. The `/READY` gate and the chip-presence check
+ * therefore run **once**, latched in file-static state, not once per
+ * channel; only the `FLTn` filter write is genuinely per-channel. That
+ * write is itself a CRC-checked transaction, so every channel still proves
+ * it can reach the chip.
  *
  * Board-fixed SPI mode: this driver only implements Mode 0 (24-bit frame,
  * CRC, no daisy chain) -- the mode is a hardware pin-strapping choice
@@ -71,13 +85,22 @@ void native_max22190_bind_bus(const spi_bus_t *bus);
 bool native_max22190_source_is_valid(uint8_t source_index, uint8_t source_flags);
 
 /**
- * @brief Start (validate communication with) one `MAX22190` channel: reads
- *        the `FAULT1` register once (a real, CRC-checked transaction) to
- *        confirm the chip communicates correctly, then writes this
- *        channel's `FLTn` filter register from `source_flags`.
+ * @brief Start one `MAX22190` channel.
+ *
+ * On the first channel started since the bus was bound, this also performs
+ * the one-time chip startup: configure `DI_READY_N` (`GPIO24`) as an input
+ * with internal pulls disabled (the board's external `10k -> +3V3_DIG`
+ * pull-up already holds the line), wait for it to read low within a bounded
+ * number of polls, then read `FAULT1` once (a real, CRC-checked
+ * transaction) to confirm the chip communicates. Later channels skip
+ * straight past that. Every call then writes this channel's `FLTn` filter
+ * register from `source_flags`.
+ *
+ * A failed chip startup is not latched, so a later `start()` retries it.
  * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid;
  *         TELEMETRY_DRIVER_RESULT_INVALID_STATE if no bus is bound;
- *         TELEMETRY_DRIVER_RESULT_TIMEOUT if a transfer fails;
+ *         TELEMETRY_DRIVER_RESULT_TIMEOUT if `/READY` never asserts within
+ *         the poll bound, or if a transfer fails;
  *         TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE if a response's own CRC
  *         does not check out; TELEMETRY_DRIVER_RESULT_OK otherwise.
  */
