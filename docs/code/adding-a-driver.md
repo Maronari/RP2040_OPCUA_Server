@@ -138,8 +138,13 @@ this is what makes a driver host-testable at all. Instead:
 
 - SPI: bind against `drivers/spi_transport.h`'s `spi_bus_t` (see
   `ads8688_driver.c` for the reference consumer).
-- I2C: bind against `drivers/i2c_transport.h`'s `i2c_bus_t` (see
-  `tcal9539_driver.c`).
+- I2C: bind against `drivers/i2c_transport.h`'s `i2c_bus_t`, with
+  `drivers/rp2350_i2c_bus.h` as the real hardware backing. This contract
+  has no in-tree consumer to copy from right now: its first one
+  (`tcal9539_driver.c`) was deleted on 2026-09-10 when the expander left
+  the board, and the transport was kept for the next I2C device. Follow
+  `ads8688_driver.c`'s SPI shape — the two contracts are deliberately
+  parallel.
 - UART/RS-485: bind against `drivers/uart_transport.h`'s `uart_bus_t`
   (see `rp2350_rs485_uart.c`'s own consumer note).
 
