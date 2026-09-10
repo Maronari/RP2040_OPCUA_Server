@@ -70,6 +70,7 @@ async def run(args: argparse.Namespace) -> int:
     client.set_password(password)
 
     good = 0
+    uncertain = 0
     bad = 0
     async with client:
         channels = await client.get_node(args.channels_node_id).get_children()
@@ -84,21 +85,40 @@ async def run(args: argparse.Namespace) -> int:
             if value_node is None:
                 print(f"  {name:<28} (no Value node)")
                 continue
-            data_value = await value_node.read_data_value()
+            # raise_on_bad_status=False is essential: reporting the status of
+            # every channel is this tool's whole job, so a non-Good one must
+            # be printed, not raised past the remaining channels.
+            try:
+                data_value = await value_node.read_data_value(raise_on_bad_status=False)
+            except Exception as exc:  # noqa: BLE001 - one unreadable channel must not hide the rest
+                bad += 1
+                print(f"  {name:<28} READ FAILED -- {type(exc).__name__}: {exc}")
+                continue
             status = data_value.StatusCode
             if status.is_good():
                 good += 1
-            else:
+            elif status.is_bad():
                 bad += 1
-            print(f"  {name:<28} value={data_value.Value.Value!r:<22} status={status.name}")
+            else:
+                uncertain += 1
+            value = data_value.Value.Value if data_value.Value is not None else None
+            print(f"  {name:<28} value={value!r:<22} status={status.name}")
 
     print()
+    print(f"good={good} uncertain={uncertain} bad={bad}")
     if len(channels) < args.expect_min:
         print(f"channel-activation: FAIL: only {len(channels)} channels present, expected at least {args.expect_min}")
         return 1
     if bad:
-        print(f"channel-activation: FAIL: {bad} channel(s) not reporting Good, {good} good")
+        print(f"channel-activation: FAIL: {bad} channel(s) reporting Bad")
         return 1
+    if uncertain:
+        # Uncertain is channel_manager.c's registration default, held until a
+        # channel's first good reading arrives -- so this means activated but
+        # not yet producing a trusted value. Deliberately not reported as a
+        # pass: whether it is expected depends on which channel it is.
+        print(f"channel-activation: INCONCLUSIVE: {uncertain} channel(s) Uncertain (registered, no good reading yet)")
+        return 2
     print(f"channel-activation: PASS ({good}/{good} channels activated and reading Good)")
     return 0
 
