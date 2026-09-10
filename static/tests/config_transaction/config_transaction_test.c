@@ -639,6 +639,32 @@ int main(void)
          * so the running configuration must be left untouched. */
         assert(!config_presets_apply(99u));
         assert(config_service_get_running_revision() == revision_before + 1u);
+
+        /* ROADMAP.md:603: a channel referencing a driver_id absent from the
+         * installed profile is rejected without altering the running
+         * configuration. CONFIG_CHANNEL_DRIVER_ADS8688 is a real driver id
+         * (a genuine v0.5.1 industrial driver) -- just not one of this
+         * fixture's three fake catalog entries -- standing in for a driver
+         * excluded by the running firmware's compiled driver pack.
+         * config_validate_service rejects it (driver_catalog_get_by_id()
+         * returns NULL) strictly before config_service_replace_and_save()
+         * touches Flash or g_running_config, so this must fail clean with
+         * the sensor_node profile applied above still running unchanged. */
+        {
+            device_profile_config_t bad_driver =
+                profile_one(channel_def(0u, "channel.bad.1", (uint8_t)CONFIG_CHANNEL_DRIVER_ADS8688, "bad"));
+            const device_profile_config_t *running;
+
+            assert(!config_service_replace_and_save(&bad_driver, true));
+            assert(config_service_get_running_revision() == revision_before + 1u);
+            running = config_service_get();
+            assert(strcmp(running->channels[0].id, "channel.temperature.1") == 0);
+            assert(running->channels[0].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_INTERNAL_TEMP);
+            assert(strcmp(running->channels[1].id, "channel.adc.1") == 0);
+            assert(running->channels[1].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE);
+            assert(strcmp(running->channels[2].id, "channel.gpio.1") == 0);
+            assert(running->channels[2].driver_id == (uint8_t)CONFIG_CHANNEL_DRIVER_GPIO_INPUT);
+        }
     }
 
     /* v0.5.0 T8: "remote_io" (services/config_presets.c) -- the
