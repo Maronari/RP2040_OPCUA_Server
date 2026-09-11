@@ -4,7 +4,7 @@
 >
 > **Board profile:** `RP2350_INDUSTRIAL_MVP_V1`
 >
-> **Last hardware consolidation:** 2026-09-02
+> **Last hardware consolidation:** 2026-09-11
 
 This document describes the current hardware architecture, frozen component choices, power tree, MCU pin allocation, completed schematic sheets, PCB/mechanical constraints, status indication, firmware-facing hardware contract, and the remaining work before production PCB release.
 
@@ -38,7 +38,7 @@ Main functional blocks:
 - 2 × analog output;
 - 4 × industrial digital input;
 - 2 × protected high-side digital output;
-- 4 × universal/counter/frequency/encoder input, with RP2350 ADC capability reserved on the same GPIOs;
+- 4 × protected high-speed universal digital inputs for state/counter/frequency/period/quadrature-encoder use;
 - 2 × I²C sensor ports with stuck-bus isolation/recovery;
 - 1 × SPI sensor port;
 - 1 × UART sensor port;
@@ -89,7 +89,7 @@ Main functional blocks:
 | DO field TVS | `5.0SMDJ36CA` | bidirectional, `VFIELD` to `GND_SYS`, after F_DO and before reverse diode |
 | DO reverse-polarity diode | `STPST10H100SBYTR` | 100 V / 10 A Schottky, DPAK, `VFIELD -> VFIELD_OUT` |
 | DO terminal blocks | 2 × `DG350-3.5-02P-14` | `DOx_OUT/GND_SYS`, 3.5 mm pitch |
-| Universal inputs | `TLV3214PWR` | current comparator-based UIC frontend; analog-path revision still required if analog UIC mode is retained |
+| Universal inputs | `TLV9034PWR` | quad push-pull comparator frontend for 4 × protected high-speed 24 V digital UIC channels; no UIC analog/ADC mode in Hardware Prototype v1 |
 | Supervisor/watchdog | `TPS3851H33EDRBR` | reset + watchdog |
 | Safe-state logic | `SN74LVC2G08DCTR` | original dual AND generates AO/DO safe enables |
 | Sensor power switches | 4 × `TPS2553DBVR` | current-limited switched sensor power |
@@ -1496,41 +1496,317 @@ The schematic topology is considered practically closed. Remaining items are val
 
 ### 3.5 Universal inputs / counters / frequency / encoder
 
-Provide **4 universal protected channels**: `UIC0..UIC3`.
+Provide **4 protected high-speed universal digital input channels**: `UIC0..UIC3`.
 
-Primary modes:
+Hardware Prototype v1 deliberately does **not** implement an analog-voltage/ADC mode on these channels. The board already has four dedicated industrial analog inputs through the external `ADS8688IDBTR`; adding a second lower-performance analog path to the UIC pins would require analog switching, extra protection and mode-control circuitry without enough MVP value.
 
-- digital input;
-- pulse counter;
-- frequency input;
+The RP2350 pads used by UIC happen to have ADC alternate functions in silicon, but `ADC0..ADC3` are **not part of the UIC hardware capability for this board revision**.
+
+Supported UIC modes:
+
+- protected 24 V digital state input;
+- pulse/event counter;
+- frequency measurement;
 - period measurement;
 - quadrature encoder using channel pairs;
-- optional low-voltage GPIO-style mode where electrically safe;
-- target analog-voltage mode through RP2350 `ADC0..ADC3`, if the final UIC frontend preserves an analog path.
+- other edge/timestamp processing implemented with RP2350 PIO/DMA.
 
-RP2350 assignment is intentionally:
+Not claimed for Hardware Prototype v1:
+
+- analog-voltage measurement through UIC;
+- 3.3 V / 5 V GPIO-level input compatibility;
+- differential RS-422 encoder input;
+- direct NPN/open-collector sinking-sensor compatibility without an external pull-up/source network;
+- IEC 61131-2 Type 1/2/3 compliance for UIC;
+- galvanic isolation.
+
+The dedicated `DI0..DI3` channels on MAX22190 remain the PLC-style filtered/diagnostic digital inputs. `UIC0..UIC3` intentionally fill the different role of **fast discrete inputs** for counters and encoders.
+
+#### 3.5.1 RP2350 allocation and signal polarity
+
+Frozen mapping:
 
 ```text
-UIC0 -> GPIO40 / ADC0
-UIC1 -> GPIO41 / ADC1
-UIC2 -> GPIO42 / ADC2
-UIC3 -> GPIO43 / ADC3
+UIC0_IN -> GPIO40
+UIC1_IN -> GPIO41
+UIC2_IN -> GPIO42
+UIC3_IN -> GPIO43
 ```
 
-This preserves the option to reuse the generic RP2350 ADC-voltage driver for UIC analog mode.
+The RP2350 silicon alternate functions on these pads are `ADC0..ADC3`, but firmware for `RP2350_INDUSTRIAL_MVP_V1` shall configure them as digital GPIO/PIO inputs only.
 
-**Important:** the currently selected `TLV3214PWR` comparator path produces a digital output and therefore does not preserve analog amplitude. Merely changing GPIO40..43 to ADC mode is not enough with the current comparator-only topology. Before analog UIC mode is claimed, the UIC schematic must provide a valid protected/scaled analog path to `ADC0..ADC3`, while retaining a clean digital/comparator path for counter/frequency/encoder operation.
+The comparator frontend is inverting:
 
-Counter and encoder processing should use RP2350 PIO and DMA where appropriate rather than nondeterministic task-level GPIO polling.
+```text
+field LOW  -> UICx_IN = HIGH
+field HIGH -> UICx_IN = LOW
+```
 
-Typical digital configurations:
+Therefore all four UIC channels are electrically **active-low** at the MCU. Firmware/PIO must account for this polarity. For a quadrature pair, both A and B are inverted by the same frontend topology, so their relative phase relationship is preserved.
+
+High-rate acquisition must use RP2350 **PIO + DMA / hardware edge counting**, not task-level GPIO polling and not software ADC thresholding.
+
+#### 3.5.2 Field connector
+
+One 6-position terminal block is used:
+
+```text
+DG350-3.5-06P-14
+
+1 UIC0_FIELD
+2 UIC1_FIELD
+3 UIC2_FIELD
+4 UIC3_FIELD
+5 UIC_COM
+6 UIC_COM
+```
+
+Both `UIC_COM` terminals connect to `GND_SYS`. The UIC channels are therefore non-isolated single-ended inputs referenced to the controller system ground.
+
+Intended field sources are nominal 24 V positive-going pulse/state signals such as PNP/sourcing or push-pull industrial sensor outputs and HTL-style encoder outputs. A dry contact can be used when wired to an appropriate positive field supply. Sinking/NPN outputs require an external pull-up/source arrangement and are not directly provided for by this frontend.
+
+#### 3.5.3 Per-channel protection and scaling
+
+For each `x = 0..3`:
+
+```text
+UICx_FIELD
+    |
+    +---- SMBJ36CA ---- GND_SYS
+    |
+   3.9k
+    |
+   3.9k
+    |
+UICx_SENSE
+    |
+    +---- 680R ---- GND_SYS
+    |
+    +---- 220pF --- GND_SYS
+    |
+    +---- BAS70LT1G
+    |       pin3 cathode -> UICx_SENSE
+    |       pin1 anode   -> GND_SYS
+    |       pin2         -> NC
+    |
+    +---- TLV9034 INx-
+```
+
+The primary field TVS is `SMBJ36CA`, bidirectional, connected directly from the connector-side `UICx_FIELD` node to `GND_SYS`. The two series `3.9 kΩ` resistors limit current and distribute transient voltage/energy. The `680 Ω` resistor forms the divider and provides a defined OFF state.
+
+Frozen nominal divider:
+
+```text
+R_TOP    = 3.9k + 3.9k = 7.8k
+R_BOTTOM = 680R
+
+divider ratio ~= 12.47 : 1
+input resistance ~= 8.48k
+```
+
+Approximate steady-state values:
+
+```text
+UICx_FIELD   UICx_SENSE   input current
+
+  8 V        0.64 V       0.94 mA
+ 24 V        1.92 V       2.83 mA
+ 36 V        2.89 V       4.25 mA
+```
+
+At the SMBJ36CA datasheet clamp point of about `58.1 V`, the divider produces approximately `4.66 V` at `UICx_SENSE`. This is above the normal 3.3 V comparator common-mode region but remains inside the TLV9034 fault-tolerant-input/absolute-input limits used by this design. Final transient margin must still be validated on the assembled PCB because real TVS overshoot depends on pulse shape, source impedance, layout inductance and ground-return geometry.
+
+The `BAS70LT1G` is the negative secondary clamp. For reverse field voltage it holds `UICx_SENSE` near ground while the two `3.9 kΩ` resistors limit the current. At `-36 V`, the resulting current is only on the order of 4–5 mA.
+
+The current design target is:
+
+```text
+nominal field signal            : 24 VDC
+normal sustained positive range : 0..36 VDC
+reverse-wiring survival target  : -36 VDC
+```
+
+These are **design targets**, not IEC/EMC certification claims.
+
+The two `3.9 kΩ` resistors should be at least 1206 / 0.25 W class and pulse-capable. Their normal DC dissipation at 36 V is only about 70 mW each, but package/pulse rating is selected for transient robustness rather than nominal power alone.
+
+#### 3.5.4 Input filtering
+
+Each scaled node uses:
+
+```text
+UICx_SENSE -> 220pF -> GND_SYS
+```
+
+With:
+
+```text
+R_THEVENIN ~= 7.8k || 680R ~= 625R
+```
+
+the nominal small-signal pole is approximately:
+
+```text
+fc ~= 1 / (2*pi*625R*220pF) ~= 1.16 MHz
+```
+
+This capacitor is intentionally small: it removes part of the very-fast residual transient content without turning the UIC into a slow PLC input. Real usable frequency also depends on cable capacitance, sensor output impedance and the field TVS.
+
+#### 3.5.5 Comparator and hysteresis
+
+One `TLV9034PWR` quad push-pull comparator implements all four channels.
+
+Supply:
+
+```text
+TLV9034 pin3  V+ -> +3V3_DIG
+TLV9034 pin12 V- -> GND_SYS
+
+100nF from +3V3_DIG to GND_SYS
+placed immediately at the IC supply pins
+```
+
+Frozen comparator-channel mapping:
+
+```text
+UIC0:
+  pin5  IN1+ <- UIC0_THRESH
+  pin4  IN1- <- UIC0_SENSE
+  pin2  OUT1 -> UIC0_COMP_N
+
+UIC1:
+  pin7  IN2+ <- UIC1_THRESH
+  pin6  IN2- <- UIC1_SENSE
+  pin1  OUT2 -> UIC1_COMP_N
+
+UIC2:
+  pin9  IN3+ <- UIC2_THRESH
+  pin8  IN3- <- UIC2_SENSE
+  pin14 OUT3 -> UIC2_COMP_N
+
+UIC3:
+  pin11 IN4+ <- UIC3_THRESH
+  pin10 IN4- <- UIC3_SENSE
+  pin13 OUT4 -> UIC3_COMP_N
+```
+
+Each channel uses the same positive-feedback threshold network:
+
+```text
++3V3_DIG
+    |
+   56k
+    |
+UICx_THRESH ----> TLV9034 INx+
+    |
+   10k
+    |
+ GND_SYS
+
+TLV9034 OUTx
+    |
+   165k
+    |
+UICx_THRESH
+```
+
+Nominal comparator thresholds referred to `UICx_SENSE` are approximately:
+
+```text
+rising  ~= 0.637 V
+falling ~= 0.476 V
+```
+
+With the 12.47:1 field divider this gives approximately:
+
+```text
+field rising / ON threshold  ~= 7.9 V
+field falling / OFF threshold ~= 5.9 V
+hysteresis                    ~= 2.0 V
+```
+
+For board-level documentation these are rounded to:
+
+```text
+ON  ~= 8 V
+OFF ~= 6 V
+```
+
+The external hysteresis is the primary noise margin around the switching point; firmware must not rely on the RP2350 input Schmitt trigger as the field threshold mechanism.
+
+#### 3.5.6 Comparator output to MCU
+
+Per channel:
+
+```text
+TLV9034 OUTx
+    |
+ UICx_COMP_N
+    |
+   47R
+    |
+  UICx_IN
+    |
+ RP2350 GPIO40..43
+```
+
+The TLV9034 output is push-pull, so no pull-up resistor is required. The `47 Ω` series resistor provides local edge damping/isolation between the fast comparator output and the MCU trace.
+
+The four comparator outputs must remain separate; push-pull outputs must never be wired together.
+
+Firmware must not begin accumulating UIC counter/encoder data during uncontrolled early power-up. After the digital rail and MCU initialization are complete, firmware shall configure the UIC GPIO pads, clear the relevant PIO/FIFO/counter state, and only then arm the measurement path.
+
+#### 3.5.7 Frequency target
+
+The TLV9034 and RP2350 PIO provide substantial silicon speed margin beyond the intended industrial use case. The initial board targets are deliberately conservative:
+
+```text
+qualification target : 100 kHz field input
+design target        : 250 kHz field input
+```
+
+Higher frequency operation may be possible, but shall not be advertised until verified on the assembled PCB with representative 24 V sensors/encoders, cable lengths, input waveforms and EMC disturbance.
+
+Typical firmware configurations remain:
 
 ```text
 4 independent counters
 2 quadrature encoders
 1 quadrature encoder + 2 counters
-4 protected digital inputs
+4 fast protected digital inputs
 ```
+
+#### 3.5.8 PCB placement and qualification
+
+Placement from the field connector toward the logic domain should follow:
+
+```text
+terminal
+ -> SMBJ36CA
+ -> 3.9k + 3.9k
+ -> UICx_SENSE
+ -> 680R / BAS70 / 220pF
+ -> TLV9034
+ -> 47R
+ -> RP2350
+```
+
+The `SMBJ36CA` must be placed at the connector/protection boundary with a short, low-inductance return to the nearby `UIC_COM/GND_SYS` region. Surge/ESD current must not be routed through MCU/supervisor ground corridors.
+
+The `680R`, `BAS70LT1G`, `220pF` and TLV9034 input pins should form a compact secondary-protection/sense region. Keep `UICx_COMP_N/UICx_IN` output traces from coupling back into `UICx_SENSE` or `UICx_THRESH`.
+
+Required assembled-board qualification includes at least:
+
+- threshold sweep for all four channels over supply and temperature;
+- reverse-wiring soak at the chosen negative-voltage target;
+- sustained 36 V input test;
+- representative ESD/EFT/surge testing with direct observation of `UICx_FIELD` and `UICx_SENSE`;
+- false-edge/count testing during EFT/noise injection;
+- maximum usable frequency testing with representative sensors/encoders and cable lengths;
+- verification that the `SMBJ36CA` field capacitance and cable/source impedance do not prevent the 100 kHz qualification target.
+
+No IEC 61000 or IEC 61131 compliance/certification shall be claimed from schematic calculations alone.
+
 
 ---
 
@@ -1982,10 +2258,10 @@ GPIO38 RS485_DE_RE
 
 GPIO39 BOARD_IO_INT_N
 
-GPIO40 UIC0_IN / ADC0
-GPIO41 UIC1_IN / ADC1
-GPIO42 UIC2_IN / ADC2
-GPIO43 UIC3_IN / ADC3
+GPIO40 UIC0_IN   (ADC0 alternate function unused in MVP)
+GPIO41 UIC1_IN   (ADC1 alternate function unused in MVP)
+GPIO42 UIC2_IN   (ADC2 alternate function unused in MVP)
+GPIO43 UIC3_IN   (ADC3 alternate function unused in MVP)
 
 GPIO44 VIN_PROTECTED_MON / ADC4
 GPIO45 AO_15V_MON / ADC5
@@ -2859,7 +3135,7 @@ Required firmware consequences of the 2026-08-28 service-I/O hardware decision:
 - use `TCAL9539 P14` as `DI_READY_N` from MAX22190 `/READY`;
 - keep `TCAL9539 P15..P17` reserved;
 - extend/validate the RP2350 generic ADC-voltage driver for ADC source indices 4..7 before internal rail monitors are enabled;
-- preserve GPIO40..43 as `UIC0..3` with ADC0..3 capability reserved for a future validated analog UIC path.
+- use GPIO40..43 exclusively as the four active-low digital `UIC0..3` inputs for Hardware Prototype v1; the ADC0..ADC3 alternate functions are not exposed as a board capability.
 
 Required AO firmware contract from the 2026-08-30 schematic:
 
@@ -2950,6 +3226,7 @@ Current status:
 07_ANALOG_INPUTS    practically closed; final PTC/footprint/pulse-rating audit required
 08_ANALOG_OUTPUTS   practically closed; final annotate/ERC/footprint/ground-domain audit required
 09_DIGITAL_IO       practically closed; DI + DO topology frozen, final annotate/ERC/footprint/layout/qualification audit required
+10_UNIVERSAL_INPUTS  practically closed; 4 × TLV9034 fast protected UIC topology frozen, final annotate/ERC/footprint/layout/qualification audit required
 ```
 
 Before PCB release, `07_ANALOG_INPUTS` must still:
@@ -3018,6 +3295,24 @@ DO:
 - qualify 2 x 1 A thermal behavior, single/dual hard short, fuse nuisance immunity, inductive load, capacitive inrush and final surge levels on the assembled PCB.
 ```
 
+Before PCB release, `10_UNIVERSAL_INPUTS` must still:
+
+```text
+- annotate TLV9034, BAS70, SMBJ36CA, connector and all passives; remove placeholder designators;
+- verify TLV9034PWR TSSOP-14 symbol pins against final footprint pads;
+- verify each BAS70LT1G footprint uses pin1 = anode/GND_SYS, pin2 = NC, pin3 = cathode/UICx_SENSE;
+- verify each SMBJ36CA footprint and placement at the connector/protection boundary;
+- freeze both 3.9k per channel as pulse-capable >=1206 / >=0.25 W parts;
+- verify 680R / 220pF / 56k / 10k / 165k / 47R values on all four channels;
+- confirm one local 100nF bypass directly at TLV9034 pins 3/12;
+- verify DG350-3.5-06P-14 footprint/3D and pin order UIC0..UIC3 + 2 x UIC_COM;
+- verify UIC_COM pins 5/6 connect to GND_SYS and no accidental isolated/floating return was created;
+- run a complete UIC0..UIC3 net-label audit so no FIELD/SENSE/THRESH/COMP_N/IN nets are cross-connected;
+- verify GPIO40..43 cross-sheet mapping and active-low semantics;
+- configure UIC acquisition with PIO/DMA rather than task-level GPIO polling;
+- qualify nominal 24 V operation, sustained 36 V, -36 V reverse-wiring target, thresholds/hysteresis, final ESD/EFT/surge levels and real maximum field frequency on the assembled PCB.
+```
+
 The 2026-08-28 service-I/O architecture decision still requires schematic completion/audit for:
 
 ```text
@@ -3031,7 +3326,6 @@ The 2026-08-28 service-I/O architecture decision still requires schematic comple
 - TCAL9539 /RESET connected to SYS_RESET_N;
 - VIN_PROTECTED, +15V_AO and +5V_ANALOG monitor networks added to ADC4..ADC6;
 - ADC7 monitor input reserved;
-- UIC frontend revisited if analog UIC mode is retained, because TLV3214 comparator output is not an analog path.
 ```
 
 Before the PCB is considered release-ready, all sheets require one full-system pass:
@@ -3052,13 +3346,12 @@ The discrete board-status LED circuitry, DI state LEDs, DO indication, and servi
 
 ---
 
-## 16. Remaining schematic work after analog I/O and digital I/O
+## 16. Remaining schematic work after core I/O
 
-The analog input/output and sheet-09 digital-input/output topologies are now complete enough to move on after the final cleanup/qualification items listed in section 15.
+The analog input/output, sheet-09 digital I/O, and sheet-10 universal-input topologies are now complete enough to move on after the final cleanup/qualification items listed in section 15.
 
 Remaining major hardware blocks still requiring schematic completion/finalization include:
 
-- UIC/counter/frequency/encoder frontend and the decision on an actual analog path to ADC0..3;
 - external sensor connectors, their TPS2553 power switches, `TCAL9539`, and both `TCA4307` devices;
 - internal ADC4..ADC6 rail-monitor dividers/filters;
 - final board-status LED driver circuitry.
@@ -3140,8 +3433,15 @@ Power    : 9–36 V DC input
            no external per-output flyback diode, no per-output TVS
            internal IPS fast demagnetization / active clamp used for inductive loads
 
-4 × UIC  : counter / frequency / encoder / digital input
-           ADC0..3 capability reserved; analog frontend path still to be finalized
+4 × UIC  : TLV9034PWR protected high-speed digital inputs
+           nominal 24 V positive-going field signals, 0..36 V sustained design target
+           SMBJ36CA primary TVS per channel
+           3.9k + 3.9k / 680R divider, BAS70 negative clamp, 220pF HF filter
+           external hysteresis: nominal ~8 V ON / ~6 V OFF
+           active-low push-pull comparator output -> 47R -> GPIO40..43
+           counter / frequency / period / quadrature encoder via RP2350 PIO/DMA
+           initial qualification target = 100 kHz; design target = 250 kHz
+           no UIC analog/ADC mode in Hardware Prototype v1
 
 2 × I2C  : 3.3 V external sensor ports, each through TCA4307 recovery buffer
 1 × SPI  : 3.3 V sensor port
