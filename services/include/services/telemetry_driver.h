@@ -7,10 +7,24 @@
  * function-pointer shape that the `*_channel_driver.c` sources under
  * `drivers/src` implement and that `sensor_manager`/`channel_manager`
  * dispatch through (see docs/code/hardware.md, "Driver operation table").
- * Only `start`/`stop`/`read` currently have real implementations across the
- * shipped native drivers; `write`/`configure`/`self_test` are dispatched
- * past a NULL check but have no functioning implementation for the current
- * driver set.
+ * Every operation in this table now has real implementations: `start`/
+ * `stop`/`read` across the whole driver set, `write` in `gpio_output`/
+ * `AD5422`/`IPS2050`, `configure` in `gpio_output`, and `self_test` in
+ * `gpio_output`/`ADS8688`/`AD5422`/`MAX22190`/`IPS2050` (v0.5.1). Any entry
+ * may still be NULL for a given driver; callers NULL-check before
+ * dispatching.
+ *
+ * **`self_test` result convention** (`ROADMAP.md:584`, "supported and
+ * passed" / "supported but hardware unavailable/not present" / "failed"):
+ * `TELEMETRY_DRIVER_RESULT_OK` means the device answered and passed;
+ * `TELEMETRY_DRIVER_RESULT_TIMEOUT` means the device did not respond at
+ * all -- absent or unpowered hardware, **not** a board fault;
+ * `TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE` means it responded and failed.
+ * The distinction exists so that pre-production hardware is never reported
+ * as a passing self-test, and so a caller can tell "the chip is not there"
+ * from "the chip is broken". Callers that collapse the three into a single
+ * pass/fail test discard that distinction -- see `sensor_manager.c`'s
+ * activation path, which currently does.
  */
 #ifndef SERVICES_TELEMETRY_DRIVER_H
 #define SERVICES_TELEMETRY_DRIVER_H
@@ -62,12 +76,12 @@ typedef struct telemetry_driver_vtbl
     telemetry_driver_result_t (*stop)(telemetry_channel_t *channel);
     /** @brief Samples the channel's current value into @p channel's runtime state. @param now_ms Caller-supplied monotonic timestamp (ms) used for rate limiting/timestamping. */
     telemetry_driver_result_t (*read)(telemetry_channel_t *channel, uint32_t now_ms);
-    /** @brief Writes a value out to the channel's underlying source, for writable channels. Not implemented by any shipped native driver. */
+    /** @brief Writes a value out to the channel's underlying source, for writable channels. Implemented by `gpio_output`, `AD5422` and `IPS2050`. */
     telemetry_driver_result_t (*write)(telemetry_channel_t *channel,
                                        const telemetry_channel_value_t *value);
-    /** @brief Applies driver-specific configuration to the channel. Not implemented by any shipped native driver. */
+    /** @brief Applies driver-specific configuration to the channel. Implemented by `gpio_output`; a NULL @p config means "re-apply the channel's own settings". */
     telemetry_driver_result_t (*configure)(telemetry_channel_t *channel, const void *config);
-    /** @brief Runs a driver-specific self-test on the channel. Not implemented by any shipped native driver. */
+    /** @brief Runs a driver-specific self-test on the channel, per this header's three-way result convention. Implemented by `gpio_output`, `ADS8688`, `AD5422`, `MAX22190` and `IPS2050`. */
     telemetry_driver_result_t (*self_test)(telemetry_channel_t *channel);
 } telemetry_driver_vtbl_t;
 

@@ -13,6 +13,19 @@
  * - Poll channels each "SensorTask" iteration and forward eligible samples
  *   to `history_service`.
  *
+ * Absent hardware vs. a bad configuration (`ROADMAP.md:603`, v0.5.1):
+ * a driver lifecycle call that returns `TELEMETRY_DRIVER_RESULT_TIMEOUT`
+ * means the device never answered -- it is not fitted, not powered, or not
+ * reachable -- which is a fact about the board, not a defect in the
+ * configuration being applied. Such a channel stays in the activation,
+ * is published, is skipped by the verify gate, and reaches
+ * `SERVICE_QUALITY_BAD` on its first failed poll. Every other non-OK
+ * result still aborts and rolls back the whole transaction. Without this
+ * split, one unfitted chip on a 16-channel industrial board would leave
+ * the device with no channels at all rather than with one bad channel;
+ * see `services/telemetry_driver.h` for the three-way result convention
+ * the drivers implement, which this is the consuming half of.
+ *
  * Ownership:
  * `g_runtime_storage` (PSRAM-allocated) holds both configuration banks'
  * `channel_config_t` and driver-context arrays; `g_active_bank` selects
@@ -275,25 +288,37 @@ static void sensor_manager_stop_candidates(uint8_t bank, size_t count)
  * @brief Starts, configures, and self-tests each enabled channel driver in
  *        candidate bank @p bank, in order.
  *
- * On the first failing channel (start/configure/self_test all treated as
- * fatal), rolls back by calling sensor_manager_stop_candidates() for every
- * channel started so far (including the failing one, since a failed start
- * may already have claimed or reconfigured shared hardware).
+ * On the first failing channel, rolls back by calling
+ * sensor_manager_stop_candidates() for every channel started so far
+ * (including the failing one, since a failed start may already have claimed
+ * or reconfigured shared hardware).
+ *
+ * `TELEMETRY_DRIVER_RESULT_TIMEOUT` is the one non-OK result that is *not*
+ * a failure here: per `services/telemetry_driver.h`'s self-test convention
+ * it means the device did not answer at all, i.e. absent or unpowered
+ * hardware rather than an invalid configuration. That channel's remaining
+ * lifecycle steps are skipped, it is flagged in @p hardware_absent, and the
+ * activation continues -- see this file's header for why
+ * (`ROADMAP.md:603`).
  *
  * @param bank Candidate bank index (0 or 1).
  * @param count Number of channels in that bank to attempt to start.
+ * @param hardware_absent Out-array of at least @p count entries, indexed
+ *        like the bank; the caller must zero it first. Set to true for each
+ *        channel whose device did not answer.
  * @return true if every enabled channel started/configured/self-tested
- *         successfully; false on first failure (candidate bank is left
- *         stopped).
+ *         successfully or was found absent; false on first real failure
+ *         (candidate bank is left stopped).
  * @note Touches hardware indirectly through the channel drivers' `start`/
  *       `configure`/`self_test` vtable entries.
  */
-static bool sensor_manager_start_candidates(uint8_t bank, size_t count)
+static bool sensor_manager_start_candidates(uint8_t bank, size_t count, bool *hardware_absent)
 {
     for (size_t index = 0u; index < count; ++index)
     {
         telemetry_channel_t channel = {0};
         channel_config_t *candidate = &g_runtime_channel_configs[bank][index];
+        telemetry_driver_result_t result;
 
         channel.metadata = candidate->metadata;
         channel.settings = candidate->settings;
@@ -303,22 +328,28 @@ static bool sensor_manager_start_candidates(uint8_t bank, size_t count)
         {
             continue;
         }
-        if (channel.driver == NULL || channel.driver->start == NULL ||
-            channel.driver->start(&channel) != TELEMETRY_DRIVER_RESULT_OK)
+        if (channel.driver == NULL || channel.driver->start == NULL)
         {
             /* A failed start may already have claimed or reconfigured shared
              * hardware; include that channel in reverse cleanup. */
             sensor_manager_stop_candidates(bank, index + 1u);
             return false;
         }
-        if (channel.driver->configure != NULL &&
-            channel.driver->configure(&channel, NULL) != TELEMETRY_DRIVER_RESULT_OK)
+        result = channel.driver->start(&channel);
+        if (result == TELEMETRY_DRIVER_RESULT_OK && channel.driver->configure != NULL)
         {
-            sensor_manager_stop_candidates(bank, index + 1u);
-            return false;
+            result = channel.driver->configure(&channel, NULL);
         }
-        if (channel.driver->self_test != NULL &&
-            channel.driver->self_test(&channel) != TELEMETRY_DRIVER_RESULT_OK)
+        if (result == TELEMETRY_DRIVER_RESULT_OK && channel.driver->self_test != NULL)
+        {
+            result = channel.driver->self_test(&channel);
+        }
+        if (result == TELEMETRY_DRIVER_RESULT_TIMEOUT)
+        {
+            hardware_absent[index] = true;
+            continue;
+        }
+        if (result != TELEMETRY_DRIVER_RESULT_OK)
         {
             sensor_manager_stop_candidates(bank, index + 1u);
             return false;
@@ -376,9 +407,15 @@ static bool sensor_manager_stop_active(void)
  * hardware settings. Failures for individual channels are accumulated but
  * do not stop the loop from attempting the remaining channels.
  *
+ * A channel whose device does not answer (`TELEMETRY_DRIVER_RESULT_TIMEOUT`)
+ * is not a restore failure: absent hardware is that channel's already-
+ * accepted state, since sensor_manager_start_candidates() admitted it on
+ * exactly those terms. Treating it as a failure here would knock the whole
+ * manager uninitialized on the next unrelated rollback.
+ *
  * @return true if every enabled active channel's start/configure/self_test
- *         succeeded; false if any failed (caller marks the manager
- *         uninitialized in that case).
+ *         succeeded or found its hardware absent; false if any failed
+ *         (caller marks the manager uninitialized in that case).
  * @note Touches hardware indirectly through the channel drivers' `start`/
  *       `configure`/`self_test` vtable entries.
  */
@@ -396,25 +433,24 @@ static bool sensor_manager_restart_active(void)
         }
         if (operation.snapshot.channel.settings.enabled && operation.snapshot.channel.driver != NULL)
         {
-            bool channel_restored = true;
-            if (operation.snapshot.channel.driver->start != NULL &&
-                operation.snapshot.channel.driver->start(&operation.snapshot.channel) != TELEMETRY_DRIVER_RESULT_OK)
+            telemetry_driver_result_t result = TELEMETRY_DRIVER_RESULT_OK;
+
+            if (operation.snapshot.channel.driver->start != NULL)
             {
-                channel_restored = false;
+                result = operation.snapshot.channel.driver->start(&operation.snapshot.channel);
             }
-            if (channel_restored && operation.snapshot.channel.driver->configure != NULL &&
-                operation.snapshot.channel.driver->configure(&operation.snapshot.channel, NULL) !=
-                    TELEMETRY_DRIVER_RESULT_OK)
+            if (result == TELEMETRY_DRIVER_RESULT_OK &&
+                operation.snapshot.channel.driver->configure != NULL)
             {
-                channel_restored = false;
+                result = operation.snapshot.channel.driver->configure(&operation.snapshot.channel, NULL);
             }
-            if (channel_restored && operation.snapshot.channel.driver->self_test != NULL &&
-                operation.snapshot.channel.driver->self_test(&operation.snapshot.channel) !=
-                    TELEMETRY_DRIVER_RESULT_OK)
+            if (result == TELEMETRY_DRIVER_RESULT_OK &&
+                operation.snapshot.channel.driver->self_test != NULL)
             {
-                channel_restored = false;
+                result = operation.snapshot.channel.driver->self_test(&operation.snapshot.channel);
             }
-            all_restored = all_restored && channel_restored;
+            all_restored = all_restored && (result == TELEMETRY_DRIVER_RESULT_OK ||
+                                            result == TELEMETRY_DRIVER_RESULT_TIMEOUT);
         }
         channel_manager_release_driver_operation(&operation);
     }
@@ -485,17 +521,25 @@ static bool sensor_manager_channel_is_new_or_changed(uint8_t old_bank, size_t ol
  * equivalent real-hardware confirmation a read would have provided for a
  * readable one.
  *
+ * A channel flagged in @p hardware_absent is excluded for the same reason,
+ * one step further along: its device never answered during startup, so no
+ * read can succeed yet and waiting out the budget would only convert a
+ * known-bad channel into a failed transaction (`ROADMAP.md:603`).
+ *
  * @param candidate_bank Bank index just published to `channel_manager`.
  * @param prepared Number of occupied slots in @p candidate_bank (and, since
  *        channel_manager_register_from_config() registers 1:1 in order, the
  *        number of leading channel_manager registry slots to check).
- * @return true if every new/changed, read-capable, enabled channel produced
- *         a valid read within its budget (or there were none to check);
- *         false if any such channel's budget was exhausted first.
+ * @param hardware_absent Per-slot flags from
+ *        sensor_manager_start_candidates(); those channels are skipped.
+ * @return true if every new/changed, read-capable, present, enabled channel
+ *         produced a valid read within its budget (or there were none to
+ *         check); false if any such channel's budget was exhausted first.
  * @note Touches hardware indirectly via channel_manager_poll_all() (driver
  *       `read`); may sleep between attempts (vTaskDelay()).
  */
-static bool sensor_manager_verify_candidate_channels(uint8_t candidate_bank, size_t prepared)
+static bool sensor_manager_verify_candidate_channels(uint8_t candidate_bank, size_t prepared,
+                                                     const bool *hardware_absent)
 {
     bool needs_verify[PLATFORM_CHANNEL_LIMIT] = {0};
     size_t pending = 0u;
@@ -514,6 +558,13 @@ static bool sensor_manager_verify_candidate_channels(uint8_t candidate_bank, siz
              * start()/configure()/self_test() already ran in
              * sensor_manager_start_candidates() and are this channel's only
              * hardware-facing confirmation. */
+            continue;
+        }
+        if (hardware_absent[index])
+        {
+            /* Device did not answer during startup: a read cannot succeed
+             * yet. The channel is still published and reaches
+             * SERVICE_QUALITY_BAD on its first failed poll. */
             continue;
         }
         if (sensor_manager_channel_is_new_or_changed(g_active_bank, g_active_count, candidate_channel))
@@ -562,6 +613,9 @@ static bool sensor_manager_activate_config_impl(const device_profile_config_t *c
 {
     const uint8_t candidate_bank = (uint8_t)(g_active_bank ^ 1u);
     size_t prepared = 0u;
+    /* Per-slot "this channel's device never answered" flags, produced by
+     * sensor_manager_start_candidates() and consumed by the verify gate. */
+    bool hardware_absent[PLATFORM_CHANNEL_LIMIT] = {0};
 
     /* This entire pass is pure service validation: no peripheral is touched. */
     if (!sensor_manager_prepare_candidate(config, candidate_bank, &prepared))
@@ -585,7 +639,7 @@ static bool sensor_manager_activate_config_impl(const device_profile_config_t *c
         }
         return false;
     }
-    if (!sensor_manager_start_candidates(candidate_bank, prepared))
+    if (!sensor_manager_start_candidates(candidate_bank, prepared, hardware_absent))
     {
         if (!sensor_manager_restart_active())
         {
@@ -623,7 +677,7 @@ static bool sensor_manager_activate_config_impl(const device_profile_config_t *c
      * (restore the old registry, restart the old drivers), since at this
      * point in the function that is still what "the previous configuration"
      * means. */
-    if (!sensor_manager_verify_candidate_channels(candidate_bank, prepared))
+    if (!sensor_manager_verify_candidate_channels(candidate_bank, prepared, hardware_absent))
     {
         sensor_manager_stop_candidates(candidate_bank, prepared);
         const bool registry_restored = channel_manager_reset() &&

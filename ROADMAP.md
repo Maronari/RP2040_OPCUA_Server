@@ -600,7 +600,7 @@ This release is intentionally **pre-hardware**. Industrial-board drivers must be
 - [ ] A configuration referencing a driver absent from the installed profile is rejected without altering the running configuration.
 - [ ] A failing/slow mock driver does not stop other channels.
 - [ ] GPIO write authorization and readback remain verified on available hardware/mock paths.
-- [ ] Driver self-test and board-diagnostic states map deterministically into channel quality and Device Health without treating unavailable custom hardware as a successful hardware test.
+- [ ] Driver self-test and board-diagnostic states map deterministically into channel quality and Device Health without treating unavailable custom hardware as a successful hardware test. *(2026-09-13: the self-test half is done — a driver reporting `TIMEOUT` ("device did not answer") now maps to that channel's `SERVICE_QUALITY_BAD` instead of aborting the whole activation transaction, so an unfitted chip costs one channel rather than all of them. The board-diagnostic → Device Health half is deliberately left to `v0.6.2`'s board-health aggregation line below, per `v0.5.1`'s scope decision 4; `board_diagnostics_service` has no runtime caller until then.)*
 - [ ] CI explicitly labels the industrial drivers as **compile/mock validated, not hardware qualified** until the custom PCB is available.
 
 ### Deferred hardware qualification

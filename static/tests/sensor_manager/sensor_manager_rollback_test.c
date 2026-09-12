@@ -16,6 +16,13 @@ static device_profile_config_t g_profile;
 static uint32_t g_revision = 1u;
 static uint8_t g_hardware_source;
 static uint32_t g_fail_start_mask;
+/* ROADMAP.md:603 -- "supported but hardware unavailable/not present", the
+ * TELEMETRY_DRIVER_RESULT_TIMEOUT every bus-attached industrial driver
+ * produces when nothing answers. Kept separate from the HARDWARE_FAILURE
+ * masks so the tests below can prove the two are treated differently. */
+static uint32_t g_timeout_start_mask;
+static uint32_t g_timeout_self_test_mask;
+static uint32_t g_fail_self_test_mask;
 static jmp_buf g_delay_exit;
 
 bool psram_allocator_is_ready(void) { return true; }
@@ -75,12 +82,20 @@ static uint8_t source_of(const telemetry_channel_t *channel)
     return ((const uint8_t *)channel->driver_context)[0];
 }
 
+static bool source_hardware_is_absent(uint8_t source)
+{
+    return ((g_timeout_start_mask | g_timeout_self_test_mask) & (1u << source)) != 0u;
+}
 static telemetry_driver_result_t fake_start(telemetry_channel_t *channel)
 {
     const uint8_t source = source_of(channel);
     if ((g_fail_start_mask & (1u << source)) != 0u)
     {
         return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+    }
+    if ((g_timeout_start_mask & (1u << source)) != 0u)
+    {
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
     }
     g_hardware_source = source;
     return TELEMETRY_DRIVER_RESULT_OK;
@@ -94,6 +109,12 @@ static telemetry_driver_result_t fake_stop(telemetry_channel_t *channel)
 static telemetry_driver_result_t fake_read(telemetry_channel_t *channel, uint32_t now)
 {
     (void)now;
+    if (source_hardware_is_absent(source_of(channel)))
+    {
+        /* A device that never answered startup does not answer reads either;
+         * channel_manager_poll_all() turns this into SERVICE_QUALITY_BAD. */
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
+    }
     channel->runtime.value.f32 = (float)g_hardware_source;
     return TELEMETRY_DRIVER_RESULT_OK;
 }
@@ -104,7 +125,15 @@ static telemetry_driver_result_t fake_configure(telemetry_channel_t *channel, co
 }
 static telemetry_driver_result_t fake_self_test(telemetry_channel_t *channel)
 {
-    (void)channel;
+    const uint8_t source = source_of(channel);
+    if ((g_fail_self_test_mask & (1u << source)) != 0u)
+    {
+        return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
+    }
+    if ((g_timeout_self_test_mask & (1u << source)) != 0u)
+    {
+        return TELEMETRY_DRIVER_RESULT_TIMEOUT;
+    }
     return TELEMETRY_DRIVER_RESULT_OK;
 }
 static const telemetry_driver_vtbl_t g_driver = {
@@ -302,5 +331,65 @@ int main(void)
     assert(channel_manager_count() == 2u);
     assert(channel_manager_copy_snapshot_by_id("channel.gpio_output.1", &snapshot));
     assert(source_of(&snapshot.channel) == 2u);
+
+    /* v0.5.1 ROADMAP.md:603 regression: a channel whose device never answers
+     * start() must still activate, and must land on SERVICE_QUALITY_BAD
+     * rather than taking the transaction down with it. Before the fix,
+     * sensor_manager_start_candidates() treated every non-OK result as
+     * fatal, so a single unfitted chip on the 16-channel industrial seed
+     * left the device with no channels at all. */
+    g_fail_start_mask = 0u;
+    g_timeout_start_mask = 1u << 3u;
+    memset(&g_profile, 0, sizeof(g_profile));
+    set_channel(0u, "channel.temperature.1", 1u); /* unchanged, device present */
+    set_channel(1u, "channel.absent.1", 3u);      /* device not fitted */
+    ++g_revision;
+    if (setjmp(g_delay_exit) == 0)
+    {
+        sensor_manager_task(NULL);
+    }
+    assert(channel_manager_count() == 2u);
+    assert(channel_manager_copy_snapshot_by_id("channel.absent.1", &snapshot));
+    assert(snapshot.channel.runtime.quality == SERVICE_QUALITY_BAD);
+    assert(channel_manager_copy_snapshot_by_id("channel.temperature.1", &snapshot));
+    assert(snapshot.channel.runtime.quality == SERVICE_QUALITY_GOOD);
+
+    /* Same contract one lifecycle step later: the device answers start() but
+     * self_test() finds nothing there. This is the case ROADMAP.md:603 names
+     * directly -- an unavailable device must not be reported as a passing
+     * self-test, and must not be reported as a broken configuration either. */
+    g_timeout_start_mask = 0u;
+    g_timeout_self_test_mask = 1u << 2u;
+    memset(&g_profile, 0, sizeof(g_profile));
+    set_channel(0u, "channel.temperature.1", 1u);
+    set_channel(1u, "channel.absent.2", 2u);
+    ++g_revision;
+    if (setjmp(g_delay_exit) == 0)
+    {
+        sensor_manager_task(NULL);
+    }
+    assert(channel_manager_count() == 2u);
+    assert(channel_manager_copy_snapshot_by_id("channel.absent.2", &snapshot));
+    assert(snapshot.channel.runtime.quality == SERVICE_QUALITY_BAD);
+
+    /* The tolerance is narrow on purpose: a device that answers and fails is
+     * still a failed activation, and still rolls the whole transaction back
+     * -- even when another channel in the same candidate is merely absent.
+     * The rollback also re-runs the previous configuration, which contains
+     * an absent-hardware channel of its own: restoring it must not be
+     * counted as a restore failure. */
+    g_fail_self_test_mask = 1u << 3u;  /* answers, fails */
+    g_timeout_start_mask = 1u << 1u;   /* absent */
+    memset(&g_profile, 0, sizeof(g_profile));
+    set_channel(0u, "channel.absent.3", 1u);
+    set_channel(1u, "channel.broken.1", 3u);
+    ++g_revision;
+    if (setjmp(g_delay_exit) == 0)
+    {
+        sensor_manager_task(NULL);
+    }
+    assert(channel_manager_count() == 2u);
+    assert(!channel_manager_copy_snapshot_by_id("channel.broken.1", &snapshot));
+    assert(channel_manager_copy_snapshot_by_id("channel.absent.2", &snapshot));
     return 0;
 }
