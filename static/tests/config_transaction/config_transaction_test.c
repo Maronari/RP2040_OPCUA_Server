@@ -640,7 +640,7 @@ int main(void)
         assert(!config_presets_apply(99u));
         assert(config_service_get_running_revision() == revision_before + 1u);
 
-        /* ROADMAP.md:603: a channel referencing a driver_id absent from the
+        /* ROADMAP.md:600: a channel referencing a driver_id absent from the
          * installed profile is rejected without altering the running
          * configuration. CONFIG_CHANNEL_DRIVER_ADS8688 is a real driver id
          * (a genuine v0.5.1 industrial driver) -- just not one of this

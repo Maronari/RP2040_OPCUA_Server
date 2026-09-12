@@ -15,7 +15,7 @@
  * the image at all. In a `FIRMWARE_DRIVER_PACK=base` build (the default)
  * this is therefore a no-op, so the reference RP2350 + W5500 board never
  * initializes `spi1` or claims PIO for chips it does not have --
- * `ROADMAP.md:552`'s profile separation, enforced at runtime rather than
+ * `ROADMAP.md:551`'s profile separation, enforced at runtime rather than
  * only at compile time.
  *
  * Pre-hardware: the pin map is frozen (`HARDWARE_MVP.md` section 6.3) but

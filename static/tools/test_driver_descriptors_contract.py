@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed check that static/host_descriptors/driver_descriptors.json
-(the versioned host-side sensor/module descriptor format, ROADMAP.md:555,
+(the versioned host-side sensor/module descriptor format, ROADMAP.md:554,
 v0.5.1 T15) stays in sync with services/driver_catalog.h's
 config_channel_driver_id_t enum -- every compiled driver_id must have a
 descriptor entry, and every descriptor entry must name a real driver_id

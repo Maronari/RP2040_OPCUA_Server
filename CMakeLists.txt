@@ -130,7 +130,7 @@ add_definitions(-DSET_TRUSTED_CERT_IN_SAMPLES)
 # reference drivers that predate v0.5.1 and apply to any board) and
 # "industrial" (RP2350_INDUSTRIAL_MVP_V1's full v0.5.1 T3-T13 driver set)
 # are defined today -- "environmental"/"motion"/"development" remain open
-# (docs/releases/v0.5.1.md ROADMAP.md:553 tracking) since their actual
+# (docs/releases/v0.5.1.md ROADMAP.md:552 tracking) since their actual
 # driver composition is not specified by any project document and needs a
 # product-scope decision, not a guess.
 #
@@ -141,7 +141,7 @@ add_definitions(-DSET_TRUSTED_CERT_IN_SAMPLES)
 # RP2350 + W5500 board neither carries nor initializes drivers for hardware
 # it does not have. Together with app/basic_profile's industrial board
 # bindings -- which exist only when those drivers are compiled in -- that
-# makes ROADMAP.md:552's "keep the reference-board profile and
+# makes ROADMAP.md:551's "keep the reference-board profile and
 # RP2350_INDUSTRIAL_MVP_V1 board profile separate" true at runtime, not
 # just at link time. The default was "industrial" until 2026-09-12, which
 # is why reference images built before then carried the full industrial

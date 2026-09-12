@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Versioned host-side sensor/module descriptor format (ROADMAP.md:555, v0.5.1 T15). Maps every services/driver_catalog.h driver_id compiled into this firmware image to its connection constraints, default channel template, units, and wiring information, for a host tool (a configurator, a validation script, or a human) to consult before writing a configuration. This data is host-side only and is not executable firmware code -- it must never be treated as authoritative over the firmware's own driver_catalog.c/native_*_source_is_valid() validation, which always has the final say at configuration-apply time. static/tools/test_driver_descriptors_contract.py keeps this file's driverId set in sync with services/driver_catalog.h.",
+  "description": "Versioned host-side sensor/module descriptor format (ROADMAP.md:554, v0.5.1 T15). Maps every services/driver_catalog.h driver_id compiled into this firmware image to its connection constraints, default channel template, units, and wiring information, for a host tool (a configurator, a validation script, or a human) to consult before writing a configuration. This data is host-side only and is not executable firmware code -- it must never be treated as authoritative over the firmware's own driver_catalog.c/native_*_source_is_valid() validation, which always has the final say at configuration-apply time. static/tools/test_driver_descriptors_contract.py keeps this file's driverId set in sync with services/driver_catalog.h.",
   "drivers": [
     {
       "driverId": 1,
@@ -197,7 +197,7 @@
     {
       "driverId": 10,
       "name": "synthetic",
-      "wiring": "None -- no external hardware dependency of any kind. Each channel counts its own read() calls independently, starting from 0 at start(), wrapping modulo 2^32. ROADMAP.md's generic 'synthetic benchmark source'/'loopback... source for host tests' driver, and this project's minimal standalone example driver (ROADMAP.md:590, v0.5.1 T16) -- see drivers/include/drivers/synthetic_driver.h and docs/code/adding-a-driver.md.",
+      "wiring": "None -- no external hardware dependency of any kind. Each channel counts its own read() calls independently, starting from 0 at start(), wrapping modulo 2^32. ROADMAP.md's generic 'synthetic benchmark source'/'loopback... source for host tests' driver, and this project's minimal standalone example driver (ROADMAP.md:587, v0.5.1 T16) -- see drivers/include/drivers/synthetic_driver.h and docs/code/adding-a-driver.md.",
       "connectionConstraints": {
         "sourceIndex": {"min": 0, "max": 7, "note": "eight independent synthetic channels so several can be configured at once without interfering"},
         "sourceFlags": {"allowed": [0], "note": "no configuration exists"}

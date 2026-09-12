@@ -92,7 +92,7 @@ typedef struct
     /** Mutable, service-owned per-instance scratch state (v0.5.1 T16/T19+:
      * lives here, in the already-existing per-channel allocation, rather
      * than a driver-private file-static array, so a compiled-but-unused
-     * driver holds none of it -- ROADMAP.md:602). Meaning is entirely
+     * driver holds none of it -- ROADMAP.md:599). Meaning is entirely
      * driver-specific and not serialized; a driver resets its own member
      * in start() and must never read a member a different driver last
      * wrote -- the union itself does not track which one applies, only

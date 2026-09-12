@@ -1,6 +1,6 @@
 # How to add a native channel driver
 
-Implements `ROADMAP.md:589` ("Document how to add a driver, reserve
+Implements `ROADMAP.md:586` ("Document how to add a driver, reserve
 resources, define configuration and expose channels") and `:590` ("Provide
 a minimal standalone example driver outside model code"), written during
 v0.5.1 T16. The example driver this document walks through end to end is
@@ -213,7 +213,7 @@ Register the new suite's `.py` runner in `static/tools/run_host_tests.py`'s
 ## 8. Add the driver to the host-side descriptor file
 
 Add an entry to `static/host_descriptors/driver_descriptors.json`
-(`ROADMAP.md:555`, v0.5.1 T15): `driverId`, `name`, `wiring`,
+(`ROADMAP.md:554`, v0.5.1 T15): `driverId`, `name`, `wiring`,
 `connectionConstraints` (the exact `sourceIndex`/`sourceFlags` meaning
 from section 2), `defaultChannelTemplate`, `capabilities`.
 `static/tools/test_driver_descriptors_contract.py` fails closed if a

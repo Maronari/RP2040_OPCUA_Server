@@ -154,7 +154,7 @@ release plan records the outcome.
   transport abstraction across all three; that was explicitly rejected as
   premature during release planning.
 - Once Phase 1 starts, implement the remaining industrial drivers strictly in
-  `ROADMAP.md`'s own listed order (`ROADMAP.md:556-582`), not reordered by
+  `ROADMAP.md`'s own listed order (`ROADMAP.md:555-579`), not reordered by
   inferred hardware/power-sequencing dependency.
 - `config_channel_driver_id_t` (`services/include/services/driver_catalog.h`)
   is persisted in Flash and the config-wire format: append new driver IDs

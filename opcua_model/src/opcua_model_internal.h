@@ -77,7 +77,7 @@ UA_ConnectionManager *UA_ConnectionManager_new_MQTT(const UA_String eventSourceN
  * ADC voltage, GPIO input/output) or `"industrial"`
  * (`RP2350_INDUSTRIAL_MVP_V1`'s full v0.5.1 driver set).
  * `"environmental"`/`"motion"`/`"development"` are not yet defined -- see
- * `docs/releases/v0.5.1.md`'s still-open `ROADMAP.md:553` tracking.
+ * `docs/releases/v0.5.1.md`'s still-open `ROADMAP.md:552` tracking.
  * `#ifndef`-guarded so a standalone build of this header (e.g. a host
  * test) that never passes the CMake definition still compiles.
  */

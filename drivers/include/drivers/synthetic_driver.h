@@ -3,8 +3,8 @@
  * @brief Native channel driver for a synthetic (no external hardware)
  *        benchmark/loopback source -- `ROADMAP.md`'s "synthetic benchmark
  *        source" / "loopback... source for host tests" generic driver
- *        (`ROADMAP.md:562-563`), and this project's minimal standalone
- *        example driver (`ROADMAP.md:590`, v0.5.1 T16).
+ *        (`ROADMAP.md:561-562`), and this project's minimal standalone
+ *        example driver (`ROADMAP.md:587`, v0.5.1 T16).
  *
  * **Read this file first if you are adding a new native driver.** It is
  * deliberately the simplest complete driver in this codebase: no bus, no

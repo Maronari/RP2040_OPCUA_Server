@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Emit CI's explicit driver hardware-qualification label (ROADMAP.md:607).
+"""Emit CI's explicit driver hardware-qualification label (ROADMAP.md:604).
 
 Prints a human-readable label to stdout (a CI step can append this to
 $GITHUB_STEP_SUMMARY) and writes the same facts to a JSON file for the

@@ -76,7 +76,7 @@
  * period deltas) lives in that same struct's `scratch.uic_derived` member
  * (v0.5.1 T19+ static-allocation audit correction) -- not a driver-private
  * file-static array, so a compiled-but-unconfigured `UIC` driver holds
- * none of it (`ROADMAP.md:602`).
+ * none of it (`ROADMAP.md:599`).
  *
  * Concurrency: none; per `native_channel_driver.h`'s file-level doc, all
  * calls arrive serialized from SensorTask.
