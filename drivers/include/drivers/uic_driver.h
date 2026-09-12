@@ -22,21 +22,30 @@
  * `pio_edge_counter_t` abstraction this driver's other modes are built on
  * does not block adding it later.
  *
- * Board topology: `UIC0..UIC3` sit behind a `TLV3214PWR` comparator
+ * Board topology: `UIC0..UIC3` sit behind a `TLV9034PWR` comparator
  * frontend (`HARDWARE_MVP.md` section 3.5) that already produces a clean
  * digital signal on `GPIO40..GPIO43` -- this driver reads/counts that
- * digital signal directly. The UIC block is **input-only digital** as of
- * the 2026-09-10 `HARDWARE_MVP.md` freeze: the comparator path does not
- * preserve analog amplitude, and `GPIO40..GPIO43`'s ADC capability is
- * explicitly not part of the UIC hardware contract -- there is no analog
- * or bidirectional UIC mode to implement.
+ * digital signal directly. The UIC block is **input-only digital**: the
+ * comparator path does not preserve analog amplitude, and
+ * `GPIO40..GPIO43`'s ADC capability is explicitly not part of the UIC
+ * hardware contract -- there is no analog or bidirectional UIC mode to
+ * implement.
+ *
+ * **The frontend inverts** (`HARDWARE_MVP.md` section 3.5.1): an asserted
+ * field input appears as a LOW level at the MCU, so every UIC channel is
+ * electrically active-low. Digital-input mode inverts on read, so a
+ * channel's value is the field state rather than the pin state. The
+ * counter-based modes need no correction: the PIO counts one pin
+ * low-to-high transition per field cycle either way (the field's falling
+ * edge), which leaves frequency and period unchanged.
  *
  * Per-channel mode selection lives in `source_flags` (bits 0-2, matching
  * the v0.5.1 T1 finding that a channel with no runtime `configure()`
  * payload should carry its static configuration in `source_flags`):
  *
- * - `0` = digital input (direct `hardware/gpio.h` read, no PIO/counter
- *   involved at all -- value type `BOOLEAN`);
+ * - `0` = digital input (direct `hardware/gpio.h` read, inverted for the
+ *   active-low frontend, no PIO/counter involved at all -- value type
+ *   `BOOLEAN`, `true` = field input asserted);
  * - `1` = pulse count (cumulative edge count since `start()`, value type
  *   `DOUBLE`);
  * - `2` = frequency in Hz, computed from the edge-count delta between

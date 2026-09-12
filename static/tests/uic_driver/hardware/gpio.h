@@ -4,7 +4,7 @@
  *        covering only the calls drivers/src/uic_driver.c's digital-input
  *        mode makes (gpio_init/gpio_set_dir/gpio_disable_pulls/gpio_get).
  *        The test sets g_gpio_stub_external_level[] directly to simulate
- *        the TLV3214PWR comparator frontend driving a level onto the pin,
+ *        the TLV9034PWR comparator frontend driving a level onto the pin,
  *        since this driver never drives these pins itself.
  */
 #ifndef HARDWARE_GPIO_H

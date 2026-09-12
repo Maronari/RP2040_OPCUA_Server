@@ -100,13 +100,14 @@ static void test_digital_input_mode_never_touches_the_counter(void)
     assert(native_uic_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
     assert(g_gpio_stub_pulls_disabled[UIC_BASE_GPIO + 2u]);
 
+    /* Active-low frontend: a HIGH pin is an idle field input. */
     g_gpio_stub_external_level[UIC_BASE_GPIO + 2u] = true;
     assert(native_uic_read(&channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
-    assert(channel.runtime.value.boolean == true);
+    assert(channel.runtime.value.boolean == false);
 
     g_gpio_stub_external_level[UIC_BASE_GPIO + 2u] = false;
     assert(native_uic_read(&channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
-    assert(channel.runtime.value.boolean == false);
+    assert(channel.runtime.value.boolean == true);
     assert(native_uic_stop(&channel) == TELEMETRY_DRIVER_RESULT_OK);
 }
 
@@ -209,10 +210,41 @@ static void test_value_type_mismatch_rejected(void)
     assert(native_uic_read(&wrong_counter, 0u) == TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT);
 }
 
+/*
+ * Regression: HARDWARE_MVP.md section 3.5.1 freezes this board's UIC
+ * frontend as inverting -- "field HIGH -> UICx_IN = LOW" -- so a channel
+ * must report the field state, not the pin state. Until 2026-09-12 the
+ * driver returned the pin level directly, reporting every digital UIC
+ * channel inverted.
+ */
+static void test_digital_input_is_active_low(void)
+{
+    gpio_stub_reset();
+    fake_counter_reset();
+    native_uic_bind_counter(NULL);
+
+    for (uint8_t index = 0u; index < UIC_CHANNEL_COUNT; ++index)
+    {
+        native_channel_source_t source = {.source_index = index, .source_flags = UIC_MODE_DIGITAL_INPUT};
+        telemetry_channel_t channel = make_channel(&source, TELEMETRY_CHANNEL_VALUE_BOOLEAN);
+
+        assert(native_uic_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+
+        g_gpio_stub_external_level[UIC_BASE_GPIO + index] = false; /* field asserted */
+        assert(native_uic_read(&channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+        assert(channel.runtime.value.boolean == true);
+
+        g_gpio_stub_external_level[UIC_BASE_GPIO + index] = true; /* field idle */
+        assert(native_uic_read(&channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+        assert(channel.runtime.value.boolean == false);
+    }
+}
+
 int main(void)
 {
     test_source_validation();
     test_digital_input_mode_never_touches_the_counter();
+    test_digital_input_is_active_low();
     test_pulse_count_mode();
     test_frequency_and_period_modes();
     test_no_counter_bound();

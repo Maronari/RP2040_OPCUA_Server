@@ -6,6 +6,13 @@
  * See drivers/include/drivers/uic_driver.h for the full contract,
  * including the deliberate quadrature-encoder scope decision.
  *
+ * Field polarity: the board's comparator frontend inverts, so an asserted
+ * (HIGH) field input reads LOW at the MCU. Digital-input mode therefore
+ * returns `gpio_get() == 0`, and the PIO counter's low-to-high pin
+ * transitions are the field's falling edges -- one per field cycle either
+ * way, so the rate-derived modes need no correction
+ * (`HARDWARE_MVP.md` section 3.5.1).
+ *
  * Ownership: g_counter is a single file-static binding shared by every UIC
  * channel instance (mirrors ads8688_driver.c's g_bus -- a genuine
  * board-wide singleton, not per-channel, so it stays file-static).
@@ -133,7 +140,9 @@ telemetry_driver_result_t native_uic_read(telemetry_channel_t *channel, uint32_t
         {
             return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT;
         }
-        channel->runtime.value.boolean = gpio_get(gpio) != 0;
+        /* Active-low at the MCU: the comparator frontend inverts, so a
+         * LOW pin means the field input is asserted. */
+        channel->runtime.value.boolean = gpio_get(gpio) == 0;
         return TELEMETRY_DRIVER_RESULT_OK;
     }
     if (channel->metadata.value_type != TELEMETRY_CHANNEL_VALUE_DOUBLE)
