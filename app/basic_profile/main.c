@@ -93,6 +93,8 @@
 #ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #include "device_identity_provisioning.h"
 #endif
+#include "industrial_board_bindings.h"
+#include "industrial_seed_config.h"
 
 #define STACK_DEPTH_BYTES(byte_count) ((configSTACK_DEPTH_TYPE)(((byte_count) + sizeof(StackType_t) - 1u) / sizeof(StackType_t)))
 
@@ -766,7 +768,15 @@ static void app_init_task(void *argument)
         app_fault_loop(true, 250u);
     }
 
+    /* The industrial pack seeds every AI/AO/DI/DO/UIC channel the board
+     * provides; the reference pack seeds the single internal-temperature
+     * channel. Either way this only applies when no persisted configuration
+     * exists -- a configured device keeps its own. */
+#if APP_INDUSTRIAL_SEED_AVAILABLE
+    if (!config_service_init(&g_industrial_profile))
+#else
     if (!config_service_init(&g_basic_profile))
+#endif
     {
         printf("[APP]\t\tConfiguration state allocation failed\n");
         fflush(stdout);
@@ -793,6 +803,16 @@ static void app_init_task(void *argument)
     if (!network_manager_init())
     {
         printf("[APP]\t\tNetwork manager init failed\n");
+    }
+
+    /* Must precede sensor_manager_init(): that call activates the running
+     * configuration, which starts channel drivers -- and an SPI-attached or
+     * UIC counter-mode driver that has not been handed its backing fails
+     * start() with INVALID_STATE. A no-op unless industrial drivers are
+     * compiled in, so the reference build touches no industrial peripheral. */
+    if (!industrial_board_bindings_apply())
+    {
+        printf("[APP]\t\tIndustrial board bindings failed\n");
     }
 
     if (!sensor_manager_init())

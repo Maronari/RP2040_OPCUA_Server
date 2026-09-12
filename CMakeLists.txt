@@ -134,18 +134,25 @@ add_definitions(-DSET_TRUSTED_CERT_IN_SAMPLES)
 # driver composition is not specified by any project document and needs a
 # product-scope decision, not a guess.
 #
-# Selecting "base" defaults every v0.5.1 industrial-only
-# FIRMWARE_ENABLE_NATIVE_*/FIRMWARE_ENABLE_INDUSTRIAL_* option to OFF
-# unless a caller has already set it explicitly (via -D or a prior cache
-# entry, checked with DEFINED before this ever touches the cache) --
-# giving ROADMAP.md:552's "keep the reference-board profile and
-# RP2350_INDUSTRIAL_MVP_V1 board profile separate" a real, working build
-# path for the first time. Selecting "industrial" (the default, matching
-# what has always been compiled in by default since v0.5.1 began) leaves
-# every one of those options at its own existing default (ON) --
-# untouched here.
-set(FIRMWARE_DRIVER_PACK "industrial" CACHE STRING
-    "Named driver-pack manifest: base (generic reference drivers only) or industrial (RP2350_INDUSTRIAL_MVP_V1's full v0.5.1 driver set)")
+# Selecting "base" -- the default since 2026-09-12 -- forces every v0.5.1
+# industrial-only FIRMWARE_ENABLE_NATIVE_* option OFF unless a caller has
+# already set it explicitly (via -D or a prior cache entry, checked with
+# DEFINED before this ever touches the cache), so the reference
+# RP2350 + W5500 board neither carries nor initializes drivers for hardware
+# it does not have. Together with app/basic_profile's industrial board
+# bindings -- which exist only when those drivers are compiled in -- that
+# makes ROADMAP.md:552's "keep the reference-board profile and
+# RP2350_INDUSTRIAL_MVP_V1 board profile separate" true at runtime, not
+# just at link time. The default was "industrial" until 2026-09-12, which
+# is why reference images built before then carried the full industrial
+# driver set.
+#
+# Selecting "industrial" leaves every one of those options at its own
+# existing default (ON) and builds the complete RP2350_INDUSTRIAL_MVP_V1
+# profile: all industrial drivers, their board bus/counter bindings, and a
+# seed configuration populating every AI/AO/DI/DO/UIC channel.
+set(FIRMWARE_DRIVER_PACK "base" CACHE STRING
+    "Named driver-pack manifest: base (generic reference drivers only, the default) or industrial (RP2350_INDUSTRIAL_MVP_V1's full v0.5.1 driver set)")
 set_property(CACHE FIRMWARE_DRIVER_PACK PROPERTY STRINGS base industrial)
 if(NOT FIRMWARE_DRIVER_PACK STREQUAL "base" AND NOT FIRMWARE_DRIVER_PACK STREQUAL "industrial")
     message(FATAL_ERROR "FIRMWARE_DRIVER_PACK must be 'base' or 'industrial', got '${FIRMWARE_DRIVER_PACK}'")
