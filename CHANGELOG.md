@@ -42,6 +42,12 @@ qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
 - Fixes found on the reference board: a fourth concurrent OPC UA connection
   no longer hangs (MEM-01), and temperature HistoryRead no longer stays
   unavailable after boot (MEM-02); both confirmed on hardware.
+- OPC UA clock (regression present in `v0.5.0`): the open62541 v1.5.7 upgrade
+  had dropped the port hook that makes `UA_DateTime_now()` use the
+  SNTP-synchronized clock, so event, condition, maintenance and ServerStatus
+  times and SecureChannel token `CreatedAt` read 1970 + uptime, and long
+  sessions with strict clients such as asyncua could abort at token renewal.
+  Restored and guarded by a host test; confirmed on the reference board.
 - Resource claims: GPIO-driven drivers claim their physical pins, so a
   generic GPIO channel can no longer alias an industrial signal.
 - Breaking: the default pack is `base`; `industrial` images target only the
@@ -50,10 +56,12 @@ qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
   (`TCAL9539`, board power service) were removed with their hardware
   (2026-09-10); `AD5422` accepts only range codes `0x01`/`0x05` and has no
   `SelfTest`; `ADS8688` accepts only mux inputs 0-3.
-- Still open for this release: live capability/NodeSet comparison and
-  UaExpert inspection, UIC quadrature mode, the `environmental`/`motion`/
-  `development` packs (deferred by decision), and all industrial hardware
-  qualification.
+- Verified live on the reference board (2026-09-13): capability model and
+  `SupportedDrivers` against the build, NodeSet exports against an
+  independent address-space walk, HistoryRead and DI/AMB model.
+- Still open for this release: UaExpert inspection, UIC quadrature mode, the
+  `environmental`/`motion`/`development` packs (deferred by decision), and
+  all industrial hardware qualification.
 
 ## v0.5.0
 
