@@ -48,6 +48,16 @@ qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
   times and SecureChannel token `CreatedAt` read 1970 + uptime, and long
   sessions with strict clients such as asyncua could abort at token renewal.
   Restored and guarded by a host test; confirmed on the reference board.
+  Until the first SNTP sync after a cold boot, those timestamps are the OPC UA
+  null DateTime (1601-01-01), never a boot-relative value.
+- Login backoff: lockouts ran on the SNTP wall clock, which reads 0 until the
+  first sync, so on a cold boot without NTP one wrong password locked the
+  account until the network delivered a time, and SNTP corrections moved
+  running lockouts. Lockouts now use the monotonic boot clock.
+- Time status: `Device.Time.TimeSynced`/Good was reported even when the RTC
+  rejected the SNTP time, and a sync could be lost to a status write-back
+  race. Sync is now reported only for a time the RTC accepted and only while
+  the RTC stays valid; rejected times count in the sync error counter.
 - Resource claims: GPIO-driven drivers claim their physical pins, so a
   generic GPIO channel can no longer alias an industrial signal.
 - Breaking: the default pack is `base`; `industrial` images target only the
