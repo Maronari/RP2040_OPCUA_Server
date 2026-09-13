@@ -26,6 +26,7 @@
 #include "mbedtls/x509_crt.h"
 #include "ota_layout.h"
 #include "pico/rand.h"
+#include "services/login_backoff.h"
 #include "services/security_state_service.h"
 #include "pico/sha256.h"
 #include "pico/stdio.h"
@@ -37,8 +38,6 @@
 #define SECURITY_SERVICE_DEFAULT_ADMIN_USER     "admin"
 #define SECURITY_SERVICE_DEFAULT_ADMIN_PASSWORD "admin"
 #define SECURITY_SERVICE_FLAG_COMMISSIONING_MODE (1u << 0u)
-#define SECURITY_SERVICE_AUTH_BASE_BACKOFF_MS   1000u
-#define SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS    32000u
 
 #define fflush(_stream) stdio_flush()
 
@@ -82,11 +81,7 @@ typedef struct
 } security_service_store_t;
 
 /** Per-user (or per-unknown-username) login-backoff bookkeeping; runtime-only, not persisted. */
-typedef struct
-{
-    uint32_t failed_attempts;
-    uint64_t blocked_until_us;
-} security_service_auth_runtime_t;
+typedef login_backoff_t security_service_auth_runtime_t;
 
 /** True once `security_service_init()` has established a valid Flash store; gates every other accessor. */
 static bool g_security_store_ready = false;
@@ -172,62 +167,23 @@ static uint32_t security_service_now_epoch_s(void)
     return get_system_time();
 }
 
-/** @brief Current monotonic microsecond timestamp used for login-backoff arithmetic. */
+/**
+ * @brief Monotonic microseconds since boot for login-backoff arithmetic.
+ *
+ * Deliberately `time_us_64()`, never the wall clock (`get_system_time_us()`):
+ * before SNTP the RTC is invalid and that reads a constant 0, so one failed
+ * login would lock the account until the network delivered a time, and an
+ * SNTP correction would shorten or stretch every running lockout.
+ */
 static uint64_t security_service_now_us(void)
 {
-    return get_system_time_us();
+    return time_us_64();
 }
 
 /** @brief Clears a login-backoff record's failure count and lockout deadline; no-op if NULL. */
 static void security_service_reset_auth_runtime(security_service_auth_runtime_t *runtime)
 {
-    if (runtime == NULL)
-    {
-        return;
-    }
-
-    runtime->failed_attempts = 0u;
-    runtime->blocked_until_us = 0u;
-}
-
-/**
- * @brief Computes the exponential login-backoff duration for a given
- * consecutive-failure count: doubles from
- * `SECURITY_SERVICE_AUTH_BASE_BACKOFF_MS` per additional failure, capped at
- * `SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS`.
- */
-static uint32_t security_service_compute_backoff_ms(uint32_t failed_attempts)
-{
-    uint32_t backoff_ms = SECURITY_SERVICE_AUTH_BASE_BACKOFF_MS;
-    uint32_t steps = failed_attempts;
-
-    while (steps > 1u && backoff_ms < SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS)
-    {
-        backoff_ms <<= 1u;
-        if (backoff_ms > SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS)
-        {
-            backoff_ms = SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS;
-            break;
-        }
-        --steps;
-    }
-
-    return backoff_ms;
-}
-
-/** @brief Milliseconds remaining until @p runtime's lockout expires (rounded up); 0 if not locked out or NULL. */
-static uint32_t security_service_remaining_backoff_ms(const security_service_auth_runtime_t *runtime,
-                                                      uint64_t now_us)
-{
-    uint64_t remaining_us;
-
-    if (runtime == NULL || runtime->blocked_until_us <= now_us)
-    {
-        return 0u;
-    }
-
-    remaining_us = runtime->blocked_until_us - now_us;
-    return (uint32_t)((remaining_us + 999u) / 1000u);
+    login_backoff_reset(runtime);
 }
 
 /** @brief Bumps the global failed-login counter and records the current time as the last failure. */
@@ -1330,7 +1286,7 @@ security_auth_result_t security_service_authenticate_user(const char *username,
         runtime = &g_user_auth_runtime[index];
     }
 
-    retry_after_ms = security_service_remaining_backoff_ms(runtime, now_us);
+    retry_after_ms = login_backoff_remaining_ms(runtime, now_us);
     if (retry_after_ms > 0u)
     {
         char details[64];
@@ -1352,9 +1308,7 @@ security_auth_result_t security_service_authenticate_user(const char *username,
         uint32_t backoff_ms;
         char details[64];
 
-        ++runtime->failed_attempts;
-        backoff_ms = security_service_compute_backoff_ms(runtime->failed_attempts);
-        runtime->blocked_until_us = now_us + (uint64_t)backoff_ms * 1000u;
+        backoff_ms = login_backoff_record_failure(runtime, now_us);
 
         if (out_retry_after_ms != NULL)
         {

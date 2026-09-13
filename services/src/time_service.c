@@ -9,12 +9,15 @@
  * exclusively by this module.
  *
  * Concurrency:
- * `g_status` is written only via `time_service_set_status()` and read only
- * via `time_service_get_status()`, both under `taskENTER_CRITICAL`/
- * `taskEXIT_CRITICAL`, so it is safe to call from any task. `g_initialized`
- * is set once by time_service_init() before "TimeTask" starts and read
- * afterward without synchronization (benign - written once before any
- * reader task runs).
+ * `g_status` has two concurrent writers: TimeTask (time_service_refresh())
+ * and the lwIP SNTP callback (set_system_time(), on the tcpip thread). Each
+ * updates only the fields it owns inside `taskENTER_CRITICAL`/
+ * `taskEXIT_CRITICAL`; neither copies the whole struct out and back, which
+ * would let one silently discard the other's update (a sync recorded by the
+ * callback between TimeTask's read and write used to be lost). Hardware and
+ * SNTP calls stay outside the critical sections. `g_initialized` is set once
+ * by time_service_init() before "TimeTask" starts and read afterward without
+ * synchronization (benign - written once before any reader task runs).
  */
 #include "services/time_service.h"
 
@@ -31,12 +34,25 @@
 static time_service_status_t g_status;
 static bool g_initialized = false;
 
-/** @brief Publishes @p status to `g_status` under a critical section. Sole writer of `g_status`. */
-static void time_service_set_status(const time_service_status_t *status)
+/**
+ * @brief Recomputes the derived fields from `rtc_valid` and
+ *        `last_sync_epoch_s`; caller holds the critical section.
+ */
+static void time_service_derive_locked(time_service_status_t *status)
 {
-    taskENTER_CRITICAL();
-    g_status = *status;
-    taskEXIT_CRITICAL();
+    status->synchronized = status->last_sync_epoch_s > 0u && status->rtc_valid;
+    if (status->synchronized)
+    {
+        status->quality = SERVICE_QUALITY_GOOD;
+    }
+    else if (status->rtc_valid)
+    {
+        status->quality = SERVICE_QUALITY_UNCERTAIN;
+    }
+    else
+    {
+        status->quality = SERVICE_QUALITY_BAD;
+    }
 }
 
 bool time_service_init(void)
@@ -58,18 +74,28 @@ bool time_service_init(void)
 
 void set_system_time(uint32_t seconds)
 {
-    time_service_status_t status = {0};
+    /* Only a time the RTC actually accepted counts as a sync: if the AON
+     * timer rejects it, claiming synchronized/GOOD would advertise a wall
+     * clock that time_service_get_utc_time_us() -- and so every OPC UA
+     * timestamp -- cannot deliver. */
+    const bool applied = rtc_driver_set_unix_time(seconds);
+    const bool rtc_valid = rtc_driver_is_valid();
 
-    rtc_driver_set_unix_time(seconds);
-    time_service_get_status(&status);
-    status.unix_time_s = seconds;
-    status.last_sync_epoch_s = seconds;
-    status.rtc_valid = true;
-    status.sntp_started = true;
-    status.synchronized = true;
-    status.sync_count++;
-    status.quality = SERVICE_QUALITY_GOOD;
-    time_service_set_status(&status);
+    taskENTER_CRITICAL();
+    g_status.sntp_started = true;
+    g_status.rtc_valid = rtc_valid;
+    if (applied && rtc_valid)
+    {
+        g_status.unix_time_s = seconds;
+        g_status.last_sync_epoch_s = seconds;
+        g_status.sync_count++;
+    }
+    else
+    {
+        g_status.sync_error_count++;
+    }
+    time_service_derive_locked(&g_status);
+    taskEXIT_CRITICAL();
 }
 
 uint32_t get_system_time(void)
@@ -108,6 +134,32 @@ int16_t get_system_timezone_offset_minutes(void)
     return config_service_get()->timezone_offset_minutes;
 }
 
+void time_service_refresh(void)
+{
+    time_service_status_t snapshot = {0};
+    bool rtc_valid;
+    uint32_t unix_time_s;
+
+    time_service_get_status(&snapshot);
+    if (network_manager_is_ready() && !snapshot.sntp_started)
+    {
+        sntp_setservername(0, snapshot.ntp_server);
+        sntp_init();
+        taskENTER_CRITICAL();
+        g_status.sntp_started = true;
+        taskEXIT_CRITICAL();
+    }
+
+    rtc_valid = rtc_driver_is_valid();
+    unix_time_s = rtc_driver_get_unix_time();
+
+    taskENTER_CRITICAL();
+    g_status.rtc_valid = rtc_valid;
+    g_status.unix_time_s = unix_time_s;
+    time_service_derive_locked(&g_status);
+    taskEXIT_CRITICAL();
+}
+
 void time_service_task(void *argument)
 {
     (void)argument;
@@ -116,34 +168,7 @@ void time_service_task(void *argument)
 
     while (1)
     {
-        time_service_status_t status = {0};
-        time_service_get_status(&status);
-
-        if (network_manager_is_ready() && !status.sntp_started)
-        {
-            sntp_setservername(0, status.ntp_server);
-            sntp_init();
-            status.sntp_started = true;
-        }
-
-        status.rtc_valid = rtc_driver_is_valid();
-        status.unix_time_s = rtc_driver_get_unix_time();
-        status.synchronized = status.synchronized || status.last_sync_epoch_s > 0u;
-
-        if (status.synchronized)
-        {
-            status.quality = SERVICE_QUALITY_GOOD;
-        }
-        else if (status.rtc_valid)
-        {
-            status.quality = SERVICE_QUALITY_UNCERTAIN;
-        }
-        else
-        {
-            status.quality = SERVICE_QUALITY_BAD;
-        }
-
-        time_service_set_status(&status);
+        time_service_refresh();
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(1000));
     }
 }
@@ -173,7 +198,8 @@ bool time_service_request_sync_now(void)
     sntp_stop();
     sntp_setservername(0, status.ntp_server);
     sntp_init();
-    status.sntp_started = true;
-    time_service_set_status(&status);
+    taskENTER_CRITICAL();
+    g_status.sntp_started = true;
+    taskEXIT_CRITICAL();
     return true;
 }

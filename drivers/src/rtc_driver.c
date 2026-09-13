@@ -211,7 +211,7 @@ bool rtc_driver_is_valid(void)
     return g_rtc_initialized && g_rtc_valid && aon_timer_is_running();
 }
 
-void rtc_driver_set_unix_time(uint32_t seconds)
+bool rtc_driver_set_unix_time(uint32_t seconds)
 {
     if (!g_rtc_initialized)
     {
@@ -219,6 +219,7 @@ void rtc_driver_set_unix_time(uint32_t seconds)
     }
 
     g_rtc_valid = rtc_driver_apply_unix_time(seconds);
+    return g_rtc_valid;
 }
 
 uint32_t rtc_driver_get_unix_time(void)

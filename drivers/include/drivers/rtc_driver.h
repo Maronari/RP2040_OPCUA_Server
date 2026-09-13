@@ -40,11 +40,12 @@ bool rtc_driver_is_valid(void);
  * directly.
  *
  * @param seconds Unix timestamp (UTC) to program into the RTC.
- * @post rtc_driver_is_valid() becomes true only if the underlying AON-timer
- *       start/set call succeeds.
+ * @return true if the AON-timer start/set call succeeded; false otherwise,
+ *         in which case the RTC is no longer considered valid.
+ * @post rtc_driver_is_valid() is true only if this call returned true.
  * @note Hardware side effect: reprograms the RP2350 Always-On timer.
  */
-void rtc_driver_set_unix_time(uint32_t seconds);
+bool rtc_driver_set_unix_time(uint32_t seconds);
 
 /**
  * @brief Read the current Unix time (UTC, seconds) from the RTC.

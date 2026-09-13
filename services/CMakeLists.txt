@@ -14,6 +14,7 @@ set(FIRMWARE_SERVICES_SOURCES
         src/device_health_service.c
         src/firmware_update_service.c
         src/history_service.c
+        src/login_backoff.c
         src/maintenance_service.c
         src/network_manager.c
         src/security_service.c

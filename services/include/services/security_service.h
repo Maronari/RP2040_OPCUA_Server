@@ -278,8 +278,11 @@ bool security_service_verify_password(const char *username,
  * @brief Authenticates a user for session/login purposes, applying
  * per-username exponential backoff on repeated failures.
  *
- * Backoff starts at `SECURITY_SERVICE_AUTH_BASE_BACKOFF_MS` (1s) and doubles
- * per consecutive failure up to `SECURITY_SERVICE_AUTH_MAX_BACKOFF_MS` (32s).
+ * Backoff starts at `LOGIN_BACKOFF_BASE_MS` (1s) and doubles per consecutive
+ * failure up to `LOGIN_BACKOFF_MAX_MS` (32s) -- see
+ * `services/login_backoff.h`. Lockouts run on the monotonic boot clock, so
+ * they expire on schedule whether or not SNTP has set the wall clock, and
+ * wall-clock corrections neither shorten nor extend them.
  * Unknown usernames share a single backoff bucket (`g_unknown_auth_runtime`)
  * to avoid revealing whether a username exists via timing. Every attempt
  * (locked-out, invalid, or successful) is written to the audit log.
