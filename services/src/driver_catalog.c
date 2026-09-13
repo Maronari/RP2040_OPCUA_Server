@@ -198,7 +198,8 @@ static const telemetry_driver_vtbl_t g_ad5422_driver = {
     .start = native_ad5422_start,
     .stop = native_ad5422_stop,
     .write = native_ad5422_write,
-    .self_test = native_ad5422_self_test,
+    /* No self_test: no AD5422 SDO reaches the MCU on this board, so an SPI
+     * readback probe cannot work (see drivers/include/drivers/ad5422_driver.h). */
 };
 #endif
 #if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
@@ -334,7 +335,7 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
         .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
                                  TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
         .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
-                        TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+                        TELEMETRY_DRIVER_CAPABILITY_WRITE,
         .validate_source = validate_ad5422,
         .driver = &g_ad5422_driver,
     },
@@ -470,11 +471,11 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
         return false;
     }
     if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE || driver_id == CONFIG_CHANNEL_DRIVER_ADS8688 ||
-        driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_UIC)
+        driver_id == CONFIG_CHANNEL_DRIVER_UIC)
     {
         required = 2u;
     }
-    else if (driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
     {
         required = 3u;
     }
@@ -544,6 +545,14 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
         out_claims[1] = (driver_catalog_resource_claim_t){
             .type = DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL,
             .index = 0u,
+            .shared = true,
+        };
+        /* AO_ENABLE_REQ (GPIO9), driven by native_ad5422_start()'s chain
+         * startup. Shared by AO0/AO1, which drive the same single line, but
+         * an exclusive gpio_input/gpio_output claim on GPIO9 conflicts. */
+        out_claims[2] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = INDUSTRIAL_AO_ENABLE_GPIO,
             .shared = true,
         };
     }

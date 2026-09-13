@@ -81,9 +81,9 @@
     {
       "driverId": 5,
       "name": "ads8688",
-      "wiring": "RP2350_INDUSTRIAL_MVP_V1 industrial 8-channel SPI ADC (ADS8688IDBTR), AI0..AI3 wired on this board. Shares the board's single physical SPI bus (SCK/MOSI/MISO) with ad5422 and max22190; has its own dedicated chip-select pin. See docs/datasheets/ADS8688-register-notes.md.",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 industrial 8-channel SPI ADC (ADS8688IDBTR), AI0..AI3 wired to CH0..CH3 on this board, CH4..CH7 tied to AGND. Shares the board's single physical SPI bus (SCK/MOSI/MISO) with ad5422 and max22190; has its own dedicated chip-select pin and uses SPI mode 1 (CPOL=0, CPHA=1), applied per transaction. See docs/datasheets/ADS8688-register-notes.md.",
       "connectionConstraints": {
-        "sourceIndex": {"min": 0, "max": 7, "note": "chip supports 8 mux inputs; only AI0..AI3 are physically wired on this board"},
+        "sourceIndex": {"min": 0, "max": 3, "note": "AI0..AI3; the chip has 8 mux inputs, but CH4..CH7 are grounded on this board and rejected"},
         "sourceFlags": {
           "enum": {
             "0": "range +-2.5x VREF",
@@ -106,15 +106,15 @@
     {
       "driverId": 6,
       "name": "ad5422",
-      "wiring": "RP2350_INDUSTRIAL_MVP_V1 2x AD5422BREZ analog-output channels (AO0/AO1), daisy-chained on the board's single physical SPI bus; no per-device chip-select, both devices share one LATCH line. See docs/datasheets/AD5422-register-notes.md. self_test's SPI readback may not be electrically observable on real hardware -- see that file's SDO-wiring caveat.",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 2x AD5422BREZ analog-output channels (AO0/AO1), daisy-chained on the board's single physical SPI bus in SPI mode 0; no per-device chip-select, both devices share one LATCH line. Write-only: neither DAC's SDO reaches BOARD_SPI_MISO, so there is no SPI self-test; faults surface on the shared BOARD_FAULT_N line. The first channel start resets both DACs, daisy-chains them and then raises AO_ENABLE_REQ (GPIO9, claimed shared) to release the hardware CLEAR; output enable writes REXT=1 (external 15.0 kOhm RSET). See docs/datasheets/AD5422-register-notes.md.",
       "connectionConstraints": {
         "sourceIndex": {"min": 0, "max": 1, "note": "AO0/AO1, this board's two daisy-chained devices"},
         "sourceFlags": {
           "enum": {
-            "0": "0-5V", "1": "0-10V", "2": "+-5V", "3": "+-10V",
-            "5": "4-20mA", "6": "0-20mA", "7": "0-24mA"
+            "1": "0-10V",
+            "5": "4-20mA"
           },
-          "note": "code 4 is reserved and rejected"
+          "note": "the two ranges this board qualifies (HARDWARE_MVP.md section 3.2); every other R[2:0] code is rejected -- bipolar ranges need a negative rail the board does not have"
         }
       },
       "defaultChannelTemplate": {
@@ -123,12 +123,12 @@
         "unit": "V",
         "flags": ["enabled", "writable"]
       },
-      "capabilities": ["start", "stop", "write", "selfTest"]
+      "capabilities": ["start", "stop", "write"]
     },
     {
       "driverId": 7,
       "name": "max22190",
-      "wiring": "RP2350_INDUSTRIAL_MVP_V1 MAX22190ATJ+ industrial digital-input frontend, DI0..DI3 wired on this board (IN1..IN4 on the chip). Shares the board's single physical SPI bus; has its own dedicated chip-select pin. Mode 0 only (24-bit frame, mandatory CRC-5, no daisy chain) -- hardware pin-strapped, not software-selectable. See docs/datasheets/MAX22190-register-notes.md. CRC-5 implementation is unverified against real silicon or a datasheet worked example -- the single largest correctness risk in this driver.",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 MAX22190ATJ+ industrial digital-input frontend, DI0..DI3 wired on this board (IN1..IN4 on the chip). Shares the board's single physical SPI bus; has its own dedicated chip-select pin. Interface Mode 0 only (24-bit frame, mandatory CRC-5, no daisy chain) -- hardware pin-strapped, not software-selectable -- on SPI clock mode 0 (CPOL=0, CPHA=0), applied per transaction. The first channel start runs HARDWARE_MVP.md's frozen chip initialization (INEN=0x0F, FLT1..FLT4=0x04, CFG=0x01, WB/FAULT2 cleared, FAULT2EN=0x3C, GPO=0x80, FAULT1EN=0xF8, POR cleared, all read back). See docs/datasheets/MAX22190-register-notes.md. CRC-5 implementation is unverified against real silicon or a datasheet worked example -- the single largest correctness risk in this driver.",
       "connectionConstraints": {
         "sourceIndex": {"min": 0, "max": 3, "note": "DI0..DI3, the four wired inputs"},
         "sourceFlags": {
@@ -136,7 +136,7 @@
             "0-2": "DELAY[2:0] glitch-filter time (000=50us .. 111=20ms)",
             "3": "FBP (filter bypass)"
           },
-          "note": "bits above 3 (WBE and reserved) are not settable via source_flags; POR default (0x08, filter bypassed) applies unless overridden"
+          "note": "bits above 3 (WBE and reserved) are not settable via source_flags; chip startup writes the board default 0x04 (1.6 ms, filter active) to FLT1..FLT4, then each channel's start writes its own value"
         }
       },
       "defaultChannelTemplate": {
@@ -166,7 +166,7 @@
     {
       "driverId": 9,
       "name": "uic",
-      "wiring": "RP2350_INDUSTRIAL_MVP_V1 universal protected input channels UIC0..UIC3 (GPIO40..GPIO43), behind a TLV3214PWR comparator frontend. Counter-based modes use RP2350 PIO (uic_pulse_counter.pio, one state machine per active channel); digital-input mode reads the GPIO directly with no PIO involved. Quadrature-encoder mode (ROADMAP.md/HARDWARE_MVP.md 'using channel pairs') is not implemented -- deliberately deferred, see docs/releases/v0.5.1.md T6.",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 universal protected input channels UIC0..UIC3 (GPIO40..GPIO43), behind a TLV9034PWR quad push-pull comparator frontend (active-low: UICx_IN is LOW when the field input is active). Counter-based modes use RP2350 PIO (uic_pulse_counter.pio, one state machine per active channel); digital-input mode reads the GPIO directly with no PIO involved. Quadrature-encoder mode (ROADMAP.md/HARDWARE_MVP.md 'using channel pairs') is not implemented -- deliberately deferred, see docs/releases/v0.5.1.md T6.",
       "connectionConstraints": {
         "sourceIndex": {"min": 0, "max": 3, "note": "UIC0..UIC3"},
         "sourceFlags": {

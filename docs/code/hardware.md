@@ -25,8 +25,9 @@ typedef struct telemetry_driver_vtbl {
 
 Заполнены все слоты. `start`/`stop`/`read` — по всему набору драйверов;
 `write` — в `gpio_output`/`AD5422`/`IPS2050`; `configure` — в
-`gpio_output`; `self_test` — в `gpio_output`/`ADS8688`/`AD5422`/
-`MAX22190`/`IPS2050` (v0.5.1). Любой слот по-прежнему может быть NULL у
+`gpio_output`; `self_test` — в `gpio_output`/`ADS8688`/`MAX22190`/
+`IPS2050` (v0.5.1; у `AD5422` его нет — на плате ни один `SDO` ЦАП не
+заведён на `BOARD_SPI_MISO`). Любой слот по-прежнему может быть NULL у
 конкретного драйвера, и `sensor_manager.c` диспетчеризует за проверкой на
 NULL. Трёхзначную конвенцию результата `self_test` (ответил и прошёл /
 не ответил вовсе / ответил и не прошёл) см. в

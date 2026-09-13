@@ -27,11 +27,11 @@
  * with a stub, the same technique `ips2050_driver.c`'s test uses.
  *
  * Chip-level vs. per-channel startup: `DI0..DI3` are four logical views of
- * one physical chip. The `/READY` gate and the chip-presence check
- * therefore run **once**, latched in file-static state, not once per
- * channel; only the `FLTn` filter write is genuinely per-channel. That
- * write is itself a CRC-checked transaction, so every channel still proves
- * it can reach the chip.
+ * one physical chip. The `/READY` gate and `HARDWARE_MVP.md` section
+ * 3.3.6's register initialization sequence therefore run **once**, latched
+ * in file-static state, not once per channel; only the `FLTn` filter write
+ * is genuinely per-channel. That write is itself a CRC-checked transaction,
+ * so every channel still proves it can reach the chip.
  *
  * Board-fixed SPI mode: this driver only implements Mode 0 (24-bit frame,
  * CRC, no daisy chain) -- the mode is a hardware pin-strapping choice
@@ -88,21 +88,27 @@ bool native_max22190_source_is_valid(uint8_t source_index, uint8_t source_flags)
  * @brief Start one `MAX22190` channel.
  *
  * On the first channel started since the bus was bound, this also performs
- * the one-time chip startup: configure `DI_READY_N` (`GPIO24`) as an input
- * with internal pulls disabled (the board's external `10k -> +3V3_DIG`
- * pull-up already holds the line), wait for it to read low within a bounded
- * number of polls, then read `FAULT1` once (a real, CRC-checked
- * transaction) to confirm the chip communicates. Later channels skip
- * straight past that. Every call then writes this channel's `FLTn` filter
- * register from `source_flags`.
+ * the one-time chip startup, `HARDWARE_MVP.md` section 3.3.6's frozen
+ * sequence: configure `DI_READY_N` (`GPIO24`) as an input with internal
+ * pulls disabled (the board's external `10k -> +3V3_DIG` pull-up already
+ * holds the line) and wait for it to read low within a bounded number of
+ * polls; read `FAULT1` (a real, CRC-checked transaction); write
+ * `INEN = 0x0F`, `FLT1..FLT4 = 0x04`, `CFG = 0x01`; read `WB` and `FAULT2`
+ * to clear stale diagnostics; write `FAULT2EN = 0x3C`, `GPO = 0x80`,
+ * `FAULT1EN = 0xF8`; clear `FAULT1.POR`; then read every one of those
+ * registers back and confirm `POR` is clear. Later channels skip straight
+ * past that. Every call then writes this channel's `FLTn` filter register
+ * from `source_flags`.
  *
  * A failed chip startup is not latched, so a later `start()` retries it.
  * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid;
  *         TELEMETRY_DRIVER_RESULT_INVALID_STATE if no bus is bound;
  *         TELEMETRY_DRIVER_RESULT_TIMEOUT if `/READY` never asserts within
- *         the poll bound, or if a transfer fails;
- *         TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE if a response's own CRC
- *         does not check out; TELEMETRY_DRIVER_RESULT_OK otherwise.
+ *         the poll bound, or if this channel's `FLTn` write fails;
+ *         TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE if any transaction of the
+ *         chip startup sequence fails (transport or response CRC), a
+ *         register does not read back as written, or `POR` stays set;
+ *         TELEMETRY_DRIVER_RESULT_OK otherwise.
  */
 telemetry_driver_result_t native_max22190_start(telemetry_channel_t *channel);
 /** @brief No-op; always returns TELEMETRY_DRIVER_RESULT_OK -- read-only input device, nothing to disable per channel. */

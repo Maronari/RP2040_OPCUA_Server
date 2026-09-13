@@ -27,7 +27,8 @@ static spi_inst_t *spi_instance_handle(uint8_t spi_instance)
 
 bool rp2350_spi_bus_init(rp2350_spi_bus_state_t *state, const rp2350_spi_bus_config_t *config)
 {
-    if (state == NULL || config == NULL || config->spi_instance > 1u || config->baudrate_hz == 0u)
+    if (state == NULL || config == NULL || config->spi_instance > 1u || config->cpol > 1u || config->cpha > 1u ||
+        config->baudrate_hz == 0u)
     {
         return false;
     }
@@ -42,8 +43,9 @@ bool rp2350_spi_bus_init(rp2350_spi_bus_state_t *state, const rp2350_spi_bus_con
             return false;
         }
 
+        /* No spi_set_format() here: the clock mode is per device and is
+         * applied by rp2350_spi_bus_acquire() for every transaction. */
         (void)spi_init(instance, config->baudrate_hz);
-        spi_set_format(instance, 8, SPI_CPOL_0, SPI_CPHA_1, SPI_MSB_FIRST);
         gpio_set_function(config->sck_gpio, GPIO_FUNC_SPI);
         gpio_set_function(config->mosi_gpio, GPIO_FUNC_SPI);
         gpio_set_function(config->miso_gpio, GPIO_FUNC_SPI);
@@ -64,7 +66,18 @@ static bool rp2350_spi_bus_acquire(void *context)
         return false;
     }
     const TickType_t ticks = pdMS_TO_TICKS(RP2350_SPI_LOCK_TIMEOUT_MS);
-    return xSemaphoreTake(g_spi_mutex[state->config.spi_instance], ticks > 0u ? ticks : 1u) == pdTRUE;
+    if (xSemaphoreTake(g_spi_mutex[state->config.spi_instance], ticks > 0u ? ticks : 1u) != pdTRUE)
+    {
+        return false;
+    }
+    /* Devices sharing this peripheral may use different clock modes
+     * (ADS8688 mode 1, AD5422/MAX22190 mode 0 on the industrial board), so
+     * the owner of the lock sets its own before spi_bus_transfer_framed()
+     * asserts its select line. Any change of SCLK idle level therefore
+     * happens while no select line is active. */
+    spi_set_format(spi_instance_handle(state->config.spi_instance), 8, (spi_cpol_t)state->config.cpol,
+                   (spi_cpha_t)state->config.cpha, SPI_MSB_FIRST);
+    return true;
 }
 
 static void rp2350_spi_bus_release(void *context)

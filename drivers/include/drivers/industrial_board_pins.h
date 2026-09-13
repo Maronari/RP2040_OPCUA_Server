@@ -25,6 +25,10 @@
  *  and the deassert edge at the end of a transfer is the LOW->HIGH edge that
  *  latches both devices (HARDWARE_MVP.md section 3.2.2). */
 #define INDUSTRIAL_AO_LATCH_GPIO 17u
+/** AO_ENABLE_REQ: AO_SAFE_EN = SYS_RESET_N AND AO_ENABLE_REQ; while low, both
+ *  AD5422 CLEAR inputs are asserted. 100k pull-down on the board
+ *  (HARDWARE_MVP.md section 3.2.3). */
+#define INDUSTRIAL_AO_ENABLE_GPIO 9u
 #define INDUSTRIAL_DO_ENABLE_GPIO 10u
 #define INDUSTRIAL_DO_COMMAND_BASE_GPIO 20u
 #define INDUSTRIAL_DO_FAULT_BASE_GPIO 22u

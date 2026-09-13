@@ -12,8 +12,8 @@
  * g_chip_ready latch are process-wide file-static state -- one physical
  * `MAX22190` chip is in scope for this release; every channel using this
  * driver shares it. DI0..DI3 are four logical views of that one chip, so
- * chip-level startup (the /READY gate and the presence check) runs once,
- * not once per channel.
+ * chip-level startup (the /READY gate and HARDWARE_MVP.md's register
+ * initialization sequence) runs once, not once per channel.
  */
 #include "drivers/max22190_driver.h"
 #include "drivers/industrial_board_pins.h"
@@ -22,14 +22,30 @@
 
 #include <stddef.h>
 
+#define MAX22190_ADDR_WB 0x00u
 #define MAX22190_ADDR_DI 0x02u
 #define MAX22190_ADDR_FAULT1 0x04u
 #define MAX22190_FLT_BASE 0x06u /**< FLTn = 0x06 + 2*n, n = 0..7 (this board uses n = 0..3). */
+#define MAX22190_ADDR_CFG 0x18u
+#define MAX22190_ADDR_INEN 0x1Au
+#define MAX22190_ADDR_FAULT2 0x1Cu
+#define MAX22190_ADDR_FAULT2EN 0x1Eu
+#define MAX22190_ADDR_GPO 0x22u
+#define MAX22190_ADDR_FAULT1EN 0x24u
 
-#define MAX22190_FAULT1_CRC_BIT (1u << 7)
+#define MAX22190_FAULT1_POR_BIT (1u << 6)
 
 #define MAX22190_MAX_CHANNEL_INDEX 3u
 #define MAX22190_FLT_FLAGS_MASK 0x0Fu /**< FLTn bits 3-0: FBP + DELAY[2:0]. */
+
+/* RP2350_INDUSTRIAL_MVP_V1 chip configuration: HARDWARE_MVP.md section
+ * 3.3.6 ("Relevant register contract") and its DI firmware contract. */
+#define MAX22190_BOARD_INEN 0x0Fu     /**< IN1..IN4 enabled; IN5..IN8 are grounded and disabled. */
+#define MAX22190_BOARD_FLT 0x04u      /**< WBE=0, FBP=0, DELAY=100b (1.6 ms). */
+#define MAX22190_BOARD_CFG 0x01u      /**< REFDI_SH_ENA. */
+#define MAX22190_BOARD_FAULT2EN 0x3Cu /**< FAULT8CKE|OTSHDNE|RFDIOE|RFDISE; REFWB masked while wire-break is unused. */
+#define MAX22190_BOARD_GPO 0x80u      /**< STK: sticky /FAULT. */
+#define MAX22190_BOARD_FAULT1EN 0xF8u /**< CRCE|PORE|FAULT2E|ALRMT2E|ALRMT1E; 24VLE/24VME (VDD24 is NC) and WBGE masked. */
 
 /**
  * @brief How many times the chip-startup gate samples `DI_READY_N` before
@@ -158,21 +174,96 @@ static bool max22190_transact(bool write, uint8_t address, uint8_t data, uint8_t
     return true;
 }
 
+/** @brief One register and the value the board configuration requires in it. */
+typedef struct
+{
+    uint8_t address;
+    uint8_t value;
+} max22190_register_value_t;
+
 /**
- * @brief One-time startup for the single physical chip: bring up the
- *        `DI_READY_N` input, wait (bounded) for the chip to report ready,
- *        then prove it communicates.
+ * @brief Board configuration written by chip startup, in `HARDWARE_MVP.md`'s
+ * order: `INEN`, `FLT1..FLT4`, `CFG` go before the stale-diagnostic clear;
+ * `FAULT2EN`, `GPO`, `FAULT1EN` after it (see max22190_start_chip()).
+ */
+static const max22190_register_value_t g_board_config_before_clear[] = {
+    {MAX22190_ADDR_INEN, MAX22190_BOARD_INEN},
+    {MAX22190_FLT_BASE + 0u, MAX22190_BOARD_FLT},
+    {MAX22190_FLT_BASE + 2u, MAX22190_BOARD_FLT},
+    {MAX22190_FLT_BASE + 4u, MAX22190_BOARD_FLT},
+    {MAX22190_FLT_BASE + 6u, MAX22190_BOARD_FLT},
+    {MAX22190_ADDR_CFG, MAX22190_BOARD_CFG},
+};
+static const max22190_register_value_t g_board_config_after_clear[] = {
+    {MAX22190_ADDR_FAULT2EN, MAX22190_BOARD_FAULT2EN},
+    {MAX22190_ADDR_GPO, MAX22190_BOARD_GPO},
+    {MAX22190_ADDR_FAULT1EN, MAX22190_BOARD_FAULT1EN},
+};
+
+#define MAX22190_TABLE_LENGTH(table) (sizeof(table) / sizeof((table)[0]))
+
+/** @brief Write every entry of @p table, in order; false on the first failed transaction. */
+static bool max22190_write_table(const max22190_register_value_t *table, size_t count)
+{
+    size_t index;
+
+    for (index = 0u; index < count; ++index)
+    {
+        if (!max22190_transact(true, table[index].address, table[index].value, NULL, NULL))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** @brief Read every entry of @p table back; false on a failed transaction or any mismatch. */
+static bool max22190_verify_table(const max22190_register_value_t *table, size_t count)
+{
+    size_t index;
+
+    for (index = 0u; index < count; ++index)
+    {
+        uint8_t value = 0u;
+
+        if (!max22190_transact(false, table[index].address, 0u, NULL, &value) || value != table[index].value)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief One-time startup for the single physical chip: the frozen
+ *        initialization sequence of `HARDWARE_MVP.md` section 3.3.6.
  *
- * `HARDWARE_MVP.md`'s initialization sequence requires observing
- * `DI_READY_N == LOW` before relying on any register access, so this runs
- * strictly before the first SPI transaction rather than alongside it.
+ * 1-2.  configure `DI_READY_N` as an input and wait (bounded) for it to go low;
+ * 3.    the SPI clock mode is the board binding's (mode 0, SCLK idle low);
+ * 4.    a CRC-protected `FAULT1` read proves the chip is present;
+ * 5-7.  `INEN = 0x0F`, `FLT1..FLT4 = 0x04`, `CFG = 0x01`;
+ * 8.    read `WB` and `FAULT2`, both clear-on-read, to drop stale/POR state;
+ * 9-11. `FAULT2EN = 0x3C`, `GPO = 0x80`, `FAULT1EN = 0xF8`;
+ * 12.   write `FAULT1 = 0x00` -- `POR` clears only when "0" is written to
+ *       it, and the write leaves every other `FAULT1` bit unaffected
+ *       (datasheet, `FAULT1` register description);
+ * 13.   read every configured register back, and `FAULT1` to confirm `POR`
+ *       really cleared, before the chip is declared healthy.
+ *
+ * `/READY` is observed strictly before the first SPI transaction. The
+ * `FLTn` values written here are the board default for all four wired
+ * inputs; each channel's start() then writes its own `source_flags` over
+ * its own register.
  * @return TELEMETRY_DRIVER_RESULT_OK on success; TELEMETRY_DRIVER_RESULT_TIMEOUT
  *         if `/READY` never asserts within the poll bound;
- *         TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE if the presence read fails.
+ *         TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE if any transaction of the
+ *         sequence fails, a register does not read back as written, or
+ *         `POR` stays set.
  */
 static telemetry_driver_result_t max22190_start_chip(void)
 {
     uint8_t fault1 = 0u;
+    uint8_t discarded = 0u;
     uint32_t attempt;
 
     /* Input, internal pulls off: the board already provides an external
@@ -188,12 +279,16 @@ static telemetry_driver_result_t max22190_start_chip(void)
             return TELEMETRY_DRIVER_RESULT_TIMEOUT;
         }
     }
-    /* Real communication check: a CRC-validated read confirms the chip is
-     * present and responding before any channel is trusted. FAULT1EN/INEN
-     * are deliberately left at their POR defaults (0xC0/0xFF) -- 0xC0
-     * already keeps the VDD24-related fault enables masked, satisfying
-     * HARDWARE_MVP.md's requirement without an extra write. */
-    if (!max22190_transact(false, MAX22190_ADDR_FAULT1, 0u, NULL, &fault1))
+    if (!max22190_transact(false, MAX22190_ADDR_FAULT1, 0u, NULL, &fault1) ||
+        !max22190_write_table(g_board_config_before_clear, MAX22190_TABLE_LENGTH(g_board_config_before_clear)) ||
+        !max22190_transact(false, MAX22190_ADDR_WB, 0u, NULL, &discarded) ||
+        !max22190_transact(false, MAX22190_ADDR_FAULT2, 0u, NULL, &discarded) ||
+        !max22190_write_table(g_board_config_after_clear, MAX22190_TABLE_LENGTH(g_board_config_after_clear)) ||
+        !max22190_transact(true, MAX22190_ADDR_FAULT1, 0u, NULL, NULL) ||
+        !max22190_verify_table(g_board_config_before_clear, MAX22190_TABLE_LENGTH(g_board_config_before_clear)) ||
+        !max22190_verify_table(g_board_config_after_clear, MAX22190_TABLE_LENGTH(g_board_config_after_clear)) ||
+        !max22190_transact(false, MAX22190_ADDR_FAULT1, 0u, NULL, &fault1) ||
+        (fault1 & MAX22190_FAULT1_POR_BIT) != 0u)
     {
         return TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE;
     }
@@ -213,9 +308,10 @@ telemetry_driver_result_t native_max22190_start(telemetry_channel_t *channel)
         return TELEMETRY_DRIVER_RESULT_INVALID_STATE;
     }
     /* DI0..DI3 are four logical views of one chip, so chip-level startup
-     * runs once rather than four times. Per-channel communication is still
-     * proven every time: the FLTn write below is itself a CRC-checked
-     * transaction that fails loudly if this channel cannot reach the chip. */
+     * (the whole HARDWARE_MVP.md sequence) runs once rather than four
+     * times. Per-channel communication is still proven every time: the FLTn
+     * write below is itself a CRC-checked transaction that fails loudly if
+     * this channel cannot reach the chip. */
     if (!g_chip_ready)
     {
         telemetry_driver_result_t chip_result = max22190_start_chip();

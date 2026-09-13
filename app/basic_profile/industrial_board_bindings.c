@@ -51,8 +51,19 @@
  */
 #define INDUSTRIAL_BOARD_SPI_BAUD_HZ 8000000u
 
-/** @brief Build one chip-select binding on the shared industrial SPI bus. */
-static bool industrial_bind_spi_device(rp2350_spi_bus_state_t *state, uint8_t cs_gpio)
+/**
+ * @brief Build one chip-select binding on the shared industrial SPI bus.
+ *
+ * The clock mode is the device's own, and the SPI backend applies it per
+ * transaction -- the three devices on `BOARD_SPI` do not agree on it:
+ * - `ADS8688`: mode 1 (`CPOL=0`, `CPHA=1`) -- SDI latched on the falling
+ *   SCLK edge (`docs/datasheets/ADS8688-register-notes.md`).
+ * - `AD5422`: mode 0 -- "data is clocked in on the rising edge of SCLK",
+ *   SDO updated on the falling edge (datasheet Rev. M, p.30).
+ * - `MAX22190`: mode 0 -- the datasheet states `CPOL=0`, `CPHA=0`, and
+ *   `HARDWARE_MVP.md` section 3.3.2 requires SCLK idle LOW.
+ */
+static bool industrial_bind_spi_device(rp2350_spi_bus_state_t *state, uint8_t cs_gpio, uint8_t cpol, uint8_t cpha)
 {
     const rp2350_spi_bus_config_t config = {
         .spi_instance = INDUSTRIAL_BOARD_SPI_INSTANCE,
@@ -60,6 +71,8 @@ static bool industrial_bind_spi_device(rp2350_spi_bus_state_t *state, uint8_t cs
         .mosi_gpio = INDUSTRIAL_BOARD_SPI_MOSI_GPIO,
         .miso_gpio = INDUSTRIAL_BOARD_SPI_MISO_GPIO,
         .cs_gpio = cs_gpio,
+        .cpol = cpol,
+        .cpha = cpha,
         .baudrate_hz = INDUSTRIAL_BOARD_SPI_BAUD_HZ,
     };
 
@@ -111,7 +124,7 @@ bool industrial_board_bindings_apply(void)
     bool ok = true;
 
 #if FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
-    if (industrial_bind_spi_device(&g_ads8688_bus_state, INDUSTRIAL_ADC_CS_GPIO))
+    if (industrial_bind_spi_device(&g_ads8688_bus_state, INDUSTRIAL_ADC_CS_GPIO, 0u, 1u))
     {
         native_ads8688_bind_bus(&g_ads8688_bus);
     }
@@ -125,7 +138,7 @@ bool industrial_board_bindings_apply(void)
     /* AO_LATCH is this device's select line: idle high, and the deassert
      * edge closing each transfer is the latching LOW->HIGH edge both
      * daisy-chained DACs share. */
-    if (industrial_bind_spi_device(&g_ad5422_bus_state, INDUSTRIAL_AO_LATCH_GPIO))
+    if (industrial_bind_spi_device(&g_ad5422_bus_state, INDUSTRIAL_AO_LATCH_GPIO, 0u, 0u))
     {
         native_ad5422_bind_bus(&g_ad5422_bus);
     }
@@ -136,7 +149,7 @@ bool industrial_board_bindings_apply(void)
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
-    if (industrial_bind_spi_device(&g_max22190_bus_state, INDUSTRIAL_DI_CS_GPIO))
+    if (industrial_bind_spi_device(&g_max22190_bus_state, INDUSTRIAL_DI_CS_GPIO, 0u, 0u))
     {
         native_max22190_bind_bus(&g_max22190_bus);
     }

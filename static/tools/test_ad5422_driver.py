@@ -20,6 +20,10 @@ def main() -> int:
         executable = pathlib.Path(directory) / "ad5422_driver_test.exe"
         command = [
             args.cc, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            # test_dir first so its hardware/gpio.h and hardware/timer.h
+            # shadow the Pico SDK's -- the driver drives AO_ENABLE_REQ and
+            # busy-waits during chain startup.
+            f"-I{test_dir}",
             f"-I{root / 'drivers' / 'include'}",
             f"-I{root / 'services' / 'include'}",
             str(root / "drivers" / "src" / "ad5422_driver.c"),

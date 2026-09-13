@@ -18,7 +18,11 @@
 
 #define ADS8688_REG_RANGE_BASE 0x05u
 #define ADS8688_CMD_MAN_CH_BASE 0xC000u
-#define ADS8688_MAX_CHANNEL_INDEX 7u
+/* The silicon has CH0..CH7, but RP2350_INDUSTRIAL_MVP_V1 wires only
+ * AI0..AI3 to CH0..CH3 and ties CH4..CH7 to AGND (HARDWARE_MVP.md section
+ * 3.1), so a channel on 4..7 would publish a grounded input as a
+ * measurement. Rejected here, where source validation lives. */
+#define ADS8688_MAX_CHANNEL_INDEX 3u
 
 typedef struct
 {

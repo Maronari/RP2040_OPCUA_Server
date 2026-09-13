@@ -17,7 +17,14 @@
 
 #include "drivers/spi_transport.h"
 
-/** @brief Pin/peripheral/baud-rate binding for one RP2350 hardware SPI chip-select instance. */
+/**
+ * @brief Pin/peripheral/baud-rate/clock-mode binding for one RP2350 hardware
+ *        SPI chip-select instance.
+ *
+ * `cpol`/`cpha` belong to the device, not to the peripheral: chips with
+ * different clock modes may share one physical bus, and each transaction
+ * applies its own device's mode (see rp2350_spi_bus_init()).
+ */
 typedef struct
 {
     uint8_t spi_instance; /**< 0 or 1 (RP2350 hardware_spi instance index). */
@@ -25,6 +32,8 @@ typedef struct
     uint8_t mosi_gpio;
     uint8_t miso_gpio;
     uint8_t cs_gpio;
+    uint8_t cpol; /**< Clock polarity: 0 = SCLK idles low, 1 = idles high. */
+    uint8_t cpha; /**< Clock phase: 0 = sample on the leading edge, 1 = on the trailing edge. */
     uint32_t baudrate_hz;
 } rp2350_spi_bus_config_t;
 
@@ -41,7 +50,15 @@ typedef struct
  *        skips peripheral re-initialization and only configures its own CS
  *        pin -- mirrors the existing lazy-shared-peripheral-init pattern in
  *        drivers/src/adc_voltage_channel_driver.c.
- * @return true on success; false for @p spi_instance > 1 or NULL arguments.
+ *
+ * The frame format is not fixed here. Every transaction re-applies this
+ * device's `cpol`/`cpha` while holding the peripheral's mutex and before
+ * asserting its select line, so a mode-1 device and a mode-0 device on the
+ * same bus each see their own clock phase regardless of which one was
+ * bound first. The baud rate is still taken from the first device bound;
+ * a shared bus runs at one rate.
+ * @return true on success; false for @p spi_instance > 1, @p cpol or
+ *         @p cpha > 1, a zero baud rate, or NULL arguments.
  */
 bool rp2350_spi_bus_init(rp2350_spi_bus_state_t *state, const rp2350_spi_bus_config_t *config);
 

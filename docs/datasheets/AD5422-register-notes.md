@@ -13,15 +13,17 @@ data-register bit width (Table 13/14).
 
 Per `HARDWARE_MVP.md:343-365`: `AO0` and `AO1` share `SCLK` and `LATCH`
 (there is only one shared `AO_LATCH`, no per-channel CS). `SDIN`/`SDO` are
-chained: the controller's `SDIN` feeds `AO0`; `AO0`'s `SDO` feeds `AO1`'s
-`SDIN`; **`AO1`'s `SDO` is explicitly NOT wired back to the shared
-`BOARD_SPI_MISO`** ("would create a push-pull contention risk"). This means
-on the real board, only `AO0`'s readback is ever observable on the host
-SPI's MISO line — `AO1` has no working hardware readback path at all. A
-driver does not need to special-case this: the datasheet-documented
-echo/readback self-test naturally reports `AO1` as producing no valid echo
-once real hardware exists, for a genuine wiring reason rather than a driver
-defect.
+chained: the controller's MOSI feeds `AO0`'s `SDIN`; `AO0`'s `SDO` feeds
+`AO1`'s `SDIN`; **`AO1`'s `SDO` ends at a test point and is explicitly NOT
+wired back to the shared `BOARD_SPI_MISO`** ("would create a push-pull
+contention risk"). Neither DAC's `SDO` therefore reaches the MCU: `AO0`'s
+readback would be clocked into `AO1`, and `AO1`'s goes nowhere. The board
+has **no SPI readback path at all**, for either device, so the driver is
+write-only and has no SPI self-test (an earlier revision of these notes
+claimed `AO0` readback was observable; it is not). Runtime fault
+diagnosis on this board is the shared open-drain `BOARD_FAULT_N` line
+(`GPIO19`), which both DAC `FAULT` outputs and `MAX22190 /FAULT` pull
+low.
 
 Datasheet confirmation (`ad5412_5422.pdf` p.30-31, "Daisy-Chain
 Operation"): daisy-chain mode is enabled per-device via the `DCEN` bit of
@@ -38,10 +40,17 @@ device (`AO0`) — matches `HARDWARE_MVP.md`'s own framing note exactly.
 | D23-D16 | 8-bit address byte |
 | D15-D0 | 16-bit data word (full 16 bits for AD5422; AD5412 only uses D15-D4) |
 
-Data is clocked MSB-first on `SCLK` rising edges; the 24-bit word is
-unconditionally latched into that device's *own* register on the `LATCH`
-rising edge — whatever 24 bits were most recently clocked into that
-device's position at that instant.
+Data is clocked MSB-first on `SCLK` rising edges ("Data is clocked in on
+the rising edge of SCLK", p.30); in daisy-chain mode `SDO` is clocked out
+on the previous falling edge. That is SPI clock mode 0. `BOARD_SPI` also
+carries the mode-1 `ADS8688`, so the RP2350 SPI backend applies each
+device's mode per transaction. The 24-bit word is unconditionally latched
+into that device's *own* register on the `LATCH` rising edge — whatever 24
+bits were most recently clocked into that device's position at that
+instant. "Data continues to be clocked in irrespective of the state of
+LATCH", so SCLK activity for the other devices on the bus shifts garbage
+into both DACs; it is harmless because nothing latches until this driver's
+own complete 48-bit frame ends with the `LATCH` rising edge.
 
 ## Address byte values (Table 9)
 
@@ -73,7 +82,7 @@ register.
 |---|---|---|
 | D15 | `CLRSEL` | Clear-to value select (0 = zero-scale/0V, 1 = midscale unipolar / zero-scale bipolar) |
 | D14 | `OVRRNG` | +10% voltage overrange enable — leave 0 |
-| D13 | `REXT` | 1 = external current-set resistor; leave 0 (use internal) unless the schematic requires it |
+| D13 | `REXT` | 1 = external current-set resistor. **The schematic requires it:** `RSET` -> 15.0 kΩ 0.1% -> `AGND`, and `HARDWARE_MVP.md` section 3.2.1 says "Firmware must select the external resistor (`REXT = 1`)". Datasheet Table 16: "it is recommended to only set REXT when also setting the OUTEN bit" (the alternative, `REXT` ahead of `OUTEN`, requires the range to change on the enabling write) |
 | D12 | `OUTEN` | Output enable — must be 1 for the channel to drive anything |
 | D11-D7 | `SR clock` (2 bits) + `SR step` (3 bits) | Digital slew-rate control — not used by this driver (left 0, slew disabled); *exact split within D11-D7 not independently re-derived here since both fields are always written 0* |
 | D6 | `SREN` | Slew-rate enable — leave 0 |
@@ -94,13 +103,13 @@ register.
 | `110` | 0 mA to 20 mA | — |
 | `111` | 0 mA to 24 mA | — |
 
-**`RP2350_INDUSTRIAL_MVP_V1` frozen MVP scope** (`HARDWARE_MVP.md:255-260`):
-only **0 V to 10 V** and **4 mA to 20 mA** are electrically validated targets
-for this board; bipolar ranges are out of scope (no negative analog rail).
-A driver may still accept all documented non-reserved codes generically
-(matching this project's existing pattern of driver-level generality plus a
-separate, documented board-level electrical restriction), but board
-integration/qualification must not claim the other ranges.
+**`RP2350_INDUSTRIAL_MVP_V1` frozen MVP scope** (`HARDWARE_MVP.md` section
+3.2): only **0 V to 10 V** (`001`) and **4 mA to 20 mA** (`101`) are
+targets for this board; bipolar ranges are physically impossible here
+(`AVSS` -> `AGND`, no negative analog rail). The driver accepts exactly
+these two codes and rejects every other one, reserved or not, so neither a
+configuration nor the host-side descriptor can offer a range the board
+does not have.
 
 ## Voltage/current scaling (internal reference `REFIN` = 5.0 V typical, `REFOUT` = 5 V ± 5 mV)
 
@@ -118,9 +127,36 @@ integration/qualification must not claim the other ranges.
 ## Reset register (address `0x56`)
 
 Only `D0` is meaningful ("Reset"); write `0x0001` to force a power-on-reset
-equivalent (all registers zeroed, both outputs tristated). Not used by
-normal driver operation; potentially useful for a future safe-state
-recovery path.
+equivalent (all registers zeroed, both outputs tristated). The datasheet
+asks for it after power-on when `DVCC`/`AVDD` ramp rates cannot be
+guaranteed, followed by 40 µs "to ensure correct calibration and to allow
+the internal reference to settle" — the case on this board, where `DVCC`
+(`+3V3_DIG`) and `AVDD` (`+15V_AO`) come from independent rails.
+
+## Chain startup on this board
+
+Two datasheet rules collide on a daisy chain that starts from reset:
+a standalone device needs *exactly* 24 clocks per `LATCH` cycle, while a
+chain of two needs 48. After a reset both devices are standalone
+(`DCEN = 0`), and `AO0`'s `SDO` does not forward anything to `AO1` until
+`AO0.DCEN = 1`. The driver therefore brings the chain up in this order,
+with `AO_ENABLE_REQ` held low (so `CLEAR` holds both outputs) throughout:
+
+1. 24-bit `RESET` → `AO0`. Valid both after power-up (`AO0` standalone)
+   and after an MCU-only restart (`AO0` still chained — its own shift
+   register holds exactly this word either way).
+2. 24-bit `CONTROL = DCEN` → `AO0`.
+3. 48-bit `[RESET][NOP]` → `AO1` reset.
+4. 48-bit `[CONTROL = DCEN][NOP]` → `AO1` chained.
+5. `AO_ENABLE_REQ` high.
+
+At least 40 µs (the driver uses 100 µs) follows every frame, covering the
+reset settle and the 5 µs standalone `LATCH` high time (t3). Whatever
+`AO1` latches before step 3 — its `SDIN` floats while `AO0` is standalone —
+is wiped by its reset. Steps 3-4 rely on the datasheet's "the last 24
+bits to be clocked in before the rising edge of LATCH is the data that is
+latched" for a still-standalone `AO1` that sees 48 clocks; no sequence can
+avoid that for the far device of a chain, so bring-up must confirm it.
 
 ## Status register (read-only, via readback request `0x02` + read-address `00`)
 
@@ -134,7 +170,7 @@ The `FAULT` pin (open-drain, shared with `MAX22190`'s `/FAULT` on
 `BOARD_FAULT_N` per `HARDWARE_MVP.md:384-392`) asserts for either fault
 condition; the status register above is how a driver distinguishes which.
 
-## Readback operation (Table 10, Table 12)
+## Readback operation (Table 10, Table 12) — not usable on this board
 
 1. Write `0x020001` (address `0x02` = readback request; data field's D1-D0
    = read-address `01` = data register; `00`=status, `10`=control) to the
@@ -143,31 +179,39 @@ condition; the status register above is how a driver distinguishes which.
    previously-addressed register's 16-bit value is clocked out on `SDO`
    during this second frame.
 
-Self-test must not write diagnostic values to DATA: OUTEN may already be
-enabled, and such probes would actuate the output. Read CONTROL and STATUS
-instead, checking the configured range/DCEN/OUTEN and fault bits. Healthy
-STATUS alone is zero and cannot prove presence; a valid nonzero CONTROL
-readback is required. Transport/absent-device results remain distinct from
-control/status mismatches. No restoration writes are necessary.
+Documented for completeness only. With no `SDO` routed to
+`BOARD_SPI_MISO` (see the wiring section), the MCU would sample a line no
+DAC drives, so a readback-based self-test could never pass — and the
+activation path treats a non-answering self-test as an absent device,
+which would leave both outputs unusable. The driver therefore implements
+no `self_test` and does not advertise the capability. A future board
+revision that routes a readback path can reintroduce a non-invasive
+CONTROL/STATUS readback (never diagnostic writes to DATA, which would
+actuate a live output).
 
 ## Notes for the driver implementation
 
 - Chip-select/board binding: **shared** `LATCH`+`SCLK`+`MOSI` across both
   channels (one shared `spi_bus_t`, matching `ads8688_driver.c`'s
-  single-bus pattern); `MISO` is only meaningfully connected for `AO0` on
-  this specific board revision (see wiring note above) — the driver itself
-  does not need to encode this; it falls out of real hardware behavior.
+  single-bus pattern), SPI clock mode 0. No `MISO` path from either DAC
+  (see wiring note above): the driver never requests receive data.
 - `source_index` = 0 (`AO0`, near/first-in-chain-from-SDO-perspective —
   transmitted *second*) or 1 (`AO1`, far — transmitted *first*).
-  `source_flags` = `R[2:0]` (0,1,2,3,5,6,7 valid; 4 reserved/invalid).
+  `source_flags` = `R[2:0]`, board-restricted to `0x1` (0-10 V) and `0x5`
+  (4-20 mA).
 - Every 48-bit transaction targets exactly one device with a real command
   and sends `NOP` (`0x000000`) for the other — no cross-channel state
   caching needed.
-- `start()`: write the control register (`OUTEN=1`, `DCEN=1`, `R[2:0]`
-  from `source_flags`, everything else 0) to the target device, `NOP` to
-  the other.
+- `start()`: CONTROL = `DCEN | R` (output disabled, range selected), DATA =
+  `0x0000` (zero scale: 0 V or 4 mA), then CONTROL =
+  `OUTEN | REXT | DCEN | R` — `REXT` set together with `OUTEN` as Table 16
+  recommends; `CLRSEL`, `OVRRNG`, slew all 0 (`HARDWARE_MVP.md` section
+  3.2.3's safe-state invariants). A failed enabling write is followed by
+  the disabled word again.
+- `stop()`: CONTROL = `DCEN | R` — `OUTEN` and `REXT` cleared together,
+  `DCEN` kept so `AO1` remains reachable through `AO0`.
 - `write()`: write the data register with the commanded 16-bit code
   (computed from the OPC UA channel's engineering-unit value via the
   inverse of the scaling formulas above) to the target device, `NOP` to
   the other.
-- `self_test()`: non-invasive CONTROL/STATUS readback described above.
+- No `self_test()` — see the readback section.

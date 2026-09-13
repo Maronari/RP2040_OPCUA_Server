@@ -119,7 +119,10 @@ static telemetry_channel_t make_channel(native_channel_source_t *source, telemet
 static void test_source_validation(void)
 {
     assert(native_ads8688_source_is_valid(0u, 0x0u));
-    assert(native_ads8688_source_is_valid(7u, 0x6u));
+    assert(native_ads8688_source_is_valid(3u, 0x6u));
+    /* CH4..CH7 are tied to AGND on RP2350_INDUSTRIAL_MVP_V1: AI0..AI3 only. */
+    assert(!native_ads8688_source_is_valid(4u, 0x0u));
+    assert(!native_ads8688_source_is_valid(7u, 0x6u));
     assert(!native_ads8688_source_is_valid(8u, 0x0u));
     assert(!native_ads8688_source_is_valid(0u, 0x3u)); /* not one of the five valid range codes */
     assert(!native_ads8688_source_is_valid(0u, 0x4u));
@@ -163,7 +166,7 @@ static void test_read_scales_bipolar_and_unipolar(void)
     spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
     native_channel_source_t bipolar_source = {.source_index = 2u, .source_flags = 0x1u}; /* +/-5.12V */
     telemetry_channel_t bipolar_channel = make_channel(&bipolar_source, TELEMETRY_CHANNEL_VALUE_FLOAT);
-    native_channel_source_t unipolar_source = {.source_index = 5u, .source_flags = 0x5u}; /* 0-10.24V */
+    native_channel_source_t unipolar_source = {.source_index = 3u, .source_flags = 0x5u}; /* 0-10.24V */
     telemetry_channel_t unipolar_channel = make_channel(&unipolar_source, TELEMETRY_CHANNEL_VALUE_DOUBLE);
 
     chip_reset();
@@ -189,7 +192,7 @@ static void test_read_scales_bipolar_and_unipolar(void)
     assert_close((double)bipolar_channel.runtime.value.f32, 5.12);
 
     /* Unipolar half-scale: 32768/65536 * 10.24 = 5.12 V. */
-    g_chip.channel_raw[5] = 0x8000u;
+    g_chip.channel_raw[3] = 0x8000u;
     assert(native_ads8688_read(&unipolar_channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
     assert_close(unipolar_channel.runtime.value.f64, 5.12);
 
@@ -224,7 +227,7 @@ static void test_read_reselects_after_other_channel(void)
 static void test_self_test_passed_unavailable_failed(void)
 {
     spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
-    native_channel_source_t source = {.source_index = 4u, .source_flags = 0x2u};
+    native_channel_source_t source = {.source_index = 1u, .source_flags = 0x2u};
     telemetry_channel_t channel = make_channel(&source, TELEMETRY_CHANNEL_VALUE_FLOAT);
 
     chip_reset();
@@ -233,7 +236,7 @@ static void test_self_test_passed_unavailable_failed(void)
     g_chip.corrupt_echo = false;
     assert(native_ads8688_self_test(&channel) == TELEMETRY_DRIVER_RESULT_OK);
     /* The channel's actual configured range must be restored afterward. */
-    assert(g_chip.registers[0x05u + 4u] == 0x2u);
+    assert(g_chip.registers[0x05u + 1u] == 0x2u);
 
     /* Absent/floating chip: echo never tracks what was written (constant readback). */
     g_chip.chip_present = false;

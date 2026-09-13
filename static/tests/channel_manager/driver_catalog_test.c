@@ -32,7 +32,7 @@ telemetry_driver_result_t native_gpio_output_configure(telemetry_channel_t *c, c
 telemetry_driver_result_t native_gpio_output_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 bool native_ads8688_source_is_valid(uint8_t index, uint8_t flags)
 {
-    return index <= 7u && (flags == 0x0u || flags == 0x1u || flags == 0x2u || flags == 0x5u || flags == 0x6u);
+    return index <= 3u && (flags == 0x0u || flags == 0x1u || flags == 0x2u || flags == 0x5u || flags == 0x6u);
 }
 telemetry_driver_result_t native_ads8688_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_ads8688_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
@@ -40,12 +40,11 @@ telemetry_driver_result_t native_ads8688_read(telemetry_channel_t *c, uint32_t n
 telemetry_driver_result_t native_ads8688_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 bool native_ad5422_source_is_valid(uint8_t index, uint8_t flags)
 {
-    return index <= 1u && flags != 0x4u && flags <= 0x7u;
+    return index <= 1u && (flags == 0x1u || flags == 0x5u);
 }
 telemetry_driver_result_t native_ad5422_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_ad5422_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *c, const telemetry_channel_value_t *v) { (void)c; (void)v; return TELEMETRY_DRIVER_RESULT_OK; }
-telemetry_driver_result_t native_ad5422_self_test(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 bool native_max22190_source_is_valid(uint8_t index, uint8_t flags)
 {
     return index <= 3u && (flags & (uint8_t)~0x0Fu) == 0u;
@@ -154,11 +153,12 @@ int main(void)
            claims[1].shared);
     /* Two ads8688 channels on different mux inputs share the SPI peripheral
      * claim but do not conflict; the same mux input claimed twice does. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 5u, 0x0u, &claims[2], 2u, &claim_count));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 2u, 0x0u, &claims[2], 2u, &claim_count));
     assert(driver_catalog_claims_are_compatible(claims, 4u));
     assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 3u, 0x2u, &claims[2], 2u, &claim_count));
     assert(!driver_catalog_claims_are_compatible(claims, 4u));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 8u, 0x0u, claims, 2u, &claim_count));
+    /* AI0..AI3 only: CH4..CH7 are grounded on RP2350_INDUSTRIAL_MVP_V1. */
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 4u, 0x0u, claims, 2u, &claim_count));
     assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x3u, claims, 2u, &claim_count));
 
     /* v0.5.1 Phase 1: ad5422 shares the same physical SPI bus as ads8688
@@ -169,23 +169,41 @@ int main(void)
      * mux index. */
     assert(ad5422 != NULL);
     assert((ad5422->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) != 0u);
-    assert((ad5422->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) != 0u);
+    /* No SELF_TEST: the board has no AD5422 SDO path to the MCU. */
+    assert((ad5422->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) == 0u);
     assert((ad5422->capabilities & TELEMETRY_DRIVER_CAPABILITY_READ) == 0u);
-    assert(ad5422->driver->write != NULL && ad5422->driver->self_test != NULL && ad5422->driver->read == NULL);
+    assert(ad5422->driver->write != NULL && ad5422->driver->self_test == NULL && ad5422->driver->read == NULL);
     assert((ad5422->default_flags & TELEMETRY_CHANNEL_FLAG_WRITABLE) != 0u);
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, claims, 2u, &claim_count));
-    assert(claim_count == 2u && claims[0].type == DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL && claims[0].index == 0u &&
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, claims, 3u, &claim_count));
+    assert(claim_count == 3u && claims[0].type == DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL && claims[0].index == 0u &&
            !claims[0].shared && claims[1].type == DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL && claims[1].index == 0u &&
            claims[1].shared);
+    /* AO_ENABLE_REQ (GPIO9), driven by the driver's chain startup: shared
+     * between AO0/AO1, and a two-claim buffer no longer suffices. */
+    assert(claims[2].type == DRIVER_CATALOG_RESOURCE_GPIO && claims[2].index == INDUSTRIAL_AO_ENABLE_GPIO &&
+           claims[2].shared);
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, claims + 3, 2u,
+                                               &temp_claim_count));
+    assert(temp_claim_count == 3u);
     /* An ads8688 channel on mux index 0 and an ad5422 channel on AO0 (also
      * index 0) must NOT conflict -- different claim types, same shared bus. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x0u, &claims[2], 2u, &claim_count));
-    assert(driver_catalog_claims_are_compatible(claims, 4u));
-    /* Two ad5422 channels both claiming AO0 do conflict. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x2u, &claims[2], 2u, &claim_count));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x0u, &claims[3], 2u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 5u));
+    /* Two ad5422 channels both claiming AO0 do conflict ... */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x5u, &claims[3], 3u, &claim_count));
+    assert(!driver_catalog_claims_are_compatible(claims, 6u));
+    /* ... AO0 and AO1 do not, although both claim AO_ENABLE_REQ ... */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 1u, 0x5u, &claims[3], 3u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 6u));
+    /* ... and a generic gpio_output on GPIO9 conflicts with that claim. */
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT, INDUSTRIAL_AO_ENABLE_GPIO, 0x0u,
+                                              &claims[3], 2u, &claim_count));
     assert(!driver_catalog_claims_are_compatible(claims, 4u));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 2u, 0x0u, claims, 2u, &claim_count));
-    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x4u, claims, 2u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 2u, 0x1u, claims, 3u, &claim_count));
+    /* Only 0-10 V (0x1) and 4-20 mA (0x5) exist on this board. */
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x0u, claims, 3u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x3u, claims, 3u, &claim_count));
+    assert(!driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x4u, claims, 3u, &claim_count));
 
     /* v0.5.1 Phase 1: max22190 (DI0-DI3) is a third chip on the same shared
      * SPI bus as ads8688/ad5422 -- read-only, no WRITE capability. */
@@ -216,8 +234,8 @@ int main(void)
     assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_ADS8688, 0u, 0x0u, &claims[3], 2u, &claim_count));
     assert(driver_catalog_claims_are_compatible(claims, 5u));
     /* An ad5422 channel on AO0 (also index 0) must likewise not conflict. */
-    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, &claims[3], 2u, &claim_count));
-    assert(driver_catalog_claims_are_compatible(claims, 5u));
+    assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_AD5422, 0u, 0x1u, &claims[3], 3u, &claim_count));
+    assert(driver_catalog_claims_are_compatible(claims, 6u));
     /* Two max22190 channels both claiming DI0 do conflict. */
     assert(driver_catalog_get_resource_claims(CONFIG_CHANNEL_DRIVER_MAX22190, 0u, 0x00u, &claims[3], 3u, &claim_count));
     assert(!driver_catalog_claims_are_compatible(claims, 6u));

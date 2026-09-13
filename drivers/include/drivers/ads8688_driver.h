@@ -24,8 +24,11 @@
  * payload).
  *
  * Ownership: `driver_context` carries only this channel's
- * `native_channel_source_t` (source_index = ADS8688 mux input 0-7,
+ * `native_channel_source_t` (source_index = ADS8688 mux input 0-3,
  * source_flags = `Range_CHn[3:0]`), matching every other native driver.
+ * The chip has eight inputs, but `RP2350_INDUSTRIAL_MVP_V1` wires only
+ * `AI0..AI3` to `CH0..CH3` and ties `CH4..CH7` to `AGND`
+ * (`HARDWARE_MVP.md` section 3.1), so indices 4-7 are rejected.
  * The SPI bus binding is process-wide (one physical `ADS8688` chip is in
  * scope for this release), held in this file's own static storage, not in
  * `driver_context` -- `sensor_manager_channel_context_t` has no room for
@@ -60,7 +63,8 @@ void native_ads8688_bind_bus(const spi_bus_t *bus);
 
 /**
  * @brief Validate an `ADS8688` channel's source selector.
- * @return true only for source_index <= 7 (mux inputs `AI0..AI7`) and
+ * @return true only for source_index <= 3 (`AI0..AI3` on `CH0..CH3`, the
+ *         inputs this board wires; `CH4..CH7` are grounded) and
  *         source_flags one of the datasheet's five valid `Range_CHn[3:0]`
  *         codes (0x0, 0x1, 0x2, 0x5, 0x6 -- see
  *         docs/datasheets/ADS8688-register-notes.md).

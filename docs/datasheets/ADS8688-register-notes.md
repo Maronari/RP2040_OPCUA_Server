@@ -9,10 +9,18 @@ Covers ADS8688 (8-channel) and ADS8684 (4-channel, shaded/unavailable bits
 noted below); this project only targets the 8-channel ADS8688 per
 `ROADMAP.md`.
 
+**Board restriction (`RP2350_INDUSTRIAL_MVP_V1`, `HARDWARE_MVP.md` section
+3.1):** only `AI0..AI3` are wired, to `CH0..CH3`; `CH4..CH7` and `AUX` are
+tied to `AGND`. The driver accepts `source_index` 0-3 only, so a
+configuration cannot publish a grounded input as a measurement.
+
 ## SPI frame basics
 
-- Full-duplex, MSB-first, CPOL/CPHA per datasheet timing diagrams (mode 1:
-  CPOL=0, CPHA=1 — verify against `Figure 1` before implementation).
+- Full-duplex, MSB-first, SPI clock mode 1 (`CPOL=0`, `CPHA=1`): the
+  timing table specifies SDI and SDO setup/hold against the *falling* SCLK
+  edge, with SCLK low when `CS` falls. `BOARD_SPI` also carries the mode-0
+  `AD5422` and `MAX22190`, so the RP2350 SPI backend applies this mode on
+  every transaction rather than once at bus initialization.
 - Every data frame starts on the falling edge of `CS`. Program-register
   read/write frames require a minimum of 24 SCLK cycles. A command-only
   frame may end after its first 16 clocks, but `MAN_Ch_n` must use a complete

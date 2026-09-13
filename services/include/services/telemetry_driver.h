@@ -10,7 +10,7 @@
  * Every operation in this table now has real implementations: `start`/
  * `stop`/`read` across the whole driver set, `write` in `gpio_output`/
  * `AD5422`/`IPS2050`, `configure` in `gpio_output`, and `self_test` in
- * `gpio_output`/`ADS8688`/`AD5422`/`MAX22190`/`IPS2050` (v0.5.1). Any entry
+ * `gpio_output`/`ADS8688`/`MAX22190`/`IPS2050` (v0.5.1). Any entry
  * may still be NULL for a given driver; callers NULL-check before
  * dispatching.
  *

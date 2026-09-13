@@ -22,10 +22,30 @@
 #define DI0_INDEX 0u
 #define DI3_INDEX 3u
 
+#define REG_WB 0x00u
 #define REG_DI 0x02u
 #define REG_FAULT1 0x04u
 #define REG_FLT1 0x06u
 #define REG_FLT4 0x0Cu
+#define REG_CFG 0x18u
+#define REG_INEN 0x1Au
+#define REG_FAULT2 0x1Cu
+#define REG_FAULT2EN 0x1Eu
+#define REG_GPO 0x22u
+#define REG_FAULT1EN 0x24u
+
+#define FAULT1_POR 0x40u
+
+/** Transactions one chip startup costs: FAULT1 read, 6 writes, WB + FAULT2
+ *  reads, 3 writes, POR clear, 9 readbacks, final FAULT1 read. */
+#define CHIP_STARTUP_TRANSFERS 23u
+
+typedef struct
+{
+    bool write;
+    uint8_t address;
+    uint8_t data;
+} fake_frame_t;
 
 typedef struct
 {
@@ -35,8 +55,12 @@ typedef struct
     bool corrupt_response_crc;
     bool force_transfer_failure;
     bool reject_bad_request_crc;
+    bool por_stuck;           /**< FAULT1.POR ignores the clearing write. */
+    int stuck_register;       /**< Address whose writes are ignored, or -1. */
     unsigned transfers;
     unsigned fail_transfer;
+    fake_frame_t log[64];
+    unsigned logged;
 } fake_chip_t;
 
 static fake_chip_t g_chip;
@@ -73,11 +97,17 @@ static void chip_reset(void)
     gpio_stub_reset();
     set_chip_ready_line(true);
     g_chip.chip_present = true;
+    g_chip.stuck_register = -1;
+    /* Datasheet POR defaults, with stale diagnostics pending in WB/FAULT2. */
     g_chip.registers[REG_FAULT1] = 0x46u;
     g_chip.registers[REG_FLT1] = 0x08u;
     g_chip.registers[REG_FLT1 + 2u] = 0x08u;
     g_chip.registers[REG_FLT1 + 4u] = 0x08u;
     g_chip.registers[REG_FLT4] = 0x08u;
+    g_chip.registers[REG_INEN] = 0xFFu;
+    g_chip.registers[REG_FAULT1EN] = 0xC0u;
+    g_chip.registers[REG_WB] = 0x01u;
+    g_chip.registers[REG_FAULT2] = 0x02u;
 }
 
 static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t length)
@@ -110,7 +140,20 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
         write = ((request_bits19 >> 18) & 0x1u) != 0u;
         address = (uint8_t)((request_bits19 >> 11) & 0x7Fu);
         data = (uint8_t)((request_bits19 >> 3) & 0xFFu);
-        if (write && address < sizeof(chip->registers))
+        if (chip->logged < sizeof(chip->log) / sizeof(chip->log[0]))
+        {
+            chip->log[chip->logged++] = (fake_frame_t){write, address, data};
+        }
+        if (write && address == REG_FAULT1)
+        {
+            /* Only POR is writable, and only "0" clears it; the other
+             * FAULT1 bits are unaffected by the write. */
+            if ((data & FAULT1_POR) == 0u && !chip->por_stuck)
+            {
+                chip->registers[REG_FAULT1] &= (uint8_t)~FAULT1_POR;
+            }
+        }
+        else if (write && address < sizeof(chip->registers) && (int)address != chip->stuck_register)
         {
             chip->registers[address] = data;
         }
@@ -120,10 +163,15 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
     {
         uint8_t byte1 = 0u;
         uint32_t addressed = (frame24 >> 5 >> 11) & 0x7Fu;
+        bool read = ((frame24 >> 23) & 0x1u) == 0u;
 
         if (addressed < sizeof(chip->registers))
         {
             byte1 = chip->registers[addressed];
+        }
+        if (read && (addressed == REG_WB || addressed == REG_FAULT2))
+        {
+            chip->registers[addressed] = 0u; /* clear-on-read */
         }
         response_bits19 = ((uint32_t)chip->di_byte << 11) | ((uint32_t)byte1 << 3);
         uint8_t response_crc = fake_crc5(response_bits19);
@@ -319,15 +367,15 @@ static void test_chip_startup_runs_once_not_per_channel(void)
     native_max22190_bind_bus(&bus);
 
     /* DI0..DI3 are four logical views of one chip: the first start pays for
-     * chip startup (FAULT1 presence read) plus its own FLTn write; each
-     * later channel pays only for its own FLTn write. */
+     * the chip startup sequence plus its own FLTn write; each later channel
+     * pays only for its own FLTn write. */
     for (index = 0u; index < 4u; ++index)
     {
         telemetry_channel_t channel = make_channel(&sources[index]);
         unsigned before = g_chip.transfers;
 
         assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
-        assert(g_chip.transfers - before == (index == 0u ? 2u : 1u));
+        assert(g_chip.transfers - before == (index == 0u ? CHIP_STARTUP_TRANSFERS + 1u : 1u));
     }
     for (index = 0u; index < 4u; ++index)
     {
@@ -341,7 +389,112 @@ static void test_chip_startup_runs_once_not_per_channel(void)
         unsigned before = g_chip.transfers;
 
         assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
-        assert(g_chip.transfers - before == 2u);
+        assert(g_chip.transfers - before == CHIP_STARTUP_TRANSFERS + 1u);
+    }
+}
+
+/** @brief HARDWARE_MVP.md section 3.3.6 initialization, frame by frame. */
+static void test_chip_startup_follows_frozen_sequence(void)
+{
+    static const fake_frame_t expected[] = {
+        {false, REG_FAULT1, 0x00u},   /* 4: CRC-protected transaction, inspect FAULT1/POR */
+        {true, REG_INEN, 0x0Fu},      /* 5 */
+        {true, REG_FLT1, 0x04u},      /* 6 */
+        {true, REG_FLT1 + 2u, 0x04u},
+        {true, REG_FLT1 + 4u, 0x04u},
+        {true, REG_FLT4, 0x04u},
+        {true, REG_CFG, 0x01u},       /* 7 */
+        {false, REG_WB, 0x00u},       /* 8 */
+        {false, REG_FAULT2, 0x00u},
+        {true, REG_FAULT2EN, 0x3Cu},  /* 9 */
+        {true, REG_GPO, 0x80u},       /* 10 */
+        {true, REG_FAULT1EN, 0xF8u},  /* 11 */
+        {true, REG_FAULT1, 0x00u},    /* 12: write 0 to POR */
+        {false, REG_INEN, 0x00u},     /* 13: read back */
+        {false, REG_FLT1, 0x00u},
+        {false, REG_FLT1 + 2u, 0x00u},
+        {false, REG_FLT1 + 4u, 0x00u},
+        {false, REG_FLT4, 0x00u},
+        {false, REG_CFG, 0x00u},
+        {false, REG_FAULT2EN, 0x00u},
+        {false, REG_GPO, 0x00u},
+        {false, REG_FAULT1EN, 0x00u},
+        {false, REG_FAULT1, 0x00u},
+        {true, REG_FLT1 + 4u, 0x0Au}, /* the channel's own FLTn */
+    };
+    spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
+    native_channel_source_t source = {.source_index = 2u, .source_flags = 0x0Au};
+    telemetry_channel_t channel = make_channel(&source);
+    unsigned index;
+
+    assert(sizeof(expected) / sizeof(expected[0]) == CHIP_STARTUP_TRANSFERS + 1u);
+    chip_reset();
+    native_max22190_bind_bus(&bus);
+    assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(g_chip.logged == sizeof(expected) / sizeof(expected[0]));
+    for (index = 0u; index < g_chip.logged; ++index)
+    {
+        assert(g_chip.log[index].write == expected[index].write);
+        assert(g_chip.log[index].address == expected[index].address);
+        assert(!expected[index].write || g_chip.log[index].data == expected[index].data);
+    }
+
+    /* End state: the board configuration, IN5..IN8 disabled, stale
+     * diagnostics consumed, POR cleared without disturbing FAULT1's other
+     * bits, and the channel's own filter over the board default. */
+    assert(g_chip.registers[REG_INEN] == 0x0Fu);
+    assert(g_chip.registers[REG_FLT1] == 0x04u && g_chip.registers[REG_FLT1 + 2u] == 0x04u);
+    assert(g_chip.registers[REG_FLT1 + 4u] == 0x0Au && g_chip.registers[REG_FLT4] == 0x04u);
+    assert(g_chip.registers[REG_CFG] == 0x01u);
+    assert(g_chip.registers[REG_FAULT2EN] == 0x3Cu);
+    assert(g_chip.registers[REG_GPO] == 0x80u);
+    assert(g_chip.registers[REG_FAULT1EN] == 0xF8u);
+    assert(g_chip.registers[REG_WB] == 0u && g_chip.registers[REG_FAULT2] == 0u);
+    assert(g_chip.registers[REG_FAULT1] == (0x46u & (uint8_t)~FAULT1_POR));
+}
+
+/** @brief A chip that does not end up configured is not declared healthy, and not latched as such. */
+static void test_chip_startup_failures_are_hardware_failures(void)
+{
+    spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
+    native_channel_source_t source = {.source_index = DI0_INDEX, .source_flags = 0x04u};
+    telemetry_channel_t channel = make_channel(&source);
+    static const int stuck[] = {REG_INEN, REG_FLT4, REG_CFG, REG_FAULT2EN, REG_GPO, REG_FAULT1EN};
+    unsigned step;
+    unsigned index;
+
+    /* Any single failed transaction anywhere in the sequence. */
+    for (step = 1u; step <= CHIP_STARTUP_TRANSFERS; ++step)
+    {
+        chip_reset();
+        native_max22190_bind_bus(&bus);
+        g_chip.fail_transfer = step;
+        assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE);
+        assert(g_chip.transfers == step); /* stops at the failure, no FLTn write */
+    }
+
+    /* A register that does not take its write fails readback. */
+    for (index = 0u; index < sizeof(stuck) / sizeof(stuck[0]); ++index)
+    {
+        chip_reset();
+        native_max22190_bind_bus(&bus);
+        g_chip.stuck_register = stuck[index];
+        assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE);
+    }
+
+    /* POR that does not clear. */
+    chip_reset();
+    native_max22190_bind_bus(&bus);
+    g_chip.por_stuck = true;
+    assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE);
+
+    /* Not latched: once the chip behaves, the full sequence runs again. */
+    g_chip.por_stuck = false;
+    {
+        unsigned before = g_chip.transfers;
+
+        assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+        assert(g_chip.transfers - before == CHIP_STARTUP_TRANSFERS + 1u);
     }
 }
 
@@ -368,5 +521,7 @@ int main(void)
     test_transfer_failure_maps_to_expected_results();
     test_ready_gate_runs_before_any_spi();
     test_chip_startup_runs_once_not_per_channel();
+    test_chip_startup_follows_frozen_sequence();
+    test_chip_startup_failures_are_hardware_failures();
     return 0;
 }
