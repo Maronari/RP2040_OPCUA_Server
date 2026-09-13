@@ -73,11 +73,25 @@ def main() -> int:
             on = name in {"internal_temp", "adc_voltage", "gpio_input", "gpio_output", "synthetic"}
             cache.append(f"{flag}:BOOL={'ON' if on else 'OFF'}")
         (build / "CMakeCache.txt").write_text("\n".join(cache) + "\n", encoding="utf-8")
-        (build / "config_export.json").write_text(json.dumps({"device": {
-            "hwRevision": "waveshare_core2350b_16mb_psram8mb/W5500", "fwRevision": "0.5.1"}}), encoding="utf-8")
-        expected = module.expected_from_build(build, catalog_source, descriptors)
+        config_wire = module.CONFIG_WIRE_HEADER.read_text(encoding="utf-8")
+        schema = module.config_schema_version(config_wire)
+        export = {"schemaVersion": schema, "device": {
+            "hwRevision": "waveshare_core2350b_16mb_psram8mb/W5500", "fwRevision": "0.5.1"}}
+        (build / "config_export.json").write_text(json.dumps(export), encoding="utf-8")
+        expected = module.expected_from_build(build, catalog_source, descriptors, config_wire)
+
+        # A build artifact that drifted from the firmware constant is refused.
+        export["schemaVersion"] = schema + 1
+        (build / "config_export.json").write_text(json.dumps(export), encoding="utf-8")
+        try:
+            module.expected_from_build(build, catalog_source, descriptors, config_wire)
+        except ValueError as error:
+            assert "schemaVersion" in str(error)
+        else:
+            raise AssertionError("a drifted config_export.json schemaVersion must be refused")
 
     assert expected["firmwareProfile"] == "base"
+    assert expected["configurationSchemaVersion"] == schema
     assert sorted(expected["drivers"]) == ["adc_voltage", "gpio_input", "gpio_output", "internal_temp", "synthetic"]
     assert expected["drivers"]["gpio_output"]["capabilities"] == ["configure", "self_test", "start", "stop", "write"]
 
@@ -85,7 +99,7 @@ def main() -> int:
         "firmwareProfile": "base",
         "hardwareRevision": "waveshare_core2350b_16mb_psram8mb/W5500",
         "softwareRevision": "0.5.1",
-        "configurationSchemaVersion": 3,
+        "configurationSchemaVersion": schema,
         "drivers": {
             name: {"id": spec["id"], "name": name, "capabilities": list(reversed(spec["capabilities"])),
                    "resources": [{"type": "gpio", "index": 0, "shared": False}]}
@@ -102,6 +116,9 @@ def main() -> int:
     assert any("firmwareProfile" in p for p in problems_after(lambda d: d.update(firmwareProfile="industrial")))
     assert any("softwareRevision" in p for p in problems_after(lambda d: d.update(softwareRevision="0.5.0")))
     assert any("configurationSchemaVersion" in p for p in problems_after(lambda d: d.update(configurationSchemaVersion=None)))
+    # The reviewed gap: any integer used to pass.
+    assert any("configurationSchemaVersion" in p for p in problems_after(lambda d: d.update(configurationSchemaVersion=999)))
+    assert any("configurationSchemaVersion" in p for p in problems_after(lambda d: d.update(configurationSchemaVersion=True)))
     assert any("missing compiled drivers" in p for p in problems_after(lambda d: d["drivers"].pop("synthetic")))
     assert any("does not compile" in p for p in problems_after(
         lambda d: d["drivers"].__setitem__("ads8688", {"id": 5, "name": "ads8688", "capabilities": []})))

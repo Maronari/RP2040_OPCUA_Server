@@ -9,6 +9,9 @@ comparison" gate of docs/releases/v0.5.1-review-fixes.md.
 Expectations come from the build directory, never from the device:
 
 - FirmwareProfile == the build's FIRMWARE_DRIVER_PACK;
+- ConfigurationSchemaVersion == CONFIG_STORE_SCHEMA_VERSION_CURRENT in
+  services/include/services/config_wire.h, which the build's
+  config_export.json "schemaVersion" must also carry;
 - HardwareRevision and Identification.SoftwareRevision == config_export.json;
 - SupportedDrivers == exactly the catalog entries whose
   FIRMWARE_ENABLE_NATIVE_*_DRIVER flag is ON in CMakeCache.txt (parsed from
@@ -44,6 +47,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 CATALOG_SOURCE = ROOT / "services" / "src" / "driver_catalog.c"
+CONFIG_WIRE_HEADER = ROOT / "services" / "include" / "services" / "config_wire.h"
 DESCRIPTORS = ROOT / "static" / "host_descriptors" / "driver_descriptors.json"
 MODEL_SOURCES = ROOT / "opcua_model" / "src"
 
@@ -89,9 +93,24 @@ def catalog_flags(source: str) -> dict[str, str]:
     return names
 
 
-def expected_from_build(build_dir: Path, catalog_source: str, descriptors: dict) -> dict:
+def config_schema_version(config_wire_header: str) -> int:
+    match = re.search(r"#define\s+CONFIG_STORE_SCHEMA_VERSION_CURRENT\s+(\d+)u?\b", config_wire_header)
+    if match is None:
+        raise ValueError("CONFIG_STORE_SCHEMA_VERSION_CURRENT not found in config_wire.h")
+    return int(match.group(1))
+
+
+def expected_from_build(build_dir: Path, catalog_source: str, descriptors: dict, config_wire_header: str) -> dict:
     cache = read_cache(build_dir)
-    export = json.loads((build_dir / "config_export.json").read_text(encoding="utf-8"))["device"]
+    export_root = json.loads((build_dir / "config_export.json").read_text(encoding="utf-8"))
+    export = export_root["device"]
+    schema = config_schema_version(config_wire_header)
+    # config_export.json is generated from a CMake template with a literal
+    # schemaVersion; a build whose artifact disagrees with the firmware
+    # constant is not a trustworthy expectation source.
+    if export_root.get("schemaVersion") != schema:
+        raise ValueError(f"build config_export.json schemaVersion {export_root.get('schemaVersion')!r} != "
+                         f"CONFIG_STORE_SCHEMA_VERSION_CURRENT {schema}")
     enabled = sorted(name for name, flag in catalog_flags(catalog_source).items() if cache.get(flag) == "ON")
     by_name = {entry["name"]: entry for entry in descriptors["drivers"]}
     drivers = {}
@@ -106,6 +125,7 @@ def expected_from_build(build_dir: Path, catalog_source: str, descriptors: dict)
         "firmwareProfile": cache["FIRMWARE_DRIVER_PACK"],
         "hardwareRevision": export["hwRevision"],
         "softwareRevision": export["fwRevision"],
+        "configurationSchemaVersion": schema,
         "drivers": drivers,
     }
 
@@ -115,8 +135,10 @@ def compare(expected: dict, live: dict) -> list[str]:
     for key in ("firmwareProfile", "hardwareRevision", "softwareRevision"):
         if live.get(key) != expected[key]:
             problems.append(f"{key}: device reports {live.get(key)!r}, build expects {expected[key]!r}")
-    if not isinstance(live.get("configurationSchemaVersion"), int):
-        problems.append(f"configurationSchemaVersion is not an integer: {live.get('configurationSchemaVersion')!r}")
+    live_schema = live.get("configurationSchemaVersion")
+    if isinstance(live_schema, bool) or live_schema != expected["configurationSchemaVersion"]:
+        problems.append(f"configurationSchemaVersion: device reports {live_schema!r}, "
+                        f"build expects {expected['configurationSchemaVersion']!r}")
 
     live_drivers = live.get("drivers", {})
     missing = sorted(set(expected["drivers"]) - set(live_drivers))
@@ -217,7 +239,8 @@ async def run(args: argparse.Namespace) -> int:
 
     build_dir = args.build_dir.resolve()
     expected = expected_from_build(build_dir, CATALOG_SOURCE.read_text(encoding="utf-8"),
-                                   json.loads(DESCRIPTORS.read_text(encoding="utf-8")))
+                                   json.loads(DESCRIPTORS.read_text(encoding="utf-8")),
+                                   CONFIG_WIRE_HEADER.read_text(encoding="utf-8"))
 
     import stage_config as opcua_common  # noqa: E402
 
