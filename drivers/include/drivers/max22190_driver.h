@@ -8,11 +8,11 @@
  *
  * Register/command reference: `docs/datasheets/MAX22190-register-notes.md`
  * (extracted from the official Analog Devices/Maxim Integrated datasheet).
- * **The 5-bit CRC this driver computes has not been cross-checked against
- * real silicon or a datasheet-provided worked example (none exists in that
- * datasheet)** -- see the register notes' CRC section for the exact
- * caveat. This is the single largest correctness risk in this driver and
- * must be the first thing verified during hardware bring-up.
+ * The 5-bit CRC follows Analog Devices' "Guidelines to Implement CRC
+ * Algorithm for the MAX22190 and MAX22192" (initial word `00111`,
+ * polynomial `110101`) and is pinned by golden vectors computed with ADI's
+ * reference code; see the register notes' CRC section. It is still not
+ * confirmed against real silicon, so bring-up checks it first.
  *
  * Bus binding: depends only on `drivers/spi_transport.h`'s generic
  * `spi_bus_t`, never on `hardware_spi` directly.

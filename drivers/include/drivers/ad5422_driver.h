@@ -135,14 +135,17 @@ telemetry_driver_result_t native_ad5422_stop(telemetry_channel_t *channel);
  * @brief Write @p value (engineering units matching the channel's
  *        configured range -- volts for 0-10 V, mA for 4-20 mA) to this
  *        channel's data register, converting via the inverse of the
- *        datasheet's scaling formula (docs/datasheets/AD5422-register-notes.md),
- *        clamped to the valid 16-bit code range.
+ *        datasheet's scaling formula (docs/datasheets/AD5422-register-notes.md).
+ *        A value outside the range (below 0 V / 4 mA, above 10 V / 20 mA, or
+ *        NaN) is refused, not clamped: nothing is sent and
+ *        `runtime.value` keeps the last applied value.
  * @return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT if the source is invalid,
  *         @p value is NULL, or the channel's value type is neither FLOAT
  *         nor DOUBLE; TELEMETRY_DRIVER_RESULT_INVALID_STATE if no bus is
  *         bound or chain startup has not yet succeeded (a 48-bit frame is
  *         not a valid write before it); TELEMETRY_DRIVER_RESULT_TIMEOUT if
- *         the transfer fails;
+ *         the transfer fails; TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE for a
+ *         value outside the range;
  *         TELEMETRY_DRIVER_RESULT_OK otherwise.
  */
 telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *channel,

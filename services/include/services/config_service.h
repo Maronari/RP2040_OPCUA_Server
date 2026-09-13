@@ -241,7 +241,7 @@ typedef void (*config_service_restart_fn)(const device_profile_config_t *new_con
  * normalize. May be NULL only in test/host builds that populate config
  * state another way.
  * @return true on success; false only if PSRAM-backed state allocation
- * fails (`WAVESHARE_CORE2350B_16MB_PSRAM8MB` builds).
+ * fails (boards whose header defines `RP2_BOARD_PSRAM_CS_PIN`).
  * @pre Must be called before any other `config_service_*` function.
  * @note Not safe to call concurrently with itself or other `config_service_*`
  * calls; intended to run once during single-threaded startup.

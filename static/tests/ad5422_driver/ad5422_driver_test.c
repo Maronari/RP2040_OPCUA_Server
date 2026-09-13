@@ -526,10 +526,55 @@ static void test_write_scales_voltage_and_current(void)
     assert(native_ad5422_write(&channel_current, &four_ma) == TELEMETRY_DRIVER_RESULT_OK);
     assert(g_chip.dac[AO1_INDEX].data_reg == 0u);
 
-    /* Out-of-range commands clamp rather than wrap. */
-    telemetry_channel_value_t negative = {.f32 = -5.0f};
-    assert(native_ad5422_write(&channel_voltage, &negative) == TELEMETRY_DRIVER_RESULT_OK);
+    /* Range edges are producible and map to the end codes. */
+    telemetry_channel_value_t zero_volts = {.f32 = 0.0f};
+    telemetry_channel_value_t twenty_ma = {.f64 = 20.0};
+    assert(native_ad5422_write(&channel_voltage, &zero_volts) == TELEMETRY_DRIVER_RESULT_OK);
     assert(g_chip.dac[AO0_INDEX].data_reg == 0u);
+    assert(native_ad5422_write(&channel_current, &twenty_ma) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(g_chip.dac[AO1_INDEX].data_reg == 65535u);
+    assert(native_ad5422_write(&channel_voltage, &ten_volts) == TELEMETRY_DRIVER_RESULT_OK);
+}
+
+/** @brief An unproducible command is refused: no frame, no DAC change, no runtime change. */
+static void test_out_of_range_write_is_refused_not_clamped(void)
+{
+    native_channel_source_t source_voltage = {.source_index = AO0_INDEX, .source_flags = 0x1u}; /* 0-10V */
+    native_channel_source_t source_current = {.source_index = AO1_INDEX, .source_flags = 0x5u}; /* 4-20mA */
+    telemetry_channel_t channel_voltage = make_channel(&source_voltage, TELEMETRY_CHANNEL_VALUE_FLOAT);
+    telemetry_channel_t channel_current = make_channel(&source_current, TELEMETRY_CHANNEL_VALUE_DOUBLE);
+    static const float bad_volts[] = {-5.0f, -0.001f, 10.001f, 24.0f, NAN, INFINITY};
+    static const double bad_ma[] = {0.0, 3.999, 20.001, 24.0, -INFINITY};
+    telemetry_channel_value_t five_volts = {.f32 = 5.0f};
+    telemetry_channel_value_t twelve_ma = {.f64 = 12.0};
+    size_t index;
+
+    chip_reset();
+    native_ad5422_bind_bus(&g_bus);
+    assert(native_ad5422_start(&channel_voltage) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_ad5422_start(&channel_current) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_ad5422_write(&channel_voltage, &five_volts) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_ad5422_write(&channel_current, &twelve_ma) == TELEMETRY_DRIVER_RESULT_OK);
+    const uint16_t voltage_code = g_chip.dac[AO0_INDEX].data_reg;
+    const uint16_t current_code = g_chip.dac[AO1_INDEX].data_reg;
+    const unsigned transfers = g_chip.transfers;
+
+    for (index = 0u; index < sizeof(bad_volts) / sizeof(bad_volts[0]); ++index)
+    {
+        telemetry_channel_value_t value = {.f32 = bad_volts[index]};
+
+        assert(native_ad5422_write(&channel_voltage, &value) == TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE);
+        assert_close((double)channel_voltage.runtime.value.f32, 5.0);
+    }
+    for (index = 0u; index < sizeof(bad_ma) / sizeof(bad_ma[0]); ++index)
+    {
+        telemetry_channel_value_t value = {.f64 = bad_ma[index]};
+
+        assert(native_ad5422_write(&channel_current, &value) == TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE);
+        assert_close(channel_current.runtime.value.f64, 12.0);
+    }
+    assert(g_chip.transfers == transfers);
+    assert(g_chip.dac[AO0_INDEX].data_reg == voltage_code && g_chip.dac[AO1_INDEX].data_reg == current_code);
 }
 
 static void test_stop_disables_output(void)
@@ -593,6 +638,7 @@ int main(void)
     test_start_enables_output_and_writing_one_channel_does_not_touch_the_other();
     test_start_sequence_sets_rext_only_with_outen();
     test_write_scales_voltage_and_current();
+    test_out_of_range_write_is_refused_not_clamped();
     test_stop_disables_output();
     test_failed_enable_leaves_output_disabled();
     test_transfer_failure_maps_to_timeout();

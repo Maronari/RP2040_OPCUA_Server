@@ -62,7 +62,9 @@ register read. Byte 2 (bits 9-16) is the addressed register's *current*
 value on a read (Mode 0/1 decode and execute within the same frame — not
 daisy-chain compatible, but this board doesn't daisy-chain); on a write, byte
 2 is instead the `WB` (wire-break) status byte, not an echo of what was
-written. Bits 17-24 are the response's own CRC (chip-generated).
+written. Bits 17-19 are `24VL`, `24VM` and `WBG` (not zero fill, unlike
+the request), and bits 20-24 are the response's own CRC, computed by the
+chip over response bits 1-19 with the same algorithm.
 
 **Consequence for reading channel state**: any well-formed frame's first
 response byte already carries fresh `DI[7:0]` — a driver does not need a
@@ -73,27 +75,44 @@ what actually matters for the live sample, not necessarily byte 2.
 
 ## CRC (5-bit, mandatory in Mode 0)
 
-Polynomial: `P(x) = x^5 + x^4 + x^2 + x^0`. Computed over the **first 19
-bits** of the 24-bit frame (R/W + address\[6:0\] + data\[7:0\] + 3 reserved
-zero bits, MSB-first), then the 5-bit result is appended as bits 20-24.
-The chip checks the CRC on every incoming frame (setting `FAULT1.CRC` on
-mismatch and discarding the frame's commands) and generates its own CRC
-for the outgoing response.
+Polynomial: `P(x) = x^5 + x^4 + x^2 + x^0` (`110101`), computed over the
+**first 19 bits** of the 24-bit frame (request: R/W + address\[6:0\] +
+data\[7:0\] + `000`; response: `DI[7:0]` + byte 2 + `24VL`/`24VM`/`WBG`),
+MSB-first; the 5-bit result is appended as bits 20-24. The chip checks the
+CRC on every incoming frame (setting `FAULT1.CRC` on mismatch and
+discarding the frame's commands) and generates its own CRC for the
+outgoing response.
 
-**Not independently verified against a datasheet worked example or
-reference implementation — none is provided in this datasheet.** This
-driver implements a standard bit-by-bit CRC-5 consistent with the stated
-polynomial (XOR mask `0x15`, the polynomial's low 5 bits with the implicit
-leading `x^5` term dropped, MSB-first over the 19 covered bits, zero
-initial state) — the common construction for this class of CRC, but
-**this exact bit-for-bit behavior has not been cross-checked against real
-MAX22190 silicon or a reference test vector**, since none exists in this
-project and no chip is physically available. This is the single largest
-correctness risk in this driver and must be the first thing verified
-during hardware bring-up (a mismatched CRC implementation would make every
-real SPI transaction with the chip fail with a `FAULT1.CRC` error,
-producing a very obvious, easy-to-diagnose failure mode rather than a
-silent one).
+**The algorithm needs an initial word, which the datasheet revision in
+`docs/datasheets/` (Rev 0, 12/17) does not mention.** Analog Devices'
+"Guidelines to Implement CRC Algorithm for the MAX22190 and MAX22192"
+(<https://www.analog.com/en/resources/design-notes/guidelines-to-implement-crc-algorithm.html>),
+whose reference C code ADI also ships in its no-OS driver
+(`drivers/digital-io/max22190/max22190.c`, `crc_init = 0x7`,
+`crc_poly = 0x35`), specifies:
+
+1. append the 5-bit initial word `00111` to the 19 data bits, giving a
+   24-bit stream;
+2. divide that stream by `110101` (modulo-2 long division);
+3. the 5-bit remainder is the CRC.
+
+A zero-initialized CRC over the same polynomial -- what this driver
+implemented until 2026-09-13 -- differs from it by exactly `0x07` on every
+frame, so the chip would have rejected every command and the driver every
+response. Golden vectors computed with ADI's reference code (the host test
+hard-codes these, so the driver and its fake chip cannot share a mistake):
+
+| Frame (19 data bits) | 24-bit frame |
+|---|---|
+| all zero | `00 00 07` |
+| read `FAULT1` (`0x04`) | `04 00 0F` |
+| read `DI` (`0x02`) | `02 00 03` |
+| write `INEN = 0x0F` | `9A 0F 16` |
+| write `FAULT1EN = 0xF8` | `A4 F8 02` |
+| response `DI = 0x09`, byte 2 `0x46`, `24VL/24VM/WBG = 101` | `09 46 AF` |
+
+Still to confirm on silicon at bring-up: a first `FAULT1` read with `CRC`
+clear.
 
 ## Register map (Table 4; only registers this driver touches)
 

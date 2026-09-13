@@ -5,8 +5,8 @@
  *
  * See drivers/include/drivers/max22190_driver.h for the full contract and
  * docs/datasheets/MAX22190-register-notes.md for the register/command
- * reference this implementation follows -- including the important CRC
- * caveat (unverified against real silicon or a datasheet worked example).
+ * reference this implementation follows, including the CRC-5 algorithm
+ * (Analog Devices' MAX22190 CRC guideline: initial word `00111`).
  *
  * Ownership: the SPI bus binding (native_max22190_bind_bus()) and the
  * g_chip_ready latch are process-wide file-static state -- one physical
@@ -98,28 +98,38 @@ static const native_channel_source_t *max22190_source(const telemetry_channel_t 
     return channel != NULL ? (const native_channel_source_t *)channel->driver_context : NULL;
 }
 
+/** @brief CRC-5 polynomial x^5+x^4+x^2+x^0 with its leading term, `110101`. */
+#define MAX22190_CRC_POLY 0x35u
+/** @brief Initial word ADI's algorithm appends to the 19 data bits, `00111`. */
+#define MAX22190_CRC_INIT_WORD 0x07u
+
 /**
- * @brief Bit-by-bit CRC-5, polynomial x^5+x^4+x^2+x^0 (XOR mask 0x15 --
- * the polynomial's low 5 bits with the implicit leading x^5 term
- * dropped), MSB-first over the low 19 bits of @p bits19.
+ * @brief MAX22190 CRC-5 over the 19 data bits of a frame (@p bits19, low 19
+ *        bits), for both host-generated and chip-generated frames.
+ *
+ * Analog Devices' "Guidelines to Implement CRC Algorithm for the MAX22190
+ * and MAX22192" (and its reference code, reproduced in ADI's no-OS
+ * `max22190.c`): append the initial word `00111` to the 19 data bits and
+ * divide the resulting 24-bit stream by `110101`; the 5-bit remainder is
+ * the CRC. The initial word is not optional -- a zero-initialized CRC over
+ * the same polynomial differs from the chip's by exactly `0x07` on every
+ * frame, so the chip would discard every command and every response would
+ * fail its check. The datasheet revision in `docs/datasheets/` (Rev 0,
+ * 12/17) gives only the polynomial.
  */
 static uint8_t max22190_crc5(uint32_t bits19)
 {
-    uint8_t crc = 0u;
+    uint32_t remainder = ((bits19 & 0x7FFFFu) << 5) | MAX22190_CRC_INIT_WORD;
     int bit_index;
 
-    for (bit_index = 18; bit_index >= 0; --bit_index)
+    for (bit_index = 23; bit_index >= 5; --bit_index)
     {
-        uint8_t bit = (uint8_t)((bits19 >> bit_index) & 1u);
-        uint8_t msb = (uint8_t)((crc >> 4) & 1u);
-
-        crc = (uint8_t)((crc << 1) & 0x1Fu);
-        if ((bit ^ msb) != 0u)
+        if ((remainder & (1uL << bit_index)) != 0u)
         {
-            crc ^= 0x15u;
+            remainder ^= (uint32_t)MAX22190_CRC_POLY << (bit_index - 5);
         }
     }
-    return (uint8_t)(crc & 0x1Fu);
+    return (uint8_t)(remainder & 0x1Fu);
 }
 
 static void max22190_build_frame(bool write, uint8_t address, uint8_t data, uint8_t out[3])

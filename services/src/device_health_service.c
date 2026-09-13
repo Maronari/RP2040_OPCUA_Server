@@ -96,7 +96,7 @@ void device_health_service_get_report(device_health_report_t *out_report)
         failure_reasons |= DEVICE_HEALTH_REASON_RUNTIME_FAULT;
     }
 
-#if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
+#if defined(RP2_BOARD_PSRAM_CS_PIN)
     if (!psram.psram_ready)
     {
         failure_reasons |= DEVICE_HEALTH_REASON_PSRAM_UNAVAILABLE;

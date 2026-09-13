@@ -86,11 +86,11 @@
         "sourceIndex": {"min": 0, "max": 3, "note": "AI0..AI3; the chip has 8 mux inputs, but CH4..CH7 are grounded on this board and rejected"},
         "sourceFlags": {
           "enum": {
-            "0": "range +-2.5x VREF",
-            "1": "range +-1.25x VREF",
-            "2": "range +-0.625x VREF",
-            "5": "range 0..1.25x VREF",
-            "6": "range 0..0.625x VREF"
+            "0": "range +-2.5x VREF (+-10.24 V)",
+            "1": "range +-1.25x VREF (+-5.12 V)",
+            "2": "range +-0.625x VREF (+-2.56 V)",
+            "5": "range 0..2.5x VREF (0..10.24 V)",
+            "6": "range 0..1.25x VREF (0..5.12 V)"
           },
           "note": "only these five range codes are implemented -- see the register notes for the full range table"
         }
@@ -128,7 +128,7 @@
     {
       "driverId": 7,
       "name": "max22190",
-      "wiring": "RP2350_INDUSTRIAL_MVP_V1 MAX22190ATJ+ industrial digital-input frontend, DI0..DI3 wired on this board (IN1..IN4 on the chip). Shares the board's single physical SPI bus; has its own dedicated chip-select pin. Interface Mode 0 only (24-bit frame, mandatory CRC-5, no daisy chain) -- hardware pin-strapped, not software-selectable -- on SPI clock mode 0 (CPOL=0, CPHA=0), applied per transaction. The first channel start runs HARDWARE_MVP.md's frozen chip initialization (INEN=0x0F, FLT1..FLT4=0x04, CFG=0x01, WB/FAULT2 cleared, FAULT2EN=0x3C, GPO=0x80, FAULT1EN=0xF8, POR cleared, all read back). See docs/datasheets/MAX22190-register-notes.md. CRC-5 implementation is unverified against real silicon or a datasheet worked example -- the single largest correctness risk in this driver.",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 MAX22190ATJ+ industrial digital-input frontend, DI0..DI3 wired on this board (IN1..IN4 on the chip). Shares the board's single physical SPI bus; has its own dedicated chip-select pin. Interface Mode 0 only (24-bit frame, mandatory CRC-5, no daisy chain) -- hardware pin-strapped, not software-selectable -- on SPI clock mode 0 (CPOL=0, CPHA=0), applied per transaction. The first channel start runs HARDWARE_MVP.md's frozen chip initialization (INEN=0x0F, FLT1..FLT4=0x04, CFG=0x01, WB/FAULT2 cleared, FAULT2EN=0x3C, GPO=0x80, FAULT1EN=0xF8, POR cleared, all read back). See docs/datasheets/MAX22190-register-notes.md. CRC-5 follows ADI's MAX22190 CRC guideline (initial word 00111, polynomial 110101), pinned by golden vectors from ADI's reference code; not yet confirmed on silicon.",
       "connectionConstraints": {
         "sourceIndex": {"min": 0, "max": 3, "note": "DI0..DI3, the four wired inputs"},
         "sourceFlags": {

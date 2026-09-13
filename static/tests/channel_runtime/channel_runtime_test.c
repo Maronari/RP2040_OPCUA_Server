@@ -407,6 +407,11 @@ static void test_write_rejections_and_failure_cleanup(void)
     contexts[0].write_result = TELEMETRY_DRIVER_RESULT_INVALID_STATE;
     assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
            CHANNEL_MANAGER_WRITE_RESULT_INVALID_LIFECYCLE);
+    /* A driver refusing an unproducible value is not a type mismatch and
+     * not a device failure, and publishes nothing (checked below). */
+    contexts[0].write_result = TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE;
+    assert(channel_manager_write_value("c00", TELEMETRY_CHANNEL_VALUE_FLOAT, &value, NULL) ==
+           CHANNEL_MANAGER_WRITE_RESULT_OUT_OF_RANGE);
     assert(channel_manager_copy_snapshot_by_id("c00", &after));
     assert(memcmp(&before.channel.runtime, &after.channel.runtime, sizeof(before.channel.runtime)) == 0);
 

@@ -43,7 +43,12 @@ typedef enum
     TELEMETRY_DRIVER_RESULT_INVALID_STATE,
     TELEMETRY_DRIVER_RESULT_TIMEOUT,
     TELEMETRY_DRIVER_RESULT_HARDWARE_FAILURE,
-    TELEMETRY_DRIVER_RESULT_NO_MEMORY
+    TELEMETRY_DRIVER_RESULT_NO_MEMORY,
+    /** A well-typed value outside what the channel can physically produce
+     *  (e.g. an analog output command beyond its range). The driver must
+     *  reject it without touching hardware or runtime state -- never clamp
+     *  and report success. */
+    TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE
 } telemetry_driver_result_t;
 
 /** @brief Bitmask a driver can report to declare which vtable operations it actually implements. */

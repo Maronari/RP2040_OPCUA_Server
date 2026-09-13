@@ -84,17 +84,22 @@ jobs:
           # FIRMWARE_DRIVER_PACK is passed explicitly rather than relying on
           # the CMake default (which became "base" on 2026-09-12): this job's
           # labelling step below hardcodes "industrial", and the two must not
-          # be able to drift apart.
+          # be able to drift apart. PICO_BOARD and the W5500 pins are not
+          # passed: they follow the pack (rp2350_industrial_mvp_v1, GPIO4..8),
+          # and a contradicting -DPICO_BOARD is a configure error.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DPICO_BOARD=waveshare_core2350b_16mb_psram8mb \
             -DWIZNET_CHIP=W5500 \
             -DFIRMWARE_DRIVER_PACK=industrial \
             -DOTA_ROM_PRIMARY_APP=ON \
             -DOTA_BUILD_BOOTLOADER=OFF \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Build reference firmware target
+      - name: Verify industrial board profile
+        run: |
+          python3 static/tools/check_board_profile.py --build-dir build
+
+      - name: Build industrial firmware target
         run: |
           cmake --build build --target all
 
@@ -186,30 +191,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi cppcheck python3
 
-      - name: Configure analysis build
+      - name: Configure both board profiles
         run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DPICO_BOARD=waveshare_core2350b_16mb_psram8mb \
-            -DWIZNET_CHIP=W5500 \
-            -DOTA_ROM_PRIMARY_APP=ON \
-            -DOTA_BUILD_BOOTLOADER=OFF \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          # cppcheck analyses what compile_commands.json lists, and each pack
+          # compiles a different set of translation units: industrial-only
+          # drivers exist only in the industrial build, base-only fallbacks
+          # only in the base build. Both are configured and both are gated.
+          for pack in base industrial; do
+            cmake -S . -B "build-${pack}" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DWIZNET_CHIP=W5500 \
+              -DFIRMWARE_DRIVER_PACK="${pack}" \
+              -DOTA_ROM_PRIMARY_APP=ON \
+              -DOTA_BUILD_BOOTLOADER=OFF \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            python3 static/tools/check_board_profile.py --build-dir "build-${pack}"
+          done
 
-      - name: Run blocking first-party cppcheck
+      - name: Run blocking first-party cppcheck (base profile)
         run: |
           python3 static/tools/run_first_party_cppcheck.py \
-            --build-dir build \
-            --xml-output build/reports/cppcheck.xml \
-            --text-output build/reports/cppcheck.txt
+            --build-dir build-base \
+            --xml-output build-reports/cppcheck-base.xml \
+            --text-output build-reports/cppcheck-base.txt
+
+      - name: Run blocking first-party cppcheck (industrial profile)
+        run: |
+          python3 static/tools/run_first_party_cppcheck.py \
+            --build-dir build-industrial \
+            --xml-output build-reports/cppcheck-industrial.xml \
+            --text-output build-reports/cppcheck-industrial.txt
 
       - name: Upload analysis logs
         uses: actions/upload-artifact@v7
         with:
           name: analysis
           path: |
-            build/reports/cppcheck.xml
-            build/reports/cppcheck.txt
+            build-reports/cppcheck-base.xml
+            build-reports/cppcheck-base.txt
+            build-reports/cppcheck-industrial.xml
+            build-reports/cppcheck-industrial.txt
           if-no-files-found: error
 
   renode_experiment:

@@ -1,15 +1,18 @@
 /**
  * @file
  * @brief Host tests for the real drivers/src/max22190_driver.c against a
- *        fake MAX22190 Mode-0 chip model that itself computes/checks CRC-5
- *        the same way the datasheet describes -- this is a genuine
- *        round-trip proof: the fake chip rejects any frame whose CRC it
- *        does not accept as valid (proving the driver's outgoing CRC is
- *        correct), and the driver rejects any response whose CRC does not
- *        check out (proving the driver's incoming CRC check is correct).
- *        The CRC-5 implementation here is written independently from
- *        drivers/src/max22190_driver.c's, not copied from it, so agreement
- *        between the two is real evidence, not a tautology.
+ *        fake MAX22190 Mode-0 chip model that computes and enforces CRC-5:
+ *        the fake chip ignores any request whose CRC it does not accept,
+ *        and the driver must reject any response whose CRC does not check
+ *        out.
+ *
+ * An independent CRC in the fake is not enough on its own: until
+ * 2026-09-13 driver and fake were written separately and both omitted the
+ * `00111` initial word of ADI's algorithm, so they agreed with each other
+ * and not with the chip. The fake's CRC is therefore a port of ADI's
+ * reference code (no-OS `max22190_crc()`), and both it and the driver's
+ * frames are checked against golden vectors computed with that code and
+ * hard-coded here (test_crc_golden_vectors()).
  */
 #include "drivers/max22190_driver.h"
 #include "drivers/industrial_board_pins.h"
@@ -55,31 +58,45 @@ typedef struct
     bool corrupt_response_crc;
     bool force_transfer_failure;
     bool reject_bad_request_crc;
+    uint8_t status3;          /**< Response bits 17-19: 24VL, 24VM, WBG. */
+    bool golden_response;     /**< Answer with golden_rx verbatim instead of modeling. */
+    uint8_t golden_rx[3];
     bool por_stuck;           /**< FAULT1.POR ignores the clearing write. */
     int stuck_register;       /**< Address whose writes are ignored, or -1. */
     unsigned transfers;
     unsigned fail_transfer;
     fake_frame_t log[64];
+    uint8_t raw[64][3];       /**< Request bytes exactly as clocked, parallel to transfers. */
     unsigned logged;
+    unsigned raw_logged;
 } fake_chip_t;
 
 static fake_chip_t g_chip;
 
-/** @brief Independent re-implementation of the datasheet's CRC-5 (x^5+x^4+x^2+x^0), for cross-checking the driver under test -- not shared code with drivers/src/max22190_driver.c. */
-static uint8_t fake_crc5(uint32_t bits19)
+/**
+ * @brief CRC-5 of a 24-bit frame's first 19 bits, ported from ADI's
+ *        reference code (no-OS `max22190_crc()`, from the "Guidelines to
+ *        Implement CRC Algorithm for the MAX22190 and MAX22192"): replace
+ *        the low 5 bits with the initial word `00111`, then divide the
+ *        24-bit stream by `110101`. Deliberately byte-oriented and shaped
+ *        like ADI's code rather than like the driver's.
+ */
+static uint8_t fake_crc5(const uint8_t frame[3])
 {
-    static const uint32_t poly = 0x35u; /* x^5+x^4+x^2+x^0, with the leading x^5 term explicit here. */
-    uint32_t reg = bits19 << 5;
-    int bit_index;
+    uint32_t stream = ((uint32_t)frame[0] << 16) | ((uint32_t)frame[1] << 8) | frame[2];
+    uint8_t step;
+    uint8_t tmp;
+    int i;
 
-    for (bit_index = 23; bit_index >= 5; --bit_index)
+    stream = (stream & 0xFFFFE0u) + 0x07u;
+    tmp = (uint8_t)((stream & 0xFC0000u) >> 18);
+    step = (tmp & 0x20u) != 0u ? (uint8_t)(tmp ^ 0x35u) : tmp;
+    for (i = 0; i < 18; ++i)
     {
-        if ((reg & (1u << bit_index)) != 0u)
-        {
-            reg ^= poly << (bit_index - 5);
-        }
+        tmp = (uint8_t)(((step & 0x1Fu) << 1) + ((stream >> (17 - i)) & 0x01u));
+        step = (tmp & 0x20u) != 0u ? (uint8_t)(tmp ^ 0x35u) : tmp;
     }
-    return (uint8_t)(reg & 0x1Fu);
+    return (uint8_t)(step & 0x1Fu);
 }
 
 /** @brief Drive the active-low DI_READY_N line: ready == chip reports itself ready. */
@@ -98,6 +115,10 @@ static void chip_reset(void)
     set_chip_ready_line(true);
     g_chip.chip_present = true;
     g_chip.stuck_register = -1;
+    /* A real chip enforces request CRC on every frame. */
+    g_chip.reject_bad_request_crc = true;
+    /* VDD24 is not connected on this board, so 24VM reads set. */
+    g_chip.status3 = 0x2u;
     /* Datasheet POR defaults, with stale diagnostics pending in WB/FAULT2. */
     g_chip.registers[REG_FAULT1] = 0x46u;
     g_chip.registers[REG_FLT1] = 0x08u;
@@ -120,16 +141,24 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
     bool write;
     uint8_t address;
     uint8_t data;
-    uint32_t response_bits19;
 
     if (chip->force_transfer_failure || length != 3u || !chip->chip_present)
     {
         return false;
     }
+    if (chip->raw_logged < sizeof(chip->raw) / sizeof(chip->raw[0]))
+    {
+        memcpy(chip->raw[chip->raw_logged++], tx, 3u);
+    }
+    if (chip->golden_response)
+    {
+        memcpy(rx, chip->golden_rx, 3u);
+        return true;
+    }
     frame24 = ((uint32_t)tx[0] << 16) | ((uint32_t)tx[1] << 8) | tx[2];
     request_bits19 = frame24 >> 5;
     request_crc = (uint8_t)(frame24 & 0x1Fu);
-    if (chip->reject_bad_request_crc && fake_crc5(request_bits19) != request_crc)
+    if (chip->reject_bad_request_crc && fake_crc5(tx) != request_crc)
     {
         /* Real chip: frame discarded, FAULT1.CRC set, but SDO for this
          * transfer still clocks out (garbage) -- for this test, simplest
@@ -173,16 +202,16 @@ static bool fake_transfer(void *context, const uint8_t *tx, uint8_t *rx, size_t 
         {
             chip->registers[addressed] = 0u; /* clear-on-read */
         }
-        response_bits19 = ((uint32_t)chip->di_byte << 11) | ((uint32_t)byte1 << 3);
-        uint8_t response_crc = fake_crc5(response_bits19);
+        rx[0] = chip->di_byte;
+        rx[1] = byte1;
+        rx[2] = (uint8_t)((chip->status3 & 0x7u) << 5);
+        uint8_t response_crc = fake_crc5(rx);
 
         if (chip->corrupt_response_crc)
         {
             response_crc ^= 0x1Fu;
         }
-        rx[0] = chip->di_byte;
-        rx[1] = byte1;
-        rx[2] = response_crc;
+        rx[2] = (uint8_t)(rx[2] | response_crc);
     }
     return true;
 }
@@ -204,6 +233,93 @@ static telemetry_channel_t make_channel(native_channel_source_t *source)
     channel.driver_context = source;
     channel.metadata.value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN;
     return channel;
+}
+
+/**
+ * @brief Golden vectors computed with ADI's reference CRC code and
+ *        hard-coded, so neither the fake chip nor the driver can drift to
+ *        a self-consistent but wrong CRC again.
+ */
+static void test_crc_golden_vectors(void)
+{
+    /* Request frames of the HARDWARE_MVP.md startup sequence, then the
+     * channel's own FLT3 write (source_flags 0x0A) and a DI read. */
+    static const uint8_t startup[][3] = {
+        {0x04, 0x00, 0x0F}, /* read FAULT1 */
+        {0x9A, 0x0F, 0x16}, /* INEN = 0x0F */
+        {0x86, 0x04, 0x1A}, /* FLT1 = 0x04 */
+        {0x88, 0x04, 0x06}, /* FLT2 */
+        {0x8A, 0x04, 0x02}, /* FLT3 */
+        {0x8C, 0x04, 0x0E}, /* FLT4 */
+        {0x98, 0x01, 0x02}, /* CFG = 0x01 */
+        {0x00, 0x00, 0x07}, /* read WB (19 zero bits: CRC is the init word itself) */
+        {0x1C, 0x00, 0x0A}, /* read FAULT2 */
+        {0x9E, 0x3C, 0x00}, /* FAULT2EN = 0x3C */
+        {0xA2, 0x80, 0x0B}, /* GPO = 0x80 */
+        {0xA4, 0xF8, 0x02}, /* FAULT1EN = 0xF8 */
+        {0x84, 0x00, 0x19}, /* FAULT1 = 0x00 (clear POR) */
+        {0x1A, 0x00, 0x06}, /* read back INEN */
+        {0x06, 0x00, 0x0B}, /* FLT1 */
+        {0x08, 0x00, 0x17}, /* FLT2 */
+        {0x0A, 0x00, 0x13}, /* FLT3 */
+        {0x0C, 0x00, 0x1F}, /* FLT4 */
+        {0x18, 0x00, 0x02}, /* CFG */
+        {0x1E, 0x00, 0x0E}, /* FAULT2EN */
+        {0x22, 0x00, 0x1C}, /* GPO */
+        {0x24, 0x00, 0x10}, /* FAULT1EN */
+        {0x04, 0x00, 0x0F}, /* FAULT1 */
+        {0x8A, 0x0A, 0x12}, /* channel DI2: FLT3 = 0x0A */
+        {0x02, 0x00, 0x03}, /* read DI */
+    };
+    spi_bus_t bus = {.vtbl = &g_fake_vtbl, .context = &g_chip};
+    native_channel_source_t source = {.source_index = 2u, .source_flags = 0x0Au};
+    telemetry_channel_t channel = make_channel(&source);
+    unsigned index;
+
+    /* The fake's own CRC reproduces every vector... */
+    for (index = 0u; index < sizeof(startup) / sizeof(startup[0]); ++index)
+    {
+        assert(fake_crc5(startup[index]) == (startup[index][2] & 0x1Fu));
+    }
+    /* ... including a response frame, whose bits 17-19 are status, not fill. */
+    {
+        static const uint8_t response[3] = {0x09, 0x46, 0xAF}; /* DI=0x09, byte2=0x46, 24VL/24VM/WBG=101, CRC=0x0F */
+        assert(fake_crc5(response) == 0x0Fu);
+    }
+
+    /* ... and the driver clocks out exactly these bytes. */
+    chip_reset();
+    native_max22190_bind_bus(&bus);
+    assert(native_max22190_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_max22190_read(&channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(g_chip.raw_logged == sizeof(startup) / sizeof(startup[0]));
+    for (index = 0u; index < g_chip.raw_logged; ++index)
+    {
+        assert(memcmp(g_chip.raw[index], startup[index], 3u) == 0);
+    }
+
+    /* The driver accepts a golden response verbatim and decodes it... */
+    {
+        native_channel_source_t di0 = {.source_index = 0u, .source_flags = 0x04u};
+        native_channel_source_t di1 = {.source_index = 1u, .source_flags = 0x04u};
+        telemetry_channel_t channel0 = make_channel(&di0);
+        telemetry_channel_t channel1 = make_channel(&di1);
+
+        g_chip.golden_response = true;
+        g_chip.golden_rx[0] = 0x09u;
+        g_chip.golden_rx[1] = 0x46u;
+        g_chip.golden_rx[2] = 0xAFu;
+        assert(native_max22190_read(&channel0, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+        assert(channel0.runtime.value.boolean == true);
+        assert(native_max22190_read(&channel1, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+        assert(channel1.runtime.value.boolean == false);
+
+        /* ... and rejects the same response carrying the zero-initialized
+         * CRC the driver used to compute (0x08 = 0x0F ^ 0x07). */
+        g_chip.golden_rx[2] = 0xA8u;
+        assert(native_max22190_read(&channel0, 0u) == TELEMETRY_DRIVER_RESULT_TIMEOUT);
+        g_chip.golden_response = false;
+    }
 }
 
 static void test_source_validation(void)
@@ -511,6 +627,7 @@ int main(void)
         g_chip.fail_transfer = step;
         assert(native_max22190_self_test(&channel) != TELEMETRY_DRIVER_RESULT_OK);
     }
+    test_crc_golden_vectors();
     test_source_validation();
     test_no_bus_bound();
     test_start_writes_filter_register();

@@ -1,5 +1,7 @@
 # ioLibrary_Driver
-option(FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS "Bind the W5500 Ethernet SPI to RP2350_INDUSTRIAL_MVP_V1's frozen GPIO4..GPIO8 mapping instead of the reference module's GPIO0..GPIO3/GPIO21 (see HARDWARE_MVP.md; pre-hardware: compile/mock validated only)" OFF)
+# FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS is not an option: the root
+# CMakeLists.txt derives it from FIRMWARE_DRIVER_PACK (industrial -> ON,
+# base -> OFF), so the Ethernet pins always match the board the pack is for.
 
 add_library(IOLIBRARY_FILES STATIC)
 

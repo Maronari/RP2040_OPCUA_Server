@@ -44,7 +44,7 @@
 #include "services/history_service.h"
 #include "pico/unique_id.h"
 
-#if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
+#if defined(RP2_BOARD_PSRAM_CS_PIN)
 #include "psram_allocator.h"
 #endif
 
@@ -67,8 +67,8 @@ typedef union
  * @brief Single allocation holding all configuration-service runtime state.
  *
  * Owner: `config_service`, lifetime from `config_service_init()` until
- * reboot. Allocated from PSRAM on `WAVESHARE_CORE2350B_16MB_PSRAM8MB`
- * builds (`g_config_state`), or a static fallback instance otherwise
+ * reboot. Allocated from PSRAM on boards whose header defines
+ * `RP2_BOARD_PSRAM_CS_PIN` (`g_config_state`), or a static fallback instance otherwise
  * (`g_config_state_fallback`) — kept out of the default `.bss`/stack budget
  * on the PSRAM target because `device_profile_config_t` (three copies, plus
  * scratch) is large. Synchronization: see file-level comment.
@@ -82,7 +82,7 @@ typedef struct
 } config_service_state_t;
 
 static config_service_state_t *g_config_state;
-#if !defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
+#if !defined(RP2_BOARD_PSRAM_CS_PIN)
 static config_service_state_t g_config_state_fallback;
 #endif
 
@@ -704,7 +704,7 @@ bool config_service_init(const device_profile_config_t *defaults)
     bool loaded_persisted_record = false;
     config_transaction_recovery_state_t recovery_state;
 
-#if defined(WAVESHARE_CORE2350B_16MB_PSRAM8MB)
+#if defined(RP2_BOARD_PSRAM_CS_PIN)
     if (g_config_state == NULL)
     {
         if (!psram_allocator_is_ready())

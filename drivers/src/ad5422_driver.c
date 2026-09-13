@@ -243,27 +243,29 @@ static telemetry_driver_result_t ad5422_start_chain(void)
     return TELEMETRY_DRIVER_RESULT_OK;
 }
 
-/** @brief Convert an engineering-unit value (volts or mA, per @p range) to a clamped 16-bit DAC code. */
+/**
+ * @brief Whether @p value (volts or mA, per @p range) lies inside the range
+ *        the output can produce: 0..10 V, or 4..20 mA.
+ *
+ * Written so NaN fails too. An actuator must not quietly substitute the
+ * nearest producible value and report success: the caller would believe
+ * the commanded value is on the terminal.
+ */
+static bool ad5422_value_in_range(const ad5422_range_entry_t *range, double value)
+{
+    const double minimum = range->current_mode ? range->current_offset_ma : 0.0;
+    const double maximum =
+        range->current_mode ? range->current_offset_ma + range->full_scale_ma : range->gain * AD5422_VREFIN;
+
+    return value >= minimum && value <= maximum;
+}
+
+/** @brief Convert an in-range engineering-unit value (see ad5422_value_in_range()) to its 16-bit DAC code. */
 static uint16_t ad5422_code_from_value(const ad5422_range_entry_t *range, double value)
 {
-    double normalized;
+    const double normalized = range->current_mode ? (value - range->current_offset_ma) / range->full_scale_ma
+                                                  : value / (range->gain * AD5422_VREFIN);
 
-    if (range->current_mode)
-    {
-        normalized = (value - range->current_offset_ma) / range->full_scale_ma;
-    }
-    else
-    {
-        normalized = value / (range->gain * AD5422_VREFIN);
-    }
-    if (normalized < 0.0)
-    {
-        normalized = 0.0;
-    }
-    else if (normalized > 1.0)
-    {
-        normalized = 1.0;
-    }
     return (uint16_t)(normalized * 65535.0 + 0.5);
 }
 
@@ -398,6 +400,11 @@ telemetry_driver_result_t native_ad5422_write(telemetry_channel_t *channel, cons
     }
     engineering_value =
         channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_FLOAT ? (double)value->f32 : value->f64;
+    if (!ad5422_value_in_range(range, engineering_value))
+    {
+        /* Nothing is sent and runtime.value keeps the last applied value. */
+        return TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE;
+    }
     code = ad5422_code_from_value(range, engineering_value);
     if (!ad5422_transact(source->source_index, AD5422_ADDR_DATA, code))
     {

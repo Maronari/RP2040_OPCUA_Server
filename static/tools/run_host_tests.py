@@ -47,6 +47,7 @@ SUITES = (
     "test_v051_public_contract.py",
     "test_driver_descriptors_contract.py",
     "test_label_driver_qualification_status.py",
+    "test_check_board_profile.py",
     "test_channel_model_contract.py",
     "test_verify_channel_model.py",
     "test_verify_channel_model_e2e.py",
