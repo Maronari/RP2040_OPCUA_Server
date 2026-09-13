@@ -66,7 +66,17 @@ jobs:
           if-no-files-found: error
 
   firmware:
+    name: firmware (${{ matrix.driver_pack }})
     runs-on: ubuntu-latest
+    # Both firmware profiles are configured, built and linked on every run:
+    # ROADMAP.md's v0.5.1 acceptance requires at least two profiles with the
+    # disabled drivers' symbols absent from the smaller ELF, and "base" is
+    # the reference-board Debug build. fail-fast is off so one profile's
+    # failure never hides the other's result.
+    strategy:
+      fail-fast: false
+      matrix:
+        driver_pack: [base, industrial]
 
     steps:
       - name: Checkout repository
@@ -79,29 +89,34 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi python3
 
-      - name: Configure industrial-pack Debug build
+      - name: Configure ${{ matrix.driver_pack }}-pack Debug build
         run: |
-          # FIRMWARE_DRIVER_PACK is passed explicitly rather than relying on
-          # the CMake default (which became "base" on 2026-09-12): this job's
-          # labelling step below hardcodes "industrial", and the two must not
-          # be able to drift apart. PICO_BOARD and the W5500 pins are not
-          # passed: they follow the pack (rp2350_industrial_mvp_v1, GPIO4..8),
+          # FIRMWARE_DRIVER_PACK is always passed explicitly, never left to
+          # the CMake default. PICO_BOARD and the W5500 pins are not passed:
+          # they follow the pack (base -> waveshare_core2350b_16mb_psram8mb,
+          # industrial -> rp2350_industrial_mvp_v1 with W5500 on GPIO4..8),
           # and a contradicting -DPICO_BOARD is a configure error.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DWIZNET_CHIP=W5500 \
-            -DFIRMWARE_DRIVER_PACK=industrial \
+            -DFIRMWARE_DRIVER_PACK=${{ matrix.driver_pack }} \
             -DOTA_ROM_PRIMARY_APP=ON \
             -DOTA_BUILD_BOOTLOADER=OFF \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Verify industrial board profile
+      - name: Verify ${{ matrix.driver_pack }} board profile
         run: |
           python3 static/tools/check_board_profile.py --build-dir build
 
-      - name: Build industrial firmware target
+      - name: Build ${{ matrix.driver_pack }} firmware target
         run: |
           cmake --build build --target all
+
+      - name: Verify linked driver set
+        run: |
+          python3 static/tools/check_driver_pack_symbols.py \
+            --driver-pack ${{ matrix.driver_pack }} \
+            --elf build/app/basic_profile/device_profile_basic.elf | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Generate size reports
         run: |
@@ -110,6 +125,7 @@ jobs:
           arm-none-eabi-size -A build/app/basic_profile/device_profile_basic.elf | tee build/reports/sections.txt
 
       - name: Label industrial driver hardware-qualification status
+        if: matrix.driver_pack == 'industrial'
         run: |
           python3 static/tools/label_driver_qualification_status.py \
             --driver-pack industrial \
@@ -161,7 +177,7 @@ jobs:
       - name: Upload firmware and release evidence
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-debug
+          name: firmware-debug-${{ matrix.driver_pack }}
           path: |
             build/app/basic_profile/device_profile_basic.elf
             build/app/basic_profile/device_profile_basic.uf2
@@ -175,6 +191,9 @@ jobs:
             build/reports/driver_qualification_status.json
             build/CMakeCache.txt
             build/compile_commands.json
+          # driver_qualification_status.json exists only for industrial; a
+          # missing path among others is skipped, and "error" still fails an
+          # upload that finds nothing at all.
           if-no-files-found: error
 
   analysis:

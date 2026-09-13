@@ -1,8 +1,59 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.5.0`. Historical tag
-SHAs below are resolved from peeled Git tags, so annotated tags are reported by
-their target commit SHA rather than the tag-object SHA.
+This file tracks the firmware release line through `v0.5.0`, plus the
+in-progress `v0.5.1` line. Historical tag SHAs below are resolved from peeled
+Git tags, so annotated tags are reported by their target commit SHA rather than
+the tag-object SHA.
+
+## v0.5.1 (unreleased)
+
+Not tagged and not release-ready: see the open gates in
+`docs/releases/v0.5.1-review-fixes.md` ("Roadmap checklist status and
+remaining gates"). Plan and history: `docs/releases/v0.5.1.md` (T1-T21).
+Every industrial driver below is **compile/mock validated, not hardware
+qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
+
+- Driver SDK: writable reference driver (`gpio_output`, with `write`,
+  `configure` and `self_test`), bus-agnostic SPI/I2C/UART transport contracts
+  with RP2350 bindings, the `synthetic` example driver and the
+  "how to add a driver" guide (`docs/code/adding-a-driver.md`).
+- Industrial drivers for `RP2350_INDUSTRIAL_MVP_V1`: `ADS8688` analog inputs
+  (AI0..AI3), `AD5422` daisy-chained analog outputs (0-10 V / 4-20 mA, chain
+  startup with software reset and `AO_ENABLE_REQ` release, write-only),
+  `MAX22190` digital inputs (frozen initialization sequence, ADI CRC-5),
+  `IPS2050` protected digital outputs, `UIC` digital input / pulse count /
+  frequency / period, `ISOW1432` RS-485 transport, `TPS3851` external
+  watchdog, board diagnostics collection and raw `ADC4..ADC6` rail monitors.
+  Board bindings and a 16-channel industrial seed configuration.
+- Board profiles: `FIRMWARE_DRIVER_PACK` selects `base` (default, reference
+  Waveshare Core2350B + W5500) or `industrial`. The pack now fixes the board
+  header (`rp2350_industrial_mvp_v1.h`: PSRAM on `GPIO0`) and the W5500 pins
+  (`GPIO4..GPIO8`); `static/tools/check_board_profile.py` and
+  `static/tools/check_driver_pack_symbols.py` verify both in CI, which builds
+  and links both profiles.
+- OPC UA / capabilities: `SupportedDrivers` and `DriverCapabilities` report
+  every driver's real resource claims; `Device.Compatibility.FirmwareProfile`
+  reports the compiled pack; a versioned host-side descriptor format
+  (`static/host_descriptors/driver_descriptors.json`).
+- Runtime: a channel whose device does not answer (`TIMEOUT`) activates with
+  `Bad` quality instead of rolling back the whole configuration; write-only
+  channels are exempt from the read-based verify gate; AO writes outside the
+  output range fail with `BadOutOfRange` instead of being clamped.
+- Fixes found on the reference board: a fourth concurrent OPC UA connection
+  no longer hangs (MEM-01), and temperature HistoryRead no longer stays
+  unavailable after boot (MEM-02); both confirmed on hardware.
+- Resource claims: GPIO-driven drivers claim their physical pins, so a
+  generic GPIO channel can no longer alias an industrial signal.
+- Breaking: the default pack is `base`; `industrial` images target only the
+  industrial board; `FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS` is removed and
+  `PICO_BOARD` must match the pack; the external sensor-I/O drivers
+  (`TCAL9539`, board power service) were removed with their hardware
+  (2026-09-10); `AD5422` accepts only range codes `0x01`/`0x05` and has no
+  `SelfTest`; `ADS8688` accepts only mux inputs 0-3.
+- Still open for this release: live capability/NodeSet comparison and
+  UaExpert inspection, UIC quadrature mode, the `environmental`/`motion`/
+  `development` packs (deferred by decision), and all industrial hardware
+  qualification.
 
 ## v0.5.0
 
