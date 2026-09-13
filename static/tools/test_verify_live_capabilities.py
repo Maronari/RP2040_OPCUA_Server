@@ -114,6 +114,13 @@ def main() -> int:
 
     literals = module.source_node_literals(module.MODEL_SOURCES)
     assert "Device.Compatibility.SupportedDrivers" in literals and "Device.Compatibility.FirmwareProfile" in literals
+    # The first live run reported both of these: a runtime prefix
+    # (model_build_channel_node_id()) and a doc-comment example.
+    assert "Device.Channels.c_" not in literals
+    assert "Device.Channels.c_74656D7031.AlarmCondition" not in literals
+    stripped = module.strip_c_comments('/* "Device.A" */ x = "Device.B"; // "Device.C"\n y = "a//b";')
+    assert '"Device.B"' in stripped and '"a//b"' in stripped
+    assert "Device.A" not in stripped and "Device.C" not in stripped
 
     print("verify-live-capabilities: PASS")
     return 0

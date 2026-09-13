@@ -15,11 +15,15 @@ Expectations come from the build directory, never from the device:
   services/src/driver_catalog.c), each descriptor's id and capabilities ==
   static/host_descriptors/driver_descriptors.json.
 
-It also walks the live ns=1 address space from Device, writes a canonical
-inventory (NodeId, NodeClass, BrowseName) as evidence, and lists every static
-"Device.*" NodeId literal in opcua_model/src that the device does not expose.
-Those are reported for review rather than failed: some literals are browse
-prefixes, method paths or compiled out by open62541 feature flags.
+It also walks the live address space from Device through every non-zero
+namespace -- ns=1 "Device.*" nodes and the separate channel-model namespace
+that holds the generic "Device.Channels.c_<hex>" channel objects and their
+alarm conditions -- writes a canonical inventory (namespace URI, NodeId,
+NodeClass, BrowseName) as evidence, and lists every static "Device.*" NodeId
+literal in opcua_model/src code (comments excluded, snprintf prefixes such as
+"Device.Channels.c_" excluded) that the device does not expose. Those are
+reported for review rather than failed: some are compiled out by open62541
+feature flags.
 
 Credentials come only from OPCUA_USERNAME/OPCUA_PASSWORD in the environment,
 never from the command line.
@@ -141,10 +145,20 @@ def compare(expected: dict, live: dict) -> list[str]:
     return problems
 
 
+def strip_c_comments(text: str) -> str:
+    """Remove /* */ and // comments, leaving string literals intact."""
+    pattern = re.compile(r'"(?:\\.|[^"\\])*"|/\*.*?\*/|//[^\n]*', re.S)
+    return pattern.sub(lambda m: m.group(0) if m.group(0).startswith('"') else " ", text)
+
+
 def source_node_literals(model_sources: Path) -> list[str]:
     literals: set[str] = set()
     for path in sorted(model_sources.glob("*.c")):
-        literals.update(re.findall(r'"(Device(?:\.[A-Za-z0-9_]+)+)"', path.read_text(encoding="utf-8", errors="replace")))
+        code = strip_c_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for literal in re.findall(r'"(Device(?:\.[A-Za-z0-9_]+)+)"', code):
+            # A trailing "_" marks a prefix completed at runtime (hex channel id).
+            if not literal.endswith("_"):
+                literals.add(literal)
     return sorted(literals)
 
 
@@ -171,24 +185,26 @@ async def read_live(client, ua) -> tuple[dict, list[dict]]:
         except (TypeError, ValueError):
             live["drivers"][name] = raw
 
-    inventory: dict[str, dict] = {}
-    queue = [ua.NodeId("Device", 1)]
-    root = await client.get_node(queue[0]).read_browse_name()
-    inventory["Device"] = {"nodeClass": "Object", "browseName": root.Name}
+    namespaces = await client.get_namespace_array()
+    inventory: dict[tuple[int, str], dict] = {}
+    start = ua.NodeId("Device", 1)
+    root = await client.get_node(start).read_browse_name()
+    inventory[(1, "Device")] = {"nodeClass": "Object", "browseName": root.Name}
+    queue = [start]
     while queue and len(inventory) < MAX_INVENTORY_NODES:
         node_id = queue.pop(0)
         for ref in await client.get_node(node_id).get_children_descriptions():
             child = ref.NodeId
-            if child.NamespaceIndex != 1 or not isinstance(child.Identifier, str):
+            key = (child.NamespaceIndex, str(child.Identifier))
+            # ns=0 is the standard OPC UA model, not this device's surface.
+            if child.NamespaceIndex == 0 or key in inventory:
                 continue
-            if child.Identifier in inventory:
-                continue
-            inventory[child.Identifier] = {
-                "nodeClass": ref.NodeClass.name,
-                "browseName": ref.BrowseName.Name,
-            }
-            queue.append(ua.NodeId(child.Identifier, 1))
-    rows = [{"nodeId": key, **inventory[key]} for key in sorted(inventory)]
+            inventory[key] = {"nodeClass": ref.NodeClass.name, "browseName": ref.BrowseName.Name}
+            queue.append(ua.NodeId(child.Identifier, child.NamespaceIndex))
+    rows = [
+        {"namespace": namespaces[ns] if ns < len(namespaces) else str(ns), "nodeId": identifier, **inventory[(ns, identifier)]}
+        for ns, identifier in sorted(inventory)
+    ]
     return live, rows
 
 
@@ -237,7 +253,10 @@ async def run(args: argparse.Namespace) -> int:
     print(f"profile={live['firmwareProfile']} hw={live['hardwareRevision']} sw={live['softwareRevision']} "
           f"schema={live['configurationSchemaVersion']}")
     print(f"SupportedDrivers: {sorted(live['drivers'])}")
-    print(f"address space: {len(inventory)} ns=1 nodes under Device"
+    per_namespace: dict[str, int] = {}
+    for row in inventory:
+        per_namespace[row["namespace"]] = per_namespace.get(row["namespace"], 0) + 1
+    print(f"address space: {len(inventory)} nodes under Device: {per_namespace}"
           + (" (TRUNCATED)" if evidence["inventoryTruncated"] else ""))
     for literal in unexposed:
         print(f"REVIEW: source NodeId literal not exposed: {literal}")
