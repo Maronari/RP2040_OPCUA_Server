@@ -30,6 +30,20 @@
  * nothing -- the callback's own publication is at least as fresh, and
  * TimeTask observes again one second later.
  *
+ * The lwIP SNTP client belongs to the lwIP core, not to either task that
+ * starts it. sntp_setservername()/sntp_init()/sntp_stop(), and the
+ * udp_new()/sys_timeout() calls inside them, are all
+ * `LWIP_ASSERT_CORE_LOCKED()` in lwIP, and TimeTask (first start) and
+ * OpcUaTask (time_service_request_sync_now()) are not the tcpip thread. Both
+ * therefore go through time_service_start_sntp(), which holds
+ * `LOCK_TCPIP_CORE()`. In this build pico-sdk's lwIP port maps that to
+ * pico_lwip_custom_lock_tcpip_core(): the W5500 driver's async_context lock,
+ * a recursive FreeRTOS mutex taken without a timeout, with priority
+ * inheritance. Lock order: the tcpip thread holds the core lock while it
+ * runs set_system_time(), which enters a critical section and takes the RTC
+ * driver's lock, so the core lock is only ever taken with neither held. Until 2026-09-15 both call sites ran unlocked, racing the
+ * tcpip thread's timeout list and UDP PCB list.
+ *
  * `g_initialized` is set once by time_service_init() before "TimeTask"
  * starts and read afterward without synchronization (benign - written once
  * before any reader task runs).
@@ -43,13 +57,59 @@
 
 #include "drivers/rtc_driver.h"
 #include "lwip/apps/sntp.h"
+#include "lwip/tcpip.h"
 #include "services/config_service.h"
 #include "services/network_manager.h"
+
+/* Without core locking lwIP's tcpip.h redefines LOCK_TCPIP_CORE() to
+ * nothing, and the SNTP calls below would silently race the tcpip thread
+ * again. lwIP's opt.h always defines the option in a real build; the
+ * defined() test only keeps static analysis, which does not resolve opt.h,
+ * from tripping on it. */
+#if defined(LWIP_TCPIP_CORE_LOCKING) && !LWIP_TCPIP_CORE_LOCKING
+#error "time_service requires LWIP_TCPIP_CORE_LOCKING to drive the SNTP client"
+#endif
 
 static time_service_status_t g_status;
 static bool g_initialized = false;
 /** Incremented under the critical section by every set_system_time() publication; see the file header. */
 static uint32_t g_rtc_apply_generation;
+/**
+ * The SNTP server name as handed to lwIP. sntp_setservername() keeps the
+ * pointer, not a copy, and with SNTP_SERVER_DNS lwIP re-reads the string on
+ * every request (dns_gethostbyname()), so this storage must outlive every
+ * call -- never a stack copy, which is what both call sites used to pass.
+ * Written only under LOCK_TCPIP_CORE(), the only context lwIP reads it in.
+ */
+static char g_sntp_server_name[TIME_SERVICE_NTP_SERVER_MAX_LEN];
+
+/**
+ * @brief (Re)starts the lwIP SNTP client against @p server, under the lwIP
+ *        core lock (see the file header).
+ *
+ * @param server Server name to copy into g_sntp_server_name; may point at a
+ *        caller's stack copy, since only the copy is handed to lwIP.
+ * @param restart true to stop a running client first (a forced re-sync);
+ *        false for the first start. sntp_init() on an already-running client
+ *        is a no-op in lwIP, so a first start that races a forced re-sync is
+ *        harmless.
+ * @pre network_manager_is_ready(): an IPv4 address implies
+ *      lwip_freertos_init() -> tcpip_init() has created the core lock.
+ * @pre The caller holds no critical section and not the RTC driver's lock.
+ */
+static void time_service_start_sntp(const char *server, bool restart)
+{
+    LOCK_TCPIP_CORE();
+    if (restart)
+    {
+        sntp_stop();
+    }
+    strncpy(g_sntp_server_name, server, sizeof(g_sntp_server_name));
+    g_sntp_server_name[sizeof(g_sntp_server_name) - 1] = '\0';
+    sntp_setservername(0, g_sntp_server_name);
+    sntp_init();
+    UNLOCK_TCPIP_CORE();
+}
 
 /**
  * @brief Recomputes the derived fields from `rtc_valid` and
@@ -174,8 +234,7 @@ void time_service_refresh(void)
     time_service_get_status(&snapshot);
     if (network_manager_is_ready() && !snapshot.sntp_started)
     {
-        sntp_setservername(0, snapshot.ntp_server);
-        sntp_init();
+        time_service_start_sntp(snapshot.ntp_server, false);
         taskENTER_CRITICAL();
         g_status.sntp_started = true;
         taskEXIT_CRITICAL();
@@ -238,9 +297,7 @@ bool time_service_request_sync_now(void)
     }
 
     time_service_get_status(&status);
-    sntp_stop();
-    sntp_setservername(0, status.ntp_server);
-    sntp_init();
+    time_service_start_sntp(status.ntp_server, true);
     taskENTER_CRITICAL();
     g_status.sntp_started = true;
     taskEXIT_CRITICAL();

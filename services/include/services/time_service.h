@@ -66,8 +66,9 @@ bool time_service_init(void);
  *        network is ready and refreshes RTC-derived status every 1000 ms.
  *
  * Runs forever; never returns. Starts SNTP (`sntp_setservername`/
- * `sntp_init`) exactly once, gated on `network_manager_is_ready()` and
- * `!status.sntp_started`. Each 1 s iteration is time_service_refresh().
+ * `sntp_init`, under the lwIP core lock) exactly once, gated on
+ * `network_manager_is_ready()` and `!status.sntp_started`. Each 1 s
+ * iteration is time_service_refresh().
  *
  * @param argument Unused (FreeRTOS task signature).
  */
@@ -97,7 +98,11 @@ void time_service_get_status(time_service_status_t *out_status);
 /**
  * @brief Forces an immediate SNTP re-sync against the configured NTP server.
  *
- * Restarts SNTP (`sntp_stop()` + `sntp_setservername()` + `sntp_init()`).
+ * Restarts SNTP (`sntp_stop()` + `sntp_setservername()` + `sntp_init()`)
+ * under the lwIP core lock, since the caller (OpcUaTask, via the
+ * `SyncTimeNow` method) is not the tcpip thread. Must not be called from the
+ * tcpip thread's SNTP callback, from a critical section, or with the RTC
+ * driver's lock held.
  *
  * @return false without side effects if the service is not initialized or
  *         the network is not ready (`network_manager_is_ready()` false);

@@ -9,7 +9,7 @@ the tag-object SHA.
 
 Not tagged and not release-ready: see the open gates in
 `docs/releases/v0.5.1-review-fixes.md` ("Roadmap checklist status and
-remaining gates"). Plan and history: `docs/releases/v0.5.1.md` (T1-T24).
+remaining gates"). Plan and history: `docs/releases/v0.5.1.md` (T1-T25).
 Every industrial driver below is **compile/mock validated, not hardware
 qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
 
@@ -64,6 +64,11 @@ qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
   the time status could briefly read Bad (with other task priorities, OPC UA
   timestamps could read null). RTC access is now serialized, and TimeTask no
   longer publishes a clock observation older than the latest SNTP apply.
+- SNTP client: started and restarted from TimeTask and from the
+  `SyncTimeNow` method without the lwIP core lock, racing the network stack's
+  timer and UDP lists, and handed lwIP a server-name pointer into a stack
+  frame that lwIP kept re-reading on every request. Now driven under the core
+  lock with a persistent name buffer.
 - Resource claims: GPIO-driven drivers claim their physical pins, so a
   generic GPIO channel can no longer alias an industrial signal.
 - Breaking: the default pack is `base`; `industrial` images target only the

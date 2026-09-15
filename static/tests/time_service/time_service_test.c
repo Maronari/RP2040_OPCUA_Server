@@ -14,6 +14,7 @@
 
 #include "drivers/rtc_driver.h"
 #include "lwip/apps/sntp.h"
+#include "lwip/tcpip.h"
 #include "services/config_service.h"
 #include "services/network_manager.h"
 
@@ -28,6 +29,8 @@ static bool g_rtc_accepts_time; /**< Whether the next AON start/set succeeds. */
 static uint32_t g_rtc_time_s;
 static bool g_network_ready;
 static unsigned g_sntp_inits;
+static int g_core_lock_depth;          /**< lwIP LOCK_TCPIP_CORE() nesting. */
+static const char *g_sntp_server_name; /**< The pointer lwIP would keep. */
 static device_profile_config_t g_config;
 /**
  * One-shot hook fired from inside the RTC read stubs, *after* the stub has
@@ -47,6 +50,20 @@ void time_service_test_exit_critical(void)
 {
     assert(g_critical_depth == 1);
     --g_critical_depth;
+}
+
+void time_service_test_lock_tcpip_core(void)
+{
+    /* The tcpip thread holds the core lock while set_system_time() enters a
+     * critical section; taking the core lock from inside one inverts that. */
+    assert(g_critical_depth == 0);
+    ++g_core_lock_depth;
+}
+
+void time_service_test_unlock_tcpip_core(void)
+{
+    assert(g_core_lock_depth > 0);
+    --g_core_lock_depth;
 }
 
 TickType_t xTaskGetTickCount(void) { return 0u; }
@@ -122,19 +139,23 @@ bool rtc_driver_try_get_unix_time_us(uint64_t *out_unix_time_us)
 const device_profile_config_t *config_service_get(void) { return &g_config; }
 bool network_manager_is_ready(void) { return g_network_ready; }
 
+/* lwIP marks the whole SNTP API LWIP_ASSERT_CORE_LOCKED(); these stubs
+ * enforce what that no-op macro does not on the device. */
 void sntp_setservername(uint8_t idx, const char *server)
 {
     (void)idx;
     assert(g_critical_depth == 0 && server != NULL);
+    assert(g_core_lock_depth > 0);
+    g_sntp_server_name = server; /* lwIP stores the pointer, not the string */
 }
 
 void sntp_init(void)
 {
-    assert(g_critical_depth == 0);
+    assert(g_critical_depth == 0 && g_core_lock_depth > 0);
     ++g_sntp_inits;
 }
 
-void sntp_stop(void) { assert(g_critical_depth == 0); }
+void sntp_stop(void) { assert(g_critical_depth == 0 && g_core_lock_depth > 0); }
 
 /* ------------------------------------------------------------ helpers */
 
@@ -154,6 +175,8 @@ static void boot(bool aon_already_running)
     g_rtc_time_s = aon_already_running ? 1789000000u : 0u;
     g_network_ready = false;
     g_sntp_inits = 0u;
+    g_core_lock_depth = 0;
+    g_sntp_server_name = NULL;
     g_between_observation_and_publication = NULL;
     memset(&g_config, 0, sizeof(g_config));
     strcpy(g_config.ntp_server, "pool.ntp.org");
@@ -287,6 +310,45 @@ static void test_stale_refresh_cannot_overwrite_a_newer_sync(void)
     assert(status().synchronized && status().unix_time_s == 1789303885u);
 }
 
+/** @brief Overwrites the stack region that a just-returned callee's frame occupied. */
+__attribute__((noinline)) static void reuse_the_stack(void)
+{
+    char scratch[8192];
+    volatile char sink;
+
+    memset(scratch, 'X', sizeof(scratch));
+    sink = scratch[sizeof(scratch) / 2u];
+    (void)sink;
+}
+
+/**
+ * @brief Regression: the SNTP client is driven under the lwIP core lock, and
+ *        the server name lwIP keeps outlives the caller's stack frame.
+ *
+ * Both call sites used to call the SNTP API from TimeTask/OpcUaTask with no
+ * core lock (the stubs above now assert it), and passed a member of a
+ * stack-local status copy. lwIP stores that pointer and re-resolves the name
+ * on every SNTP request, so from then on it read whatever the task had
+ * since put on its stack. Here the caller's frame is overwritten after each
+ * call, the way the task's next calls overwrite it on the device, and the
+ * name lwIP would resolve must still be the configured one.
+ */
+static void test_sntp_runs_under_the_core_lock_with_a_persistent_name(void)
+{
+    boot(false);
+    g_network_ready = true;
+
+    time_service_refresh(); /* TimeTask's first start */
+    assert(g_sntp_inits == 1u && g_core_lock_depth == 0);
+    reuse_the_stack();
+    assert(g_sntp_server_name != NULL && strcmp(g_sntp_server_name, "pool.ntp.org") == 0);
+
+    assert(time_service_request_sync_now()); /* OpcUaTask's SyncTimeNow */
+    assert(g_sntp_inits == 2u && g_core_lock_depth == 0);
+    reuse_the_stack();
+    assert(strcmp(g_sntp_server_name, "pool.ntp.org") == 0);
+}
+
 int main(void)
 {
     test_cold_boot_is_bad_until_sntp();
@@ -295,5 +357,6 @@ int main(void)
     test_warm_rtc_is_uncertain();
     test_sync_survives_concurrent_refresh();
     test_stale_refresh_cannot_overwrite_a_newer_sync();
+    test_sntp_runs_under_the_core_lock_with_a_persistent_name();
     return 0;
 }
