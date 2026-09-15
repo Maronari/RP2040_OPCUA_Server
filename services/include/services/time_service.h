@@ -20,10 +20,12 @@
 /**
  * @brief Point-in-time snapshot of RTC/SNTP synchronization status.
  *
- * Owned by `time_service.c`'s single static `g_status`; every writer
- * updates only its own fields inside `taskENTER_CRITICAL`/
+ * Owned by `time_service.c`'s single static `g_status`; both writers (the
+ * SNTP callback and TimeTask) update it inside `taskENTER_CRITICAL`/
  * `taskEXIT_CRITICAL`, and time_service_get_status() copies it under the
- * same lock, so the SNTP callback and TimeTask cannot overwrite each other.
+ * same lock. Neither can overwrite the other's sync record, and TimeTask
+ * never publishes an RTC observation older than the latest SNTP apply (an
+ * apply generation counter, see time_service.c).
  *
  * `synchronized` means "SNTP has set the RTC and the RTC still holds that
  * time": `last_sync_epoch_s > 0 && rtc_valid`. It is not sticky -- if the
@@ -75,6 +77,9 @@ void time_service_task(void *argument);
  * @brief One TimeTask iteration: start SNTP once the network is ready, then
  *        re-read RTC validity and time and recompute `synchronized` and
  *        `quality` (see time_service_status_t).
+ *
+ * The observation is published only if no set_system_time() published
+ * while it was being taken; otherwise it is dropped as stale.
  *
  * Exposed so host tests can drive the state machine without a scheduler;
  * on the device only time_service_task() calls it.

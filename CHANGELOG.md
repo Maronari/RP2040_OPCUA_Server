@@ -9,7 +9,7 @@ the tag-object SHA.
 
 Not tagged and not release-ready: see the open gates in
 `docs/releases/v0.5.1-review-fixes.md` ("Roadmap checklist status and
-remaining gates"). Plan and history: `docs/releases/v0.5.1.md` (T1-T21).
+remaining gates"). Plan and history: `docs/releases/v0.5.1.md` (T1-T24).
 Every industrial driver below is **compile/mock validated, not hardware
 qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
 
@@ -58,6 +58,12 @@ qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
   rejected the SNTP time, and a sync could be lost to a status write-back
   race. Sync is now reported only for a time the RTC accepted and only while
   the RTC stays valid; rejected times count in the sync error counter.
+- Clock concurrency: an SNTP correction stops and rewrites the RP2350
+  Always-On timer, and a task reading the clock inside that window saw no
+  valid time -- a channel sample could get an invalid SourceTimestamp and
+  the time status could briefly read Bad (with other task priorities, OPC UA
+  timestamps could read null). RTC access is now serialized, and TimeTask no
+  longer publishes a clock observation older than the latest SNTP apply.
 - Resource claims: GPIO-driven drivers claim their physical pins, so a
   generic GPIO channel can no longer alias an industrial signal.
 - Breaking: the default pack is `base`; `industrial` images target only the

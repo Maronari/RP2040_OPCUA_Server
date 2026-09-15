@@ -29,6 +29,13 @@ static uint32_t g_rtc_time_s;
 static bool g_network_ready;
 static unsigned g_sntp_inits;
 static device_profile_config_t g_config;
+/**
+ * One-shot hook fired from inside the RTC read stubs, *after* the stub has
+ * captured what it will return. Models another context -- the tcpip thread's
+ * SNTP callback -- running between a caller's RTC observation and its
+ * publication, without needing a scheduler.
+ */
+static void (*g_between_observation_and_publication)(void);
 
 void time_service_test_enter_critical(void)
 {
@@ -49,6 +56,17 @@ void vTaskDelayUntil(TickType_t *previous_wake_time, TickType_t time_increment)
     (void)time_increment;
 }
 
+static void fire_preemption(void)
+{
+    void (*hook)(void) = g_between_observation_and_publication;
+
+    g_between_observation_and_publication = NULL;
+    if (hook != NULL)
+    {
+        hook();
+    }
+}
+
 bool rtc_driver_init(void)
 {
     assert(g_critical_depth == 0);
@@ -57,8 +75,11 @@ bool rtc_driver_init(void)
 
 bool rtc_driver_is_valid(void)
 {
+    const bool observed = g_rtc_running;
+
     assert(g_critical_depth == 0);
-    return g_rtc_running;
+    fire_preemption();
+    return observed;
 }
 
 bool rtc_driver_set_unix_time(uint32_t seconds)
@@ -81,6 +102,21 @@ uint32_t rtc_driver_get_unix_time(void)
 uint64_t rtc_driver_get_unix_time_us(void)
 {
     return (uint64_t)rtc_driver_get_unix_time() * 1000000u;
+}
+
+bool rtc_driver_try_get_unix_time_us(uint64_t *out_unix_time_us)
+{
+    const bool observed_valid = g_rtc_running;
+    const uint32_t observed_time_s = g_rtc_time_s;
+
+    assert(g_critical_depth == 0);
+    fire_preemption();
+    if (!observed_valid || out_unix_time_us == NULL)
+    {
+        return false;
+    }
+    *out_unix_time_us = (uint64_t)observed_time_s * 1000000u;
+    return true;
 }
 
 const device_profile_config_t *config_service_get(void) { return &g_config; }
@@ -118,6 +154,7 @@ static void boot(bool aon_already_running)
     g_rtc_time_s = aon_already_running ? 1789000000u : 0u;
     g_network_ready = false;
     g_sntp_inits = 0u;
+    g_between_observation_and_publication = NULL;
     memset(&g_config, 0, sizeof(g_config));
     strcpy(g_config.ntp_server, "pool.ntp.org");
     assert(time_service_init());
@@ -215,6 +252,41 @@ static void test_sync_survives_concurrent_refresh(void)
     assert(status().sync_count == 1u && status().synchronized && g_sntp_inits == 2u);
 }
 
+static void sntp_applies_a_sync(void)
+{
+    set_system_time(1789303884u);
+}
+
+/**
+ * @brief Regression: an RTC observation TimeTask took before an SNTP apply
+ *        must not be published over that apply.
+ *
+ * The reviewed interleaving: TimeTask observes the RTC (not yet valid), the
+ * tcpip thread's SNTP callback applies a time and publishes the sync, then
+ * TimeTask publishes its older observation. Before the apply-generation
+ * guard that stale "not valid" won: TimeSynced/ClockQuality read false/Bad
+ * right after a successful sync, and time_service_get_utc_time_us() -- which
+ * gates on the published rtc_valid -- reported no clock, i.e. a null OPC UA
+ * DateTime, until the next refresh.
+ */
+static void test_stale_refresh_cannot_overwrite_a_newer_sync(void)
+{
+    uint64_t utc = 0u;
+
+    boot(false);
+    g_between_observation_and_publication = sntp_applies_a_sync;
+    time_service_refresh();
+    assert(g_between_observation_and_publication == NULL); /* the interleaving really ran */
+    assert(status().rtc_valid && status().synchronized && status().quality == SERVICE_QUALITY_GOOD);
+    assert(status().sync_count == 1u && status().unix_time_s == 1789303884u);
+    assert(time_service_get_utc_time_us(&utc) && utc == UINT64_C(1789303884) * UINT64_C(1000000));
+
+    /* Dropping the stale observation loses nothing: the next one publishes. */
+    g_rtc_time_s = 1789303885u;
+    time_service_refresh();
+    assert(status().synchronized && status().unix_time_s == 1789303885u);
+}
+
 int main(void)
 {
     test_cold_boot_is_bad_until_sntp();
@@ -222,5 +294,6 @@ int main(void)
     test_losing_the_rtc_drops_synchronized();
     test_warm_rtc_is_uncertain();
     test_sync_survives_concurrent_refresh();
+    test_stale_refresh_cannot_overwrite_a_newer_sync();
     return 0;
 }

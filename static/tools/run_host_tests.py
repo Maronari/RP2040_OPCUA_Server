@@ -70,6 +70,7 @@ SUITES = (
     "test_condition_method_arguments_contract.py",
     "test_rp2_ua_datetime_clock.py",
     "test_login_backoff.py",
+    "test_rtc_driver.py",
     "test_time_service.py",
     "test_w5x00_transport.py",
     "test_open62541_lwip_listener.py",
