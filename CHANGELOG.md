@@ -69,6 +69,10 @@ qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
   timer and UDP lists, and handed lwIP a server-name pointer into a stack
   frame that lwIP kept re-reading on every request. Now driven under the core
   lock with a persistent name buffer.
+- Network bring-up: the W5500 netif, DHCP start and static address/DNS
+  configuration ran without the lwIP core lock after the network thread had
+  started. They now run under it (boot-time exposure only), and the driver,
+  not `network_manager`, applies the static DNS server.
 - Resource claims: GPIO-driven drivers claim their physical pins, so a
   generic GPIO channel can no longer alias an industrial signal.
 - Breaking: the default pack is `base`; `industrial` images target only the

@@ -30,6 +30,22 @@
  * recv_lwip(). recv_lwip() releases the mutex before handing a decoded
  * frame to `netif.input()`, so lwIP's own processing of a received frame
  * never runs while the MACRAW mutex is held.
+ *
+ * lwIP core lock: the netif, DHCP and DNS configuration calls
+ * (configure_netif(), w5x00_ethernet_driver_start_dhcp(),
+ * w5x00_ethernet_driver_set_static_ipv4()) run from InitTask after
+ * lwip_freertos_init() has already started the tcpip thread, whose timers
+ * walk the netif list, so each runs under LOCK_TCPIP_CORE(). pico-sdk maps
+ * that to this driver's own async_context lock -- a recursive FreeRTOS
+ * mutex. Nothing in this firmware registers async_context workers on that
+ * context, so the lock's only other holders are the tcpip thread and
+ * task-context lwIP API users (sockets, time_service's SNTP start).
+ * Lock order is core lock, then MACRAW mutex: a transmit issued under the
+ * core lock (a gratuitous ARP from netif_set_up()/netif_set_addr(), a DHCP
+ * DISCOVER from dhcp_start()) reaches netif_output() -> send_lwip() while
+ * holding it, exactly like every other lwIP transmit. Nothing may therefore
+ * take the core lock while holding the MACRAW mutex, and recv_lwip() never
+ * does. Until 2026-09-15 these calls ran unlocked.
  */
 #include "drivers/w5x00_ethernet_driver.h"
 
@@ -45,6 +61,7 @@
 #include "w5x00_spi.h"
 
 #include "lwip/dhcp.h"
+#include "lwip/dns.h"
 #include "lwip/pbuf.h"
 #include "lwip/stats.h"
 #include "lwip/tcpip.h"
@@ -382,20 +399,31 @@ static void w5x00_emit_diagnostic(w5x00_ethernet_driver_t *driver,
  */
 static bool configure_netif(w5x00_ethernet_driver_t *driver)
 {
-    if (netif_add(&driver->netif, IP_ADDR_ANY, IP_ADDR_ANY, IP_ADDR_ANY, driver, netif_initialize, tcpip_input) == NULL)
+    struct netif *added;
+
+    /* The tcpip thread is already running (lwip_freertos_init()), so the
+     * netif API needs the core lock; see the file header for lock order. The
+     * MACRAW recovery below is not lwIP and runs after the lock is released. */
+    LOCK_TCPIP_CORE();
+    added = netif_add(&driver->netif, IP_ADDR_ANY, IP_ADDR_ANY, IP_ADDR_ANY, driver, netif_initialize, tcpip_input);
+    if (added != NULL)
+    {
+        driver->netif.name[0] = 'e';
+        driver->netif.name[1] = '0';
+
+        netif_set_link_callback(&driver->netif, netif_link_callback);
+        netif_set_status_callback(&driver->netif, netif_status_callback);
+        netif_set_default(&driver->netif);
+        netif_set_link_up(&driver->netif);
+        netif_set_up(&driver->netif);
+    }
+    UNLOCK_TCPIP_CORE();
+
+    if (added == NULL)
     {
         printf("[NET]\t\tFailed to add lwIP netif\n");
         return false;
     }
-
-    driver->netif.name[0] = 'e';
-    driver->netif.name[1] = '0';
-
-    netif_set_link_callback(&driver->netif, netif_link_callback);
-    netif_set_status_callback(&driver->netif, netif_status_callback);
-    netif_set_default(&driver->netif);
-    netif_set_link_up(&driver->netif);
-    netif_set_up(&driver->netif);
 
     driver->macraw_quarantined = true;
     if (!w5x00_macraw_lock(driver))
@@ -1172,22 +1200,30 @@ bool w5x00_ethernet_driver_init(w5x00_ethernet_driver_t *driver, const uint8_t m
 
 bool w5x00_ethernet_driver_start_dhcp(w5x00_ethernet_driver_t *driver)
 {
+    err_t result;
+
     if (driver == NULL || !driver->initialized)
     {
         return false;
     }
 
-    return dhcp_start(&driver->netif) == ERR_OK;
+    /* `initialized` implies lwip_freertos_init() ran, so the core lock exists. */
+    LOCK_TCPIP_CORE();
+    result = dhcp_start(&driver->netif);
+    UNLOCK_TCPIP_CORE();
+    return result == ERR_OK;
 }
 
 void w5x00_ethernet_driver_set_static_ipv4(w5x00_ethernet_driver_t *driver,
                                            const uint8_t ip[4],
                                            const uint8_t netmask[4],
-                                           const uint8_t gateway[4])
+                                           const uint8_t gateway[4],
+                                           const uint8_t dns[4])
 {
     ip4_addr_t ipaddr;
     ip4_addr_t netmask_addr;
     ip4_addr_t gateway_addr;
+    ip4_addr_t dns_addr;
 
     if (driver == NULL || !driver->initialized)
     {
@@ -1197,7 +1233,11 @@ void w5x00_ethernet_driver_set_static_ipv4(w5x00_ethernet_driver_t *driver,
     IP4_ADDR(&ipaddr, ip[0], ip[1], ip[2], ip[3]);
     IP4_ADDR(&netmask_addr, netmask[0], netmask[1], netmask[2], netmask[3]);
     IP4_ADDR(&gateway_addr, gateway[0], gateway[1], gateway[2], gateway[3]);
+    IP4_ADDR(&dns_addr, dns[0], dns[1], dns[2], dns[3]);
+    LOCK_TCPIP_CORE();
     netif_set_addr(&driver->netif, &ipaddr, &netmask_addr, &gateway_addr);
+    dns_setserver(0, &dns_addr);
+    UNLOCK_TCPIP_CORE();
 }
 
 void w5x00_ethernet_driver_poll(w5x00_ethernet_driver_t *driver)
