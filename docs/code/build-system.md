@@ -27,7 +27,7 @@ CMake + Raspberry Pi Pico SDK, кросс-компиляция через `arm-n
 
 `cmake/` содержит только `cmake/firmware_version.cmake` — единственный
 авторитетный источник семантической версии
-(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.5.0`), упаковываемый в
+(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.5.1`), упаковываемый в
 `RP2_FIRMWARE_VERSION_NUMBER` и используемый в `project(... VERSION ...)`,
 `pico_set_program_version()` и
 `DEVICE_PROFILE_FW_REVISION`/`OTA_APP_FIRMWARE_VERSION`. Вычисление
@@ -100,7 +100,7 @@ graph TD
 | `OTA_BUILD_BOOTLOADER` | `OFF` (`CMakeLists.txt:43`) | Управляет включением `bootloader/` + `ota_artifacts.cmake` + варианта приложения `_bank_a`, слинкованного с поддержкой OTA. |
 | `W5X00_DIAGNOSTIC_NO_OPCUA` | `OFF` (`CMakeLists.txt:44`) | Собирает образ сетевой диагностики без open62541/модели OPC UA; исключает сервисы импорта идентичности/доверия; переименовывает цель приложения в `device_profile_basic_w5x00_diag`. Взаимно исключает `OTA_BUILD_BOOTLOADER` (`FATAL_ERROR`, если установлены оба, `CMakeLists.txt:46-50`). |
 | `FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER` / `_ADC_VOLTAGE_DRIVER` / `_GPIO_INPUT_DRIVER` | `ON` для каждого (`drivers/CMakeLists.txt:1-3`) | Включение на этапе компиляции для каждого драйвера отдельно; отключённые драйверы полностью удаляются из ELF-файла (согласно правилу удаления драйверов из [AGENTS.md](../../AGENTS.md)). |
-| `PICO_BOARD` | `waveshare_core2350b_16mb_psram8mb` (`CMakeLists.txt:27-29`) | Выбирает заголовок платы, который фиксирует `PICO_FLASH_SIZE_BYTES` и, следовательно, всю раскладку Flash для OTA. |
+| `PICO_BOARD` | следует из `FIRMWARE_DRIVER_PACK`: `base` → `waveshare_core2350b_16mb_psram8mb`, `industrial` → `rp2350_industrial_mvp_v1` (корневой `CMakeLists.txt`, раздел «Board profile») | Выбирает заголовок платы, который фиксирует `PICO_FLASH_SIZE_BYTES` (и, следовательно, всю раскладку Flash для OTA) и вывод CS PSRAM. Противоречащий паку `-DPICO_BOARD` — `FATAL_ERROR`. Выводы W5500 тоже следуют паку (`industrial` → GPIO4..8); отдельной опции `FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS` больше нет. Проверка собранного дерева: `static/tools/check_board_profile.py`. |
 | `WIZNET_CHIP` | `W5500` (`CMakeLists.txt:31-34`) | Выбирает `W5100S_FILES`/`W5500_FILES`. |
 | `DEVICE_IDENTITY_CERT_DER_FILE` / `_PRIVATE_KEY_FILE` / `DEVICE_TRUST_LIST_FILE` | не задано | При задании встраивает материалы идентичности/доверия в `generated/device_identity_provisioning.h` на этапе сборки. |
 | `OTA_FLASH_ERASE_SIZE_BYTES`, `OTA_BOOTLOADER_SIZE_BYTES`, `OTA_MAINTENANCE_JOURNAL_SIZE_BYTES`, `OTA_HISTORY_SIZE_BYTES`, `OTA_CONFIG_SLOT_SIZE_BYTES` и т.д. | см. [ota-bootloader.md](ota-bootloader.md) | Формируют раскладку областей OTA во всей Flash-памяти; `FATAL_ERROR` при несовпадении выравнивания или неполном покрытии. |

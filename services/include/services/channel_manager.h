@@ -36,6 +36,8 @@ typedef struct
  * telemetry_driver_result_t (see channel_manager_map_driver_result() in
  * channel_manager.c) or from channel_manager's own pre-driver-call
  * validation (NOT_FOUND, DISABLED, READ_ONLY, TYPE_MISMATCH).
+ * CHANNEL_MANAGER_WRITE_RESULT_OUT_OF_RANGE means the driver refused a
+ * value it cannot produce; nothing was applied or published.
  */
 typedef enum
 {
@@ -49,7 +51,8 @@ typedef enum
     CHANNEL_MANAGER_WRITE_RESULT_INVALID_LIFECYCLE,
     CHANNEL_MANAGER_WRITE_RESULT_TIMEOUT,
     CHANNEL_MANAGER_WRITE_RESULT_HARDWARE_FAILURE,
-    CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE
+    CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE,
+    CHANNEL_MANAGER_WRITE_RESULT_OUT_OF_RANGE
 } channel_manager_write_result_t;
 
 /**

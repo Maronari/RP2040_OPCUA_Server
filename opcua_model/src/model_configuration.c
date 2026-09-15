@@ -52,6 +52,7 @@ static UA_StatusCode model_channel_write_result_to_status(channel_manager_write_
     case CHANNEL_MANAGER_WRITE_RESULT_TIMEOUT: return UA_STATUSCODE_BADTIMEOUT;
     case CHANNEL_MANAGER_WRITE_RESULT_HARDWARE_FAILURE: return UA_STATUSCODE_BADDEVICEFAILURE;
     case CHANNEL_MANAGER_WRITE_RESULT_RESOURCE_FAILURE: return UA_STATUSCODE_BADRESOURCEUNAVAILABLE;
+    case CHANNEL_MANAGER_WRITE_RESULT_OUT_OF_RANGE: return UA_STATUSCODE_BADOUTOFRANGE;
     default: return UA_STATUSCODE_BADINTERNALERROR;
     }
 }
@@ -1343,7 +1344,16 @@ static void model_append_driver_capability_names_json(uint32_t capabilities, cha
     }
 }
 
-/** @brief Maps a driver_catalog_resource_type_t to its JSON wire name. */
+/**
+ * @brief Maps a driver_catalog_resource_type_t to its JSON wire name.
+ *
+ * Must be extended whenever a new resource type is added to
+ * services/driver_catalog.h -- static/tools/test_driver_catalog_opcua_contract.py
+ * fails closed if this mapping falls behind that enum (see v0.5.1 T13,
+ * which found and fixed this mapping silently reporting every v0.5.1
+ * industrial driver's resource claims as "none" before that regression
+ * guard existed).
+ */
 static const char *model_driver_resource_type_to_string(driver_catalog_resource_type_t type)
 {
     switch (type)
@@ -1351,6 +1361,12 @@ static const char *model_driver_resource_type_to_string(driver_catalog_resource_
     case DRIVER_CATALOG_RESOURCE_ADC_INPUT: return "adc_input";
     case DRIVER_CATALOG_RESOURCE_ADC_PERIPHERAL: return "adc_peripheral";
     case DRIVER_CATALOG_RESOURCE_GPIO: return "gpio";
+    case DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT: return "spi_chip_select";
+    case DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL: return "spi_peripheral";
+    case DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL: return "ad5422_channel";
+    case DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL: return "max22190_channel";
+    case DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL: return "ips2050_channel";
+    case DRIVER_CATALOG_RESOURCE_UIC_CHANNEL: return "uic_channel";
     case DRIVER_CATALOG_RESOURCE_NONE:
     default: return "none";
     }

@@ -39,12 +39,12 @@ jobs:
       - name: Run host and static verification suites
         run: python3 static/tools/run_host_tests.py
 
-      - name: Verify public OPC UA contract against v0.4.2
+      - name: Verify public OPC UA contract against v0.5.0
         run: |
           mkdir -p build/reports
           python3 static/tools/verify_opcua_public_contract.py \
-            --baseline v0.4.2 \
-            --allow-v043-channel-additions \
+            --baseline c6da6c44326e6b1fe67b06656ac8a3518c12ea9e \
+            --allow-v051-additions \
             --output build/reports/opcua_public_contract.json
 
       - name: Prove host-test failures propagate
@@ -66,7 +66,17 @@ jobs:
           if-no-files-found: error
 
   firmware:
+    name: firmware (${{ matrix.driver_pack }})
     runs-on: ubuntu-latest
+    # Both firmware profiles are configured, built and linked on every run:
+    # ROADMAP.md's v0.5.1 acceptance requires at least two profiles with the
+    # disabled drivers' symbols absent from the smaller ELF, and "base" is
+    # the reference-board Debug build. fail-fast is off so one profile's
+    # failure never hides the other's result.
+    strategy:
+      fail-fast: false
+      matrix:
+        driver_pack: [base, industrial]
 
     steps:
       - name: Checkout repository
@@ -79,25 +89,48 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi python3
 
-      - name: Configure reference Debug build
+      - name: Configure ${{ matrix.driver_pack }}-pack Debug build
         run: |
+          # FIRMWARE_DRIVER_PACK is always passed explicitly, never left to
+          # the CMake default. PICO_BOARD and the W5500 pins are not passed:
+          # they follow the pack (base -> waveshare_core2350b_16mb_psram8mb,
+          # industrial -> rp2350_industrial_mvp_v1 with W5500 on GPIO4..8),
+          # and a contradicting -DPICO_BOARD is a configure error.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DPICO_BOARD=waveshare_core2350b_16mb_psram8mb \
             -DWIZNET_CHIP=W5500 \
+            -DFIRMWARE_DRIVER_PACK=${{ matrix.driver_pack }} \
             -DOTA_ROM_PRIMARY_APP=ON \
             -DOTA_BUILD_BOOTLOADER=OFF \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Build reference firmware target
+      - name: Verify ${{ matrix.driver_pack }} board profile
+        run: |
+          python3 static/tools/check_board_profile.py --build-dir build
+
+      - name: Build ${{ matrix.driver_pack }} firmware target
         run: |
           cmake --build build --target all
+
+      - name: Verify linked driver set
+        run: |
+          python3 static/tools/check_driver_pack_symbols.py \
+            --driver-pack ${{ matrix.driver_pack }} \
+            --elf build/app/basic_profile/device_profile_basic.elf | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Generate size reports
         run: |
           mkdir -p build/reports
           arm-none-eabi-size build/app/basic_profile/device_profile_basic.elf | tee build/reports/size.txt
           arm-none-eabi-size -A build/app/basic_profile/device_profile_basic.elf | tee build/reports/sections.txt
+
+      - name: Label industrial driver hardware-qualification status
+        if: matrix.driver_pack == 'industrial'
+        run: |
+          python3 static/tools/label_driver_qualification_status.py \
+            --driver-pack industrial \
+            --report docs/releases/v0.5.1-driver-verification.md \
+            --output build/reports/driver_qualification_status.json | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verify version integrity
         env:
@@ -144,7 +177,7 @@ jobs:
       - name: Upload firmware and release evidence
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-debug
+          name: firmware-debug-${{ matrix.driver_pack }}
           path: |
             build/app/basic_profile/device_profile_basic.elf
             build/app/basic_profile/device_profile_basic.uf2
@@ -155,8 +188,12 @@ jobs:
             build/reports/sections.txt
             build/reports/version_integrity.json
             build/reports/artifact_check.json
+            build/reports/driver_qualification_status.json
             build/CMakeCache.txt
             build/compile_commands.json
+          # driver_qualification_status.json exists only for industrial; a
+          # missing path among others is skipped, and "error" still fails an
+          # upload that finds nothing at all.
           if-no-files-found: error
 
   analysis:
@@ -173,30 +210,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi cppcheck python3
 
-      - name: Configure analysis build
+      - name: Configure both board profiles
         run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DPICO_BOARD=waveshare_core2350b_16mb_psram8mb \
-            -DWIZNET_CHIP=W5500 \
-            -DOTA_ROM_PRIMARY_APP=ON \
-            -DOTA_BUILD_BOOTLOADER=OFF \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          # cppcheck analyses what compile_commands.json lists, and each pack
+          # compiles a different set of translation units: industrial-only
+          # drivers exist only in the industrial build, base-only fallbacks
+          # only in the base build. Both are configured and both are gated.
+          for pack in base industrial; do
+            cmake -S . -B "build-${pack}" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Debug \
+              -DWIZNET_CHIP=W5500 \
+              -DFIRMWARE_DRIVER_PACK="${pack}" \
+              -DOTA_ROM_PRIMARY_APP=ON \
+              -DOTA_BUILD_BOOTLOADER=OFF \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            python3 static/tools/check_board_profile.py --build-dir "build-${pack}"
+          done
 
-      - name: Run blocking first-party cppcheck
+      - name: Run blocking first-party cppcheck (base profile)
         run: |
           python3 static/tools/run_first_party_cppcheck.py \
-            --build-dir build \
-            --xml-output build/reports/cppcheck.xml \
-            --text-output build/reports/cppcheck.txt
+            --build-dir build-base \
+            --xml-output build-reports/cppcheck-base.xml \
+            --text-output build-reports/cppcheck-base.txt
+
+      - name: Run blocking first-party cppcheck (industrial profile)
+        run: |
+          python3 static/tools/run_first_party_cppcheck.py \
+            --build-dir build-industrial \
+            --xml-output build-reports/cppcheck-industrial.xml \
+            --text-output build-reports/cppcheck-industrial.txt
 
       - name: Upload analysis logs
         uses: actions/upload-artifact@v7
         with:
           name: analysis
           path: |
-            build/reports/cppcheck.xml
-            build/reports/cppcheck.txt
+            build-reports/cppcheck-base.xml
+            build-reports/cppcheck-base.txt
+            build-reports/cppcheck-industrial.xml
+            build-reports/cppcheck-industrial.txt
           if-no-files-found: error
 
   renode_experiment:

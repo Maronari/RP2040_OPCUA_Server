@@ -76,6 +76,10 @@ typedef enum
  * except where noted (w5x00_counter_inc() uses `__atomic_fetch_add` so
  * counters remain race-free even for any future non-mutex-holding
  * incrementer).
+ *
+ * The lwIP netif/DHCP/DNS configuration calls this driver makes take the
+ * lwIP core lock (pico-sdk: this instance's `async_context_freertos` lock).
+ * Lock order is core lock before `macraw_mutex`; see w5x00_ethernet_driver.c.
  */
 typedef struct w5x00_ethernet_driver
 {
@@ -143,28 +147,36 @@ typedef struct w5x00_ethernet_driver
 bool w5x00_ethernet_driver_init(w5x00_ethernet_driver_t *driver, const uint8_t mac[6]);
 
 /**
- * @brief Start lwIP's DHCP client on the driver's netif.
+ * @brief Start lwIP's DHCP client on the driver's netif, under the lwIP
+ *        core lock.
  * @return false if @p driver is NULL or not initialized, or if
  *         `dhcp_start()` reports an error; true otherwise.
  * @note Does not block for a lease; DHCP progresses asynchronously via
  *       lwIP's own timers/callbacks.
+ * @note Must not be called while holding the MACRAW mutex (lock order).
  */
 bool w5x00_ethernet_driver_start_dhcp(w5x00_ethernet_driver_t *driver);
 
 /**
- * @brief Configure a static IPv4 address/netmask/gateway on the driver's netif.
+ * @brief Configure a static IPv4 address/netmask/gateway and the primary DNS
+ *        server on the driver's netif, under the lwIP core lock.
  *
  * No-op if @p driver is NULL or not initialized. Callers should not also
- * run DHCP on the same netif.
+ * run DHCP on the same netif. The DNS server lives here rather than in the
+ * caller so that every raw lwIP configuration call has one owner and one
+ * locking rule.
  *
  * @param ip 4-byte IPv4 address, network byte order (most-significant octet first).
  * @param netmask 4-byte subnet mask, same byte order.
  * @param gateway 4-byte default gateway, same byte order.
+ * @param dns 4-byte primary DNS server (lwIP DNS server index 0), same byte order.
+ * @note Must not be called while holding the MACRAW mutex (lock order).
  */
 void w5x00_ethernet_driver_set_static_ipv4(w5x00_ethernet_driver_t *driver,
                                            const uint8_t ip[4],
                                            const uint8_t netmask[4],
-                                           const uint8_t gateway[4]);
+                                           const uint8_t gateway[4],
+                                           const uint8_t dns[4]);
 
 /**
  * @brief Drain up to W5X00_ETHERNET_RX_POLL_BUDGET (8) queued received

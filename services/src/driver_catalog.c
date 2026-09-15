@@ -26,10 +26,17 @@
  */
 
 #include "services/driver_catalog.h"
+#include "drivers/industrial_board_pins.h"
 
 #include <string.h>
 
+#include "drivers/ad5422_driver.h"
+#include "drivers/ads8688_driver.h"
+#include "drivers/ips2050_driver.h"
+#include "drivers/max22190_driver.h"
 #include "drivers/native_channel_driver.h"
+#include "drivers/synthetic_driver.h"
+#include "drivers/uic_driver.h"
 
 #ifndef FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER 1
@@ -39,6 +46,27 @@
 #endif
 #ifndef FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER
 #define FIRMWARE_ENABLE_NATIVE_GPIO_INPUT_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_UIC_DRIVER 1
+#endif
+#ifndef FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+#define FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER 1
 #endif
 
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
@@ -65,11 +93,68 @@ static bool validate_gpio(uint8_t source_index, uint8_t source_flags)
 }
 #endif
 
-/* Vtable dispatch tables: bind each native driver's start/stop/read
- * operation functions (drivers/include/drivers/native_channel_driver.h)
- * into the telemetry_driver_vtbl_t shape channel_manager.c calls through.
- * No native driver defines .write -- none of these three drivers are
- * writable. */
+#if FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT; delegates to the native driver's own source validation. */
+static bool validate_gpio_output(uint8_t source_index, uint8_t source_flags)
+{
+    return native_gpio_output_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_ADS8688; delegates to the native driver's own source validation. */
+static bool validate_ads8688(uint8_t source_index, uint8_t source_flags)
+{
+    return native_ads8688_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_AD5422; delegates to the native driver's own source validation. */
+static bool validate_ad5422(uint8_t source_index, uint8_t source_flags)
+{
+    return native_ad5422_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_MAX22190; delegates to the native driver's own source validation. */
+static bool validate_max22190(uint8_t source_index, uint8_t source_flags)
+{
+    return native_max22190_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_IPS2050; delegates to the native driver's own source validation. */
+static bool validate_ips2050(uint8_t source_index, uint8_t source_flags)
+{
+    return native_ips2050_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_UIC; delegates to the native driver's own source validation. */
+static bool validate_uic(uint8_t source_index, uint8_t source_flags)
+{
+    return native_uic_source_is_valid(source_index, source_flags);
+}
+#endif
+
+#if FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+/** @brief driver_catalog_validate_source_fn for CONFIG_CHANNEL_DRIVER_SYNTHETIC; delegates to the native driver's own source validation. */
+static bool validate_synthetic(uint8_t source_index, uint8_t source_flags)
+{
+    return native_synthetic_source_is_valid(source_index, source_flags);
+}
+#endif
+
+/* Vtable dispatch tables: bind each native driver's operation functions
+ * (drivers/include/drivers/native_channel_driver.h) into the
+ * telemetry_driver_vtbl_t shape channel_manager.c/sensor_manager.c call
+ * through. internal_temp/adc_voltage/gpio_input are read-only (no .write/
+ * .configure/.self_test); gpio_output is the first writable native driver
+ * (v0.5.1 T1). */
 #if FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER
 static const telemetry_driver_vtbl_t g_internal_temp_driver = {
     .start = native_internal_temperature_start,
@@ -89,6 +174,62 @@ static const telemetry_driver_vtbl_t g_gpio_input_driver = {
     .start = native_gpio_input_start,
     .stop = native_gpio_input_stop,
     .read = native_gpio_input_read,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+static const telemetry_driver_vtbl_t g_gpio_output_driver = {
+    .start = native_gpio_output_start,
+    .stop = native_gpio_output_stop,
+    .write = native_gpio_output_write,
+    .configure = native_gpio_output_configure,
+    .self_test = native_gpio_output_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
+static const telemetry_driver_vtbl_t g_ads8688_driver = {
+    .start = native_ads8688_start,
+    .stop = native_ads8688_stop,
+    .read = native_ads8688_read,
+    .self_test = native_ads8688_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+static const telemetry_driver_vtbl_t g_ad5422_driver = {
+    .start = native_ad5422_start,
+    .stop = native_ad5422_stop,
+    .write = native_ad5422_write,
+    /* No self_test: no AD5422 SDO reaches the MCU on this board, so an SPI
+     * readback probe cannot work (see drivers/include/drivers/ad5422_driver.h). */
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+static const telemetry_driver_vtbl_t g_max22190_driver = {
+    .start = native_max22190_start,
+    .stop = native_max22190_stop,
+    .read = native_max22190_read,
+    .self_test = native_max22190_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+static const telemetry_driver_vtbl_t g_ips2050_driver = {
+    .start = native_ips2050_start,
+    .stop = native_ips2050_stop,
+    .write = native_ips2050_write,
+    .self_test = native_ips2050_self_test,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+static const telemetry_driver_vtbl_t g_uic_driver = {
+    .start = native_uic_start,
+    .stop = native_uic_stop,
+    .read = native_uic_read,
+};
+#endif
+#if FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+static const telemetry_driver_vtbl_t g_synthetic_driver = {
+    .start = native_synthetic_start,
+    .stop = native_synthetic_stop,
+    .read = native_synthetic_read,
 };
 #endif
 
@@ -146,6 +287,123 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
                         TELEMETRY_DRIVER_CAPABILITY_READ,
         .validate_source = validate_gpio,
         .driver = &g_gpio_input_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_GPIO_OUTPUT_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT,
+        .name = "gpio_output",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_CONFIGURE |
+                        TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_gpio_output,
+        .driver = &g_gpio_output_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_ADS8688,
+        .name = "ads8688",
+        .default_unit = "V",
+        .default_kind = TELEMETRY_CHANNEL_KIND_ANALOG,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_FLOAT,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_HISTORIZED,
+        .analog = true,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
+                                 TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_READ | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_ads8688,
+        .driver = &g_ads8688_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_AD5422,
+        .name = "ad5422",
+        .default_unit = "V",
+        .default_kind = TELEMETRY_CHANNEL_KIND_ANALOG,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_FLOAT,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE,
+        .analog = true,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
+                                 TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_WRITE,
+        .validate_source = validate_ad5422,
+        .driver = &g_ad5422_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_MAX22190,
+        .name = "max22190",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_READ | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_max22190,
+        .driver = &g_max22190_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_IPS2050,
+        .name = "ips2050",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED | TELEMETRY_CHANNEL_FLAG_WRITABLE,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_WRITE | TELEMETRY_DRIVER_CAPABILITY_SELF_TEST,
+        .validate_source = validate_ips2050,
+        .driver = &g_ips2050_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_UIC,
+        .name = "uic",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_DISCRETE,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED,
+        .analog = false,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_BOOLEAN) |
+                                 TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_READ,
+        .validate_source = validate_uic,
+        .driver = &g_uic_driver,
+    },
+#endif
+#if FIRMWARE_ENABLE_NATIVE_SYNTHETIC_DRIVER
+    {
+        .driver_id = CONFIG_CHANNEL_DRIVER_SYNTHETIC,
+        .name = "synthetic",
+        .default_unit = "",
+        .default_kind = TELEMETRY_CHANNEL_KIND_ANALOG,
+        .default_value_type = TELEMETRY_CHANNEL_VALUE_DOUBLE,
+        .default_flags = TELEMETRY_CHANNEL_FLAG_ENABLED,
+        .analog = true,
+        .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
+                                 TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
+        .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
+                        TELEMETRY_DRIVER_CAPABILITY_READ,
+        .validate_source = validate_synthetic,
+        .driver = &g_synthetic_driver,
     },
 #endif
     /* Keeps the array valid when every optional native driver is excluded. */
@@ -212,9 +470,18 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
     {
         return false;
     }
-    if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE)
+    if (driver_id == CONFIG_CHANNEL_DRIVER_ADC_VOLTAGE || driver_id == CONFIG_CHANNEL_DRIVER_ADS8688 ||
+        driver_id == CONFIG_CHANNEL_DRIVER_UIC)
     {
         required = 2u;
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_AD5422 || driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
+    {
+        required = 3u;
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_IPS2050)
+    {
+        required = 4u;
     }
     *out_claim_count = required;
     if (out_claims == NULL || claims_capacity < required)
@@ -241,11 +508,122 @@ bool driver_catalog_get_resource_claims(uint8_t driver_id,
             .shared = true,
         };
     }
-    else if (driver_id == CONFIG_CHANNEL_DRIVER_GPIO_INPUT)
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_GPIO_INPUT || driver_id == CONFIG_CHANNEL_DRIVER_GPIO_OUTPUT)
     {
         out_claims[0].type = DRIVER_CATALOG_RESOURCE_GPIO;
         out_claims[0].index = source_index;
         out_claims[0].shared = false;
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_ADS8688)
+    {
+        /* source_index selects one of the chip's 8 mux inputs -- exclusive,
+         * so two configured channels cannot both bind AI-n. Only one
+         * physical ADS8688 chip is in scope for this release, so a single
+         * shared SPI-peripheral claim at index 0 is sufficient; see
+         * docs/releases/v0.5.1.md T2 for the multi-chip caveat this leaves
+         * unaddressed. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_SPI_CHIP_SELECT;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL,
+            .index = 0u,
+            .shared = true,
+        };
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_AD5422)
+    {
+        /* source_index selects AO0/AO1 (a daisy-chain position, not a
+         * chip-select pin -- both AD5422 devices share one LATCH line).
+         * Shares the same SPI_PERIPHERAL index as CONFIG_CHANNEL_DRIVER_ADS8688:
+         * both chips sit on the industrial board's one shared physical SPI
+         * bus (HARDWARE_MVP.md), so the shared claim correctly does not
+         * conflict between them. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_AD5422_CHANNEL;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL,
+            .index = 0u,
+            .shared = true,
+        };
+        /* AO_ENABLE_REQ (GPIO9), driven by native_ad5422_start()'s chain
+         * startup. Shared by AO0/AO1, which drive the same single line, but
+         * an exclusive gpio_input/gpio_output claim on GPIO9 conflicts. */
+        out_claims[2] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = INDUSTRIAL_AO_ENABLE_GPIO,
+            .shared = true,
+        };
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_MAX22190)
+    {
+        /* source_index selects DI0-DI3, one of this board's four wired
+         * physical input lines on the single MAX22190 chip in scope for this
+         * release -- exclusive, so two configured channels cannot both bind
+         * the same DI line. Shares the same SPI_PERIPHERAL index as ADS8688/
+         * AD5422: all three chips sit on the industrial board's one shared
+         * physical SPI bus (HARDWARE_MVP.md), so the shared claim correctly
+         * does not conflict between them. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_MAX22190_CHANNEL;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_SPI_PERIPHERAL,
+            .index = 0u,
+            .shared = true,
+        };
+        /* DI_READY_N (GPIO24), the chip's /READY line, read directly by
+         * native_max22190_start()'s one-time chip startup since the
+         * 2026-09-10 hardware revision. Shared, because all four DI
+         * channels observe the same single pin and must not conflict with
+         * each other -- but an exclusive gpio_input/gpio_output claim on
+         * GPIO24 still conflicts with it, which is the point. */
+        out_claims[2] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = INDUSTRIAL_DI_READY_GPIO,
+            .shared = true,
+        };
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_IPS2050)
+    {
+        /* source_index selects DO0/DO1, one of this board's two protected
+         * high-side output channels -- exclusive, so two configured
+         * channels cannot both bind the same DO. A plain GPIO frontend
+         * (HARDWARE_MVP.md 3.4.4), not a shared-bus chip like ADS8688/
+         * AD5422/MAX22190. Physical GPIO claims prevent cross-driver aliases. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_IPS2050_CHANNEL;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = (uint8_t)(INDUSTRIAL_DO_COMMAND_BASE_GPIO + source_index),
+            .shared = false,
+        };
+        out_claims[2] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = (uint8_t)(INDUSTRIAL_DO_FAULT_BASE_GPIO + source_index),
+            .shared = false,
+        };
+        out_claims[3] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = INDUSTRIAL_DO_ENABLE_GPIO,
+            .shared = true,
+        };
+    }
+    else if (driver_id == CONFIG_CHANNEL_DRIVER_UIC)
+    {
+        /* source_index selects UIC0-UIC3 -- exclusive regardless of the
+         * channel's configured mode, since every mode binds the same
+         * physical GPIO40..GPIO43 pin. */
+        out_claims[0].type = DRIVER_CATALOG_RESOURCE_UIC_CHANNEL;
+        out_claims[0].index = source_index;
+        out_claims[0].shared = false;
+        out_claims[1] = (driver_catalog_resource_claim_t){
+            .type = DRIVER_CATALOG_RESOURCE_GPIO,
+            .index = (uint8_t)(INDUSTRIAL_UIC_BASE_GPIO + source_index),
+            .shared = false,
+        };
     }
     return true;
 }

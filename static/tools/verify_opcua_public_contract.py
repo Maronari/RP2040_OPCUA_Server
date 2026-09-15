@@ -17,6 +17,7 @@ EXPECTED_V040_COMMIT = "8a454945aaccc3d381a2e889e90b53569415b705"
 EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
 EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
 EXPECTED_V043_COMMIT = "dec08ba22e835e8037f9fd5342dcc63ddc03f5ac"
+EXPECTED_V050_COMMIT = "c6da6c44326e6b1fe67b06656ac8a3518c12ea9e"
 # Updated 2026-09-02 (from 830f8678a86040a31e8e2f51bea4647c4e8473243c012526674f3bc462763102)
 # for the namespace-build-failure rollback fix: model_core_lifecycle.c gains
 # four new printf strings ("Rolled back to the last-known-good
@@ -62,6 +63,34 @@ EXPECTED_V043_PUBLIC_INVENTORY_SHA256 = (
 # guessed.
 EXPECTED_V050_PUBLIC_INVENTORY_SHA256 = (
     "26a55277518624759f0fae0ed48a0da12c5fea359972bcb246cc4223a051e707"
+)
+# v0.5.1 T13: model_driver_resource_type_to_string()
+# (opcua_model/src/model_configuration.c) had silently fallen behind
+# services/driver_catalog.h's driver_catalog_resource_type_t as v0.5.1's
+# Phase 1 drivers added six new resource types -- every one of them was
+# reported as the JSON string "none" in the existing
+# Device.Compatibility.SupportedDrivers.* descriptors instead of its real
+# name. Fixed by adding the six missing switch cases
+# (spi_chip_select/spi_peripheral/ad5422_channel/max22190_channel/
+# ips2050_channel/uic_channel); no NodeId, BrowseName or method was
+# added/removed/renamed. Confirmed via this script's own --output evidence
+# dump: node_and_browse_calls and public_attribute_assignments are
+# byte-for-byte unchanged from the v0.5.0 baseline (0 added, 0 removed);
+# only string_literals gained exactly the six new resource-type-name
+# strings above.
+# Updated 2026-09-06 (from 26e59fa340af6192d85b0b524168591ad62b6d925cdffc5eda8f1c61fb27bb41)
+# for v0.5.1 T14: opcua_model_internal.h's MODEL_FIRMWARE_DRIVER_PACK_NAME
+# fallback default corrected from the stale "base" to "industrial" (the
+# real value is now supplied by the top-level FIRMWARE_DRIVER_PACK CMake
+# option at build time; the header's own fallback only matters for a
+# build that never sets that option). A one-for-one string-literal swap,
+# not an addition -- string_literal_count stayed at 1735,
+# node_and_browse_call_count (387) and public_attribute_assignment_count
+# (66) unchanged, confirmed the same way as the T13 update above.
+# Computed directly from this script's own public_inventory() output
+# against the tree at T14 completion.
+EXPECTED_V051_PUBLIC_INVENTORY_SHA256 = (
+    "3b174c69b66ebd6e012e01bc3fc3bf9b3b9b6aaa2e554e6fc67768cb57d7292a"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
@@ -207,6 +236,43 @@ V043_REVIEWED_COMMENT_ONLY_DRIFT_PATHS = frozenset({
 # EXPECTED_V050_PUBLIC_INVENTORY_SHA256 comparison below, plus
 # missing_baseline_contract() rejecting any removed v0.4.3 public entry.
 V050_REVIEWED_MODEL_DRIFT_PATHS = frozenset(MODEL_SOURCE_SET)
+# v0.5.1 T13 touches only model_configuration.c (the six missing
+# driver-resource-type JSON wire-name mappings). Mirrors the v0.4.3/v0.5.0
+# precedent of covering the whole MODEL_SOURCE_SET rather than a narrower
+# allowlist -- the actual fail-closed proof is
+# EXPECTED_V051_PUBLIC_INVENTORY_SHA256 below, plus
+# missing_baseline_contract() rejecting any removed v0.4.3 public entry.
+# Updated 2026-09-09 for MEM-01: model_core_lifecycle.c gained a
+# comment-only cross-reference to port/lwip/lwipopts.h's MEMP_NUM_TCP_PCB
+# budget next to config->maxSecureChannels. public_inventory() strips
+# comments before hashing (see strip_comments() in public_inventory()
+# below), so EXPECTED_V051_PUBLIC_INVENTORY_SHA256 is unchanged by this --
+# confirmed by re-running this file's own inventory before/after the edit.
+V051_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
+    "opcua_model/src/opcua_model_internal.h",
+    "opcua_model/src/model_configuration.c",
+    "opcua_model/src/model_core_lifecycle.c",
+})
+
+
+def assert_v051_inventory_delta(baseline: dict, current: dict) -> None:
+    """Allow exactly the reviewed resource names and pack fallback change.
+
+    Unlike older baselines, v0.5.0 needs no registration-call replacements:
+    every NodeId/BrowseName call and public attribute must remain identical.
+    """
+    for key in ("node_and_browse_calls", "public_attribute_assignments"):
+        if Counter(baseline[key]) != Counter(current[key]):
+            raise SystemExit(f"opcua-contract: FAIL: v0.5.1 changed {key}")
+    expected = Counter(baseline["string_literals"])
+    expected['"base"'] -= 1
+    if expected['"base"'] < 0:
+        raise SystemExit("opcua-contract: FAIL: v0.5.0 pack fallback missing")
+    for name in ("industrial", "spi_chip_select", "spi_peripheral", "ad5422_channel",
+                 "max22190_channel", "ips2050_channel", "uic_channel"):
+        expected[f'"{name}"'] += 1
+    if +expected != Counter(current["string_literals"]):
+        raise SystemExit("opcua-contract: FAIL: unreviewed v0.5.1 string delta")
 PUBLIC_CALL_PREFIXES = (
     "UA_NODEID_",
     "UA_EXPANDEDNODEID_",
@@ -251,6 +317,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-v050-additions",
         action="store_true",
         help="Allow only the reviewed v0.5.0 config-preset/compatibility model source delta",
+    )
+    parser.add_argument(
+        "--allow-v051-additions",
+        action="store_true",
+        help="Allow only the reviewed v0.5.1 driver-resource-type-name-mapping fix",
     )
     parser.add_argument(
         "--source-dir",
@@ -638,6 +709,22 @@ def main() -> int:
                     "opcua-contract: FAIL: model drift outside reviewed v0.5.0 "
                     f"config-preset/compatibility files: {relative}"
                 )
+    if args.allow_v051_additions:
+        if baseline_commit != EXPECTED_V050_COMMIT:
+            raise SystemExit(
+                "opcua-contract: FAIL: v0.5.1 additions require "
+                f"v0.5.0@{EXPECTED_V050_COMMIT}, got {args.baseline}@{baseline_commit}"
+            )
+        for relative in MODEL_SOURCE_SET:
+            if relative in V051_REVIEWED_MODEL_DRIFT_PATHS:
+                continue
+            baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
+            current_data = normalized_source((source_dir / relative).read_bytes())
+            if current_data != baseline_data:
+                raise SystemExit(
+                    "opcua-contract: FAIL: model drift outside reviewed v0.5.1 "
+                    f"driver-resource-type-mapping files: {relative}"
+                )
 
     stable_files: list[dict[str, str]] = []
     for relative in BYTE_STABLE_PUBLIC_CONTRACT_PATHS:
@@ -670,8 +757,13 @@ def main() -> int:
         args.allow_v042_channel_additions
         or args.allow_v043_channel_additions
         or args.allow_v050_additions
+        or args.allow_v051_additions
     )
     missing_baseline = missing_baseline_contract(baseline_inventory, current_inventory)
+    if args.allow_v051_additions:
+        assert_v051_inventory_delta(baseline_inventory, current_inventory)
+        # Exact delta check above permits only the reviewed pack fallback.
+        missing_baseline = {}
     if allow_additions and missing_baseline:
         summary = ", ".join(
             f"{key}={len(items)}" for key, items in sorted(missing_baseline.items())
@@ -698,6 +790,12 @@ def main() -> int:
             "opcua-contract: FAIL: public inventory is not the reviewed v0.5.0 delta: "
             + str(current_inventory["sha256"])
         )
+    if (args.allow_v051_additions and
+            current_inventory["sha256"] != EXPECTED_V051_PUBLIC_INVENTORY_SHA256):
+        raise SystemExit(
+            "opcua-contract: FAIL: public inventory is not the reviewed v0.5.1 delta: "
+            + str(current_inventory["sha256"])
+        )
     if inventory_changed and not allow_additions:
         raise SystemExit("opcua-contract: FAIL: public model inventory differs from baseline")
 
@@ -720,6 +818,10 @@ def main() -> int:
             EXPECTED_V050_PUBLIC_INVENTORY_SHA256
             if args.allow_v050_additions else None
         ),
+        "reviewed_v051_public_inventory_sha256": (
+            EXPECTED_V051_PUBLIC_INVENTORY_SHA256
+            if args.allow_v051_additions else None
+        ),
         "baseline_contract_removals": missing_baseline,
         "reviewed_v042_channel_additions": bool(
             args.allow_v042_channel_additions and inventory_changed
@@ -730,12 +832,17 @@ def main() -> int:
         "reviewed_v050_additions": bool(
             args.allow_v050_additions and inventory_changed
         ),
+        "reviewed_v051_additions": bool(
+            args.allow_v051_additions and inventory_changed
+        ),
         "reviewed_v042_model_drift_paths": sorted(V042_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v042_channel_additions else [],
         "reviewed_v043_model_drift_paths": sorted(V043_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v043_channel_additions else [],
         "reviewed_v050_model_drift_paths": sorted(V050_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v050_additions else [],
+        "reviewed_v051_model_drift_paths": sorted(V051_REVIEWED_MODEL_DRIFT_PATHS)
+        if args.allow_v051_additions else [],
         "string_literal_count": len(current_inventory["string_literals"]),
         "node_and_browse_call_count": len(current_inventory["node_and_browse_calls"]),
         "public_attribute_assignment_count": len(

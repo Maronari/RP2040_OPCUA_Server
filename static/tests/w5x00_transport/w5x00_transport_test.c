@@ -75,21 +75,40 @@ int w5x00_test_printf(const char *format, ...)
     return 0;
 }
 
-SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *storage) { storage->locked = 0; return storage; }
+static StaticSemaphore_t *fake_last_mutex;
+SemaphoreHandle_t xSemaphoreCreateMutexStatic(StaticSemaphore_t *storage) { storage->locked = 0; fake_last_mutex = storage; return storage; }
 int xSemaphoreTake(SemaphoreHandle_t semaphore, TickType_t ticks) { (void)ticks; if (semaphore->locked) return pdFALSE; semaphore->locked = 1; return pdTRUE; }
 int xSemaphoreGive(SemaphoreHandle_t semaphore) { semaphore->locked = 0; if (fake_unlock_hook != NULL && !fake_unlock_hook_active) { fake_unlock_hook_active = 1; fake_unlock_hook(); fake_unlock_hook_active = 0; } return pdTRUE; }
 
-struct netif *netif_add(struct netif *n, const void *a, const void *b, const void *c, void *state, netif_init_fn init, netif_input_fn input) { (void)a; (void)b; (void)c; n->state = state; n->input = input; return init(n) == ERR_OK ? n : NULL; }
-void netif_set_link_callback(struct netif *n, void (*callback)(struct netif *)) { (void)n; (void)callback; }
-void netif_set_status_callback(struct netif *n, void (*callback)(struct netif *)) { (void)n; (void)callback; }
-void netif_set_default(struct netif *n) { (void)n; }
-void netif_set_link_up(struct netif *n) { n->link_up = 1; }
-void netif_set_up(struct netif *n) { (void)n; }
+/* lwIP core lock. The netif/DHCP/DNS configuration API is core-locked in
+ * lwIP, and the driver calls it after lwip_freertos_init() has started the
+ * tcpip thread, so each stub below asserts the lock is held. */
+static int fake_core_lock_depth;
+static unsigned fake_core_lock_takes;
+static unsigned fake_core_locked_calls;
+static ip4_addr_t fake_dns_server;
+void w5x00_test_lock_tcpip_core(void)
+{
+    /* Lock order is core lock, then MACRAW mutex: never the reverse. */
+    assert(fake_last_mutex == NULL || fake_last_mutex->locked == 0);
+    ++fake_core_lock_depth;
+    ++fake_core_lock_takes;
+}
+void w5x00_test_unlock_tcpip_core(void) { assert(fake_core_lock_depth > 0); --fake_core_lock_depth; }
+static void core_locked_call(void) { assert(fake_core_lock_depth > 0); ++fake_core_locked_calls; }
+
+struct netif *netif_add(struct netif *n, const void *a, const void *b, const void *c, void *state, netif_init_fn init, netif_input_fn input) { (void)a; (void)b; (void)c; core_locked_call(); n->state = state; n->input = input; return init(n) == ERR_OK ? n : NULL; }
+void netif_set_link_callback(struct netif *n, void (*callback)(struct netif *)) { (void)n; (void)callback; core_locked_call(); }
+void netif_set_status_callback(struct netif *n, void (*callback)(struct netif *)) { (void)n; (void)callback; core_locked_call(); }
+void netif_set_default(struct netif *n) { (void)n; core_locked_call(); }
+void netif_set_link_up(struct netif *n) { core_locked_call(); n->link_up = 1; }
+void netif_set_up(struct netif *n) { (void)n; core_locked_call(); }
 int netif_is_link_up(struct netif *n) { return n->link_up; }
 const ip4_addr_t *netif_ip4_addr(struct netif *n) { return &n->ip_addr; }
-void netif_set_addr(struct netif *n, const ip4_addr_t *a, const ip4_addr_t *b, const ip4_addr_t *c) { (void)b; (void)c; n->ip_addr = *a; }
+void netif_set_addr(struct netif *n, const ip4_addr_t *a, const ip4_addr_t *b, const ip4_addr_t *c) { (void)b; (void)c; core_locked_call(); n->ip_addr = *a; }
+void dns_setserver(uint8_t numdns, const ip4_addr_t *dnsserver) { assert(numdns == 0u); core_locked_call(); fake_dns_server = *dnsserver; }
 const char *ip4addr_ntoa(const ip4_addr_t *a) { (void)a; return "0.0.0.0"; }
-err_t dhcp_start(struct netif *n) { (void)n; return ERR_OK; }
+err_t dhcp_start(struct netif *n) { (void)n; core_locked_call(); return ERR_OK; }
 err_t tcpip_input(struct pbuf *p, struct netif *n) { (void)p; (void)n; return ERR_OK; }
 err_t etharp_output(struct netif *n, const void *a, const void *b) { (void)n; (void)a; (void)b; return ERR_OK; }
 struct pbuf *pbuf_alloc(int layer, u16_t length, int type) { struct pbuf *p; (void)layer; (void)type; if (fake_pbuf_fail) return NULL; p = calloc(1, sizeof(*p)); if (p != NULL) { p->payload = malloc(length); if (p->payload == NULL) { free(p); return NULL; } p->len = length; p->tot_len = length; } return p; }
@@ -527,4 +546,63 @@ static void test_status_timeout_recovery_phases(void)
     assert(fake_close_commands == 1u && fake_open_commands == 1u);
 }
 
-int main(void) { test_rx_canary_and_oversize_recovery(); test_malformed_recovery(); test_rx_short_record_deferral_and_recovery(); test_rx_snapshot_observes_second_raw_read(); test_rx_snapshot_for_persistent_prefix_only(); test_rx_snapshot_after_recv_command_failure(); test_rx_snapshot_is_one_shot_for_two_prefixes(); test_rx_runt_payload_recovery(); test_rx_timeout_recovery(); test_rx_saved_pointer_delivers_payload_and_commits_full_record(); test_bounded_poll_and_pbuf_failure(); test_tx_errors_and_mutex_serialization(); test_tx_interface_admission_failure(); test_dhcp_sized_tx_admission_and_offer_progress(); test_unstable_tx_fsr_exhaustion(); test_diagnostic_interleaving(); test_status_timeout_recovery_phases(); return 0; }
+static void reset_core_lock_fake(void) { fake_core_lock_depth = 0; fake_core_lock_takes = 0u; fake_core_locked_calls = 0u; fake_dns_server.addr = 0u; }
+
+/*
+ * Regression: configure_netif() ran netif_add()/netif_set_*() from InitTask
+ * with no lwIP core lock, after lwip_freertos_init() had already started the
+ * tcpip thread whose timers walk the netif list. The stubs assert the lock;
+ * this drives the real w5x00_ethernet_driver_init() path through them.
+ */
+static void test_netif_bring_up_runs_under_the_core_lock(void)
+{
+    w5x00_ethernet_driver_t driver;
+    const uint8_t mac[6] = {0x02u, 0x00u, 0x00u, 0x00u, 0x00u, 0x01u};
+
+    reset_fake();
+    reset_core_lock_fake();
+    fake_console_mutex = NULL; /* no earlier test's driver may be referenced */
+    assert(w5x00_ethernet_driver_init(&driver, mac));
+    assert(driver.initialized && driver.netif.link_up == 1);
+    assert(fake_core_lock_depth == 0);
+    assert(fake_core_lock_takes == 1u);   /* one hold covers the whole netif bring-up */
+    assert(fake_core_locked_calls == 6u); /* add, link/status callbacks, default, link up, up */
+    assert(driver.macraw_mutex->locked == 0);
+}
+
+/*
+ * Regression: dhcp_start() and netif_set_addr() ran unlocked from InitTask,
+ * and network_manager called dns_setserver() unlocked too. The DNS server is
+ * now applied by the driver, under the same lock as the address.
+ */
+static void test_dhcp_and_static_configuration_run_under_the_core_lock(void)
+{
+    w5x00_ethernet_driver_t driver;
+    const uint8_t ip[4] = {192u, 168u, 1u, 50u};
+    const uint8_t netmask[4] = {255u, 255u, 255u, 0u};
+    const uint8_t gateway[4] = {192u, 168u, 1u, 1u};
+    const uint8_t dns[4] = {9u, 9u, 9u, 9u};
+    ip4_addr_t expected;
+
+    prepare_driver(&driver);
+    reset_fake();
+    reset_core_lock_fake();
+
+    assert(w5x00_ethernet_driver_start_dhcp(&driver));
+    assert(fake_core_lock_depth == 0 && fake_core_lock_takes == 1u && fake_core_locked_calls == 1u);
+
+    w5x00_ethernet_driver_set_static_ipv4(&driver, ip, netmask, gateway, dns);
+    assert(fake_core_lock_depth == 0 && fake_core_lock_takes == 2u && fake_core_locked_calls == 3u);
+    IP4_ADDR(&expected, ip[0], ip[1], ip[2], ip[3]);
+    assert(driver.netif.ip_addr.addr == expected.addr);
+    IP4_ADDR(&expected, dns[0], dns[1], dns[2], dns[3]);
+    assert(fake_dns_server.addr == expected.addr);
+
+    /* Not initialized: no lwIP call and no lock taken. */
+    driver.initialized = false;
+    assert(!w5x00_ethernet_driver_start_dhcp(&driver));
+    w5x00_ethernet_driver_set_static_ipv4(&driver, ip, netmask, gateway, dns);
+    assert(fake_core_lock_takes == 2u && fake_core_locked_calls == 3u);
+}
+
+int main(void) { test_rx_canary_and_oversize_recovery(); test_malformed_recovery(); test_rx_short_record_deferral_and_recovery(); test_rx_snapshot_observes_second_raw_read(); test_rx_snapshot_for_persistent_prefix_only(); test_rx_snapshot_after_recv_command_failure(); test_rx_snapshot_is_one_shot_for_two_prefixes(); test_rx_runt_payload_recovery(); test_rx_timeout_recovery(); test_rx_saved_pointer_delivers_payload_and_commits_full_record(); test_bounded_poll_and_pbuf_failure(); test_tx_errors_and_mutex_serialization(); test_tx_interface_admission_failure(); test_dhcp_sized_tx_admission_and_offer_progress(); test_unstable_tx_fsr_exhaustion(); test_diagnostic_interleaving(); test_status_timeout_recovery_phases(); test_netif_bring_up_runs_under_the_core_lock(); test_dhcp_and_static_configuration_run_under_the_core_lock(); return 0; }

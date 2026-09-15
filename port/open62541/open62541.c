@@ -311360,15 +311360,30 @@ UA_DateTime_nowMonotonic(void) {
 #include <FreeRTOS.h>
 #include <task.h>
 
+/* RP2 port patch (must survive every amalgamation upgrade; guarded by
+ * static/tools/test_rp2_ua_datetime_clock.py): the stock FreeRTOS clock
+ * below returned 1970 + FreeRTOS uptime, so every OPC UA timestamp the
+ * stack or the model takes from UA_DateTime_now() -- event and condition
+ * times, ServerStatus, SecureChannel token CreatedAt -- ignored SNTP. The
+ * v1.5.3 -> v1.5.7 upgrade in 36e03c9 silently dropped this hook. The UTC
+ * wall clock comes from services/time_service via rp2_ua_datetime_now();
+ * when it is unavailable the result is 0 (the OPC UA "unknown" DateTime),
+ * never a boot-relative substitute. */
+#include "rp2_ua_datetime_clock.h"
+
 /* The current time in UTC time */
 UA_DateTime UA_DateTime_now(void) {
-    UA_DateTime microSeconds = ((UA_DateTime)xTaskGetTickCount()) * (1000000 / configTICK_RATE_HZ);
-    return ((microSeconds / 1000000) * UA_DATETIME_SEC) + ((microSeconds % 1000000) * UA_DATETIME_USEC) + UA_DATETIME_UNIX_EPOCH;
+    int64_t datetime_100ns;
+
+    if(!rp2_ua_datetime_now(&datetime_100ns))
+        return 0;
+
+    return (UA_DateTime)datetime_100ns;
 }
 
 /* Offset between local time and UTC time */
 UA_Int64 UA_DateTime_localTimeUtcOffset(void) {
-    return 0; //TODO: this is set to zero since UA_DateTime_now() is just the local time, and not UTC.
+    return 0;
 }
 
 /* CPU clock invariant to system time changes. Use only to measure durations,

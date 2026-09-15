@@ -130,6 +130,20 @@ extern unsigned char *g_lwip_ram_heap;
 #define MEMP_NUM_NETCONN            10
 #define PBUF_POOL_SIZE              7
 #define MEMP_NUM_PBUF               16
+/* MEM-01 fix: open62541's lwIP EventLoop self-pipe (UA_EventLoopLWIP_pipe(),
+ * "Windows has no pipes, use a local TCP connection for the self-pipe
+ * trick") permanently holds 2 established TCP PCBs for the life of the
+ * server, on this embedded lwIP backend too, not just on Windows hosts.
+ * The lwIP default (5) therefore only leaves 3 PCBs for real OPC UA client
+ * connections even though opcua_model/src/model_core_lifecycle.c configures
+ * maxSecureChannels/maxSessions = 4 -- the 4th concurrent client's TCP
+ * connection was accepted at the listen socket but then had no PCB left to
+ * become ESTABLISHED, so the client's handshake hung until its own timeout
+ * (Windows WinError 121). Budget: 2 (self-pipe) + 4 (maxSecureChannels) + 2
+ * spare (a departing client lingering in TIME_WAIT/CLOSE_WAIT must not
+ * block a new one). If maxSecureChannels in model_core_lifecycle.c ever
+ * changes, this must be revisited together with it. */
+#define MEMP_NUM_TCP_PCB            8
 #define MEMP_NUM_TCP_SEG            48
 #define MEMP_NUM_TCP_WND            6
 #define DEFAULT_UDP_RECVMBOX_SIZE   6

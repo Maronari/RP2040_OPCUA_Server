@@ -570,17 +570,46 @@ history_flash_backend_result_t history_flash_backend_restore(history_flash_backe
 }
 
 /**
+ * @brief Erases the inactive sector and flips the active one onto it.
+ * @return false if the erase itself fails; @p state is left untouched
+ *         (still pointing at the old, full active sector) so the caller can
+ *         retry later without losing track of which sector needs erasing.
+ */
+static bool swap_to_erased_sector(history_flash_backend_t *backend, uint32_t channel_base,
+                                  history_flash_backend_channel_state_t *state)
+{
+    const uint8_t next_active = (uint8_t)(1u - state->active_sector);
+    const uint32_t next_sector_base = channel_base + (uint32_t)next_active * HISTORY_FLASH_BACKEND_SECTOR_SIZE;
+
+    if (!backend->storage.erase_sector(backend->storage.context, next_sector_base))
+    {
+        return false;
+    }
+    state->active_sector = next_active;
+    state->next_page_in_sector = 0u;
+    return true;
+}
+
+/**
  * @brief Program the staging page to Flash once full, swapping sectors if
  *        the active sector is now completely written.
  *
  * No-op (returns OK) if the staging buffer is not yet full. If a previous
  * sector-swap erase failed, next_page_in_sector is left at the
- * out-of-range sentinel and this returns HISTORY_FLASH_BACKEND_IO on every
- * call until a retry of that erase succeeds -- writes to this slot are
- * refused meanwhile, but the already-programmed sector remains readable.
+ * out-of-range sentinel; this function now retries that erase on every
+ * subsequent call (rather than refusing unconditionally) before attempting
+ * to program the still-pending staged page -- a single transient erase
+ * failure (Flash busy, a coordinator timeout, momentary contention with
+ * another subsystem) must not permanently wedge this channel's history the
+ * way it previously could (MEM-02: fixed 2026-09-09). Writes to this slot
+ * are refused only while the erase keeps failing; the already-programmed
+ * sector remains readable meanwhile, and no staged sample is lost while
+ * retrying (history_flash_backend_append() does not touch staging_page
+ * until this function returns OK).
  *
- * @note Hardware side effect: at most one Flash program call, plus (only on
- *       a sector boundary) one Flash erase call, per invocation.
+ * @note Hardware side effect: up to one Flash erase call (the pending
+ *       retry, if any) plus one Flash program call, plus (only on a fresh
+ *       sector boundary) one more Flash erase call, per invocation.
  */
 static history_flash_backend_result_t flush_staging_if_full(history_flash_backend_t *backend, uint8_t slot)
 {
@@ -593,14 +622,17 @@ static history_flash_backend_result_t flush_staging_if_full(history_flash_backen
     {
         return HISTORY_FLASH_BACKEND_OK;
     }
-    if (state->next_page_in_sector >= HISTORY_FLASH_BACKEND_PAGES_PER_SECTOR)
-    {
-        /* A previous sector swap (erase) failed; refuse further writes for
-         * this channel until it is retried successfully. */
-        return HISTORY_FLASH_BACKEND_IO;
-    }
 
     channel_base = (uint32_t)slot * HISTORY_FLASH_BACKEND_CHANNEL_REGION_SIZE_BYTES;
+
+    if (state->next_page_in_sector >= HISTORY_FLASH_BACKEND_PAGES_PER_SECTOR)
+    {
+        if (!swap_to_erased_sector(backend, channel_base, state))
+        {
+            return HISTORY_FLASH_BACKEND_IO;
+        }
+    }
+
     sector_base = channel_base + (uint32_t)state->active_sector * HISTORY_FLASH_BACKEND_SECTOR_SIZE;
     page_offset = sector_base + (uint32_t)state->next_page_in_sector * HISTORY_FLASH_BACKEND_PAGE_SIZE;
 
@@ -615,18 +647,11 @@ static history_flash_backend_result_t flush_staging_if_full(history_flash_backen
 
     if (state->next_page_in_sector >= HISTORY_FLASH_BACKEND_PAGES_PER_SECTOR)
     {
-        const uint8_t next_active = (uint8_t)(1u - state->active_sector);
-        const uint32_t next_sector_base = channel_base + (uint32_t)next_active * HISTORY_FLASH_BACKEND_SECTOR_SIZE;
-
-        if (!backend->storage.erase_sector(backend->storage.context, next_sector_base))
-        {
-            /* Leave next_page_in_sector at the out-of-range sentinel so a
-             * later append retries the erase before accepting more writes;
-             * the just-filled sector remains valid and readable meanwhile. */
-            return HISTORY_FLASH_BACKEND_IO;
-        }
-        state->active_sector = next_active;
-        state->next_page_in_sector = 0u;
+        /* Proactively erase the now-stale sector so the *next* fill doesn't
+         * have to wait on it; swap_to_erased_sector() leaves state
+         * untouched on failure, so a later call retries this exactly like
+         * the stuck-sentinel case above. */
+        (void)swap_to_erased_sector(backend, channel_base, state);
     }
 
     return HISTORY_FLASH_BACKEND_OK;

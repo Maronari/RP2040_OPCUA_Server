@@ -21,6 +21,10 @@ pico_board_cmake_set(PICO_PLATFORM, rp2350)
 // --- BOARD SPECIFIC ---
 #define WAVESHARE_CORE2350B_PSRAM_CS_PIN 47
 #define WAVESHARE_CORE2350B_PSRAM_SIZE_BYTES (8 * 1024 * 1024)
+// Board-neutral PSRAM description consumed by port/psram/psram_allocator.c
+// and the PSRAM-backed services (shared with rp2350_industrial_mvp_v1.h).
+#define RP2_BOARD_PSRAM_CS_PIN WAVESHARE_CORE2350B_PSRAM_CS_PIN
+#define RP2_BOARD_PSRAM_SIZE_BYTES WAVESHARE_CORE2350B_PSRAM_SIZE_BYTES
 
 // --- RP2350 VARIANT ---
 // This board uses RP2350B, not RP2350A.

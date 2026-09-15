@@ -2,7 +2,8 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.4.3`, merge commit `dec08ba22e835e8037f9fd5342dcc63ddc03f5ac`.
+> **Current baseline:** `v0.5.0`, merge commit `c6da6c4` (PR #19,
+> `v0.5.0/transactional-config` → `main`; no `v0.5.0` tag exists yet).
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 
@@ -214,8 +215,7 @@ At minimum the qualification gate covers:
 - `AD5422` voltage/current output, diagnostics and hardware-safe state;
 - `MAX22190` DI thresholds/filtering/diagnostics;
 - `IPS2050` DO command/fault/protection behavior;
-- UIC digital/counter/frequency/period/encoder operation and analog mode if the final schematic implements it;
-- `TCAL9539`, `TPS2553` per-port power control/faults and `TCA4307` stuck-bus recovery;
+- UIC digital/counter/frequency/period/encoder operation (input-only digital per the 2026-09-10 `HARDWARE_MVP.md` freeze — no analog mode exists to qualify);
 - raw isolated RS-485 transport through `ISOW1432`, including direction timing and bus faults;
 - `TPS3851` external watchdog/supervisor behavior in combination with the RP2350 internal watchdog;
 - internal rail-monitor scaling/thresholds and board-level PGOOD/fault diagnostics;
@@ -548,7 +548,7 @@ This release is intentionally **pre-hardware**. Industrial-board drivers must be
 - [ ] Keep all native drivers statically linked into firmware; configuration and host tools may instantiate them only by stable `driver_id`.
 - [ ] Add one compile-time enable/disable option per driver or driver family, and generate the runtime driver catalog only from enabled targets.
 - [ ] Ensure disabled drivers and their private dependencies are absent from the final ELF/UF2 rather than merely hidden from the catalog.
-- [ ] Keep the reference-board profile and `RP2350_INDUSTRIAL_MVP_V1` board profile separate. Building the industrial profile must not make the reference profile touch nonexistent peripherals during boot.
+- [ ] Keep the reference-board profile and `RP2350_INDUSTRIAL_MVP_V1` board profile separate. Building the industrial profile must not make the reference profile touch nonexistent peripherals during boot. *(2026-09-12: `FIRMWARE_DRIVER_PACK` now defaults to `base`, and the industrial bus/counter bindings plus the 16-channel industrial seed exist only when those drivers are compiled in — so the reference build contains no industrial symbol and initializes no industrial peripheral at boot.)*
 - [ ] Define firmware driver-pack manifests for `base`, `environmental`, `motion`, `industrial` and `development`, including profile ID, included driver IDs, hardware compatibility and resource budget.
 - [ ] Expose `SupportedDrivers` and `DriverCapabilities` through a bounded OPC UA capability model usable by the configurator before configuration upload.
 - [ ] Define a versioned host-side sensor/module descriptor format that maps catalog entries to required `driver_id`, connection constraints, default channel templates, units and wiring information. This descriptor data remains host-side and is not executable firmware code.
@@ -561,7 +561,7 @@ This release is intentionally **pre-hardware**. Industrial-board drivers must be
   - synthetic benchmark source;
   - loopback/mock source for host tests.
 - [ ] Extend the RP2350 ADC-voltage driver for RP2350B `ADC0..ADC7` where supported by the board profile. For `RP2350_INDUSTRIAL_MVP_V1`, reserve:
-  - `ADC0..ADC3 / GPIO40..GPIO43` for `UIC0..UIC3` analog-capable paths;
+  - `ADC0..ADC3 / GPIO40..GPIO43`: **not applicable** — the 2026-09-10 `HARDWARE_MVP.md` freeze makes `UIC0..UIC3` input-only digital, so these GPIOs' ADC capability is not part of the UIC hardware contract;
   - `ADC4 / GPIO44` for `VIN_PROTECTED_MON`;
   - `ADC5 / GPIO45` for `AO_15V_MON`;
   - `ADC6 / GPIO46` for `ANA_5V_MON`;
@@ -571,14 +571,12 @@ This release is intentionally **pre-hardware**. Industrial-board drivers must be
   - 2 × `AD5422BREZ` analog-output channels, including voltage/current mode, commanded output, status/diagnostics and safe-state integration;
   - `MAX22190ATJ+` industrial digital-input frontend for `DI0..DI3`;
   - `IPS2050HTR` protected high-side digital-output control and fault/readback handling for `DO0..DO1`;
-  - UIC board driver(s) for digital input, counter, frequency, period and quadrature-encoder operation using GPIO/PIO/DMA where appropriate; retain analog-mode support in the API only where the final UIC schematic provides a real protected analog path to `ADC0..ADC3`;
-  - `TCAL9539` internal I²C GPIO expander for sensor-power enables, per-port power faults, `TCA4307` control/status and `BOARD_IO_INT_N` handling;
-  - 2 × `TCA4307` external-I²C isolation/recovery control through `EN` and `READY` state, while treating the chip's autonomous stuck-bus recovery as hardware behavior rather than software bit-banging;
-  - 4 × `TPS2553DBVR` sensor-power control as a board service layered over `TCAL9539`, including independent enable/disable, per-port fault state and bounded power-cycle sequencing;
+  - UIC board driver(s) for digital input, counter, frequency, period and quadrature-encoder operation using GPIO/PIO/DMA where appropriate. The 2026-09-10 `HARDWARE_MVP.md` freeze settles the previously conditional analog clause: the block is **input-only digital**, so no analog or bidirectional UIC mode is to be implemented or advertised;
+  - ~~`TCAL9539` internal I²C GPIO expander~~, ~~2 × `TCA4307` external-I²C isolation/recovery~~, ~~4 × `TPS2553DBVR` sensor-power control~~ — **removed from scope 2026-09-10.** `HARDWARE_MVP.md` deleted the external I²C/SPI/UART sensor ports and the whole sensor-power/service-I/O subsystem from Hardware Prototype v1; the implemented drivers and their tests were deleted with it, leaving `MAX22190`'s `/READY` on a direct `GPIO24` and `GPIO25..33`/`GPIO39` reserved;
   - `ISOW1432DFMR` board-level raw half-duplex RS-485 transport binding using the RP2350 UART and `RS485_DE_RE`; Modbus protocol support remains scheduled for `v0.7.0`;
   - `TPS3851H33EDRBR` external supervisor/watchdog board integration using `WD_ENABLE`, `WD_KICK` and reset/fault semantics, while retaining the RP2350 internal watchdog as a separate layer unless a later design decision removes it;
   - W5500 board binding for the final industrial GPIO/SPI mapping without rewriting the already working Ethernet stack;
-  - board diagnostics for `PWR_IN_FAULT_N`, `PWR_3V3_PGOOD_N`, `PWR_5V_PGOOD_N`, `BOARD_FAULT_N`, DO faults, sensor-power faults/recovery state and monitored internal rails.
+  - board diagnostics for `PWR_IN_FAULT_N`, `PWR_3V3_PGOOD_N`, `PWR_5V_PGOOD_N`, `BOARD_FAULT_N`, DO faults and monitored internal rails (the sensor-power fault/recovery half went away with the 2026-09-10 removal above).
 - [ ] Do not create meaningless firmware drivers for passive parts or autonomous power ICs. Regulators, eFuse, TVS devices, ferrites, MagJack, protection components and simple logic are represented through their observable fault/PGOOD/monitor signals only where such signals exist.
 - [ ] Separate bus/protocol logic from RP2350 peripheral access so SPI/I²C/UART/GPIO transactions can be injected or mocked in host tests. Driver correctness must not depend on having the custom PCB attached.
 - [ ] Validate command framing, register addresses, bit fields, endianness, sign extension, scaling, range checks and status decoding against the selected component datasheets.
@@ -594,7 +592,7 @@ This release is intentionally **pre-hardware**. Industrial-board drivers must be
 - [ ] The normal reference RP2350 + W5500 build remains runnable and does not probe or initialize industrial-board peripherals that are not present.
 - [ ] A separate `RP2350_INDUSTRIAL_MVP_V1` firmware build compiles and links all selected industrial drivers with no new first-party warnings, even though the target PCB is not yet available.
 - [ ] Host/mock tests verify SPI/I²C/UART/GPIO transaction generation and response parsing for the industrial drivers, including success, timeout, malformed/status-fault and device-not-present paths.
-- [ ] Datasheet-derived register/command tests cover the important configuration and conversion paths for `ADS8688`, `AD5422`, `MAX22190`, `TCAL9539` and other register-driven devices.
+- [ ] Datasheet-derived register/command tests cover the important configuration and conversion paths for `ADS8688`, `AD5422`, `MAX22190` and other register-driven devices.
 - [ ] Resource-claim validation rejects conflicting assignments before driver activation.
 - [ ] A new mock driver can be added without editing OPC UA modules or core channel-manager logic.
 - [ ] Build at least two firmware profiles and verify that a disabled driver's code/symbols are absent from the smaller ELF and that the reported `SupportedDrivers` set exactly matches the linked catalog.
@@ -602,7 +600,7 @@ This release is intentionally **pre-hardware**. Industrial-board drivers must be
 - [ ] A configuration referencing a driver absent from the installed profile is rejected without altering the running configuration.
 - [ ] A failing/slow mock driver does not stop other channels.
 - [ ] GPIO write authorization and readback remain verified on available hardware/mock paths.
-- [ ] Driver self-test and board-diagnostic states map deterministically into channel quality and Device Health without treating unavailable custom hardware as a successful hardware test.
+- [ ] Driver self-test and board-diagnostic states map deterministically into channel quality and Device Health without treating unavailable custom hardware as a successful hardware test. *(2026-09-13: the self-test half is done — a driver reporting `TIMEOUT` ("device did not answer") now maps to that channel's `SERVICE_QUALITY_BAD` instead of aborting the whole activation transaction, so an unfitted chip costs one channel rather than all of them. The board-diagnostic → Device Health half is deliberately left to `v0.6.2`'s board-health aggregation line below, per `v0.5.1`'s scope decision 4; `board_diagnostics_service` has no runtime caller until then.)*
 - [ ] CI explicitly labels the industrial drivers as **compile/mock validated, not hardware qualified** until the custom PCB is available.
 
 ### Deferred hardware qualification
@@ -611,12 +609,11 @@ Physical activation and qualification of `RP2350_INDUSTRIAL_MVP_V1` are delibera
 
 At minimum, later hardware qualification must cover:
 
-- SPI/I²C/UART electrical communication and reset behavior;
+- SPI/UART electrical communication and reset behavior;
 - AI accuracy/range/protection and calibration on `ADS8688`;
 - AO voltage/current generation, readback and safe-state on `AD5422`;
 - DI/DO thresholds, protection and fault behavior;
-- UIC counter/frequency/encoder limits and, if implemented in hardware, analog mode;
-- sensor-power enable/fault/power-cycle and I²C stuck-bus recovery;
+- UIC counter/frequency/encoder limits (input-only digital; no analog mode);
 - RS-485 direction timing and isolated-bus operation;
 - external watchdog/supervisor reset behavior;
 - monitored supply-rail scaling and thresholds.
@@ -748,7 +745,7 @@ Make failure detection depend on subsystem health rather than a blindly kicked w
 - [ ] Add controlled degradation when PSRAM, history storage, MQTT or time synchronization is unavailable.
 - [ ] Add recovery policies for Ethernet link loss, DHCP loss, broker disconnect and OPC UA client abuse.
 - [ ] Add fault injection hooks for allocation failure, Flash error, corrupted config, driver timeout and network flap.
-- [ ] Add board-health aggregation capable of consuming `PWR_IN_FAULT_N`, `PWR_3V3_PGOOD_N`, `PWR_5V_PGOOD_N`, `BOARD_FAULT_N`, DO faults, `BOARD_IO_INT_N`, per-port sensor-power faults, `TCA4307 READY` state and internal rail-monitor channels when the industrial profile is built.
+- [ ] Add board-health aggregation capable of consuming `PWR_IN_FAULT_N`, `PWR_3V3_PGOOD_N`, `PWR_5V_PGOOD_N`, `BOARD_FAULT_N`, DO faults and internal rail-monitor channels when the industrial profile is built.
 - [ ] Keep board-health diagnostics observable and degradable; an optional diagnostic failure must not automatically become a reboot loop unless the documented health policy classifies it as safety/availability critical.
 - [ ] Add brownout/power-loss campaigns for configuration, maintenance journal and OTA.
 
@@ -945,7 +942,7 @@ Freeze the contracts that will be guaranteed by `v1.0.0` only after the industri
 ### Required implementation
 
 - [ ] Treat closure of the industrial hardware qualification gate as a prerequisite for final public driver-API freeze. At minimum, every industrial driver/API path that can force a public lifecycle/capability/configuration change must have been exercised on the assembled board.
-- [ ] Review hardware-qualification findings before freeze. If real `ADS8688`, `AD5422`, `MAX22190`, `IPS2050`, UIC, `TCAL9539`/`TPS2553`/`TCA4307`, RS-485 or watchdog behavior requires an additional lifecycle, asynchronous-event, calibration, diagnostic or shared-resource semantic, fix the pre-1.0 API before freezing it.
+- [ ] Review hardware-qualification findings before freeze. If real `ADS8688`, `AD5422`, `MAX22190`, `IPS2050`, UIC, RS-485 or watchdog behavior requires an additional lifecycle, asynchronous-event, calibration, diagnostic or shared-resource semantic, fix the pre-1.0 API before freezing it.
 - [ ] Freeze public driver API, channel API and service error model only after that review.
 - [ ] Freeze configuration schema version `1` and migration policy.
 - [ ] Freeze vendor namespace URI and public NodeIds.
@@ -982,8 +979,8 @@ Optimize the frozen platform and publish both its reproducible synthetic operati
 - [ ] Reduce long critical sections and lock contention.
 - [ ] Tune lwIP/WIZnet buffers, open62541 limits and task priorities using measured data.
 - [ ] Run complete synthetic benchmark profiles and compare with `v0.5.2`; synthetic sources remain the canonical cross-version reproducibility baseline.
-- [ ] Add an `industrial_board_real_io` benchmark profile after hardware qualification and measure representative simultaneous AI/AO/DI/DO/UIC/sensor/RS-485 workloads.
-- [ ] For the real-I/O profile, record at least ADS8688 acquisition/sampling jitter, AO write/update latency, DI event latency, UIC counter/frequency/encoder limits, RS-485 turnaround, TCAL9539 interrupt/service latency, I²C recovery behavior, CPU load, task stack margins and memory use with the industrial driver pack active.
+- [ ] Add an `industrial_board_real_io` benchmark profile after hardware qualification and measure representative simultaneous AI/AO/DI/DO/UIC/RS-485 workloads.
+- [ ] For the real-I/O profile, record at least ADS8688 acquisition/sampling jitter, AO write/update latency, DI event latency, UIC counter/frequency/encoder limits, RS-485 turnaround, CPU load, task stack margins and memory use with the industrial driver pack active.
 - [ ] Run 7-day soak with security, subscriptions, history, alarms and selected field protocol enabled.
 - [ ] Run a corresponding industrial-board soak profile when the hardware qualification gate is closed and the board is stable enough for long-run testing.
 - [ ] Publish tested maximums and recommended operating limits, clearly separating synthetic/reference-board limits from industrial real-I/O limits.
@@ -1015,7 +1012,7 @@ Complete hardware qualification, manufacturing, calibration, provisioning and re
 - [ ] Define unique serial, MAC, product-instance URI, asset ID and certificate provisioning flow.
 - [ ] Add factory-test profile and test-jig protocol/results format for the production board rather than only the generic reference board.
 - [ ] Define production calibration/storage flow for AI/AO and any internal monitor channels whose accuracy is part of the product diagnostics contract.
-- [ ] Include factory checks for power tree/PGOOD/faults, Flash/PSRAM, Ethernet, USB, isolated RS-485, AI/AO/DI/DO/UIC, external I²C recovery, sensor-power switching/faults, external watchdog/safe-state and status indication.
+- [ ] Include factory checks for power tree/PGOOD/faults, Flash/PSRAM, Ethernet, USB, isolated RS-485, AI/AO/DI/DO/UIC, external watchdog/safe-state and status indication.
 - [ ] Produce reproducible signed release artifacts: bootloader, application, factory image, manifest, default config, NodeSet/public-node inventory, SBOM and size/benchmark reports.
 - [ ] Add release automation that verifies tag, runtime version and artifact manifest consistency, including hardware-profile and supported-board-revision metadata.
 - [ ] Document flash layout, recovery procedure, factory reset and decommissioning.
@@ -1073,14 +1070,25 @@ Codex must not implement the following before a roadmap revision assigns an exac
 ## 8. Immediate next action
 
 The next implementation target is
-**`v0.5.0 — Transactional Runtime Configuration`**.
+**`v0.5.1 — Driver SDK and Industrial Board Driver Integration`**.
 
 Before coding, Codex must:
 
-1. use merged `v0.4.3` (`dec08ba22e835e8037f9fd5342dcc63ddc03f5ac`) as the implementation and compatibility baseline;
-2. inspect the current configuration service, channel manager, driver catalog/capability API, persistence layout and OPC UA configuration methods before changing code;
-3. create and then follow a file-level execution plan in `docs/releases/v0.5.0.md`;
-4. freeze the configuration transaction states, staged/running/last-known-good persistence contract, resource-conflict model and rollback semantics before implementation;
-5. verify valid apply, unavailable-driver rejection, resource conflicts, driver-start failure, namespace/model rebuild failure and power loss at every transaction phase;
-6. keep industrial-board driver implementation out of `v0.5.0`; those drivers are scheduled for `v0.5.1` and consume the configuration/resource machinery built here;
-7. only then start implementation limited to `v0.5.0`.
+1. use merged `v0.5.0` (`c6da6c4`, PR #19) as the implementation and
+   compatibility baseline;
+2. inspect the current driver vtable (`telemetry_driver_vtbl_t`), driver
+   catalog/resource-claim API, and native reference drivers before changing
+   code — `write`/`configure`/`self_test` are declared but have no shipped
+   implementation yet, and no SPI/I²C/UART bus abstraction exists;
+3. create and then follow a file-level execution plan in
+   `docs/releases/v0.5.1.md`;
+4. treat the pre-1.0 driver API "freeze" this version requires as the
+   *outcome* of a pilot phase (a native GPIO output driver, then the
+   `ADS8688` industrial ADC driver plus a new SPI transport abstraction), not
+   its starting assumption; do not begin implementing any other industrial
+   driver until that pilot phase's review gate closes;
+5. keep this release explicitly pre-hardware: `RP2350_INDUSTRIAL_MVP_V1`
+   does not physically exist yet, so industrial drivers must be
+   source-complete and host/mock-validated, never claimed as hardware
+   qualified;
+6. only then start implementation limited to `v0.5.1`.

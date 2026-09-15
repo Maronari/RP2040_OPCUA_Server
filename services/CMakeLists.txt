@@ -14,6 +14,7 @@ set(FIRMWARE_SERVICES_SOURCES
         src/device_health_service.c
         src/firmware_update_service.c
         src/history_service.c
+        src/login_backoff.c
         src/maintenance_service.c
         src/network_manager.c
         src/security_service.c
@@ -23,6 +24,14 @@ set(FIRMWARE_SERVICES_SOURCES
         src/sensor_manager.c
         src/time_service.c
         )
+
+if(FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE AND FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER)
+    # board_diagnostics_service.c calls into ips2050_driver.h
+    # (native_ips2050_read_fault()) directly, so it is only ever compiled in
+    # when that dependency is -- never link-fails from a partial dependency
+    # set.
+    list(APPEND FIRMWARE_SERVICES_SOURCES src/board_diagnostics_service.c)
+endif()
 
 if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
     list(APPEND FIRMWARE_SERVICES_SOURCES

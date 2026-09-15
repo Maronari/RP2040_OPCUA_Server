@@ -5,16 +5,14 @@ industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
 `waveshare_core2350b_16mb_psram8mb`; the default application target is
 `device_profile_basic`.
 
-The current implementation target is `v0.5.0`. It restructures runtime
-configuration into a real validate -> persist-staged -> stop -> activate ->
-verify -> commit/rollback transaction with a staged/running/last-known-good
-Flash backend and a real configuration schema version, adds exhaustive
-missing-driver reporting, consumes the reboot-required diagnostic to trigger
-an actual controlled OPC UA server restart, clears per-channel history/alarm
-state on channel delete/modify, and adds runtime configuration presets plus
-firmware/configuration compatibility data on top of the per-channel
-history/alarms released in `v0.4.3`, while preserving unrelated public
-contracts.
+`v0.5.0` (Transactional Runtime Configuration) is merged; its transaction
+pipeline, staged/running/last-known-good Flash backend, controlled restart,
+and configuration presets are listed under "What The Firmware Already
+Implements" below. The current implementation target is `v0.5.1` (Driver SDK
+and Industrial Board Driver Integration): it freezes the pre-1.0 native
+driver API and adds source-complete, host/mock-validated drivers for the
+`RP2350_INDUSTRIAL_MVP_V1` industrial board, which does not physically exist
+yet — see [docs/releases/v0.5.1.md](docs/releases/v0.5.1.md).
 
 ## What The Firmware Already Implements
 

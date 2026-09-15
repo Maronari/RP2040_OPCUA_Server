@@ -12,17 +12,36 @@
  * Macros
  * ----------------------------------------------------------------------------------------------------
  */
-/* SPI */
+/* SPI
+ *
+ * Defaults below match a generic W5x00 reference module wired to
+ * GPIO0..GPIO3. RP2350_INDUSTRIAL_MVP_V1's frozen GPIO map
+ * (HARDWARE_MVP.md) assigns GPIO4..GPIO8 to the W5500 instead -- v0.5.1 T10
+ * makes every one of these overridable via a compile definition (see
+ * FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS in port/CMakeLists.txt) rather than
+ * rewriting this vendored WIZnet driver. */
+#ifndef SPI_PORT
 #define SPI_PORT spi0
+#endif
 
+#ifndef PIN_SCK
 #define PIN_SCK 2
+#endif
+#ifndef PIN_MOSI
 #define PIN_MOSI 3
+#endif
+#ifndef PIN_MISO
 #define PIN_MISO 0
+#endif
+#ifndef PIN_CS
 #define PIN_CS 1
+#endif
 /* Set PIN_RST to a GPIO number when the W5x00 reset line is wired.
  * Use -1 for modules where reset is not connected and the chip relies on
  * its own power-on reset circuit. */
+#ifndef PIN_RST
 #define PIN_RST (-1)
+#endif
 
 /* Use SPI DMA */
 //#define USE_SPI_DMA // if you want to use SPI DMA, uncomment.

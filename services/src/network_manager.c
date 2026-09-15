@@ -31,7 +31,6 @@
 #include <task.h>
 
 #include "drivers/w5x00_ethernet_driver.h"
-#include "lwip/dns.h"
 #include "lwip/dhcp.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/prot/dhcp.h"
@@ -256,10 +255,13 @@ bool network_manager_init(void)
     }
     else
     {
-        ip4_addr_t dns_server;
-        w5x00_ethernet_driver_set_static_ipv4(&g_driver, config->static_ip, config->static_netmask, config->static_gateway);
-        IP4_ADDR(&dns_server, config->static_dns[0], config->static_dns[1], config->static_dns[2], config->static_dns[3]);
-        dns_setserver(0, &dns_server);
+        /* The driver applies the DNS server together with the address, under
+         * the lwIP core lock (see w5x00_ethernet_driver.c). */
+        w5x00_ethernet_driver_set_static_ipv4(&g_driver,
+                                              config->static_ip,
+                                              config->static_netmask,
+                                              config->static_gateway,
+                                              config->static_dns);
     }
 
     g_initialized = true;

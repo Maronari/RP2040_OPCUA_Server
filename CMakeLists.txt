@@ -24,9 +24,53 @@ else()
     set(PICO_BOARD_HEADER_DIRS ${PICO_BOARD_HEADER_DIRS} CACHE STRING "Additional Pico board header directories" FORCE)
 endif()
 
-if(NOT DEFINED PICO_BOARD)
-    set(PICO_BOARD waveshare_core2350b_16mb_psram8mb CACHE STRING "Pico board")
+# --- Board profile ----------------------------------------------------------
+# A driver pack is a board profile, not only a driver list: "industrial"
+# builds exist solely for RP2350_INDUSTRIAL_MVP_V1 and "base" for the
+# reference Waveshare Core2350B + W5500 module. Everything board-specific
+# follows from the pack -- PICO_BOARD (PSRAM chip-select, RP2350B, Flash
+# size) and the W5500 SPI pins -- so an industrial driver set can never be
+# built against the reference board's wiring or the other way round.
+# Contradicting values are rejected, not silently overridden. See the
+# driver-pack manifest section below for what each pack compiles in.
+set(FIRMWARE_DRIVER_PACK "base" CACHE STRING
+    "Named driver-pack manifest and board profile: base (reference Waveshare Core2350B + W5500 module, the default) or industrial (RP2350_INDUSTRIAL_MVP_V1 only)")
+set_property(CACHE FIRMWARE_DRIVER_PACK PROPERTY STRINGS base industrial)
+if(FIRMWARE_DRIVER_PACK STREQUAL "industrial")
+    set(_firmware_pack_board rp2350_industrial_mvp_v1)
+    set(_firmware_pack_industrial_w5500_pins ON)
+elseif(FIRMWARE_DRIVER_PACK STREQUAL "base")
+    set(_firmware_pack_board waveshare_core2350b_16mb_psram8mb)
+    set(_firmware_pack_industrial_w5500_pins OFF)
+else()
+    message(FATAL_ERROR "FIRMWARE_DRIVER_PACK must be 'base' or 'industrial', got '${FIRMWARE_DRIVER_PACK}'")
 endif()
+
+if(NOT DEFINED PICO_BOARD)
+    set(PICO_BOARD ${_firmware_pack_board} CACHE STRING "Pico board (follows FIRMWARE_DRIVER_PACK)")
+elseif(NOT PICO_BOARD STREQUAL _firmware_pack_board)
+    message(FATAL_ERROR
+            "PICO_BOARD='${PICO_BOARD}' does not match FIRMWARE_DRIVER_PACK='${FIRMWARE_DRIVER_PACK}', "
+            "which requires PICO_BOARD='${_firmware_pack_board}'. The board follows the pack: drop "
+            "-DPICO_BOARD (or reconfigure with -UPICO_BOARD) and select the pack instead.")
+endif()
+
+# FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS used to be an independent option,
+# which let an industrial build keep the reference module's W5500 pins. It
+# is now derived from the pack; a stale or explicit cache entry that
+# disagrees is an error rather than a second source of truth.
+get_property(_firmware_w5500_pins_cached CACHE FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS PROPERTY TYPE SET)
+if(_firmware_w5500_pins_cached)
+    if((FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS AND NOT _firmware_pack_industrial_w5500_pins) OR
+       (NOT FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS AND _firmware_pack_industrial_w5500_pins))
+        message(FATAL_ERROR
+                "FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS=${FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS} contradicts "
+                "FIRMWARE_DRIVER_PACK='${FIRMWARE_DRIVER_PACK}'. The W5500 pin mapping now follows the pack; "
+                "reconfigure with -UFIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS.")
+    endif()
+    unset(FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS CACHE)
+endif()
+set(FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS ${_firmware_pack_industrial_w5500_pins})
 
 if(NOT DEFINED WIZNET_CHIP)
     set(WIZNET_CHIP W5500 CACHE STRING "WIZnet Ethernet chip")
@@ -124,6 +168,55 @@ endif()
 
 add_definitions(-DUA_ARCHITECTURE_FREERTOSLWIP)
 add_definitions(-DSET_TRUSTED_CERT_IN_SAMPLES)
+
+# --- Driver-pack manifest (ROADMAP.md 5.1 "driver-pack manifests") --------
+# Named, buildable sets of native drivers. Only "base" (the generic
+# reference drivers that predate v0.5.1 and apply to any board) and
+# "industrial" (RP2350_INDUSTRIAL_MVP_V1's full v0.5.1 T3-T13 driver set)
+# are defined today -- "environmental"/"motion"/"development" remain open
+# (docs/releases/v0.5.1.md ROADMAP.md:552 tracking) since their actual
+# driver composition is not specified by any project document and needs a
+# product-scope decision, not a guess.
+#
+# Selecting "base" -- the default since 2026-09-12 -- forces every v0.5.1
+# industrial-only FIRMWARE_ENABLE_NATIVE_* option OFF unless a caller has
+# already set it explicitly (via -D or a prior cache entry, checked with
+# DEFINED before this ever touches the cache), so the reference
+# RP2350 + W5500 board neither carries nor initializes drivers for hardware
+# it does not have. Together with app/basic_profile's industrial board
+# bindings -- which exist only when those drivers are compiled in -- that
+# makes ROADMAP.md:551's "keep the reference-board profile and
+# RP2350_INDUSTRIAL_MVP_V1 board profile separate" true at runtime, not
+# just at link time. The default was "industrial" until 2026-09-12, which
+# is why reference images built before then carried the full industrial
+# driver set.
+#
+# Selecting "industrial" leaves every one of those options at its own
+# existing default (ON) and builds the complete RP2350_INDUSTRIAL_MVP_V1
+# profile: all industrial drivers, their board bus/counter bindings, and a
+# seed configuration populating every AI/AO/DI/DO/UIC channel -- on the
+# industrial board header and W5500 pins only.
+#
+# FIRMWARE_DRIVER_PACK itself, and the board it implies, are declared in
+# the "Board profile" section near the top of this file, before the SDK
+# reads PICO_BOARD.
+if(FIRMWARE_DRIVER_PACK STREQUAL "base")
+    set(FIRMWARE_INDUSTRIAL_ONLY_OPTIONS
+        FIRMWARE_ENABLE_NATIVE_ADS8688_DRIVER
+        FIRMWARE_ENABLE_NATIVE_AD5422_DRIVER
+        FIRMWARE_ENABLE_NATIVE_MAX22190_DRIVER
+        FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER
+        FIRMWARE_ENABLE_NATIVE_UIC_DRIVER
+        FIRMWARE_ENABLE_NATIVE_RS485_TRANSPORT
+        FIRMWARE_ENABLE_NATIVE_TPS3851_WATCHDOG_DRIVER
+        FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE
+        )
+    foreach(_firmware_industrial_option ${FIRMWARE_INDUSTRIAL_ONLY_OPTIONS})
+        if(NOT DEFINED ${_firmware_industrial_option})
+            set(${_firmware_industrial_option} OFF CACHE BOOL "Defaulted OFF by FIRMWARE_DRIVER_PACK=base")
+        endif()
+    endforeach()
+endif()
 
 # Add libraries in subdirectories
 add_subdirectory(${CMAKE_SOURCE_DIR}/libraries)

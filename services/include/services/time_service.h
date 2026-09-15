@@ -20,11 +20,21 @@
 /**
  * @brief Point-in-time snapshot of RTC/SNTP synchronization status.
  *
- * Owned by `time_service.c`'s single static `g_status`; published/read
- * under `taskENTER_CRITICAL`/`taskEXIT_CRITICAL`
- * (`time_service_set_status()`/time_service_get_status()).
- * `synchronized` is sticky: once `last_sync_epoch_s > 0`, it never reverts
- * to false in time_service_task() (`time_service.c:112`).
+ * Owned by `time_service.c`'s single static `g_status`; both writers (the
+ * SNTP callback and TimeTask) update it inside `taskENTER_CRITICAL`/
+ * `taskEXIT_CRITICAL`, and time_service_get_status() copies it under the
+ * same lock. Neither can overwrite the other's sync record, and TimeTask
+ * never publishes an RTC observation older than the latest SNTP apply (an
+ * apply generation counter, see time_service.c).
+ *
+ * `synchronized` means "SNTP has set the RTC and the RTC still holds that
+ * time": `last_sync_epoch_s > 0 && rtc_valid`. It is not sticky -- if the
+ * RTC stops being valid, `synchronized` and `quality` drop with it, so
+ * `Device.Time.TimeSynced` can never read true while the wall clock (and
+ * therefore every OPC UA timestamp) is unavailable. `quality` is GOOD only
+ * when synchronized, UNCERTAIN when the RTC is valid but was not set by
+ * SNTP this boot (e.g. an AON timer carried over a soft reset), BAD
+ * otherwise. `sync_error_count` counts SNTP answers the RTC could not apply.
  */
 typedef struct
 {
@@ -56,13 +66,26 @@ bool time_service_init(void);
  *        network is ready and refreshes RTC-derived status every 1000 ms.
  *
  * Runs forever; never returns. Starts SNTP (`sntp_setservername`/
- * `sntp_init`) exactly once, gated on `network_manager_is_ready()` and
- * `!status.sntp_started`. Recomputes `quality` each iteration: GOOD once
- * `synchronized`, UNCERTAIN if only the RTC is valid, BAD otherwise.
+ * `sntp_init`, under the lwIP core lock) exactly once, gated on
+ * `network_manager_is_ready()` and `!status.sntp_started`. Each 1 s
+ * iteration is time_service_refresh().
  *
  * @param argument Unused (FreeRTOS task signature).
  */
 void time_service_task(void *argument);
+
+/**
+ * @brief One TimeTask iteration: start SNTP once the network is ready, then
+ *        re-read RTC validity and time and recompute `synchronized` and
+ *        `quality` (see time_service_status_t).
+ *
+ * The observation is published only if no set_system_time() published
+ * while it was being taken; otherwise it is dropped as stale.
+ *
+ * Exposed so host tests can drive the state machine without a scheduler;
+ * on the device only time_service_task() calls it.
+ */
+void time_service_refresh(void);
 
 /**
  * @brief Copies the current time/sync status snapshot to @p out_status.
@@ -75,7 +98,11 @@ void time_service_get_status(time_service_status_t *out_status);
 /**
  * @brief Forces an immediate SNTP re-sync against the configured NTP server.
  *
- * Restarts SNTP (`sntp_stop()` + `sntp_setservername()` + `sntp_init()`).
+ * Restarts SNTP (`sntp_stop()` + `sntp_setservername()` + `sntp_init()`)
+ * under the lwIP core lock, since the caller (OpcUaTask, via the
+ * `SyncTimeNow` method) is not the tcpip thread. Must not be called from the
+ * tcpip thread's SNTP callback, from a critical section, or with the RTC
+ * driver's lock held.
  *
  * @return false without side effects if the service is not initialized or
  *         the network is not ready (`network_manager_is_ready()` false);
@@ -110,13 +137,16 @@ bool time_service_get_utc_time_us(uint64_t *out_unix_time_us);
 int16_t get_system_timezone_offset_minutes(void);
 
 /**
- * @brief Applies a new absolute Unix time to the RTC and marks the service synchronized.
+ * @brief Applies a new absolute Unix time to the RTC; marks the service synchronized only if the RTC accepted it.
  *
  * Registered as the lwIP `SNTP_SET_SYSTEM_TIME` callback
  * (`port/lwip/lwipopts.h:143`), so in normal operation this is invoked from
  * lwIP's SNTP processing context (the lwIP/tcpip task), not called directly
- * by application code. Writes the RTC via `rtc_driver_set_unix_time()`,
- * then marks status synchronized/GOOD and increments `sync_count`.
+ * by application code. Writes the RTC via `rtc_driver_set_unix_time()`. On
+ * success it records `last_sync_epoch_s`, increments `sync_count` and the
+ * status becomes synchronized/GOOD; if the RTC rejects the time it
+ * increments `sync_error_count` instead and `synchronized`/`quality` follow
+ * the RTC's actual validity.
  *
  * @param seconds New absolute Unix time, in seconds.
  */

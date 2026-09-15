@@ -23,10 +23,15 @@ typedef struct telemetry_driver_vtbl {
 } telemetry_driver_vtbl_t;
 ```
 
-Сегодня заполнены только `start`/`stop`/`read`, тремя поставляемыми
-нативными драйверами. Слоты `configure`/`self_test`/`write`
-диспетчеризуются из `sensor_manager.c` за проверками на NULL, но не имеют
-действующей реализации для текущего набора драйверов.
+Заполнены все слоты. `start`/`stop`/`read` — по всему набору драйверов;
+`write` — в `gpio_output`/`AD5422`/`IPS2050`; `configure` — в
+`gpio_output`; `self_test` — в `gpio_output`/`ADS8688`/`MAX22190`/
+`IPS2050` (v0.5.1; у `AD5422` его нет — на плате ни один `SDO` ЦАП не
+заведён на `BOARD_SPI_MISO`). Любой слот по-прежнему может быть NULL у
+конкретного драйвера, и `sensor_manager.c` диспетчеризует за проверкой на
+NULL. Трёхзначную конвенцию результата `self_test` (ответил и прошёл /
+не ответил вовсе / ответил и не прошёл) см. в
+`services/include/services/telemetry_driver.h`.
 
 ```mermaid
 graph LR
@@ -55,7 +60,11 @@ graph LR
 | Напряжение ADC | `drivers/src/adc_voltage_channel_driver.c` | Периферия ADC, внешние аналоговые выводы 0-3 (`adc_gpio_init`, `adc_select_input`, `adc_read`) | `source_index<=3 && source_flags==0` |
 | Вход GPIO | `drivers/src/gpio_input_channel_driver.c` | Банк GPIO (`gpio_init`, `gpio_set_dir`, `gpio_pull_up/down`, `gpio_get`) | `source_index < NUM_BANK0_GPIOS`, допустимые биты флагов, не pull-up и pull-down одновременно |
 
-Ни один из трёх не реализует `configure`/`write`/`self_test`. Драйвер
+Таблица выше охватывает только три дженерик-драйвера, существовавших до
+v0.5.1; промышленный набор (`ADS8688`, `AD5422`, `MAX22190`, `IPS2050`,
+`UIC`, `synthetic`) добавлен в v0.5.1 и здесь не описан — см.
+`docs/releases/v0.5.1.md`. Ни один из этих трёх не реализует
+`configure`/`write`/`self_test`. Драйвер
 напряжения ADC разделяет один файл-статический флаг инициализации
 `g_adc_ready` между всеми экземплярами каналов напряжения ADC, отражая тот
 факт, что сама периферия ADC — единый разделяемый ресурс (см. заявки на

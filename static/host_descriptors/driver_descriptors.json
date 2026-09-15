@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "description": "Versioned host-side sensor/module descriptor format (ROADMAP.md:554, v0.5.1 T15). Maps every services/driver_catalog.h driver_id compiled into this firmware image to its connection constraints, default channel template, units, and wiring information, for a host tool (a configurator, a validation script, or a human) to consult before writing a configuration. This data is host-side only and is not executable firmware code -- it must never be treated as authoritative over the firmware's own driver_catalog.c/native_*_source_is_valid() validation, which always has the final say at configuration-apply time. static/tools/test_driver_descriptors_contract.py keeps this file's driverId set in sync with services/driver_catalog.h.",
+  "drivers": [
+    {
+      "driverId": 1,
+      "name": "internal_temp",
+      "wiring": "RP2350 internal die temperature sensor (ADC channel 4 on RP2350B); no external pins.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 0, "note": "always 0 -- one internal sensor"},
+        "sourceFlags": {"allowed": [0]}
+      },
+      "defaultChannelTemplate": {
+        "kind": "analog",
+        "valueType": "float",
+        "unit": "degC",
+        "flags": ["enabled", "historized", "alarmEnabled"]
+      },
+      "capabilities": ["start", "stop", "read"]
+    },
+    {
+      "driverId": 2,
+      "name": "adc_voltage",
+      "wiring": "RP2350B external ADC inputs ADC0..ADC3 (GPIO40..GPIO43 on RP2350_INDUSTRIAL_MVP_V1, ADC_BASE_PIN=40). ADC4..ADC7 exist on the same peripheral but are not reachable through this channel-driver path -- see the raw-diagnostic-only native_adc_voltage_read_raw() note below.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 3, "note": "channel-driver path only; ADC4..ADC7 are reachable only via native_adc_voltage_read_raw(), a raw diagnostic query with no channel/driver_catalog exposure at all (v0.5.1 T12, services/board_diagnostics_service.c)"},
+        "sourceFlags": {"allowed": [0]}
+      },
+      "defaultChannelTemplate": {
+        "kind": "analog",
+        "valueType": "float",
+        "unit": "V",
+        "flags": ["enabled", "historized"]
+      },
+      "capabilities": ["start", "stop", "read"]
+    },
+    {
+      "driverId": 3,
+      "name": "gpio_input",
+      "wiring": "Any RP2350 GPIO not otherwise reserved -- see HARDWARE_MVP.md's frozen GPIO map for RP2350_INDUSTRIAL_MVP_V1 reservations before choosing a pin.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 47, "note": "NUM_BANK0_GPIOS - 1 on RP2350B"},
+        "sourceFlags": {
+          "bits": {
+            "0": "invert",
+            "1": "pullUp",
+            "2": "pullDown"
+          },
+          "note": "pullUp and pullDown are mutually exclusive"
+        }
+      },
+      "defaultChannelTemplate": {
+        "kind": "discrete",
+        "valueType": "boolean",
+        "unit": "",
+        "flags": ["enabled"]
+      },
+      "capabilities": ["start", "stop", "read"]
+    },
+    {
+      "driverId": 4,
+      "name": "gpio_output",
+      "wiring": "Any RP2350 GPIO not otherwise reserved -- see HARDWARE_MVP.md's frozen GPIO map for RP2350_INDUSTRIAL_MVP_V1 reservations before choosing a pin.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 47, "note": "NUM_BANK0_GPIOS - 1 on RP2350B"},
+        "sourceFlags": {
+          "bits": {
+            "0": "invert",
+            "1": "openDrain"
+          }
+        }
+      },
+      "defaultChannelTemplate": {
+        "kind": "discrete",
+        "valueType": "boolean",
+        "unit": "",
+        "flags": ["enabled", "writable"]
+      },
+      "capabilities": ["start", "stop", "write", "configure", "selfTest"]
+    },
+    {
+      "driverId": 5,
+      "name": "ads8688",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 industrial 8-channel SPI ADC (ADS8688IDBTR), AI0..AI3 wired to CH0..CH3 on this board, CH4..CH7 tied to AGND. Shares the board's single physical SPI bus (SCK/MOSI/MISO) with ad5422 and max22190; has its own dedicated chip-select pin and uses SPI mode 1 (CPOL=0, CPHA=1), applied per transaction. See docs/datasheets/ADS8688-register-notes.md.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 3, "note": "AI0..AI3; the chip has 8 mux inputs, but CH4..CH7 are grounded on this board and rejected"},
+        "sourceFlags": {
+          "enum": {
+            "0": "range +-2.5x VREF (+-10.24 V)",
+            "1": "range +-1.25x VREF (+-5.12 V)",
+            "2": "range +-0.625x VREF (+-2.56 V)",
+            "5": "range 0..2.5x VREF (0..10.24 V)",
+            "6": "range 0..1.25x VREF (0..5.12 V)"
+          },
+          "note": "only these five range codes are implemented -- see the register notes for the full range table"
+        }
+      },
+      "defaultChannelTemplate": {
+        "kind": "analog",
+        "valueType": "float",
+        "unit": "V",
+        "flags": ["enabled", "historized"]
+      },
+      "capabilities": ["start", "stop", "read", "selfTest"]
+    },
+    {
+      "driverId": 6,
+      "name": "ad5422",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 2x AD5422BREZ analog-output channels (AO0/AO1), daisy-chained on the board's single physical SPI bus in SPI mode 0; no per-device chip-select, both devices share one LATCH line. Write-only: neither DAC's SDO reaches BOARD_SPI_MISO, so there is no SPI self-test; faults surface on the shared BOARD_FAULT_N line. The first channel start resets both DACs, daisy-chains them and then raises AO_ENABLE_REQ (GPIO9, claimed shared) to release the hardware CLEAR; output enable writes REXT=1 (external 15.0 kOhm RSET). See docs/datasheets/AD5422-register-notes.md.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 1, "note": "AO0/AO1, this board's two daisy-chained devices"},
+        "sourceFlags": {
+          "enum": {
+            "1": "0-10V",
+            "5": "4-20mA"
+          },
+          "note": "the two ranges this board qualifies (HARDWARE_MVP.md section 3.2); every other R[2:0] code is rejected -- bipolar ranges need a negative rail the board does not have"
+        }
+      },
+      "defaultChannelTemplate": {
+        "kind": "analog",
+        "valueType": "float",
+        "unit": "V",
+        "flags": ["enabled", "writable"]
+      },
+      "capabilities": ["start", "stop", "write"]
+    },
+    {
+      "driverId": 7,
+      "name": "max22190",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 MAX22190ATJ+ industrial digital-input frontend, DI0..DI3 wired on this board (IN1..IN4 on the chip). Shares the board's single physical SPI bus; has its own dedicated chip-select pin. Interface Mode 0 only (24-bit frame, mandatory CRC-5, no daisy chain) -- hardware pin-strapped, not software-selectable -- on SPI clock mode 0 (CPOL=0, CPHA=0), applied per transaction. The first channel start runs HARDWARE_MVP.md's frozen chip initialization (INEN=0x0F, FLT1..FLT4=0x04, CFG=0x01, WB/FAULT2 cleared, FAULT2EN=0x3C, GPO=0x80, FAULT1EN=0xF8, POR cleared, all read back). See docs/datasheets/MAX22190-register-notes.md. CRC-5 follows ADI's MAX22190 CRC guideline (initial word 00111, polynomial 110101), pinned by golden vectors from ADI's reference code; not yet confirmed on silicon.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 3, "note": "DI0..DI3, the four wired inputs"},
+        "sourceFlags": {
+          "bits": {
+            "0-2": "DELAY[2:0] glitch-filter time (000=50us .. 111=20ms)",
+            "3": "FBP (filter bypass)"
+          },
+          "note": "bits above 3 (WBE and reserved) are not settable via source_flags; chip startup writes the board default 0x04 (1.6 ms, filter active) to FLT1..FLT4, then each channel's start writes its own value"
+        }
+      },
+      "defaultChannelTemplate": {
+        "kind": "discrete",
+        "valueType": "boolean",
+        "unit": "",
+        "flags": ["enabled"]
+      },
+      "capabilities": ["start", "stop", "read", "selfTest"]
+    },
+    {
+      "driverId": 8,
+      "name": "ips2050",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 IPS2050HTR protected high-side digital-output frontend, DO0/DO1. Plain GPIO frontend, no SPI/I2C/UART bus at all -- dedicated DOx_CMD/DOx_FAULT GPIO pins per channel plus a shared DO_ENABLE_REQ line (asserted once, on the first channel to start). See HARDWARE_MVP.md section 3.4.4.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 1, "note": "DO0/DO1, a 0-based renumbering of the schematic's 1-based DO1/DO2"},
+        "sourceFlags": {"allowed": [0], "note": "no per-channel configuration exists on this board -- polarity and safe-state wiring are fixed in hardware"}
+      },
+      "defaultChannelTemplate": {
+        "kind": "discrete",
+        "valueType": "boolean",
+        "unit": "",
+        "flags": ["enabled", "writable"]
+      },
+      "capabilities": ["start", "stop", "write", "selfTest"]
+    },
+    {
+      "driverId": 9,
+      "name": "uic",
+      "wiring": "RP2350_INDUSTRIAL_MVP_V1 universal protected input channels UIC0..UIC3 (GPIO40..GPIO43), behind a TLV9034PWR quad push-pull comparator frontend (active-low: UICx_IN is LOW when the field input is active). Counter-based modes use RP2350 PIO (uic_pulse_counter.pio, one state machine per active channel); digital-input mode reads the GPIO directly with no PIO involved. Quadrature-encoder mode (ROADMAP.md/HARDWARE_MVP.md 'using channel pairs') is not implemented -- deliberately deferred, see docs/releases/v0.5.1.md T6.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 3, "note": "UIC0..UIC3"},
+        "sourceFlags": {
+          "enum": {
+            "0": "digitalInput",
+            "1": "pulseCount",
+            "2": "frequency",
+            "3": "period"
+          },
+          "note": "bits above 2 must be 0; mode 4 (quadrature) is not defined"
+        }
+      },
+      "defaultChannelTemplate": {
+        "note": "the correct kind/valueType/unit depend on the selected mode -- see modeChannelTemplates below, not a single fixed default",
+        "kind": "discrete",
+        "valueType": "boolean",
+        "unit": "",
+        "flags": ["enabled"]
+      },
+      "modeChannelTemplates": {
+        "0": {"name": "digitalInput", "kind": "discrete", "valueType": "boolean", "unit": ""},
+        "1": {"name": "pulseCount", "kind": "analog", "valueType": "double", "unit": "count"},
+        "2": {"name": "frequency", "kind": "analog", "valueType": "double", "unit": "Hz"},
+        "3": {"name": "period", "kind": "analog", "valueType": "double", "unit": "s"}
+      },
+      "capabilities": ["start", "stop", "read"]
+    },
+    {
+      "driverId": 10,
+      "name": "synthetic",
+      "wiring": "None -- no external hardware dependency of any kind. Each channel counts its own read() calls independently, starting from 0 at start(), wrapping modulo 2^32. ROADMAP.md's generic 'synthetic benchmark source'/'loopback... source for host tests' driver, and this project's minimal standalone example driver (ROADMAP.md:587, v0.5.1 T16) -- see drivers/include/drivers/synthetic_driver.h and docs/code/adding-a-driver.md.",
+      "connectionConstraints": {
+        "sourceIndex": {"min": 0, "max": 7, "note": "eight independent synthetic channels so several can be configured at once without interfering"},
+        "sourceFlags": {"allowed": [0], "note": "no configuration exists"}
+      },
+      "defaultChannelTemplate": {
+        "kind": "analog",
+        "valueType": "double",
+        "unit": "",
+        "flags": ["enabled"]
+      },
+      "capabilities": ["start", "stop", "read"]
+    }
+  ]
+}

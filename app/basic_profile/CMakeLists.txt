@@ -115,6 +115,8 @@ configure_file(${CMAKE_CURRENT_LIST_DIR}/device_identity_provisioning.h.in
 function(add_device_profile_target target_name use_ota_linker)
     add_executable(${target_name}
             main.c
+            industrial_board_bindings.c
+            industrial_seed_config.c
             ota_layout_sanity.c
             )
 

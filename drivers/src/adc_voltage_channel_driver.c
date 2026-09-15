@@ -1,6 +1,8 @@
 /**
  * @file
- * @brief Native channel driver for external ADC-voltage inputs 0-3.
+ * @brief Native channel driver for external ADC-voltage inputs 0-3, plus a
+ *        raw diagnostic query (native_adc_voltage_read_raw()) covering the
+ *        full 0-7 range for non-channel callers.
  *
  * Responsibilities: implement the start/stop/read slots of
  * telemetry_driver_vtbl_t for ADC-voltage channels (see
@@ -8,8 +10,9 @@
  * contract).
  *
  * Ownership: g_adc_ready is a single file-static flag shared by every
- * ADC-voltage channel instance -- it tracks the physical ADC peripheral
- * (a singleton resource), not any one channel.
+ * ADC-voltage channel instance and by native_adc_voltage_read_raw() -- it
+ * tracks the physical ADC peripheral (a singleton resource), not any one
+ * channel.
  *
  * Concurrency: none; per the header's file-level doc, all calls arrive
  * serialized from SensorTask.
@@ -80,4 +83,21 @@ telemetry_driver_result_t native_adc_voltage_read(telemetry_channel_t *channel, 
         return TELEMETRY_DRIVER_RESULT_UNSUPPORTED;
     }
     return TELEMETRY_DRIVER_RESULT_OK;
+}
+
+bool native_adc_voltage_read_raw(uint8_t adc_index, double *out_volts)
+{
+    if (adc_index > 7u || out_volts == NULL)
+    {
+        return false;
+    }
+    if (!g_adc_ready)
+    {
+        adc_init();
+        g_adc_ready = true;
+    }
+    adc_gpio_init((uint)(ADC_BASE_PIN + adc_index));
+    adc_select_input(adc_index);
+    *out_volts = (double)adc_read() * (3.3 / 4095.0);
+    return true;
 }

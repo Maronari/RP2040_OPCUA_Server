@@ -111,10 +111,13 @@ flowchart TD
 
 `boards/` содержит только заголовочные файлы — без `CMakeLists.txt` —
 подключается через `PICO_BOARD_HEADER_DIRS` (корневой `CMakeLists.txt:19-25`).
-`PICO_BOARD` по умолчанию — `waveshare_core2350b_16mb_psram8mb`
-(`CMakeLists.txt:27-29`), если не задано явно; эталонная сборка передаёт его
-явно ([AGENTS.md:199](../../AGENTS.md)). Также существует второй заголовок
-платы, `weact_studio_rp2350a_16mb.h`. `WIZNET_CHIP` по умолчанию — `W5500`
+`PICO_BOARD` определяется паком драйверов: `FIRMWARE_DRIVER_PACK=base` (по
+умолчанию) — `waveshare_core2350b_16mb_psram8mb`, `industrial` —
+`rp2350_industrial_mvp_v1.h` (PSRAM CS на GPIO0, без выводов UART/I2C/SPI/LED
+по умолчанию). Явно заданный `PICO_BOARD`, не совпадающий с паком, даёт
+ошибку конфигурации; эталонная сборка передаёт совпадающее значение
+([AGENTS.md:199](../../AGENTS.md)). Также существует заголовок платы
+`weact_studio_rp2350a_16mb.h`, паком не выбираемый. `WIZNET_CHIP` по умолчанию — `W5500`
 (`CMakeLists.txt:31-34`).
 
 ## Связанная документация

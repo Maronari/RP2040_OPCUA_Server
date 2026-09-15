@@ -103,7 +103,10 @@ typedef struct telemetry_driver_vtbl {
 Вызовы `read`/`write`/`start`/`stop` драйверов каналов происходят в `SensorTask`
 (через `channel_manager_poll_all`/`sensor_manager`). `w5x00_ethernet_driver_poll`
 выполняется в `NetworkTask` каждые 10 мс. `watchdog_driver_kick` выполняется в
-`WatchdogTask`. Вызовы `rtc_driver` выполняются в `TimeTask`. Операции Flash
+`WatchdogTask`. `rtc_driver` вызывается из нескольких контекстов сразу: запись —
+из потока lwIP tcpip (SNTP-колбэк `set_system_time()`), чтение — из `TimeTask`,
+`SensorTask` (метки времени каналов) и `OpcUaTask` (`UA_DateTime_now()`); все
+обращения к AON-таймеру сериализует внутренний листовой мьютекс драйвера. Операции Flash
 выполняются в той задаче, которая вызывает владеющий сервис (применение
 конфигурации, фиксация транзакции обслуживания, добавление сэмпла истории) —
 сериализуются общим мьютексом координатора независимо от вызывающей стороны.

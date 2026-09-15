@@ -1,10 +1,30 @@
 # ioLibrary_Driver
+# FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS is not an option: the root
+# CMakeLists.txt derives it from FIRMWARE_DRIVER_PACK (industrial -> ON,
+# base -> OFF), so the Ethernet pins always match the board the pack is for.
+
 add_library(IOLIBRARY_FILES STATIC)
 
 target_sources(IOLIBRARY_FILES PRIVATE
         ${PORT_DIR}/ioLibrary_Driver/src/w5x00_spi.c
         ${PORT_DIR}/ioLibrary_Driver/src/w5x00_gpio_irq.c
         )
+
+if(FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS)
+    # RP2350_INDUSTRIAL_MVP_V1's frozen GPIO map (HARDWARE_MVP.md):
+    # GPIO4 ETH_MISO, GPIO5 ETH_CS_N, GPIO6 ETH_SCK, GPIO7 ETH_MOSI,
+    # GPIO8 ETH_INT_N -- all four SPI pins remain on hardware SPI0 (the
+    # same repeating GPIO-function-group pattern that also puts the
+    # reference module's GPIO0..GPIO3 default on SPI0), so SPI_PORT itself
+    # is unchanged.
+    target_compile_definitions(IOLIBRARY_FILES PUBLIC
+            PIN_MISO=4
+            PIN_CS=5
+            PIN_SCK=6
+            PIN_MOSI=7
+            PIN_INT=8
+            )
+endif()
 
 target_include_directories(IOLIBRARY_FILES PUBLIC
         ${WIZNET_DIR}/Ethernet
