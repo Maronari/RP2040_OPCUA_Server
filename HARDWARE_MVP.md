@@ -4,7 +4,7 @@
 >
 > **Board profile:** `RP2350_INDUSTRIAL_MVP_V1`
 >
-> **Last hardware consolidation:** 2026-09-11
+> **Last hardware consolidation:** 2026-09-23
 
 This document describes the current hardware architecture, frozen component choices, power tree, MCU pin allocation, completed schematic sheets, PCB/mechanical constraints, status indication, firmware-facing hardware contract, and the remaining work before production PCB release.
 
@@ -1824,9 +1824,87 @@ Current intent:
 
 `+3V3_ANALOG` is **not** currently assigned a dedicated ADC monitor. Its diagnostic value does not justify consuming the last spare ADC channel at this stage.
 
-Each monitored rail requires an appropriate divider/protection/RC network such that the ADC pin remains inside the RP2350 absolute and operating limits over worst-case rail/input tolerance. Exact divider and RC values are **not frozen yet** and must be verified against RP2350 ADC acquisition/source-impedance requirements before schematic release.
+The three populated monitor networks are frozen on sheet `03_MCU_RP2350`. Each channel uses a passive divider, a `1 kΩ` ADC-isolation resistor and a `100 nF` capacitor directly on the MCU-side monitor net:
 
-The existing firmware `adc_voltage` driver is architecturally reusable for these board monitors, but the current implementation only validates source indices `0..3`. RP2350 board support must extend/validate that driver for `ADC4..ADC7` before these monitor channels are enabled in the industrial firmware profile.
+```text
+VIN_PROTECTED
+    |
+   30k
+    |
+    +---- 2.2k ---- GND_SYS
+    |
+    1k
+    |
+VIN_PROTECTED_MON ----> GPIO44 / ADC4
+    |
+   100nF
+    |
+ GND_SYS
+```
+
+```text
++15V_AO
+   |
+  10k
+   |
+   +---- 2.2k ---- GND_SYS
+   |
+   1k
+   |
+AO_15V_MON -----------> GPIO45 / ADC5
+   |
+  100nF
+   |
+GND_SYS
+```
+
+```text
++5V_ANALOG
+    |
+   2.7k
+    |
+    +---- 3.3k ---- GND_SYS
+    |
+    1k
+    |
+ANA_5V_MON -----------> GPIO46 / ADC6
+    |
+   100nF
+    |
+ GND_SYS
+```
+
+Nominal divider behavior is approximately:
+
+```text
+VIN_PROTECTED_MON:
+  24 V -> 1.64 V at the divider node
+  36 V -> 2.46 V at the divider node
+
+AO_15V_MON:
+  15 V -> 2.70 V at the divider node
+
+ANA_5V_MON:
+  5.0 V -> 2.75 V at the divider node
+```
+
+The `1 kΩ` element is between the divider node and the RP2350 ADC pin. The `100 nF` capacitor is connected from the MCU-side monitor net to `GND_SYS`, after the `1 kΩ`. This provides low-pass filtering and isolates the ADC input from the monitored rail without creating a clamp/back-power path into `+3V3_DIG`.
+
+Approximate divider Thevenin/source resistances before the `1 kΩ` ADC resistor are:
+
+```text
+VIN_PROTECTED_MON: 30k || 2.2k ~= 2.05k
+AO_15V_MON       : 10k || 2.2k ~= 1.80k
+ANA_5V_MON       : 2.7k || 3.3k ~= 1.49k
+```
+
+All three therefore present only a few kilohms effective source resistance to the RP2350 ADC after including the series `1 kΩ`, which is appropriate for slow board-diagnostic measurements.
+
+No external rail clamp to `+3V3_DIG` is used on these monitor inputs, avoiding an unintended back-power path if a monitored rail is present while the digital 3.3 V rail is absent.
+
+These channels are for board-health diagnostics, not precision metrology. Firmware must apply the documented divider ratios when converting raw ADC pin voltage/code to the corresponding rail voltage.
+
+The existing firmware `adc_voltage` driver is architecturally reusable for these board monitors. RP2350 board support must support the `ADC4..ADC6` source indices before these monitor channels are enabled in the industrial firmware profile. `ADC7` remains reserved/unassigned.
 
 The MVP has no external low-voltage sensor SPI, I²C or UART ports and no per-port switched sensor-power subsystem.
 
