@@ -59,22 +59,22 @@
         {
           "kind": "native",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native.json",
-          "sha256": "fcdd415390089c2f1b1b61b5d78e4600a7d9e8d847cc90054282954390a10df6"
+          "sha256": "a32b8d413f8bd4e0f46c4f912c7c0c8172548ef5342e826dc10a8e110139bdb9"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-resources.json",
-          "sha256": "3b68b8ed7dd1267a616f63e03582f2ab3a62c1c6df918963d0c60c27c05011d6"
+          "sha256": "28bc1bb1b291d50b3da8ab5704b9e5e6c01a6e4ddeb7f7f022db6944bcfba987"
         },
         {
           "kind": "boot-clock",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-boot-clock.json",
-          "sha256": "1a48a75fc761cb1fbcd05ec6be45a8d0c5be5a4d65ca265957b0e1fce690c4b5"
+          "sha256": "6b97333f6218dec81a4e5c6d846ce122baea01771a2efa1c0f431821175f029b"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json",
-          "sha256": "2f11cb87278b419d6c2620ea553b71fc10f2d1f3dcace85e044b859c87909f21"
+          "sha256": "6e270568271c84c2ced2fb7eec1cdabc0a2cacb97ff68e5b664f4a395d072320"
         }
       ]
     },
@@ -1092,17 +1092,17 @@
         {
           "kind": "native",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json",
-          "sha256": "eab4a4f84b69e2f69cea768e5b59f3b66ed9f91b8236d0d17d2964bdb146188b"
+          "sha256": "2ee7e065bf339feb3be19649dffb8ada4070ee5843890dfd664654e795a71a2e"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-resources.json",
-          "sha256": "941ddfa31d62581546e2b108224c9cf4b4eea37354e06e146ab71182df2c7479"
+          "sha256": "8a49c14e489d0ac32e0947e9fbe6c3143cbb39b42c5eb59179d4def28ffef6fe"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-static-size.json",
-          "sha256": "5836f13c8f80c798f3b46b981589f6f0c327698cadc8272f5b15f7d54cb20e78"
+          "sha256": "f74fe33ede07ad972b05ec6928720fb8d213f47d5776323554d3d06675610bf8"
         }
       ]
     }

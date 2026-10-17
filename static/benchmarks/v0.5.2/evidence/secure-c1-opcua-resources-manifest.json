@@ -18,13 +18,13 @@
     },
     "profile": {
       "path": "secure-c1-opcua-resources-profile.json",
-      "sizeBytes": 748,
-      "sha256": "0ea07534c0b638ac32667365d13e3c44f751257db78f8967040cfc7dec3fb41a"
+      "sizeBytes": 728,
+      "sha256": "8007e393563a6d5a5364e4a652331a066eaf1c748e02eb0634b02bcdedf0e55a"
     },
     "staticSize": {
       "path": "secure-c1-opcua-resources-static-size.json",
-      "sizeBytes": 11526,
-      "sha256": "f0d50488056af03ab9e9f100502b5521fadbc75685bd856dcd602fabdb0b0f8c"
+      "sizeBytes": 11042,
+      "sha256": "54d67125b88a15b024979dcdf377cda068282353a0816db369af7ff5140244a2"
     }
   },
   "scope": {

@@ -112,8 +112,8 @@ def validate(manifest_path: pathlib.Path) -> None:
                "files")
     require(files["staticComparisonBaseline"] == {
         "path": "secure-c1-opcua-resources-static-size.json",
-        "sizeBytes": 11526,
-        "sha256": "f0d50488056af03ab9e9f100502b5521fadbc75685bd856dcd602fabdb0b0f8c",
+        "sizeBytes": 11042,
+        "sha256": "54d67125b88a15b024979dcdf377cda068282353a0816db369af7ff5140244a2",
     }, "static comparison baseline descriptor mismatch")
     root = manifest_path.parent
     measurement_path = validate_descriptor(root, files["measurement"], "measurement")

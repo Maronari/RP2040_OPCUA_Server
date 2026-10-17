@@ -15,28 +15,28 @@
   "files": {
     "measurement": {
       "path": "secure-c1-diag-budget-live.json",
-      "sizeBytes": 964,
-      "sha256": "abf903fa83fba7837947856da36dc80357dcd48dfb0eb317926eb039588de340"
+      "sizeBytes": 923,
+      "sha256": "0cbaa226ec2ba5fa7bb7eb0971c99a38a26e13ed35be2ff783a7d06dabfedb7b"
     },
     "serialCapture": {
       "path": "secure-c1-diag-budget-serial.log",
-      "sizeBytes": 2883,
-      "sha256": "b5ba70b7bf1015602e6b0a7a5ce476b72c365ab60d5a6823dae78d8b9233214b"
+      "sizeBytes": 2858,
+      "sha256": "83ee0a24d465e8ea0a83af2d6aea984fb5ce6a7b7ddba48eb834eb4a1d3a029c"
     },
     "profile": {
       "path": "secure-c1-diag-budget-profile.json",
-      "sizeBytes": 748,
-      "sha256": "0ea07534c0b638ac32667365d13e3c44f751257db78f8967040cfc7dec3fb41a"
+      "sizeBytes": 728,
+      "sha256": "8007e393563a6d5a5364e4a652331a066eaf1c748e02eb0634b02bcdedf0e55a"
     },
     "staticSize": {
       "path": "secure-c1-diag-budget-static-size.json",
-      "sizeBytes": 11591,
-      "sha256": "e4f86a48428ebec2bb8b45aba1ea509a826aaf31cf786396427bc7c36fab7740"
+      "sizeBytes": 11104,
+      "sha256": "38d20adc57eb304c4d8f22fa5223f31c13851388ee557ac3e172195d298f4c1a"
     },
     "staticComparisonBaseline": {
       "path": "secure-c1-opcua-resources-static-size.json",
-      "sizeBytes": 11526,
-      "sha256": "f0d50488056af03ab9e9f100502b5521fadbc75685bd856dcd602fabdb0b0f8c"
+      "sizeBytes": 11042,
+      "sha256": "54d67125b88a15b024979dcdf377cda068282353a0816db369af7ff5140244a2"
     },
     "stackComparison": {
       "path": "secure-c1-stack-comparison.json",
@@ -50,13 +50,13 @@
     },
     "v051StackCapture": {
       "path": "secure-c1-stack-v051.log",
-      "sizeBytes": 880,
-      "sha256": "45f47930eb7cca3d0b68148abba2bbe31d79ab132438de6b454d2508341343f3"
+      "sizeBytes": 873,
+      "sha256": "cd66ee49d367b56f9f9bef3a417bdb5e0efc7265728ed910936ff8a5b8fcdcf1"
     },
     "v052StackCapture": {
       "path": "secure-c1-stack-v052.log",
-      "sizeBytes": 880,
-      "sha256": "9bd9c773bf69f4890f9aad661fa4c462d97c97ff1cdf42a47d30199097ea8509"
+      "sizeBytes": 873,
+      "sha256": "f996ad2efbffc8127ba70cfafac8002bddeb968c79449093020055c78cf84c82"
     }
   },
   "limits": {

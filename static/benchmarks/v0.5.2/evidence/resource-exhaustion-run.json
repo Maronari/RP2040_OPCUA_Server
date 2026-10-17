@@ -80,16 +80,16 @@
     },
     "serialLog": {
       "path": "resource-exhaustion-serial.log",
-      "sha256": "394fa50f43dafb38a24c1435dc395a99148527ada2b0e8b648314f5205c29af4",
+      "sha256": "03abd54f7b141e083af1c14abe0344105272e1c7c722e6dd065cf941420fdeea",
       "note": "The first 300-second capture window ended before output; this second continuous window contains the single final JSON record."
     },
     "profileMetadata": {
       "path": "resource-exhaustion-profile.json",
-      "sha256": "ffec1617fc8efcc78e1fefe6b546a5e9d822ce266acd6b49ce6fc145cab831e4"
+      "sha256": "47b53ba6f883323aab19cc82f897042c344536890e49406f911283a29a80549a"
     },
     "staticSizeReport": {
       "path": "resource-exhaustion-static-size.json",
-      "sha256": "7460374d051bbbe43f240f1fd1d286d9b2aedec3c820d209d1a1b7f494db9000"
+      "sha256": "7c5d1b53589afc00c8bdadfabce59f5e7c765c72dba18fa37882ca2087d7d05e"
     }
   }
 }
