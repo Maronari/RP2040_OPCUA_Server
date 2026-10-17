@@ -10,9 +10,25 @@ import tempfile
 
 def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[2]
-    source = (root / "libraries" / "FreeRTOS-Kernel" / "tasks.c").read_text(
-        encoding="utf-8"
-    )
+    kernel = root / "libraries" / "FreeRTOS-Kernel"
+    patch = root / "patches" / "submodules" / "freertos-malloc-diagnostics.patch"
+    gitlink = subprocess.run(
+        ["git", "-C", str(root), "ls-tree", "HEAD", "libraries/FreeRTOS-Kernel"],
+        check=True, capture_output=True, text=True,
+    ).stdout.split()[2]
+    with tempfile.TemporaryDirectory(prefix="freertos-patch-") as patch_directory:
+        clean_tree = pathlib.Path(patch_directory)
+        for relative in ("include/portable.h", "portable/MemMang/heap_4.c", "tasks.c"):
+            destination = clean_tree / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(subprocess.run(
+                ["git", "-C", str(kernel), "show", f"{gitlink}:{relative}"],
+                check=True, capture_output=True,
+            ).stdout)
+        subprocess.run(["git", "apply", "--check", str(patch)],
+                       cwd=clean_tree, check=True)
+        subprocess.run(["git", "apply", str(patch)], cwd=clean_tree, check=True)
+        source = (clean_tree / "tasks.c").read_text(encoding="utf-8")
     start = source.index("static configSTACK_DEPTH_TYPE prvTaskCheckFreeStackSpace")
     end = source.index("#endif /* ( ( configUSE_TRACE_FACILITY", start)
     function = source[start:end]
