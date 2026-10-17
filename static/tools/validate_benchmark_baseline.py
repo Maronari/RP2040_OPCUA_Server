@@ -27,6 +27,7 @@ STATIC_TOTALS = {
     "ExternalFlashLoadBytes", "SramStaticTotalBytes",
 }
 INTERNAL_SRAM_REGIONS = {"RAM": 524288, "SCRATCH_X": 4096, "SCRATCH_Y": 4096}
+MINIMUM_INTERNAL_SRAM_RESERVE_BYTES = 256
 
 
 class BaselineError(ValueError):
@@ -329,9 +330,10 @@ def validate_static_report(report: dict[str, Any], thresholds: dict[str, Any]) -
             "static report internal SRAM regions differ from the reference RP2350 layout")
     internal_capacity = sum(region["lengthBytes"] for region in internal)
     static_limit = thresholds["staticMaxima"]["SramStaticTotalBytes"]
-    require(static_limit < internal_capacity,
-            f"SramStaticTotalBytes threshold {static_limit} must leave reserve below "
-            f"physical internal SRAM {internal_capacity}")
+    require(static_limit <= internal_capacity - MINIMUM_INTERNAL_SRAM_RESERVE_BYTES,
+            f"SramStaticTotalBytes threshold {static_limit} must leave at least "
+            f"{MINIMUM_INTERNAL_SRAM_RESERVE_BYTES} bytes below physical internal SRAM "
+            f"{internal_capacity}")
     for key, maximum in thresholds["staticMaxima"].items():
         value = totals.get(key)
         require(type(value) is int and value >= 0, f"static report {key} missing")

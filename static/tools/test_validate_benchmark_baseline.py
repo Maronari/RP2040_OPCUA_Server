@@ -145,9 +145,9 @@ static_too_low["staticMaxima"]["ExternalFlashLoadBytes"] = 1
 rejects(lambda: validate_static_report(read_json(STATIC_REPORT), static_too_low), "exceeds")
 
 static_above_capacity = copy.deepcopy(thresholds)
-static_above_capacity["staticMaxima"]["SramStaticTotalBytes"] = 532480
+static_above_capacity["staticMaxima"]["SramStaticTotalBytes"] = 532225
 rejects(lambda: validate_static_report(read_json(STATIC_REPORT), static_above_capacity),
-        "must leave reserve")
+        "must leave at least 256 bytes")
 
 duplicate_region = read_json(STATIC_REPORT)
 duplicate_region["memoryRegions"].append(copy.deepcopy(
