@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "profileId": "v052-resource-exhaustion-reference",
+  "firmwareVersion": "0.5.2",
+  "gitCommit": "2881230c2ccb",
+  "board": "waveshare_core2350b_16mb_psram8mb",
+  "driverPack": "base",
+  "testOnly": true,
+  "persistentWritesAllowed": false,
+  "cyclesPerAllocator": 100,
+  "pointerCapacity": 512,
+  "heapRequestBytes": 1024,
+  "psramRequestBytes": 16384
+}

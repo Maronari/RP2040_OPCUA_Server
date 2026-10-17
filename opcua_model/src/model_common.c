@@ -147,7 +147,13 @@ void model_monitored_item_register_callback(UA_Server *server,
     (void)node_id;
     (void)node_context;
     (void)attribute_id;
-    (void)removed;
+    const opcua_resource_service_status_t result = removed
+        ? opcua_resource_service_release(OPCUA_RESOURCE_SERVICE_MONITORED_ITEMS)
+        : opcua_resource_service_acquire(OPCUA_RESOURCE_SERVICE_MONITORED_ITEMS);
+    if (result != OPCUA_RESOURCE_SERVICE_STATUS_OK)
+    {
+        (void)opcua_resource_service_invalidate(OPCUA_RESOURCE_SERVICE_MONITORED_ITEMS);
+    }
 
     /* The callback is retained for the public open62541 integration point.
      * Monitored-item create/delete is expected normal traffic and must not
@@ -161,10 +167,8 @@ void model_monitored_item_register_callback(UA_Server *server,
  *        `UA_ServerConfig.applicationCallback`.
  * @return Static string literal; `"unknown"` for any value not in the
  *         enumerated set.
- * @note Not declared in `opcua_model_internal.h` and has no caller elsewhere
- *       in this codebase as of this pass (`model_server_notification_callback`
- *       below is a no-op and does not call it); kept as a ready-to-use
- *       formatter should notification logging be re-enabled.
+ * @note Not declared in `opcua_model_internal.h` and currently has no caller;
+ *       resource notifications intentionally do not format or print names.
  */
 const char *model_notification_type_name(UA_ApplicationNotificationType type)
 {
@@ -224,11 +228,47 @@ void model_server_notification_callback(UA_Server *server,
                                         const UA_KeyValueMap payload)
 {
     (void)server;
-    (void)type;
     (void)payload;
-
-    /* Application notifications include every service and subscription state
-     * transition. They are intentionally silent in the production task. */
+    /* open62541 calls specialized notifications under its server mutex. Keep
+     * this path constant-time, allocation-free and free of nested UA calls. */
+    opcua_resource_service_gauge_t gauge;
+    bool created;
+    switch (type)
+    {
+    case UA_APPLICATIONNOTIFICATIONTYPE_SECURECHANNEL_OPENED:
+        gauge = OPCUA_RESOURCE_SERVICE_SECURE_CHANNELS;
+        created = true;
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_SECURECHANNEL_CLOSED:
+        gauge = OPCUA_RESOURCE_SERVICE_SECURE_CHANNELS;
+        created = false;
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_SESSION_CREATED:
+        gauge = OPCUA_RESOURCE_SERVICE_SESSIONS;
+        created = true;
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_SESSION_CLOSED:
+        gauge = OPCUA_RESOURCE_SERVICE_SESSIONS;
+        created = false;
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_CREATED:
+        gauge = OPCUA_RESOURCE_SERVICE_SUBSCRIPTIONS;
+        created = true;
+        break;
+    case UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_DELETED:
+        gauge = OPCUA_RESOURCE_SERVICE_SUBSCRIPTIONS;
+        created = false;
+        break;
+    default:
+        return;
+    }
+    const opcua_resource_service_status_t result = created
+        ? opcua_resource_service_acquire(gauge)
+        : opcua_resource_service_release(gauge);
+    if (result != OPCUA_RESOURCE_SERVICE_STATUS_OK)
+    {
+        (void)opcua_resource_service_invalidate(gauge);
+    }
 }
 
 void model_set_boolean_method_output(size_t output_size, UA_Variant *output, UA_Boolean result);

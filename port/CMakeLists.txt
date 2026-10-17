@@ -51,6 +51,7 @@ target_include_directories(PSRAM_ALLOCATOR PUBLIC
         )
 
 target_link_libraries(PSRAM_ALLOCATOR PRIVATE
+        FREERTOS_FILES
         pico_stdlib
         hardware_clocks
         hardware_gpio

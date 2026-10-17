@@ -78,6 +78,16 @@ void model_security_audit_callback(const char *event,
                                           void *context)
 {
     (void)context;
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    /* security_service still records its bounded audit state; this adapter
+     * must not enqueue an OPC UA audit event for the events-off cell. */
+    (void)event;
+    (void)actor;
+    (void)subject;
+    (void)success;
+    (void)details;
+    return;
+#endif
     model_queue_pending_audit_event(event, actor, subject, success, details);
 }
 
@@ -1269,6 +1279,9 @@ UA_StatusCode model_build_channel_alarm_conditions(UA_Server *server)
     {
         return UA_STATUSCODE_BADINVALIDARGUMENT;
     }
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    return UA_STATUSCODE_GOOD;
+#endif
     if (!g_model_alarm_conditions_available)
     {
         return UA_STATUSCODE_BADNOTSUPPORTED;

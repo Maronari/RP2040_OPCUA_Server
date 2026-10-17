@@ -863,6 +863,337 @@ void model_history_read_raw(UA_Server *server,
 }
 #endif
 
+static bool model_t2_node_id_equals(const UA_NodeId *node_id, const char *text)
+{
+    const size_t length = strlen(text);
+    return node_id != NULL && node_id->namespaceIndex == 1u &&
+           node_id->identifierType == UA_NODEIDTYPE_STRING &&
+           node_id->identifier.string.length == length &&
+           memcmp(node_id->identifier.string.data, text, length) == 0;
+}
+
+static UA_StatusCode model_t2_quality_to_status(diag_service_quality_t quality)
+{
+    switch (quality)
+    {
+    case DIAG_SERVICE_QUALITY_GOOD:
+        return UA_STATUSCODE_GOOD;
+    case DIAG_SERVICE_QUALITY_UNCERTAIN_LAST_USABLE:
+        return UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE;
+    case DIAG_SERVICE_QUALITY_BAD_NOT_SUPPORTED:
+        return UA_STATUSCODE_BADNOTSUPPORTED;
+    case DIAG_SERVICE_QUALITY_BAD_NOT_CONNECTED:
+        return UA_STATUSCODE_BADNOTCONNECTED;
+    case DIAG_SERVICE_QUALITY_BAD_NO_DATA:
+    default:
+        return UA_STATUSCODE_BADNODATA;
+    }
+}
+
+static UA_StatusCode model_t2_effective_status(diag_service_quality_t member_quality)
+{
+    if (g_model_resource_snapshot_cache_stale)
+    {
+        return UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE;
+    }
+    return model_t2_quality_to_status(member_quality);
+}
+
+static const char *model_t2_failure_reason_text(diag_service_alloc_failure_reason_t reason)
+{
+    switch (reason)
+    {
+    case DIAG_SERVICE_ALLOC_FAILURE_NONE: return "None";
+    case DIAG_SERVICE_ALLOC_FAILURE_OUT_OF_MEMORY: return "OutOfMemory";
+    case DIAG_SERVICE_ALLOC_FAILURE_LOCK_TIMEOUT: return "LockTimeout";
+    case DIAG_SERVICE_ALLOC_FAILURE_INVALID_CONTEXT: return "InvalidContext";
+    case DIAG_SERVICE_ALLOC_FAILURE_SIZE_OVERFLOW: return "SizeOverflow";
+    default: return "Invalid";
+    }
+}
+
+static void model_t2_apply_snapshot_source_timestamp(UA_Boolean include_source_timestamp,
+                                                      const diag_service_snapshot_t *snapshot,
+                                                      UA_DataValue *value)
+{
+    if (include_source_timestamp && snapshot->timestamp_valid)
+    {
+        model_apply_channel_source_timestamp(include_source_timestamp,
+                                             snapshot->timestamp_unix_us, value);
+    }
+}
+
+static UA_StatusCode model_t2_set_optional_datetime(UA_DataValue *value,
+                                                     bool valid,
+                                                     uint64_t unix_us,
+                                                     UA_StatusCode status)
+{
+    UA_DateTime timestamp = 0;
+    if (!valid || !model_source_timestamp_to_datetime(unix_us, &timestamp))
+    {
+        /* UA null (no Variant) is intentional here. Zero would invent a
+         * 1601 timestamp and violate the frozen unavailable-time contract. */
+        value->hasStatus = true;
+        value->status = status;
+        return UA_STATUSCODE_GOOD;
+    }
+    return model_set_datetime_value(value, timestamp, status);
+}
+
+static bool model_t2_task_field_matches(const UA_String *identifier,
+                                        const diag_service_snapshot_t *snapshot,
+                                        const diag_service_snapshot_task_t **out_task,
+                                        const char **out_field)
+{
+    static const char prefix[] = "Device.Diagnostics.Tasks.";
+    const size_t prefix_length = sizeof(prefix) - 1u;
+
+    if (identifier == NULL || identifier->length <= prefix_length ||
+        memcmp(identifier->data, prefix, prefix_length) != 0)
+    {
+        return false;
+    }
+    for (uint32_t index = 0u; index < snapshot->retained_task_count &&
+                             index < DIAG_SERVICE_MAX_SNAPSHOT_TASKS; ++index)
+    {
+        const diag_service_snapshot_task_t *task = &snapshot->tasks[index];
+        const size_t name_length = strlen(task->name);
+        const size_t field_offset = prefix_length + name_length + 1u;
+        if (name_length == 0u || identifier->length <= field_offset ||
+            memcmp(identifier->data + prefix_length, task->name, name_length) != 0 ||
+            identifier->data[prefix_length + name_length] != '.')
+        {
+            continue;
+        }
+        *out_task = task;
+        *out_field = (const char *)(identifier->data + field_offset);
+        return true;
+    }
+    return false;
+}
+
+static bool model_t2_field_equals(const UA_String *identifier, const char *field)
+{
+    const size_t length = strlen(field);
+    return identifier->length == length && memcmp(identifier->data, field, length) == 0;
+}
+
+static UA_StatusCode model_t3_quality_to_status(opcua_resource_service_quality_t quality)
+{
+    switch (quality)
+    {
+    case OPCUA_RESOURCE_SERVICE_QUALITY_GOOD:
+        return UA_STATUSCODE_GOOD;
+    case OPCUA_RESOURCE_SERVICE_QUALITY_BAD_NOT_SUPPORTED:
+        return UA_STATUSCODE_BADNOTSUPPORTED;
+    default:
+        return UA_STATUSCODE_BADNODATA;
+    }
+}
+
+static UA_StatusCode model_read_t3_opcua_resource_diagnostic(
+    const UA_NodeId *node_id, UA_Boolean include_source_timestamp, UA_DataValue *value)
+{
+    static const char *const names[OPCUA_RESOURCE_SERVICE_GAUGE_COUNT] = {
+        "Sessions", "SecureChannels", "Subscriptions", "MonitoredItems",
+        "PublishRequests", "EventQueue"};
+    const opcua_resource_service_snapshot_t *snapshot =
+        &g_model_opcua_resource_snapshot_cache;
+    const UA_String *identifier = &node_id->identifier.string;
+    static const char prefix[] = "Device.Diagnostics.OpcUa.";
+    const size_t prefix_length = sizeof(prefix) - 1u;
+
+    if (!g_model_opcua_resource_snapshot_cache_available)
+    {
+        value->hasStatus = true;
+        value->status = UA_STATUSCODE_BADNODATA;
+        return UA_STATUSCODE_GOOD;
+    }
+    if (include_source_timestamp && g_model_resource_snapshot_cache_available &&
+        !g_model_resource_snapshot_cache_stale &&
+        g_model_resource_snapshot_cache != NULL)
+    {
+        model_t2_apply_snapshot_source_timestamp(true,
+                                                 g_model_resource_snapshot_cache, value);
+    }
+    for (uint32_t index = 0u; index < OPCUA_RESOURCE_SERVICE_GAUGE_COUNT; ++index)
+    {
+        const size_t name_length = strlen(names[index]);
+        const size_t field_offset = prefix_length + name_length + 1u;
+        if (identifier->length <= field_offset ||
+            memcmp(identifier->data, prefix, prefix_length) != 0 ||
+            memcmp(identifier->data + prefix_length, names[index], name_length) != 0 ||
+            identifier->data[field_offset - 1u] != '.')
+        {
+            continue;
+        }
+        const opcua_resource_service_gauge_snapshot_t *gauge = &snapshot->gauges[index];
+        const UA_StatusCode quality = model_t3_quality_to_status(gauge->quality);
+        if (quality != UA_STATUSCODE_GOOD)
+        {
+            value->hasStatus = true;
+            value->status = quality;
+            return UA_STATUSCODE_GOOD;
+        }
+        const UA_String field = {identifier->length - field_offset,
+                                 identifier->data + field_offset};
+        if (model_t2_field_equals(&field, "Current"))
+            return model_set_uint64_value(value, gauge->current, quality);
+        if (model_t2_field_equals(&field, "Peak"))
+            return model_set_uint64_value(value, gauge->peak, quality);
+        if (model_t2_field_equals(&field, "Capacity"))
+            return model_set_uint64_value(value, gauge->capacity, quality);
+    }
+    {
+        const opcua_resource_service_counter_snapshot_t *counter = NULL;
+        bool wrap = false;
+        if (model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.RejectedRequests"))
+            counter = &snapshot->rejected_requests;
+        else if (model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.RejectedRequestsWrapCount"))
+        {
+            counter = &snapshot->rejected_requests;
+            wrap = true;
+        }
+        else if (model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.EventQueueDrops"))
+            counter = &snapshot->event_queue_drops;
+        else if (model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.EventQueueDropsWrapCount"))
+        {
+            counter = &snapshot->event_queue_drops;
+            wrap = true;
+        }
+        if (counter != NULL)
+        {
+            const UA_StatusCode quality = model_t3_quality_to_status(counter->quality);
+            if (quality != UA_STATUSCODE_GOOD)
+            {
+                value->hasStatus = true;
+                value->status = quality;
+                return UA_STATUSCODE_GOOD;
+            }
+            return model_set_uint64_value(value, wrap ? counter->wrap_count : counter->value,
+                                          quality);
+        }
+    }
+    value->hasStatus = true;
+    value->status = UA_STATUSCODE_BADNODEIDUNKNOWN;
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode model_read_t2_resource_diagnostic(const UA_NodeId *node_id,
+                                                        UA_Boolean include_source_timestamp,
+                                                        UA_DataValue *value)
+{
+    const diag_service_snapshot_t *snapshot = g_model_resource_snapshot_cache;
+    UA_StatusCode status;
+
+    if (!g_model_resource_snapshot_cache_available || snapshot == NULL)
+    {
+        value->hasStatus = true;
+        value->status = UA_STATUSCODE_BADNODATA;
+        return UA_STATUSCODE_GOOD;
+    }
+    model_t2_apply_snapshot_source_timestamp(include_source_timestamp, snapshot, value);
+    status = model_t2_effective_status(snapshot->quality);
+
+#define MODEL_T2_U64(_id, _member, _quality) \
+    if (model_t2_node_id_equals(node_id, (_id))) return model_set_uint64_value(value, (UA_UInt64)(_member), model_t2_effective_status((_quality)))
+#define MODEL_T2_U32(_id, _member, _quality) \
+    if (model_t2_node_id_equals(node_id, (_id))) return model_set_uint32_value(value, (UA_UInt32)(_member), model_t2_effective_status((_quality)))
+#define MODEL_T2_BOOL(_id, _member, _quality) \
+    if (model_t2_node_id_equals(node_id, (_id))) return model_set_boolean_value(value, (_member) ? UA_TRUE : UA_FALSE, model_t2_effective_status((_quality)))
+
+    MODEL_T2_U64("Device.Diagnostics.SnapshotSequence", snapshot->sequence, snapshot->quality);
+    MODEL_T2_U64("Device.Diagnostics.SnapshotSequenceWrapCount", snapshot->sequence_wrap_count, snapshot->quality);
+    if (model_t2_node_id_equals(node_id, "Device.Diagnostics.SnapshotTimestamp"))
+        return model_t2_set_optional_datetime(value, snapshot->timestamp_valid, snapshot->timestamp_unix_us, status);
+    if (model_t2_node_id_equals(node_id, "Device.Diagnostics.SnapshotAgeMs"))
+    {
+        const uint64_t now_ms = time_us_64() / 1000u;
+        const uint64_t elapsed_ms = now_ms >= g_model_resource_snapshot_cache_monotonic_ms
+                                        ? now_ms - g_model_resource_snapshot_cache_monotonic_ms
+                                        : 0u;
+        const uint64_t age_ms = UINT64_MAX - snapshot->age_ms < elapsed_ms
+                                    ? UINT64_MAX
+                                    : snapshot->age_ms + elapsed_ms;
+        return model_set_uint64_value(value, age_ms, status);
+    }
+    MODEL_T2_U32("Device.Diagnostics.TaskCount", snapshot->task_count, snapshot->quality);
+    MODEL_T2_BOOL("Device.Diagnostics.TaskListTruncated", snapshot->task_list_truncated, snapshot->quality);
+    MODEL_T2_BOOL("Device.Diagnostics.TaskNameConflict", snapshot->task_name_conflict, snapshot->quality);
+    MODEL_T2_BOOL("Device.Diagnostics.TaskModelIncomplete",
+                  snapshot->task_model_incomplete || g_model_resource_task_model_incomplete,
+                  snapshot->quality);
+
+#define MODEL_T2_HEAP_U64(_suffix, _member) MODEL_T2_U64("Device.Diagnostics.Heap." _suffix, snapshot->heap._member, snapshot->heap.quality)
+    MODEL_T2_HEAP_U64("TotalBytes", total_bytes); MODEL_T2_HEAP_U64("UsedBytes", used_bytes);
+    MODEL_T2_HEAP_U64("PeakUsedBytes", peak_used_bytes); MODEL_T2_HEAP_U64("FreeBytes", free_bytes);
+    MODEL_T2_HEAP_U64("MinimumEverFreeBytes", minimum_ever_free_bytes); MODEL_T2_HEAP_U64("LargestFreeBlockBytes", largest_free_block_bytes);
+    MODEL_T2_HEAP_U64("SmallestFreeBlockBytes", smallest_free_block_bytes); MODEL_T2_HEAP_U64("FreeBlockCount", free_block_count);
+    MODEL_T2_HEAP_U64("SuccessfulAllocations", successful_allocations.value); MODEL_T2_HEAP_U64("SuccessfulAllocationsWrapCount", successful_allocations.wrap_count);
+    MODEL_T2_HEAP_U64("SuccessfulFrees", successful_frees.value); MODEL_T2_HEAP_U64("SuccessfulFreesWrapCount", successful_frees.wrap_count);
+    MODEL_T2_HEAP_U64("FailedAllocations", failed_allocations.value); MODEL_T2_HEAP_U64("FailedAllocationsWrapCount", failed_allocations.wrap_count);
+    MODEL_T2_HEAP_U64("InvalidContextFailures", invalid_context_failures.value); MODEL_T2_HEAP_U64("InvalidContextFailuresWrapCount", invalid_context_failures.wrap_count);
+    MODEL_T2_HEAP_U64("LastFailedRequestedBytes", last_failed_requested_bytes); MODEL_T2_HEAP_U64("LastFailedAdjustedBytes", last_failed_adjusted_bytes);
+    MODEL_T2_U32("Device.Diagnostics.Heap.LastFailureReason", snapshot->heap.last_failure_reason, snapshot->heap.quality);
+    if (model_t2_node_id_equals(node_id, "Device.Diagnostics.Heap.LastFailureReasonText")) return model_set_string_value(value, model_t2_failure_reason_text(snapshot->heap.last_failure_reason), model_t2_effective_status(snapshot->heap.quality));
+    if (model_t2_node_id_equals(node_id, "Device.Diagnostics.Heap.LastFailureTimestamp")) return model_t2_set_optional_datetime(value, snapshot->heap.last_failure_timestamp_valid, snapshot->heap.last_failure_timestamp_unix_us, model_t2_effective_status(snapshot->heap.quality));
+    MODEL_T2_HEAP_U64("LastFailureUptimeMs", last_failure_uptime_ms);
+
+#define MODEL_T2_PSRAM_U64(_suffix, _member) MODEL_T2_U64("Device.Diagnostics.PSRAM." _suffix, snapshot->psram._member, snapshot->psram.quality)
+    MODEL_T2_PSRAM_U64("PeakUsedBytes", peak_used_bytes); MODEL_T2_PSRAM_U64("RequestedBytesInUse", requested_bytes_in_use);
+    MODEL_T2_PSRAM_U64("PeakRequestedBytesInUse", peak_requested_bytes_in_use); MODEL_T2_PSRAM_U64("SuccessfulAllocations", successful_allocations.value);
+    MODEL_T2_PSRAM_U64("SuccessfulAllocationsWrapCount", successful_allocations.wrap_count); MODEL_T2_PSRAM_U64("SuccessfulFrees", successful_frees.value);
+    MODEL_T2_PSRAM_U64("SuccessfulFreesWrapCount", successful_frees.wrap_count); MODEL_T2_PSRAM_U64("FailedAllocations", failed_allocations.value);
+    MODEL_T2_PSRAM_U64("FailedAllocationsWrapCount", failed_allocations.wrap_count); MODEL_T2_PSRAM_U64("LockTimeouts", lock_timeouts.value);
+    MODEL_T2_PSRAM_U64("LockTimeoutsWrapCount", lock_timeouts.wrap_count); MODEL_T2_PSRAM_U64("InvalidContextFailures", invalid_context_failures.value);
+    MODEL_T2_PSRAM_U64("InvalidContextFailuresWrapCount", invalid_context_failures.wrap_count); MODEL_T2_PSRAM_U64("LastFailedRequestedBytes", last_failed_requested_bytes);
+    MODEL_T2_U32("Device.Diagnostics.PSRAM.LastFailureReason", snapshot->psram.last_failure_reason, snapshot->psram.quality);
+    if (model_t2_node_id_equals(node_id, "Device.Diagnostics.PSRAM.LastFailureReasonText")) return model_set_string_value(value, model_t2_failure_reason_text(snapshot->psram.last_failure_reason), model_t2_effective_status(snapshot->psram.quality));
+    if (model_t2_node_id_equals(node_id, "Device.Diagnostics.PSRAM.LastFailureTimestamp")) return model_t2_set_optional_datetime(value, snapshot->psram.last_failure_timestamp_valid, snapshot->psram.last_failure_timestamp_unix_us, model_t2_effective_status(snapshot->psram.quality));
+    MODEL_T2_PSRAM_U64("LastFailureUptimeMs", last_failure_uptime_ms);
+
+#define MODEL_T2_LWIP_U64(_suffix, _member) MODEL_T2_U64("Device.Diagnostics.PSRAM.LwIP." _suffix, snapshot->lwip._member, snapshot->lwip.quality)
+    MODEL_T2_LWIP_U64("ReservedBytes", reserved_bytes); MODEL_T2_LWIP_U64("UsedBytes", used_bytes);
+    MODEL_T2_LWIP_U64("PeakUsedBytes", peak_used_bytes); MODEL_T2_LWIP_U64("LargestFreeBlockBytes", largest_free_block_bytes);
+    MODEL_T2_LWIP_U64("FailedAllocations", failed_allocations.value); MODEL_T2_LWIP_U64("FailedAllocationsWrapCount", failed_allocations.wrap_count);
+
+    {
+        const diag_service_snapshot_task_t *task = NULL;
+        const char *field = NULL;
+        const UA_String *identifier = &node_id->identifier.string;
+        if (model_t2_task_field_matches(identifier, snapshot, &task, &field))
+        {
+            const UA_String field_string = {(size_t)(identifier->data + identifier->length - (const uint8_t *)field), (UA_Byte *)field};
+            const UA_StatusCode task_status = model_t2_effective_status(task->quality);
+            const UA_StatusCode identity_status = g_model_resource_snapshot_cache_stale
+                                                      ? UA_STATUSCODE_UNCERTAINLASTUSABLEVALUE
+                                                      : UA_STATUSCODE_GOOD;
+            if (model_t2_field_equals(&field_string, "Present")) return model_set_boolean_value(value, task->present ? UA_TRUE : UA_FALSE, identity_status);
+            if (model_t2_field_equals(&field_string, "Name")) return model_set_string_value(value, task->name, identity_status);
+            if (model_t2_field_equals(&field_string, "TaskNumber")) return model_set_uint32_value(value, task->task_number, task_status);
+            if (model_t2_field_equals(&field_string, "Generation")) return model_set_uint64_value(value, task->generation, identity_status);
+            if (model_t2_field_equals(&field_string, "GenerationWrapCount")) return model_set_uint64_value(value, task->generation_wrap_count, identity_status);
+            if (model_t2_field_equals(&field_string, "State")) return model_set_uint32_value(value, task->state, identity_status);
+            if (model_t2_field_equals(&field_string, "StateText")) return model_set_string_value(value, task->state == DIAG_SERVICE_TASK_STATE_RUNNING ? "Running" : task->state == DIAG_SERVICE_TASK_STATE_READY ? "Ready" : task->state == DIAG_SERVICE_TASK_STATE_BLOCKED ? "Blocked" : task->state == DIAG_SERVICE_TASK_STATE_SUSPENDED ? "Suspended" : task->state == DIAG_SERVICE_TASK_STATE_DELETED ? "Deleted" : "Invalid", identity_status);
+            if (model_t2_field_equals(&field_string, "CurrentPriority")) return model_set_uint32_value(value, task->current_priority, task_status);
+            if (model_t2_field_equals(&field_string, "BasePriority")) return model_set_uint32_value(value, task->base_priority, task_status);
+            if (model_t2_field_equals(&field_string, "RuntimeCounterMs")) return model_set_uint64_value(value, task->runtime_counter_ms, model_t2_effective_status(task->runtime_counter_quality));
+            if (model_t2_field_equals(&field_string, "RuntimeCounterWrapCount")) return model_set_uint64_value(value, task->runtime_counter_wrap_count, model_t2_effective_status(task->runtime_counter_quality));
+            if (model_t2_field_equals(&field_string, "RuntimePercent")) return model_set_double_value(value, task->runtime_percent, model_t2_effective_status(task->runtime_percent_quality));
+            if (model_t2_field_equals(&field_string, "StackHighWatermarkBytes")) return model_set_uint64_value(value, task->stack_high_watermark_bytes, task_status);
+        }
+    }
+#undef MODEL_T2_U64
+#undef MODEL_T2_U32
+#undef MODEL_T2_BOOL
+#undef MODEL_T2_HEAP_U64
+#undef MODEL_T2_PSRAM_U64
+#undef MODEL_T2_LWIP_U64
+    value->hasStatus = true;
+    value->status = UA_STATUSCODE_BADNOTFOUND;
+    return UA_STATUSCODE_GOOD;
+}
+
 UA_StatusCode model_read_value(UA_Server *server,
                                       const UA_NodeId *session_id,
                                       void *session_context,
@@ -898,6 +1229,29 @@ UA_StatusCode model_read_value(UA_Server *server,
         value->hasStatus = true;
         value->status = UA_STATUSCODE_BADUSERACCESSDENIED;
         return UA_STATUSCODE_GOOD;
+    }
+
+    if (model_node_is_t2_resource_diagnostic(node_id))
+    {
+        if (!model_session_has_role(session_context, SECURITY_ROLE_SERVICE))
+        {
+            value->hasStatus = true;
+            value->status = UA_STATUSCODE_BADUSERACCESSDENIED;
+            return UA_STATUSCODE_GOOD;
+        }
+        if (model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.RejectedRequests") ||
+            model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.RejectedRequestsWrapCount") ||
+            model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.EventQueueDrops") ||
+            model_t2_node_id_equals(node_id, "Device.Diagnostics.OpcUa.EventQueueDropsWrapCount") ||
+            (node_id->identifierType == UA_NODEIDTYPE_STRING &&
+             node_id->identifier.string.length >= sizeof("Device.Diagnostics.OpcUa.") - 1u &&
+             memcmp(node_id->identifier.string.data, "Device.Diagnostics.OpcUa.",
+                    sizeof("Device.Diagnostics.OpcUa.") - 1u) == 0))
+        {
+            return model_read_t3_opcua_resource_diagnostic(
+                node_id, include_source_timestamp, value);
+        }
+        return model_read_t2_resource_diagnostic(node_id, include_source_timestamp, value);
     }
 
     switch (context->kind)
@@ -1452,7 +1806,9 @@ UA_StatusCode model_read_value(UA_Server *server,
         if (context->task_name == NULL || !diag_service_get_task_info_by_name(context->task_name, &task_info))
         {
             value->hasStatus = true;
-            value->status = UA_STATUSCODE_BADNOTFOUND;
+            value->status = diag_service_snapshot_is_available()
+                                ? UA_STATUSCODE_BADNOTFOUND
+                                : UA_STATUSCODE_BADNODATA;
             return UA_STATUSCODE_GOOD;
         }
 

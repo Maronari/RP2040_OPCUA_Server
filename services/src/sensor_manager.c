@@ -61,6 +61,9 @@
 #include "drivers/native_channel_driver.h"
 #include "services/channel_config.h"
 #include "services/channel_manager.h"
+#if RP2_BENCHMARK_PROFILE_ENABLED
+#include "services/benchmark_timing.h"
+#endif
 #include "services/config_service.h"
 #include "services/device_channels.h"
 #include "services/driver_catalog.h"
@@ -813,6 +816,12 @@ bool sensor_manager_init(void)
         }
     }
     config_service_set_runtime_apply_callback(sensor_manager_activate_config);
+#if RP2_BENCHMARK_PROFILE_ENABLED
+    /* The timing store is benchmark-only and reports its own unavailable
+     * state.  Sampling must remain available if evidence storage cannot be
+     * allocated. */
+    (void)benchmark_timing_init();
+#endif
     return sensor_manager_activate_running_config();
 }
 
@@ -829,8 +838,21 @@ void sensor_manager_task(void *argument)
         }
         if (g_initialized)
         {
+#if RP2_BENCHMARK_PROFILE_ENABLED
+            /* Control ingress happens before warmup/capture.  The observer
+             * is supplied only by this steady-state SensorTask path, so
+             * activation's verify polls never contaminate benchmark data. */
+            benchmark_timing_sensor_task_process_control();
+            const channel_manager_sample_observer_t observer = benchmark_timing_sensor_poll_begin();
+            (void)channel_manager_poll_all_observed(
+                (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS), observer);
+            benchmark_timing_sensor_poll_end();
+            sensor_manager_record_channel_history();
+            (void)benchmark_timing_dump_if_ready();
+#else
             (void)channel_manager_poll_all((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS));
             sensor_manager_record_channel_history();
+#endif
         }
         vTaskDelayUntil(&last_wake_time, pdMS_TO_TICKS(sensor_manager_resolve_poll_period_ms()));
     }

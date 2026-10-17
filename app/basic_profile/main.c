@@ -82,6 +82,9 @@
 #include "services/device_channels.h"
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
+#include "services/benchmark_profile.h"
+#include "services/benchmark_timing.h"
+#include "services/resource_exhaustion_test.h"
 #include "services/network_manager.h"
 #ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #include "services/security_identity_import_service.h"
@@ -213,6 +216,134 @@ static uint32_t g_watchdog_timeout_ms_resolved = 0u;
  * mechanism. `volatile` because it is written from fault/exception context
  * and read from `watchdog_task`. */
 static volatile bool g_watchdog_kick_enabled = true;
+
+#if RP2_BENCHMARK_PROFILE_ENABLED
+/* App-owned USB console adapter.  SensorTask asks for at most one byte while
+ * idle; once warmup starts it performs no console I/O until capture ends. */
+static char g_benchmark_console_command[32];
+static size_t g_benchmark_console_command_length;
+static bool g_benchmark_console_discard_line;
+static char g_benchmark_timing_output_buffer[512];
+static size_t g_benchmark_timing_output_length;
+
+static bool app_benchmark_timing_flush_output(void)
+{
+    int written;
+
+    if (g_benchmark_timing_output_length == 0u)
+    {
+        return true;
+    }
+    written = printf("%.*s", (int)g_benchmark_timing_output_length, g_benchmark_timing_output_buffer);
+    g_benchmark_timing_output_length = 0u;
+    return written >= 0;
+}
+
+static benchmark_timing_control_t app_benchmark_timing_control_poll(void *context)
+{
+    (void)context;
+    /* Drain a bounded burst so a command does not take sixteen 1 Hz polls to
+     * arrive, while keeping idle console work bounded outside capture. */
+    for (size_t consumed = 0u; consumed < sizeof(g_benchmark_console_command); ++consumed)
+    {
+        const int received = getchar_timeout_us(0u);
+
+        if (received == PICO_ERROR_TIMEOUT)
+        {
+            return BENCHMARK_TIMING_CONTROL_NONE;
+        }
+        if (received == '\r')
+        {
+            continue;
+        }
+        if (received == '\n')
+        {
+            const bool start = !g_benchmark_console_discard_line &&
+                               strcmp(g_benchmark_console_command, "benchmark start") == 0;
+            const bool dump = !g_benchmark_console_discard_line &&
+                              strcmp(g_benchmark_console_command, "benchmark dump") == 0;
+
+            g_benchmark_console_command_length = 0u;
+            g_benchmark_console_command[0] = '\0';
+            g_benchmark_console_discard_line = false;
+            if (start)
+            {
+                return BENCHMARK_TIMING_CONTROL_START;
+            }
+            if (dump)
+            {
+                return BENCHMARK_TIMING_CONTROL_DUMP;
+            }
+            continue;
+        }
+        if (!g_benchmark_console_discard_line &&
+            g_benchmark_console_command_length + 1u < sizeof(g_benchmark_console_command))
+        {
+            g_benchmark_console_command[g_benchmark_console_command_length++] = (char)received;
+            g_benchmark_console_command[g_benchmark_console_command_length] = '\0';
+        }
+        else
+        {
+            /* Ignore every byte through newline after overflow: no suffix of
+             * an overlong command may be accepted as a fresh command. */
+            g_benchmark_console_discard_line = true;
+        }
+    }
+    return BENCHMARK_TIMING_CONTROL_NONE;
+}
+
+static bool app_benchmark_timing_output(const char *bytes, size_t length, void *context)
+{
+    (void)context;
+    while (length > 0u)
+    {
+        const size_t available = sizeof(g_benchmark_timing_output_buffer) - g_benchmark_timing_output_length;
+        const size_t copy_length = length < available ? length : available;
+
+        memcpy(&g_benchmark_timing_output_buffer[g_benchmark_timing_output_length], bytes, copy_length);
+        g_benchmark_timing_output_length += copy_length;
+        bytes += copy_length;
+        length -= copy_length;
+        if (g_benchmark_timing_output_length == sizeof(g_benchmark_timing_output_buffer) &&
+            !app_benchmark_timing_flush_output())
+        {
+            return false;
+        }
+    }
+    if (g_benchmark_timing_output_length > 0u &&
+        g_benchmark_timing_output_buffer[g_benchmark_timing_output_length - 1u] == '\n')
+    {
+        if (!app_benchmark_timing_flush_output())
+        {
+            return false;
+        }
+        fflush(stdout);
+    }
+    return true;
+}
+#endif
+
+#if RP2_RESOURCE_EXHAUSTION_TEST_ENABLED
+/* InitTask is the only runnable application task in this test-only profile.
+ * Accumulate the known-bounded document before one USB write so a failed
+ * writer cannot leave a result interleaved with a partial document. */
+static char g_resource_exhaustion_json[RESOURCE_EXHAUSTION_TEST_JSON_MAX_BYTES + 1u];
+static size_t g_resource_exhaustion_json_length;
+
+static bool app_resource_exhaustion_output(const char *bytes, size_t length, void *context)
+{
+    (void)context;
+    if (bytes == NULL ||
+        length > sizeof(g_resource_exhaustion_json) - 1u - g_resource_exhaustion_json_length)
+    {
+        return false;
+    }
+    memcpy(&g_resource_exhaustion_json[g_resource_exhaustion_json_length], bytes, length);
+    g_resource_exhaustion_json_length += length;
+    g_resource_exhaustion_json[g_resource_exhaustion_json_length] = '\0';
+    return true;
+}
+#endif
 
 static void app_stop_watchdog_kicks(const char *reason);
 
@@ -498,11 +629,14 @@ static bool create_task(TaskFunction_t entry_point,
 {
     if (xTaskCreate(entry_point, name, stack_size, NULL, priority, out_handle) != pdPASS)
     {
+        diag_service_set_last_fault_code(DIAG_FAULT_CODE_MALLOC_FAILED);
         printf("[APP]\t\tFailed to create task %s, free heap=%u, min ever free=%u\n",
                name,
                (unsigned)xPortGetFreeHeapSize(),
                (unsigned)xPortGetMinimumEverFreeHeapSize());
         fflush(stdout);
+        app_stop_watchdog_kicks("required task creation failed");
+        app_fault_loop(true, 250u);
         return false;
     }
 
@@ -761,6 +895,33 @@ static void app_init_task(void *argument)
     const device_profile_config_t *config = NULL;
     (void)argument;
 
+#if RP2_RESOURCE_EXHAUSTION_TEST_ENABLED
+    {
+        resource_exhaustion_test_result_t result;
+
+        /* This profile has no persistent/config/network/OPC UA surface.  The
+         * diag service is initialized before the baseline so its bounded
+         * snapshot storage is not mistaken for exhaustion-test retention. */
+        diag_service_init();
+        g_resource_exhaustion_json_length = 0u;
+        if (!resource_exhaustion_test_run(&result) ||
+            !resource_exhaustion_test_write_json(&result,
+                                                 app_resource_exhaustion_output,
+                                                 NULL))
+        {
+            printf("{\"schemaVersion\":1,\"kind\":\"v052-resource-exhaustion\",\"error\":\"runner-output-failed\"}\n");
+        }
+        else
+        {
+            (void)printf("%.*s", (int)g_resource_exhaustion_json_length,
+                         g_resource_exhaustion_json);
+        }
+        fflush(stdout);
+        vTaskDelete(NULL);
+        return;
+    }
+#endif
+
     if (!flash_operation_coordinator_init())
     {
         printf("[APP]\t\tFlash operation coordinator init failed\n");
@@ -784,6 +945,15 @@ static void app_init_task(void *argument)
     }
     config = config_service_get();
 
+#if RP2_BENCHMARK_PROFILE_ENABLED
+    printf("[BENCHMARK]\tTEST-ONLY profile=%s channels=%u rateHz=%u clients=%u events=%u history=%u securityNone=%u\n",
+           RP2_BENCHMARK_PROFILE_ID, (unsigned)RP2_BENCHMARK_CHANNEL_COUNT,
+           (unsigned)RP2_BENCHMARK_RATE_HZ, (unsigned)RP2_BENCHMARK_CLIENT_COUNT,
+           (unsigned)RP2_BENCHMARK_EVENTS_ENABLED, (unsigned)RP2_BENCHMARK_HISTORY_ENABLED,
+           (unsigned)RP2_BENCHMARK_SECURITY_NONE);
+    fflush(stdout);
+#endif
+
     diag_service_init();
     config_import_service_init();
     firmware_update_service_init();
@@ -797,6 +967,10 @@ static void app_init_task(void *argument)
         fflush(stdout);
         app_fault_loop(true, 250u);
     }
+#if RP2_BENCHMARK_PROFILE_ENABLED
+    benchmark_timing_set_control(app_benchmark_timing_control_poll, NULL);
+    benchmark_timing_set_output(app_benchmark_timing_output, NULL);
+#endif
     diag_service_register_task("InitTask", xTaskGetCurrentTaskHandle());
     print_heap_usage("After services init");
 
@@ -912,8 +1086,11 @@ static void app_init_task(void *argument)
         }
         else
         {
+            diag_service_set_last_fault_code(DIAG_FAULT_CODE_MALLOC_FAILED);
             printf("[APP]\t\tFailed to create task WatchdogTask\n");
             fflush(stdout);
+            app_stop_watchdog_kicks("required task creation failed");
+            app_fault_loop(true, 250u);
         }
     }
 
@@ -947,16 +1124,19 @@ int main(void)
 {
     TaskHandle_t init_task_handle = NULL;
 
+    benchmark_timing_note_boot_started();
     platform_clock_init();
     led_driver_init(DEVICE_PROFILE_LED_PIN);
     stdio_init_all();
     app_wait_for_usb_console();
     app_init_psram_allocator();
     app_install_exception_handlers();
+#if !RP2_RESOURCE_EXHAUSTION_TEST_ENABLED
     if (!lwip_psram_heap_init())
     {
         app_fault_trap("lwIP PSRAM heap unavailable", 200u);
     }
+#endif
 
     printf("[APP]\t\tBooting %s FW=%s HW=%s Build=%s Git=%s\n",
            g_basic_profile.device_name,
@@ -977,6 +1157,7 @@ int main(void)
                     INIT_TASK_PRIORITY,
                     &init_task_handle) != pdPASS)
     {
+        diag_service_set_last_fault_code(DIAG_FAULT_CODE_MALLOC_FAILED);
         printf("[APP]\t\tFailed to create InitTask, free heap=%u, min ever free=%u\n",
                (unsigned)xPortGetFreeHeapSize(),
                (unsigned)xPortGetMinimumEverFreeHeapSize());
@@ -1023,31 +1204,54 @@ void app_assert_handler(const char *file, unsigned line)
  *        satisfy a request (requires `configUSE_MALLOC_FAILED_HOOK` in
  *        `FreeRTOSConfig.h`).
  *
- * Records `DIAG_FAULT_CODE_MALLOC_FAILED` via `diag_service_set_last_fault_code()`
- * (surfaced through diagnostics for post-mortem inspection), stops watchdog
- * kicks, logs detailed heap statistics, then enters the terminal fault
- * loop.
+ * Records the failure in the bounded diagnostics state and returns. Policy
+ * belongs to the caller: required long-lived task creation paths above set a
+ * fault and enter watchdog recovery, while allocation-capable services can
+ * return their existing bounded error to the client.
  *
- * @note Called directly from within the FreeRTOS allocator, which may be in
- *       an arbitrary task's context; never returns.
+ * @note Called directly from within the FreeRTOS allocator and therefore
+ *       performs no allocation, logging, or terminal recovery itself.
  */
 void vApplicationMallocFailedHook(void)
 {
-    HeapStats_t heap_stats = {0};
+    const size_t requested_bytes = xPortGetLastMallocFailedRequestedSize();
+    const size_t adjusted_bytes = xPortGetLastMallocFailedAdjustedSize();
+    uint64_t timestamp_unix_us = 0u;
+    const bool invalid_context = xPortIsInsideInterrupt() != pdFALSE;
+    bool timestamp_valid = false;
 
-    vPortGetHeapStats(&heap_stats);
-    diag_service_set_last_fault_code(DIAG_FAULT_CODE_MALLOC_FAILED);
-    app_stop_watchdog_kicks("malloc failed");
-    printf("[FreeRTOS]\tMalloc failed, req=%u, adj=%u, free heap=%u, min ever free=%u, largest block=%u, free blocks=%u\n",
-           (unsigned)xPortGetLastMallocFailedRequestedSize(),
-           (unsigned)xPortGetLastMallocFailedAdjustedSize(),
-           (unsigned)xPortGetFreeHeapSize(),
-           (unsigned)xPortGetMinimumEverFreeHeapSize(),
-           (unsigned)heap_stats.xSizeOfLargestFreeBlockInBytes,
-           (unsigned)heap_stats.xNumberOfFreeBlocks);
-    fflush(stdout);
+#ifndef NDEBUG
+    configASSERT(!invalid_context);
+#endif
+    if (!invalid_context)
+    {
+        timestamp_valid = time_service_get_utc_time_us(&timestamp_unix_us);
+    }
 
-    app_fault_loop(true, 250u);
+    const diag_service_alloc_failure_reason_t reason =
+        invalid_context ? DIAG_SERVICE_ALLOC_FAILURE_INVALID_CONTEXT
+                        : (requested_bytes > 0u && adjusted_bytes == 0u
+                               ? DIAG_SERVICE_ALLOC_FAILURE_SIZE_OVERFLOW
+                               : DIAG_SERVICE_ALLOC_FAILURE_OUT_OF_MEMORY);
+    const uint64_t uptime_ms =
+        ((uint64_t)(invalid_context ? xTaskGetTickCountFromISR()
+                                    : xTaskGetTickCount()) *
+         1000u) /
+        configTICK_RATE_HZ;
+    if (invalid_context)
+    {
+        diag_service_record_heap_failure_from_isr(reason,
+                                                  requested_bytes,
+                                                  adjusted_bytes,
+                                                  uptime_ms);
+        return;
+    }
+    diag_service_record_heap_failure(reason,
+                                     requested_bytes,
+                                     adjusted_bytes,
+                                     uptime_ms,
+                                     timestamp_valid,
+                                     timestamp_unix_us);
 }
 
 /**

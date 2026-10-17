@@ -1,0 +1,93 @@
+{
+  "checks": {
+    "browse": {
+      "roleCount": 4,
+      "state": "measured"
+    },
+    "capacity": {
+      "extraServiceClients": 2,
+      "state": "measured"
+    },
+    "directRead": {
+      "nodeCountPerRole": 22,
+      "roleCount": 4,
+      "state": "measured"
+    },
+    "write": {
+      "deniedRoleCount": 4,
+      "nodeCountPerRole": 1,
+      "probeNode": "ns=1;s=Device.Diagnostics.OpcUa.Sessions.Capacity",
+      "roleCount": 4,
+      "state": "measured"
+    }
+  },
+  "elapsedMonotonicMs": 71141,
+  "kind": "v052-opcua-resource-verification",
+  "profile": {
+    "capacityExerciseEnabled": true,
+    "extraServiceClients": 2,
+    "id": "v052-resource-diagnostics-live",
+    "requestTimeoutMs": 30000,
+    "snapshotSettleMs": 2000
+  },
+  "result": {
+    "state": "passed"
+  },
+  "roles": [
+    {
+      "authorization": "privileged",
+      "browse": "measured",
+      "directRead": "measured",
+      "role": "service",
+      "write": "measured"
+    },
+    {
+      "authorization": "privileged",
+      "browse": "measured",
+      "directRead": "measured",
+      "role": "admin",
+      "write": "measured"
+    },
+    {
+      "authorization": "unprivileged",
+      "browse": "measured",
+      "directRead": "measured",
+      "role": "viewer",
+      "write": "measured"
+    },
+    {
+      "authorization": "unprivileged",
+      "browse": "measured",
+      "directRead": "measured",
+      "role": "operator",
+      "write": "measured"
+    },
+    {
+      "anonymousOutcome": "activation-denied",
+      "authorization": "unprivileged",
+      "browse": "not-run",
+      "directRead": "not-run",
+      "role": "anonymous",
+      "write": "not-run"
+    }
+  ],
+  "runtime": {
+    "asyncua": "2.0.1",
+    "python": "3.12.0",
+    "tool": "verify_v052_opcua_resources.py",
+    "toolVersion": 1
+  },
+  "schemaVersion": 1,
+  "security": {
+    "autoClientCertificateDisabled": false,
+    "clientCertificateConfigured": false,
+    "mode": "SignAndEncrypt",
+    "policy": "Basic256Sha256",
+    "serverCertificateConfigured": false
+  },
+  "server": {
+    "authority": "redacted",
+    "port": 4840,
+    "scheme": "opc.tcp"
+  }
+}

@@ -18,6 +18,7 @@ EXPECTED_V041_COMMIT = "a5ebc3231faf658325ad02e997f05acf8601e8bf"
 EXPECTED_V042_COMMIT = "568dfd4e2a77c2db6fca4cd9a65e6279624928d6"
 EXPECTED_V043_COMMIT = "dec08ba22e835e8037f9fd5342dcc63ddc03f5ac"
 EXPECTED_V050_COMMIT = "c6da6c44326e6b1fe67b06656ac8a3518c12ea9e"
+EXPECTED_V051_COMMIT = "2881230c2ccbb98b8701730c4de930dc95da30fc"
 # Updated 2026-09-02 (from 830f8678a86040a31e8e2f51bea4647c4e8473243c012526674f3bc462763102)
 # for the namespace-build-failure rollback fix: model_core_lifecycle.c gains
 # four new printf strings ("Rolled back to the last-known-good
@@ -91,6 +92,12 @@ EXPECTED_V050_PUBLIC_INVENTORY_SHA256 = (
 # against the tree at T14 completion.
 EXPECTED_V051_PUBLIC_INVENTORY_SHA256 = (
     "3b174c69b66ebd6e012e01bc3fc3bf9b3b9b6aaa2e554e6fc67768cb57d7292a"
+)
+# v0.5.2 adds only the bounded resource-diagnostic surface documented in
+# docs/releases/v0.5.2.md. This value is intentionally filled from this
+# script's canonical inventory after the closed NodeId manifest test passes.
+EXPECTED_V052_PUBLIC_INVENTORY_SHA256 = (
+    "2f1bac21e15c468117b17e4b77385f49e133939346172b2c611e74bf1c736294"
 )
 # This is deliberately an ordered, closed manifest.  The contract inventory is
 # source-derived, so a glob would let a new UA registration evade comparison.
@@ -253,6 +260,20 @@ V051_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/model_configuration.c",
     "opcua_model/src/model_core_lifecycle.c",
 })
+V052_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
+    "opcua_model/src/opcua_model_internal.h",
+    "opcua_model/src/model_common.c",
+    "opcua_model/src/model_access.c",
+    "opcua_model/src/model_address_space.c",
+    "opcua_model/src/opcua_model_context.c",
+    "opcua_model/src/model_core_lifecycle.c",
+    # T4's compile-selected benchmark adapter changes no public node or
+    # method contract, but it must gate the existing event/condition paths
+    # to make events=false measurable without changing production defaults.
+    "opcua_model/src/model_events.c",
+    "opcua_model/src/model_maintenance.c",
+    "opcua_model/src/model_history.c",
+})
 
 
 def assert_v051_inventory_delta(baseline: dict, current: dict) -> None:
@@ -322,6 +343,11 @@ def parse_args() -> argparse.Namespace:
         "--allow-v051-additions",
         action="store_true",
         help="Allow only the reviewed v0.5.1 driver-resource-type-name-mapping fix",
+    )
+    parser.add_argument(
+        "--allow-v052-additions",
+        action="store_true",
+        help="Allow only the reviewed v0.5.2 resource-diagnostic model delta",
     )
     parser.add_argument(
         "--source-dir",
@@ -406,6 +432,9 @@ def aggregate_current_source(source_dir: pathlib.Path) -> bytes:
         # Module-local private-header includes are build plumbing, not source
         # inventory. The baseline has the declarations inline in one file.
         data = data.replace(b'#include "opcua_model_internal.h"\n', b'')
+        # The compile-time T4 profile header selects existing endpoint/event
+        # paths. Its include is build plumbing, not a public namespace string.
+        data = data.replace(b'#include "services/benchmark_profile.h"\n', b'')
         chunks.append(data)
     return b"".join(chunks)
 
@@ -416,6 +445,7 @@ def aggregate_baseline_source(source_dir: pathlib.Path, baseline: str) -> bytes:
     for path in MODEL_SOURCE_SET:
         data = normalized_source(baseline_bytes(source_dir, baseline, path))
         data = data.replace(b'#include "opcua_model_internal.h"\n', b'')
+        data = data.replace(b'#include "services/benchmark_profile.h"\n', b'')
         chunks.append(data)
     return b"".join(chunks)
 
@@ -725,6 +755,22 @@ def main() -> int:
                     "opcua-contract: FAIL: model drift outside reviewed v0.5.1 "
                     f"driver-resource-type-mapping files: {relative}"
                 )
+    if args.allow_v052_additions:
+        if baseline_commit != EXPECTED_V051_COMMIT:
+            raise SystemExit(
+                "opcua-contract: FAIL: v0.5.2 additions require "
+                f"v0.5.1@{EXPECTED_V051_COMMIT}, got {args.baseline}@{baseline_commit}"
+            )
+        for relative in MODEL_SOURCE_SET:
+            if relative in V052_REVIEWED_MODEL_DRIFT_PATHS:
+                continue
+            baseline_data = normalized_source(baseline_bytes(source_dir, args.baseline, relative))
+            current_data = normalized_source((source_dir / relative).read_bytes())
+            if current_data != baseline_data:
+                raise SystemExit(
+                    "opcua-contract: FAIL: model drift outside reviewed v0.5.2 "
+                    f"resource-diagnostic files: {relative}"
+                )
 
     stable_files: list[dict[str, str]] = []
     for relative in BYTE_STABLE_PUBLIC_CONTRACT_PATHS:
@@ -758,6 +804,7 @@ def main() -> int:
         or args.allow_v043_channel_additions
         or args.allow_v050_additions
         or args.allow_v051_additions
+        or args.allow_v052_additions
     )
     missing_baseline = missing_baseline_contract(baseline_inventory, current_inventory)
     if args.allow_v051_additions:
@@ -796,6 +843,12 @@ def main() -> int:
             "opcua-contract: FAIL: public inventory is not the reviewed v0.5.1 delta: "
             + str(current_inventory["sha256"])
         )
+    if (args.allow_v052_additions and
+            current_inventory["sha256"] != EXPECTED_V052_PUBLIC_INVENTORY_SHA256):
+        raise SystemExit(
+            "opcua-contract: FAIL: public inventory is not the reviewed v0.5.2 delta: "
+            + str(current_inventory["sha256"])
+        )
     if inventory_changed and not allow_additions:
         raise SystemExit("opcua-contract: FAIL: public model inventory differs from baseline")
 
@@ -822,6 +875,10 @@ def main() -> int:
             EXPECTED_V051_PUBLIC_INVENTORY_SHA256
             if args.allow_v051_additions else None
         ),
+        "reviewed_v052_public_inventory_sha256": (
+            EXPECTED_V052_PUBLIC_INVENTORY_SHA256
+            if args.allow_v052_additions else None
+        ),
         "baseline_contract_removals": missing_baseline,
         "reviewed_v042_channel_additions": bool(
             args.allow_v042_channel_additions and inventory_changed
@@ -835,6 +892,9 @@ def main() -> int:
         "reviewed_v051_additions": bool(
             args.allow_v051_additions and inventory_changed
         ),
+        "reviewed_v052_additions": bool(
+            args.allow_v052_additions and inventory_changed
+        ),
         "reviewed_v042_model_drift_paths": sorted(V042_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v042_channel_additions else [],
         "reviewed_v043_model_drift_paths": sorted(V043_REVIEWED_MODEL_DRIFT_PATHS)
@@ -843,6 +903,8 @@ def main() -> int:
         if args.allow_v050_additions else [],
         "reviewed_v051_model_drift_paths": sorted(V051_REVIEWED_MODEL_DRIFT_PATHS)
         if args.allow_v051_additions else [],
+        "reviewed_v052_model_drift_paths": sorted(V052_REVIEWED_MODEL_DRIFT_PATHS)
+        if args.allow_v052_additions else [],
         "string_literal_count": len(current_inventory["string_literals"]),
         "node_and_browse_call_count": len(current_inventory["node_and_browse_calls"]),
         "public_attribute_assignment_count": len(

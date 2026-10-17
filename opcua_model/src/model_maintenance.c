@@ -377,6 +377,15 @@ UA_StatusCode model_condition_deactivate(UA_Server *server,
 UA_StatusCode model_sync_maintenance_condition(
     UA_Server *server, const maintenance_service_snapshot_t *snapshot)
 {
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    /* The benchmark's events-off cell deliberately has no A&C publication.
+     * The maintenance service remains the state owner and the successful
+     * no-op prevents its committed transaction from being marked as an
+     * adapter publication fault. */
+    (void)server;
+    (void)snapshot;
+    return UA_STATUSCODE_GOOD;
+#else
 #if defined(UA_ENABLE_SUBSCRIPTIONS_EVENTS) && \
     defined(UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS)
     const UA_NodeId condition_id =
@@ -405,6 +414,7 @@ UA_StatusCode model_sync_maintenance_condition(
     (void)server;
     (void)snapshot;
     return UA_STATUSCODE_GOOD;
+#endif
 #endif
 }
 
@@ -486,6 +496,11 @@ UA_StatusCode model_create_device_health_condition(UA_Server *server,
  * Condition instances themselves *is* propagated as an error. */
 UA_StatusCode model_build_alarm_conditions(UA_Server *server)
 {
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    (void)server;
+    g_model_alarm_conditions_available = false;
+    return UA_STATUSCODE_GOOD;
+#else
     UA_NodeClass condition_type_class = UA_NODECLASS_UNSPECIFIED;
     UA_NodeClass security_parent_class = UA_NODECLASS_UNSPECIFIED;
     UA_NodeClass device_health_parent_class = UA_NODECLASS_UNSPECIFIED;
@@ -612,6 +627,7 @@ UA_StatusCode model_build_alarm_conditions(UA_Server *server)
 
     g_model_alarm_conditions_available = status == UA_STATUSCODE_GOOD;
     return status;
+#endif
 }
 
 /* First-match-wins priority cascade (most urgent first): expired cert >
@@ -710,6 +726,24 @@ void model_sync_condition(UA_Server *server,
                                  const char *active_message,
                                  const char *normal_message)
 {
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    /* Keep service-owned alarm/health state out of the address-space event
+     * machinery for an events-off benchmark.  This also prevents implicit
+     * Condition events from TwoState writes. */
+    (void)server;
+    (void)condition_id;
+    (void)source_id;
+    (void)was_active;
+    (void)was_reason;
+    (void)was_enabled;
+    (void)next_enable_poll;
+    (void)reason;
+    (void)severity;
+    (void)quality;
+    (void)active_message;
+    (void)normal_message;
+    return;
+#else
     UA_StatusCode status = UA_STATUSCODE_GOOD;
     bool force_reconcile = false;
     const TickType_t now = xTaskGetTickCount();
@@ -820,6 +854,7 @@ void model_sync_condition(UA_Server *server,
                UA_StatusCode_name(status));
         fflush(stdout);
     }
+#endif
 }
 
 void model_process_device_health_conditions(UA_Server *server,
@@ -1217,6 +1252,25 @@ UA_StatusCode model_emit_event_ex(UA_Server *server,
                                          const void *fields_context,
                                          model_event_last_kind_t last_kind)
 {
+    if (server == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    /* All firmware/runtime/configuration/maintenance/audit emitters funnel
+     * through this adapter.  Do not fabricate an event or update its mirror
+     * in the explicit events-off benchmark cell. */
+    (void)event_type_id;
+    (void)source_node_id;
+    (void)source_name;
+    (void)message;
+    (void)severity;
+    (void)fields_writer;
+    (void)fields_context;
+    (void)last_kind;
+    return UA_STATUSCODE_GOOD;
+#else
     UA_KeyValueMap event_fields = {0};
     UA_DateTime event_time = UA_DateTime_now();
     UA_String source_name_string =
@@ -1226,11 +1280,6 @@ UA_StatusCode model_emit_event_ex(UA_Server *server,
     UA_ByteString event_id = UA_BYTESTRING_NULL;
     char event_id_hex[33];
     UA_StatusCode status;
-
-    if (server == NULL)
-    {
-        return UA_STATUSCODE_BADINVALIDARGUMENT;
-    }
 
     status = UA_KeyValueMap_setScalar(&event_fields,
                                       UA_QUALIFIEDNAME(0, (char *)"Time"),
@@ -1301,6 +1350,7 @@ UA_StatusCode model_emit_event_ex(UA_Server *server,
     }
 
     return status;
+#endif
 }
 
 UA_StatusCode model_emit_event(UA_Server *server,
@@ -1627,6 +1677,17 @@ void model_emit_firmware_event(UA_Server *server,
 void model_process_pending_audit_events(UA_Server *server)
 {
     model_pending_audit_event_t pending = {{0}};
+
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    (void)server;
+    /* Producers can run outside OpcUaTask. Drain the fixed ring without
+     * formatting or publishing an audit event, so audit traffic cannot leave
+     * stale work that changes the benchmark's later iterations. */
+    while (model_pop_pending_audit_event(&pending))
+    {
+    }
+    return;
+#endif
 
     while (model_pop_pending_audit_event(&pending))
     {
@@ -2318,16 +2379,19 @@ UA_StatusCode model_prepare_maintenance_event(
 UA_StatusCode model_publish_prepared_maintenance_event(
     UA_Server *server, model_prepared_maintenance_event_t *event)
 {
+    if (server == NULL || event == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    (void)event;
+    return UA_STATUSCODE_GOOD;
+#else
     UA_ByteString event_id = UA_BYTESTRING_NULL;
     char event_id_hex[33];
     const UA_NodeId source = model_maintenance_node_id();
     const UA_NodeId type = model_event_type_node_id(MODEL_EVENT_TYPE_MAINTENANCE);
     UA_StatusCode status;
-
-    if (server == NULL || event == NULL)
-    {
-        return UA_STATUSCODE_BADINVALIDARGUMENT;
-    }
     status = UA_Server_createEvent(server, source, type, 350u, event->message,
                                    &event->fields, NULL, &event_id);
     if (status == UA_STATUSCODE_GOOD)
@@ -2344,6 +2408,7 @@ UA_StatusCode model_publish_prepared_maintenance_event(
     }
     UA_ByteString_clear(&event_id);
     return status;
+#endif
 }
 
 UA_StatusCode model_maintenance_mutations_available(void)

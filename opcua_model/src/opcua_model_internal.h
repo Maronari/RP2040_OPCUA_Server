@@ -19,6 +19,7 @@
 #include "pico/stdio.h"
 #include "psram_allocator.h"
 #include "services/alarm_service.h"
+#include "services/benchmark_profile.h"
 #include "services/channel_manager.h"
 #include "services/config_service.h"
 #include "services/config_export_service.h"
@@ -29,6 +30,7 @@
 #include "services/config_wire.h"
 #include "services/device_channels.h"
 #include "services/diag_service.h"
+#include "services/opcua_resource_service.h"
 #include "services/device_health_service.h"
 #include "services/firmware_update_service.h"
 #include "services/history_service.h"
@@ -154,6 +156,11 @@ typedef enum
     MODEL_NODE_DIAG_CPU_LOAD_APPROX,
     MODEL_NODE_DIAG_LAST_FAULT_CODE,
     MODEL_NODE_DIAG_TASK_STACK_HIGH_WATER,
+    /* v0.5.2 T2: one shared immutable node context backs the additive
+     * resource diagnostics. The callback resolves the exact member from the
+     * NodeId and reads the PSRAM-backed published snapshot; this avoids a
+     * context object per counter in internal SRAM. */
+    MODEL_NODE_DIAG_RESOURCE_SNAPSHOT,
     MODEL_NODE_NETWORK_MAC_ADDRESS,
     MODEL_NODE_NETWORK_IP_MODE,
     MODEL_NODE_NETWORK_IPV4,
@@ -739,6 +746,7 @@ enum
     FIXED_CTX_DIAG_PSRAM_ALLOCATOR_MODE,
     FIXED_CTX_DIAG_CPU_LOAD_APPROX,
     FIXED_CTX_DIAG_LAST_FAULT_CODE,
+    FIXED_CTX_DIAG_RESOURCE_SNAPSHOT,
     FIXED_CTX_NETWORK_MAC_ADDRESS,
     FIXED_CTX_NETWORK_IP_MODE,
     FIXED_CTX_NETWORK_IPV4,
@@ -1049,6 +1057,21 @@ typedef struct opcua_model_context {
     model_history_continuation_t history_continuations[MODEL_HISTORY_CONTINUATION_CAPACITY];
     uint32_t history_continuation_next_token;
     history_service_channel_sample_t *history_read_sample_buffer;
+    /* v0.5.2 T2: published only by OpcUaTask. This bounded PSRAM allocation
+     * is deliberately not service state; it is an adapter cache so Read
+     * callbacks never place the complete 16-task snapshot on their stack. */
+    diag_service_snapshot_t *resource_snapshot_cache;
+    opcua_resource_service_snapshot_t opcua_resource_snapshot_cache;
+    bool opcua_resource_snapshot_cache_available;
+    uint64_t opcua_event_drops_last_raw;
+    uint64_t opcua_event_drops_last_wrap_count;
+    uint64_t opcua_rejected_requests_last_raw;
+    uint64_t opcua_rejected_requests_last_wrap_count;
+    bool resource_snapshot_cache_in_psram;
+    bool resource_snapshot_cache_available;
+    bool resource_snapshot_cache_stale;
+    uint64_t resource_snapshot_cache_monotonic_ms;
+    bool resource_task_model_incomplete;
     model_pending_actions_t pending_actions; device_profile_config_t address_space_config_snapshot;
     bool address_space_config_snapshot_valid; model_activate_session_fn default_activate_session;
     model_close_session_fn default_close_session; model_get_user_executable_fn default_get_user_executable;
@@ -1178,6 +1201,14 @@ void model_core_task(void *argument);
 #define g_model_history_continuations (model_context_get()->history_continuations)
 #define g_model_history_continuation_next_token (model_context_get()->history_continuation_next_token)
 #define g_model_history_read_sample_buffer (model_context_get()->history_read_sample_buffer)
+#define g_model_resource_snapshot_cache (model_context_get()->resource_snapshot_cache)
+#define g_model_opcua_resource_snapshot_cache (model_context_get()->opcua_resource_snapshot_cache)
+#define g_model_opcua_resource_snapshot_cache_available (model_context_get()->opcua_resource_snapshot_cache_available)
+#define g_model_resource_snapshot_cache_in_psram (model_context_get()->resource_snapshot_cache_in_psram)
+#define g_model_resource_snapshot_cache_available (model_context_get()->resource_snapshot_cache_available)
+#define g_model_resource_snapshot_cache_stale (model_context_get()->resource_snapshot_cache_stale)
+#define g_model_resource_snapshot_cache_monotonic_ms (model_context_get()->resource_snapshot_cache_monotonic_ms)
+#define g_model_resource_task_model_incomplete (model_context_get()->resource_task_model_incomplete)
 #define g_pending_actions (model_context_get()->pending_actions)
 #define g_model_address_space_config_snapshot (model_context_get()->address_space_config_snapshot)
 #define g_model_address_space_config_snapshot_valid (model_context_get()->address_space_config_snapshot_valid)
@@ -1236,17 +1267,15 @@ void model_log_node_id_compact(const UA_NodeId *node_id);
  * @brief `UA_Server_setMonitoredItemRegisterCallback` hook, invoked by
  *        open62541 whenever a subscription monitored item is created or
  *        deleted for a node.
- * @note Intentionally a no-op: monitored-item churn is expected normal
- *       traffic, and this callback must not perform blocking I/O or
- *       allocation diagnostics on that path. Runs on `OpcUaTask`.
+ * @note Updates one fixed-storage T3 occupancy counter; it must not perform
+ *       blocking I/O or allocations. Runs on `OpcUaTask`.
  */
 void model_monitored_item_register_callback(UA_Server *server, const UA_NodeId *session_id, void *session_context, const UA_NodeId *node_id, void *node_context, UA_UInt32 attribute_id, UA_Boolean removed);
 /**
- * @brief `UA_ServerConfig.applicationCallback` hook, invoked by open62541
- *        for every lifecycle/session/subscription/service state transition.
- * @note Intentionally a no-op for the same reason as
- *       `model_monitored_item_register_callback` (high-frequency, must stay
- *       non-blocking). Runs on `OpcUaTask`.
+ * @brief Specialized open62541 lifecycle notification hook for secure
+ *        channels, sessions and subscriptions.
+ * @note Updates fixed-storage occupancy only. It must not call back into
+ *       open62541 while its server mutex is held. Runs on `OpcUaTask`.
  */
 void model_server_notification_callback(UA_Server *server, UA_ApplicationNotificationType type, const UA_KeyValueMap payload);
 /** @brief True if @p session_context was activated over a secure
@@ -2252,6 +2281,13 @@ void model_history_read_raw(UA_Server *server, void *history_database_context, c
  *       `docs/code/modules/opcua_model.md#generic-readwrite-dispatch`.
  */
 UA_StatusCode model_read_value(UA_Server *server, const UA_NodeId *session_id, void *session_context, const UA_NodeId *node_id, void *node_context, UA_Boolean include_source_timestamp, const UA_NumericRange *range, UA_DataValue *value);
+/** True only for v0.5.2 additive resource-diagnostics NodeIds. Legacy
+ * diagnostics deliberately return false so their established role behavior
+ * is untouched. */
+bool model_node_is_t2_resource_diagnostic(const UA_NodeId *node_id);
+/** Refreshes the adapter cache and reconciles dynamic named-task subtrees.
+ * Must be called only from OpcUaTask after diag_service_sample(). */
+void model_refresh_resource_diagnostics(UA_Server *server);
 /**
  * @brief Generic `UA_DataSource.write` installed on every writable variable
  *        node; dispatches on `model_node_context_t.kind`, re-checks the

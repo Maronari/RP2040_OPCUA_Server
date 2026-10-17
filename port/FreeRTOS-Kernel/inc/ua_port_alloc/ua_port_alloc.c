@@ -144,17 +144,23 @@ void ua_port_free(void *mem)
                  header->meta.source == UA_PORT_ALLOC_SOURCE_FREERTOS);
 
     const uint32_t source = header->meta.source;
-    header->meta.magic = 0u;
-    header->meta.source = 0u;
 
     if (source == UA_PORT_ALLOC_SOURCE_PSRAM)
     {
+        /* psram_free() can acknowledge through its intrusive pending-free
+         * list after a bounded mutex timeout.  Keep this header valid until
+         * that acknowledgement returns.  Do not touch the header after the
+         * call: an immediately reclaimed block may already have been handed
+         * to another task by the time psram_free() returns. */
         psram_free(header);
+        return;
     }
     else
     {
         vPortFree(header);
+        return;
     }
+
 }
 
 void *ua_port_realloc(void *mem, size_t new_size)

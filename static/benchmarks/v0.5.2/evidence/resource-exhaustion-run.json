@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "kind": "v052-resource-exhaustion-run",
+  "result": "pass",
+  "capturedAt": "2026-10-11T16:13:56+03:00",
+  "qualificationScope": "reference-board-validation-only",
+  "hardware": {
+    "boardProfile": "waveshare_core2350b_16mb_psram8mb",
+    "bootloaderModel": "Raspberry Pi RP2350",
+    "usbSerialPort": "COM6",
+    "industrialBoardQualified": false
+  },
+  "firmware": {
+    "version": "0.5.2",
+    "profileId": "v052-resource-exhaustion-reference",
+    "gitBaseline": "2881230c2ccbb98b8701730c4de930dc95da30fc",
+    "gitDirty": true,
+    "driverPack": "base",
+    "buildType": "Debug",
+    "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614",
+    "uf2Sha256": "1ed8fcbe5ce7925234f72020cc882508a5358c6b19022bd820a8a1723f4d5480"
+  },
+  "workload": {
+    "heapCycles": 100,
+    "psramCycles": 100,
+    "heapRequestBytes": 1024,
+    "psramRequestBytes": 16384,
+    "pointerCapacity": 512,
+    "durationMs": 569778
+  },
+  "runtime": {
+    "heap": {
+      "blocksPerCycle": 351,
+      "usedBytesBaseline": 6312,
+      "usedBytesFinal": 6312,
+      "peakUsedBytes": 368544,
+      "peakDeltaFromBaselineBytes": 362232,
+      "minimumEverFreeBytes": 96,
+      "failedAllocationDelta": 100
+    },
+    "psram": {
+      "blocksPerCycle": 510,
+      "usedBytesBaseline": 6848,
+      "usedBytesFinal": 6848,
+      "peakUsedBytes": 8374928,
+      "peakDeltaFromBaselineBytes": 8368080,
+      "requestedBytesBaseline": 6800,
+      "requestedBytesFinal": 6800,
+      "minimumEverFreeBytesAvailable": false,
+      "terminalOomFreeBytesStable": true,
+      "failedAllocationDelta": 100
+    },
+    "initTaskStack": {
+      "highWaterStartBytes": 5556,
+      "highWaterEndBytes": 2384,
+      "highWaterDecreaseBytes": 3172
+    }
+  },
+  "observations": {
+    "allCyclesCompleted": true,
+    "payloadVerified": true,
+    "baselineReturned": true,
+    "failureCountersExact": true,
+    "oomReasonsExact": true,
+    "lowWaterStableAfterFirstCycle": true,
+    "rebootObserved": false,
+    "usbDisconnectObserved": false,
+    "persistentConfigurationInitialized": false
+  },
+  "staticLayout": {
+    "externalFlashLoadBytes": 71760,
+    "internalSramStaticBytes": 394168,
+    "freeRtosHeapReservationBytes": 368640,
+    "uf2FileBytes": 144384
+  },
+  "evidence": {
+    "rawJson": {
+      "path": "resource-exhaustion-raw.json",
+      "sha256": "03abd54f7b141e083af1c14abe0344105272e1c7c722e6dd065cf941420fdeea"
+    },
+    "serialLog": {
+      "path": "resource-exhaustion-serial.log",
+      "sha256": "394fa50f43dafb38a24c1435dc395a99148527ada2b0e8b648314f5205c29af4",
+      "note": "The first 300-second capture window ended before output; this second continuous window contains the single final JSON record."
+    },
+    "profileMetadata": {
+      "path": "resource-exhaustion-profile.json",
+      "sha256": "ffec1617fc8efcc78e1fefe6b546a5e9d822ce266acd6b49ce6fc145cab831e4"
+    },
+    "staticSizeReport": {
+      "path": "resource-exhaustion-static-size.json",
+      "sha256": "7460374d051bbbe43f240f1fd1d286d9b2aedec3c820d209d1a1b7f494db9000"
+    }
+  }
+}

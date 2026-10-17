@@ -2,8 +2,22 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** `v0.5.0`, merge commit `c6da6c4` (PR #19,
-> `v0.5.0/transactional-config` → `main`; no `v0.5.0` tag exists yet).
+> **Current baseline:** released `v0.5.1`, tag commit
+> `2881230c2ccbb98b8701730c4de930dc95da30fc` (PR #20).
+>
+> **First unreleased version:** `v0.5.2` — Resource Instrumentation and
+> Benchmark Suite. Implementation plan: `docs/releases/v0.5.2.md`.
+>
+> **Release-status maintenance (2026-09-15):** the owner confirmed that
+> `v0.5.1` is released; its tag was resolved locally. Versions through
+> `v0.5.1` are historical releases. Historical unchecked acceptance items
+> remain evidence/exception records, not an instruction to reopen those
+> releases. Publication does not establish missing validation: UaExpert
+> inspection and UIC quadrature remain unverified/unimplemented in the
+> `v0.5.1` reports; undefined driver packs remain deferred by decision.
+> Industrial drivers remain **compile/mock validated, not hardware qualified**.
+> These exceptions do not expand `v0.5.2` scope; section 5.2 still governs
+> later industrial hardware qualification.
 >
 > **Repository:** `Maronari/RP2040_OPCUA_Server`.
 

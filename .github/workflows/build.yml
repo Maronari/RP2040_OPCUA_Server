@@ -39,12 +39,11 @@ jobs:
       - name: Run host and static verification suites
         run: python3 static/tools/run_host_tests.py
 
-      - name: Verify public OPC UA contract against v0.5.0
+      - name: Verify public OPC UA contract against released v0.5.1
         run: |
           mkdir -p build/reports
           python3 static/tools/verify_opcua_public_contract.py \
-            --baseline c6da6c44326e6b1fe67b06656ac8a3518c12ea9e \
-            --allow-v051-additions \
+            --baseline 2881230c2ccbb98b8701730c4de930dc95da30fc \
             --output build/reports/opcua_public_contract.json
 
       - name: Prove host-test failures propagate
@@ -58,11 +57,36 @@ jobs:
             exit 1
           fi
 
+      - name: Validate and render v0.5.2 hardware baseline
+        run: |
+          python3 static/tools/validate_resource_exhaustion_evidence.py \
+            static/benchmarks/v0.5.2/evidence/resource-exhaustion-raw.json \
+            --manifest static/benchmarks/v0.5.2/evidence/resource-exhaustion-run.json
+          python3 static/tools/validate_v052_opcua_resource_evidence.py \
+            static/benchmarks/v0.5.2/evidence/secure-c1-opcua-resources-manifest.json
+          python3 static/tools/validate_v052_diag_budget_evidence.py \
+            static/benchmarks/v0.5.2/evidence/secure-c1-diag-budget-manifest.json
+          python3 static/tools/validate_benchmark_baseline.py \
+            --baseline static/benchmarks/v0.5.2/baseline.json \
+            --thresholds static/benchmarks/v0.5.2/thresholds.json \
+            --static-report static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json
+          python3 static/tools/render_benchmark_baseline.py \
+            --baseline static/benchmarks/v0.5.2/baseline.json \
+            --thresholds static/benchmarks/v0.5.2/thresholds.json \
+            --output build/reports/v0.5.2-baseline.md
+          cmp docs/releases/v0.5.2-baseline.md build/reports/v0.5.2-baseline.md
+
       - name: Upload host contract evidence
         uses: actions/upload-artifact@v7
         with:
           name: host-contract-evidence
-          path: build/reports/opcua_public_contract.json
+          path: |
+            build/reports/opcua_public_contract.json
+            build/reports/v0.5.2-baseline.md
+            static/benchmarks/v0.5.2/baseline.json
+            static/benchmarks/v0.5.2/thresholds.json
+            static/benchmarks/v0.5.2/evidence/*.json
+            static/benchmarks/v0.5.2/evidence/*.log
           if-no-files-found: error
 
   firmware:
@@ -123,6 +147,17 @@ jobs:
           mkdir -p build/reports
           arm-none-eabi-size build/app/basic_profile/device_profile_basic.elf | tee build/reports/size.txt
           arm-none-eabi-size -A build/app/basic_profile/device_profile_basic.elf | tee build/reports/sections.txt
+          python3 static/tools/generate_static_size_report.py \
+            --elf build/app/basic_profile/device_profile_basic.elf \
+            --uf2 build/app/basic_profile/device_profile_basic.uf2 \
+            --bin build/app/basic_profile/device_profile_basic.bin \
+            --map build/app/basic_profile/device_profile_basic.elf.map \
+            --cmake-cache build/CMakeCache.txt \
+            --output build/reports/static_size_report.json
+          python3 static/tools/validate_benchmark_baseline.py \
+            --baseline static/benchmarks/v0.5.2/baseline.json \
+            --thresholds static/benchmarks/v0.5.2/thresholds.json \
+            --static-report build/reports/static_size_report.json
 
       - name: Label industrial driver hardware-qualification status
         if: matrix.driver_pack == 'industrial'
@@ -182,10 +217,12 @@ jobs:
             build/app/basic_profile/device_profile_basic.elf
             build/app/basic_profile/device_profile_basic.uf2
             build/app/basic_profile/device_profile_basic.bin
+            build/app/basic_profile/device_profile_basic.elf.map
             build/config_export.json
             build/generated/ota_layout/ota_layout.json
             build/reports/size.txt
             build/reports/sections.txt
+            build/reports/static_size_report.json
             build/reports/version_integrity.json
             build/reports/artifact_check.json
             build/reports/driver_qualification_status.json
@@ -194,6 +231,191 @@ jobs:
           # driver_qualification_status.json exists only for industrial; a
           # missing path among others is skipped, and "error" still fails an
           # upload that finds nothing at all.
+          if-no-files-found: error
+
+  benchmark_firmware:
+    name: benchmark firmware (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: secure-c1
+            profile_id: v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0
+            channels: 1
+            rate_hz: 1
+            clients: 1
+            security: basic256sha256-signandencrypt
+            events: OFF
+            history: OFF
+          - name: test-none-c16
+            profile_id: v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1
+            channels: 16
+            rate_hz: 10
+            clients: 4
+            security: test-none
+            events: ON
+            history: ON
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install firmware build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi python3
+
+      - name: Configure ${{ matrix.name }} benchmark image
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DWIZNET_CHIP=W5500 \
+            -DFIRMWARE_DRIVER_PACK=base \
+            -DOTA_ROM_PRIMARY_APP=ON \
+            -DOTA_BUILD_BOOTLOADER=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DFIRMWARE_BENCHMARK_PROFILE=synthetic \
+            -DFIRMWARE_BENCHMARK_CHANNELS=${{ matrix.channels }} \
+            -DFIRMWARE_BENCHMARK_RATE_HZ=${{ matrix.rate_hz }} \
+            -DFIRMWARE_BENCHMARK_CLIENTS=${{ matrix.clients }} \
+            -DFIRMWARE_BENCHMARK_SECURITY=${{ matrix.security }} \
+            -DFIRMWARE_BENCHMARK_EVENTS=${{ matrix.events }} \
+            -DFIRMWARE_BENCHMARK_HISTORY=${{ matrix.history }}
+
+      - name: Build ${{ matrix.name }} benchmark image
+        run: cmake --build build --target all
+
+      - name: Verify benchmark profile and static size
+        run: |
+          mkdir -p build/reports
+          python3 static/tools/check_board_profile.py --build-dir build
+          python3 static/tools/benchmark_profiles.py \
+            --profile-id ${{ matrix.profile_id }} \
+            --verify-export build/config_export.json \
+            --verify-metadata build/benchmark_profile.json \
+            --output build/reports/profile-verification.json
+          python3 static/tools/generate_static_size_report.py \
+            --elf build/app/basic_profile/device_profile_basic.elf \
+            --uf2 build/app/basic_profile/device_profile_basic.uf2 \
+            --bin build/app/basic_profile/device_profile_basic.bin \
+            --map build/app/basic_profile/device_profile_basic.elf.map \
+            --cmake-cache build/CMakeCache.txt \
+            --output build/reports/static_size_report.json
+          python3 static/tools/validate_benchmark_baseline.py \
+            --baseline static/benchmarks/v0.5.2/baseline.json \
+            --thresholds static/benchmarks/v0.5.2/thresholds.json \
+            --static-report build/reports/static_size_report.json
+
+      - name: Upload benchmark firmware evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-firmware-${{ matrix.name }}
+          path: |
+            build/app/basic_profile/device_profile_basic.elf
+            build/app/basic_profile/device_profile_basic.uf2
+            build/app/basic_profile/device_profile_basic.bin
+            build/app/basic_profile/device_profile_basic.elf.map
+            build/config_export.json
+            build/benchmark_profile.json
+            build/reports/profile-verification.json
+            build/reports/static_size_report.json
+            build/CMakeCache.txt
+            build/compile_commands.json
+          if-no-files-found: error
+
+  resource_exhaustion_firmware:
+    name: resource exhaustion test firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install firmware build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi cppcheck python3
+
+      - name: Configure test-only reference image
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DPICO_BOARD=waveshare_core2350b_16mb_psram8mb \
+            -DWIZNET_CHIP=W5500 \
+            -DFIRMWARE_DRIVER_PACK=base \
+            -DOTA_ROM_PRIMARY_APP=ON \
+            -DOTA_BUILD_BOOTLOADER=OFF \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DFIRMWARE_BENCHMARK_PROFILE=resource-exhaustion
+
+      - name: Build test-only reference image
+        run: cmake --build build --target all
+
+      - name: Run blocking first-party cppcheck for exhaustion profile
+        run: |
+          mkdir -p build/reports
+          python3 static/tools/run_first_party_cppcheck.py \
+            --build-dir build \
+            --xml-output build/reports/cppcheck-resource-exhaustion.xml \
+            --text-output build/reports/cppcheck-resource-exhaustion.txt
+
+      - name: Verify profile metadata and static size
+        run: |
+          mkdir -p build/reports
+          python3 static/tools/check_board_profile.py --build-dir build
+          python3 - <<'PY'
+          import json
+          import pathlib
+
+          metadata = json.loads(pathlib.Path("build/resource_exhaustion_profile.json").read_text())
+          expected = {
+              "schemaVersion": 1,
+              "profileId": "v052-resource-exhaustion-reference",
+              "board": "waveshare_core2350b_16mb_psram8mb",
+              "driverPack": "base",
+              "testOnly": True,
+              "persistentWritesAllowed": False,
+              "cyclesPerAllocator": 100,
+              "pointerCapacity": 512,
+              "heapRequestBytes": 1024,
+              "psramRequestBytes": 16384,
+          }
+          for key, value in expected.items():
+              if metadata.get(key) != value:
+                  raise SystemExit(f"resource exhaustion metadata mismatch: {key}")
+          PY
+          python3 static/tools/generate_static_size_report.py \
+            --elf build/app/basic_profile/device_profile_basic.elf \
+            --uf2 build/app/basic_profile/device_profile_basic.uf2 \
+            --bin build/app/basic_profile/device_profile_basic.bin \
+            --map build/app/basic_profile/device_profile_basic.elf.map \
+            --cmake-cache build/CMakeCache.txt \
+            --output build/reports/static_size_report.json
+          python3 static/tools/validate_benchmark_baseline.py \
+            --baseline static/benchmarks/v0.5.2/baseline.json \
+            --thresholds static/benchmarks/v0.5.2/thresholds.json \
+            --static-report build/reports/static_size_report.json
+
+      - name: Upload exhaustion-test firmware evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: resource-exhaustion-firmware
+          path: |
+            build/app/basic_profile/device_profile_basic.elf
+            build/app/basic_profile/device_profile_basic.uf2
+            build/app/basic_profile/device_profile_basic.bin
+            build/app/basic_profile/device_profile_basic.elf.map
+            build/resource_exhaustion_profile.json
+            build/reports/static_size_report.json
+            build/reports/cppcheck-resource-exhaustion.xml
+            build/reports/cppcheck-resource-exhaustion.txt
+            build/CMakeCache.txt
+            build/compile_commands.json
           if-no-files-found: error
 
   analysis:

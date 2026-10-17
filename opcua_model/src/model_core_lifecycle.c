@@ -72,6 +72,133 @@
 
 #include <timers.h>
 
+static void model_sample_resource_diagnostics(UA_Server *server)
+{
+    uint64_t timestamp_unix_us = 0u;
+    const bool timestamp_valid = time_service_get_utc_time_us(&timestamp_unix_us);
+    (void)diag_service_sample(time_us_64() / 1000u,
+                              timestamp_valid,
+                              timestamp_unix_us);
+    if (server != NULL)
+    {
+        UA_ServerResourceUsage usage;
+        const UA_StatusCode usage_status = UA_Server_getResourceUsage(server, &usage);
+        if (usage_status == UA_STATUSCODE_GOOD && usage.publishRequestsAvailable &&
+            usage.publishRequestsCurrent <= UINT32_MAX &&
+            usage.publishRequestsPeak <= UINT32_MAX &&
+            usage.publishRequestsCapacity <= UINT32_MAX)
+        {
+            if (opcua_resource_service_observe(OPCUA_RESOURCE_SERVICE_PUBLISH_REQUESTS,
+                                               (uint32_t)usage.publishRequestsCurrent,
+                                               (uint32_t)usage.publishRequestsPeak,
+                                               (uint32_t)usage.publishRequestsCapacity) !=
+                OPCUA_RESOURCE_SERVICE_STATUS_OK)
+            {
+                (void)opcua_resource_service_invalidate(
+                    OPCUA_RESOURCE_SERVICE_PUBLISH_REQUESTS);
+            }
+        }
+        else
+        {
+            (void)opcua_resource_service_invalidate(OPCUA_RESOURCE_SERVICE_PUBLISH_REQUESTS);
+        }
+        if (usage_status == UA_STATUSCODE_GOOD && usage.eventQueueAvailable &&
+            usage.eventQueueCurrent <= UINT32_MAX &&
+            usage.eventQueuePeak <= UINT32_MAX &&
+            usage.eventQueueCapacity <= UINT32_MAX)
+        {
+            if (opcua_resource_service_observe(OPCUA_RESOURCE_SERVICE_EVENT_QUEUE,
+                                               (uint32_t)usage.eventQueueCurrent,
+                                               (uint32_t)usage.eventQueuePeak,
+                                               (uint32_t)usage.eventQueueCapacity) !=
+                OPCUA_RESOURCE_SERVICE_STATUS_OK)
+            {
+                (void)opcua_resource_service_invalidate(OPCUA_RESOURCE_SERVICE_EVENT_QUEUE);
+            }
+        }
+        else
+        {
+            (void)opcua_resource_service_invalidate(OPCUA_RESOURCE_SERVICE_EVENT_QUEUE);
+        }
+        if (usage_status == UA_STATUSCODE_GOOD && usage.eventQueueDropsAvailable)
+        {
+            const uint64_t previous = model_context_get()->opcua_event_drops_last_raw;
+            const uint64_t previous_wraps =
+                model_context_get()->opcua_event_drops_last_wrap_count;
+            if (usage.eventQueueDropsWrapCount >= previous_wraps &&
+                usage.eventQueueDropsWrapCount - previous_wraps <= 1u)
+            {
+                if (opcua_resource_service_add_event_queue_drops(
+                        usage.eventQueueDrops - previous) != OPCUA_RESOURCE_SERVICE_STATUS_OK)
+                {
+                    (void)opcua_resource_service_invalidate_event_queue_drops();
+                }
+                model_context_get()->opcua_event_drops_last_raw = usage.eventQueueDrops;
+                model_context_get()->opcua_event_drops_last_wrap_count =
+                    usage.eventQueueDropsWrapCount;
+            }
+            else
+            {
+                (void)opcua_resource_service_invalidate_event_queue_drops();
+            }
+        }
+        else
+        {
+            (void)opcua_resource_service_invalidate_event_queue_drops();
+        }
+        if (usage_status == UA_STATUSCODE_GOOD && usage.rejectedRequestsAvailable)
+        {
+            const uint64_t previous = model_context_get()->opcua_rejected_requests_last_raw;
+            const uint64_t previous_wraps =
+                model_context_get()->opcua_rejected_requests_last_wrap_count;
+            if (usage.rejectedRequestsWrapCount >= previous_wraps &&
+                usage.rejectedRequestsWrapCount - previous_wraps <= 1u)
+            {
+                if (opcua_resource_service_add_rejected_requests(
+                        usage.rejectedRequests - previous) != OPCUA_RESOURCE_SERVICE_STATUS_OK)
+                {
+                    (void)opcua_resource_service_invalidate_rejected_requests();
+                }
+                model_context_get()->opcua_rejected_requests_last_raw =
+                    usage.rejectedRequests;
+                model_context_get()->opcua_rejected_requests_last_wrap_count =
+                    usage.rejectedRequestsWrapCount;
+            }
+            else
+            {
+                (void)opcua_resource_service_invalidate_rejected_requests();
+            }
+        }
+        else
+        {
+            (void)opcua_resource_service_invalidate_rejected_requests();
+        }
+    }
+    g_model_opcua_resource_snapshot_cache_available =
+        opcua_resource_service_get_snapshot(&g_model_opcua_resource_snapshot_cache);
+
+    /* Allocation is deliberately retried on the fixed snapshot cadence.
+     * Failing to reserve the adapter cache must not make the server start
+     * fail or fabricate zero-valued resource telemetry. */
+    if (g_model_resource_snapshot_cache == NULL)
+    {
+        if (psram_allocator_is_ready())
+        {
+            g_model_resource_snapshot_cache =
+                (diag_service_snapshot_t *)psram_malloc(sizeof(*g_model_resource_snapshot_cache));
+            g_model_resource_snapshot_cache_in_psram =
+                g_model_resource_snapshot_cache != NULL;
+        }
+        if (g_model_resource_snapshot_cache == NULL)
+        {
+            g_model_resource_snapshot_cache =
+                (diag_service_snapshot_t *)pvPortMalloc(sizeof(*g_model_resource_snapshot_cache));
+            g_model_resource_snapshot_cache_in_psram = false;
+        }
+        g_model_resource_snapshot_cache_available = false;
+    }
+}
+
 /**
  * @brief Fallback deadline for `UA_Server_run_shutdown()` during a
  *        controlled restart (v0.5.0 T6).
@@ -615,6 +742,46 @@ UA_StatusCode model_keep_only_signandencrypt_endpoints(UA_ServerConfig *config)
     return UA_STATUSCODE_GOOD;
 }
 
+#if RP2_BENCHMARK_PROFILE_ENABLED && RP2_BENCHMARK_SECURITY_NONE
+/* The security-off benchmark image is deliberately an endpoint-level test
+ * mode.  It installs no Basic256Sha256 endpoint or policy, but reuses the
+ * normal username-login callback and every role wrapper.  This keeps
+ * authentication and authorization observable while making the plaintext
+ * transport explicit in the build profile. */
+static UA_StatusCode model_configure_benchmark_none_server(UA_ServerConfig *config)
+{
+    UA_StatusCode status;
+
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    model_clear_runtime_security_config(config);
+    status = model_configure_secure_access_control(config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    /* open62541 suppresses Username token policies on a None endpoint unless
+     * this explicit test-only exception is enabled. The normal access-control
+     * callback and role checks remain in force; credentials are deliberately
+     * sent in clear text only by the selected benchmark image. */
+    config->allowNonePolicyPassword = true;
+
+    status = UA_ServerConfig_addSecurityPolicyNone(config, NULL);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    return UA_ServerConfig_addEndpoint(config,
+                                       UA_SECURITY_POLICY_NONE_URI,
+                                       UA_MESSAGESECURITYMODE_NONE);
+}
+#endif
+
 UA_StatusCode model_limit_insecure_endpoints_to_anonymous(UA_ServerConfig *config)
 {
     size_t endpoint_index;
@@ -679,6 +846,18 @@ UA_StatusCode model_limit_insecure_endpoints_to_anonymous(UA_ServerConfig *confi
 
 UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
 {
+    if (config == NULL)
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+#if RP2_BENCHMARK_PROFILE_ENABLED && RP2_BENCHMARK_SECURITY_NONE
+    /* Test-only: do not seed or load the production certificate/trust
+     * lifecycle for an image which intentionally has exactly one None
+     * endpoint.  model_configure_benchmark_none_server retains the normal
+     * username identity and role authorization callbacks. */
+    return model_configure_benchmark_none_server(config);
+#else
     security_service_blob_view_t certificate = {0};
     security_service_blob_view_t private_key = {0};
     security_service_blob_view_t trust_list = {0};
@@ -691,11 +870,6 @@ UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
     UA_NodeId default_user_token_group =
         UA_NS0ID(SERVERCONFIGURATION_CERTIFICATEGROUPS_DEFAULTUSERTOKENGROUP);
     UA_StatusCode status;
-
-    if (config == NULL)
-    {
-        return UA_STATUSCODE_BADINVALIDARGUMENT;
-    }
 
     status = model_seed_bootstrap_identity_if_needed();
     if (status != UA_STATUSCODE_GOOD)
@@ -789,6 +963,16 @@ UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
         return status;
     }
 
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_SECURITY_NONE
+    /* The secure benchmark axis is exact even on a freshly provisioned board:
+     * retain the existing certificate-verification state, but expose only the
+     * declared Basic256Sha256/SignAndEncrypt endpoint. */
+    status = model_keep_only_signandencrypt_endpoints(config);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+#else
     if (commissioning_mode)
     {
         status = model_keep_only_none_and_signandencrypt_endpoints(config);
@@ -811,11 +995,13 @@ UA_StatusCode model_configure_secure_server(UA_ServerConfig *config)
             return status;
         }
     }
+#endif
 
     printf("[OPC UA]\tSecurity mode: %s\n",
            commissioning_mode ? "Commissioning" : "Strict");
     fflush(stdout);
     return UA_STATUSCODE_GOOD;
+#endif
 }
 #endif
 
@@ -853,6 +1039,7 @@ void model_core_task(void *argument)
     UA_Server *server = NULL;
     UA_ServerConfig *config = NULL;
     UA_StatusCode status = UA_STATUSCODE_GOOD;
+    opcua_resource_service_init();
     bool wait_for_network_logged = false;
     /* v0.5.0 T6: true from the second and every later pass through the
      * `for (;;)` loop below, i.e. every controlled-restart rebuild; false
@@ -865,6 +1052,7 @@ void model_core_task(void *argument)
      * still gets its own retry. */
     bool address_space_rollback_attempted = false;
     TickType_t next_psram_stats_tick = 0;
+    TickType_t last_diag_snapshot_tick = 0;
     model_event_runtime_state_t event_runtime_state = {0};
     (void)argument;
 
@@ -891,6 +1079,8 @@ void model_core_task(void *argument)
     printf("[OPC UA]\tIPv4 is ready, continuing startup\n");
     fflush(stdout);
     model_bind_open62541_allocators();
+    model_sample_resource_diagnostics(NULL);
+    last_diag_snapshot_tick = xTaskGetTickCount();
 
     /* v0.5.0 T6: everything from here through the run loop below is one
      * "server lifetime". Cold boot runs it once; a controlled restart
@@ -1000,6 +1190,9 @@ void model_core_task(void *argument)
     config->queueSizeLimits.max = 8;
     config->maxPublishReqPerSession = 4;
     config->monitoredItemRegisterCallback = model_monitored_item_register_callback;
+    config->secureChannelNotificationCallback = model_server_notification_callback;
+    config->sessionNotificationCallback = model_server_notification_callback;
+    config->subscriptionNotificationCallback = model_server_notification_callback;
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     config->maxEventsPerNode = 8;
 #endif
@@ -1118,6 +1311,49 @@ void model_core_task(void *argument)
     ua_port_alloc_log_stats("UA_Server_newWithConfig completed");
     config = UA_Server_getConfig(server);
     model_context_set_server_handles(server, config);
+    {
+        const opcua_resource_service_server_config_t resource_config = {
+            .capacities = {
+                [OPCUA_RESOURCE_SERVICE_SESSIONS] = config->maxSessions,
+                [OPCUA_RESOURCE_SERVICE_SECURE_CHANNELS] = config->maxSecureChannels,
+                [OPCUA_RESOURCE_SERVICE_SUBSCRIPTIONS] = config->maxSubscriptions,
+                [OPCUA_RESOURCE_SERVICE_MONITORED_ITEMS] = config->maxMonitoredItems,
+                [OPCUA_RESOURCE_SERVICE_PUBLISH_REQUESTS] =
+                    config->maxSessions * config->maxPublishReqPerSession,
+                [OPCUA_RESOURCE_SERVICE_EVENT_QUEUE] = 0u,
+            },
+            .supported_gauges_mask =
+                OPCUA_RESOURCE_SERVICE_GAUGE_BIT(OPCUA_RESOURCE_SERVICE_SESSIONS) |
+                OPCUA_RESOURCE_SERVICE_GAUGE_BIT(OPCUA_RESOURCE_SERVICE_SECURE_CHANNELS) |
+                OPCUA_RESOURCE_SERVICE_GAUGE_BIT(OPCUA_RESOURCE_SERVICE_SUBSCRIPTIONS) |
+                OPCUA_RESOURCE_SERVICE_GAUGE_BIT(OPCUA_RESOURCE_SERVICE_MONITORED_ITEMS) |
+                OPCUA_RESOURCE_SERVICE_GAUGE_BIT(OPCUA_RESOURCE_SERVICE_PUBLISH_REQUESTS)
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+                | OPCUA_RESOURCE_SERVICE_GAUGE_BIT(OPCUA_RESOURCE_SERVICE_EVENT_QUEUE)
+#endif
+                ,
+            .rejected_requests_supported = true,
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+            .event_queue_drops_supported = true,
+#else
+            .event_queue_drops_supported = false,
+#endif
+        };
+        if (opcua_resource_service_begin_server(&resource_config) !=
+            OPCUA_RESOURCE_SERVICE_STATUS_OK)
+        {
+            model_context_delete_server(server);
+            vTaskDelete(NULL);
+        }
+        model_context_get()->opcua_event_drops_last_raw = 0u;
+        model_context_get()->opcua_event_drops_last_wrap_count = 0u;
+        model_context_get()->opcua_rejected_requests_last_raw = 0u;
+        model_context_get()->opcua_rejected_requests_last_wrap_count = 0u;
+        /* Replace the pre-server BadNoData cache before any address-space
+         * publication. Otherwise fresh nodes could expose an uninitialized
+         * Good zero capacity until the first one-second sample. */
+        model_sample_resource_diagnostics(server);
+    }
 
     /* Boot-only: maintenance_service owns its own independent Flash journal
      * with its own recovery scan (drivers/maintenance_journal_backend.c),
@@ -1185,6 +1421,11 @@ void model_core_task(void *argument)
         vTaskDelete(NULL);
     }
     address_space_rollback_attempted = false;
+
+    /* The first sample predates address-space construction. Publish it now
+     * that dynamic task-object mutation is legal and exclusively owned by
+     * this OpcUaTask. */
+    model_refresh_resource_diagnostics(server);
 
     {
         const device_profile_config_t *running_config = config_service_get();
@@ -1318,6 +1559,15 @@ void model_core_task(void *argument)
 
         model_process_runtime_events(server, &event_runtime_state);
 
+        const TickType_t diag_now = xTaskGetTickCount();
+        if ((TickType_t)(diag_now - last_diag_snapshot_tick) >=
+            pdMS_TO_TICKS(DIAG_SERVICE_SNAPSHOT_PERIOD_MS))
+        {
+            model_sample_resource_diagnostics(server);
+            model_refresh_resource_diagnostics(server);
+            last_diag_snapshot_tick = diag_now;
+        }
+
         if (xTaskGetTickCount() >= next_psram_stats_tick)
         {
             log_opcua_heap("Periodic runtime");
@@ -1415,6 +1665,9 @@ void model_core_task(void *argument)
         fflush(stdout);
     }
 
+    /* Capture final owner counters before teardown resets the server object;
+     * boot-lifetime drop totals must survive a controlled rebuild. */
+    model_sample_resource_diagnostics(server);
     model_context_delete_server(server);
     server = NULL;
 
@@ -1443,6 +1696,21 @@ void model_core_task(void *argument)
     {
         psram_free(g_model_maintenance_export_payload);
         g_model_maintenance_export_payload = NULL;
+    }
+
+    if (g_model_resource_snapshot_cache != NULL)
+    {
+        if (g_model_resource_snapshot_cache_in_psram)
+        {
+            psram_free(g_model_resource_snapshot_cache);
+        }
+        else
+        {
+            vPortFree(g_model_resource_snapshot_cache);
+        }
+        g_model_resource_snapshot_cache = NULL;
+        g_model_resource_snapshot_cache_in_psram = false;
+        g_model_resource_snapshot_cache_available = false;
     }
 
 #ifdef UA_ENABLE_HISTORIZING

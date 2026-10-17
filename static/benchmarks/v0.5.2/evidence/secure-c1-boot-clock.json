@@ -1,0 +1,22 @@
+{
+  "server": "opc.tcp://192.168.1.103:4840",
+  "firstReachableSeconds": 0.0,
+  "firstUtcSeconds": 0.0,
+  "nullWindowSamples": 0,
+  "bootRelativeSeen": false,
+  "login": null,
+  "samples": [
+    {
+      "t": 0.0,
+      "class": "utc",
+      "createdAt": "2026-10-10T15:52:57.731000+00:00",
+      "skewSeconds": 0.167
+    },
+    {
+      "t": 2.1,
+      "class": "utc",
+      "createdAt": "2026-10-10T15:52:59.036000+00:00",
+      "skewSeconds": -0.65
+    }
+  ]
+}

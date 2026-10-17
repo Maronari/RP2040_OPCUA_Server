@@ -69,6 +69,24 @@
 #define configUSE_TRACE_FACILITY                1
 #define configUSE_STATS_FORMATTING_FUNCTIONS    1
 
+/* v0.5.2 resource instrumentation.  The bridge functions are deliberately
+ * declared in terms of opaque identities so this configuration header does
+ * not depend on TaskHandle_t being defined yet.  Both hooks execute inside
+ * the kernel task critical section and the bridge performs only bounded,
+ * non-allocating table updates. */
+void diag_service_trace_task_create(void *task_identity,
+                                    const char *task_name,
+                                    uint32_t task_number);
+void diag_service_trace_task_delete(void *task_identity,
+                                    const char *task_name);
+#define traceTASK_CREATE(pxNewTCB) \
+    diag_service_trace_task_create((void *)(pxNewTCB), \
+                                   (pxNewTCB)->pcTaskName, \
+                                   (uint32_t)((pxNewTCB)->uxTCBNumber))
+#define traceTASK_DELETE(pxTaskToDelete) \
+    diag_service_trace_task_delete((void *)(pxTaskToDelete), \
+                                   (pxTaskToDelete)->pcTaskName)
+
 /* Co-routine related definitions. */
 #define configUSE_CO_ROUTINES                   0
 #define configMAX_CO_ROUTINE_PRIORITIES         1

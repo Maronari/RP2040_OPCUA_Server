@@ -60,3 +60,150 @@ index fe15654edd..d78d3924d1 100644
  void vPortInitialiseBlocks( void )
  {
      /* This just exists to keep the linker quiet. */
+diff --git a/tasks.c b/tasks.c
+index 7a65e7ba50..df1803c367 100644
+--- a/tasks.c
++++ b/tasks.c
+@@ -656,7 +656,8 @@ static void prvAddCurrentTaskToDelayedList( TickType_t xTicksToWait,
+  */
+ #if ( ( configUSE_TRACE_FACILITY == 1 ) || ( INCLUDE_uxTaskGetStackHighWaterMark == 1 ) || ( INCLUDE_uxTaskGetStackHighWaterMark2 == 1 ) )
+ 
+-    static configSTACK_DEPTH_TYPE prvTaskCheckFreeStackSpace( const uint8_t * pucStackByte ) PRIVILEGED_FUNCTION;
++    static configSTACK_DEPTH_TYPE prvTaskCheckFreeStackSpace( const uint8_t * pucStackByte,
++                                                               const StackType_t * pxStackLastWord ) PRIVILEGED_FUNCTION;
+ 
+ #endif
+ 
+@@ -6248,11 +6249,22 @@ static void prvCheckTasksWaitingTermination( void )
+         {
+             #if ( portSTACK_GROWTH > 0 )
+             {
+-                pxTaskStatus->usStackHighWaterMark = prvTaskCheckFreeStackSpace( ( uint8_t * ) pxTCB->pxEndOfStack );
++                pxTaskStatus->usStackHighWaterMark = prvTaskCheckFreeStackSpace( ( uint8_t * ) pxTCB->pxEndOfStack,
++                                                                                   NULL );
+             }
+             #else
+             {
+-                pxTaskStatus->usStackHighWaterMark = prvTaskCheckFreeStackSpace( ( uint8_t * ) pxTCB->pxStack );
++                #if defined( PICO_RP2350 ) && ( PICO_RP2350 == 1 )
++                {
++                    pxTaskStatus->usStackHighWaterMark = prvTaskCheckFreeStackSpace( ( uint8_t * ) pxTCB->pxStack,
++                                                                                       pxTCB->pxEndOfStack );
++                }
++                #else
++                {
++                    pxTaskStatus->usStackHighWaterMark = prvTaskCheckFreeStackSpace( ( uint8_t * ) pxTCB->pxStack,
++                                                                                       NULL );
++                }
++                #endif
+             }
+             #endif
+         }
+@@ -6308,19 +6320,64 @@ static void prvCheckTasksWaitingTermination( void )
+ 
+ #if ( ( configUSE_TRACE_FACILITY == 1 ) || ( INCLUDE_uxTaskGetStackHighWaterMark == 1 ) || ( INCLUDE_uxTaskGetStackHighWaterMark2 == 1 ) )
+ 
+-    static configSTACK_DEPTH_TYPE prvTaskCheckFreeStackSpace( const uint8_t * pucStackByte )
++    static configSTACK_DEPTH_TYPE prvTaskCheckFreeStackSpace( const uint8_t * pucStackByte,
++                                                               const StackType_t * pxStackLastWord )
+     {
+-        configSTACK_DEPTH_TYPE uxCount = 0U;
+-
+-        while( *pucStackByte == ( uint8_t ) tskSTACK_FILL_BYTE )
++        /* On RP2350, task stacks are word-aligned and grow down.  The result
++         * is reported in StackType_t words, so scanning whole fill words has
++         * exactly the same first-non-fill and rounding semantics as the
++         * portable byte loop below: a partly used word contributes zero. */
++        #if defined( PICO_RP2350 ) && ( PICO_RP2350 == 1 ) && ( portSTACK_GROWTH == -1 )
+         {
+-            pucStackByte -= portSTACK_GROWTH;
+-            uxCount++;
++            const StackType_t * pxStackWord = ( const StackType_t * ) pucStackByte;
++            const StackType_t xFillWord =
++                ( ( ( StackType_t ) ~ ( ( StackType_t ) 0U ) ) /
++                  ( StackType_t ) UINT8_MAX ) *
++                ( StackType_t ) tskSTACK_FILL_BYTE;
++            configSTACK_DEPTH_TYPE uxCount = 0U;
++
++            _Static_assert( sizeof( StackType_t ) == sizeof( uint32_t ),
++                            "RP2350 stack-word scan requires 32-bit StackType_t" );
++
++            /* The four-word probe only advances after all four words match.
++             * The scalar tail returns the same quotient at the first changed
++             * word, including any byte offset within that word. */
++            while( ( ( pxStackLastWord - pxStackWord >= 3 ) &&
++                     ( ( pxStackWord[ 0 ] ^ xFillWord ) |
++                     ( pxStackWord[ 1 ] ^ xFillWord ) |
++                     ( pxStackWord[ 2 ] ^ xFillWord ) |
++                     ( pxStackWord[ 3 ] ^ xFillWord ) ) == 0U ) )
++            {
++                pxStackWord += 4;
++                uxCount += 4U;
++            }
++
++            while( ( pxStackWord <= pxStackLastWord ) &&
++                   ( *pxStackWord == xFillWord ) )
++            {
++                pxStackWord++;
++                uxCount++;
++            }
++
++            return uxCount;
+         }
++        #else
++        {
++            configSTACK_DEPTH_TYPE uxCount = 0U;
+ 
+-        uxCount /= ( configSTACK_DEPTH_TYPE ) sizeof( StackType_t );
++            ( void ) pxStackLastWord;
+ 
+-        return uxCount;
++            while( *pucStackByte == ( uint8_t ) tskSTACK_FILL_BYTE )
++            {
++                pucStackByte -= portSTACK_GROWTH;
++                uxCount++;
++            }
++
++            uxCount /= ( configSTACK_DEPTH_TYPE ) sizeof( StackType_t );
++
++            return uxCount;
++        }
++        #endif
+     }
+ 
+ #endif /* ( ( configUSE_TRACE_FACILITY == 1 ) || ( INCLUDE_uxTaskGetStackHighWaterMark == 1 ) || ( INCLUDE_uxTaskGetStackHighWaterMark2 == 1 ) ) */
+@@ -6360,7 +6417,15 @@ static void prvCheckTasksWaitingTermination( void )
+         }
+         #endif
+ 
+-        uxReturn = prvTaskCheckFreeStackSpace( pucEndOfStack );
++        #if defined( PICO_RP2350 ) && ( PICO_RP2350 == 1 ) && ( portSTACK_GROWTH < 0 )
++        {
++            uxReturn = prvTaskCheckFreeStackSpace( pucEndOfStack, pxTCB->pxEndOfStack );
++        }
++        #else
++        {
++            uxReturn = prvTaskCheckFreeStackSpace( pucEndOfStack, NULL );
++        }
++        #endif
+ 
+         traceRETURN_uxTaskGetStackHighWaterMark2( uxReturn );
+ 
+@@ -6392,7 +6457,16 @@ static void prvCheckTasksWaitingTermination( void )
+         }
+         #endif
+ 
+-        uxReturn = ( UBaseType_t ) prvTaskCheckFreeStackSpace( pucEndOfStack );
++        #if defined( PICO_RP2350 ) && ( PICO_RP2350 == 1 ) && ( portSTACK_GROWTH < 0 )
++        {
++            uxReturn = ( UBaseType_t ) prvTaskCheckFreeStackSpace( pucEndOfStack,
++                                                                     pxTCB->pxEndOfStack );
++        }
++        #else
++        {
++            uxReturn = ( UBaseType_t ) prvTaskCheckFreeStackSpace( pucEndOfStack, NULL );
++        }
++        #endif
+ 
+         traceRETURN_uxTaskGetStackHighWaterMark( uxReturn );
+ 

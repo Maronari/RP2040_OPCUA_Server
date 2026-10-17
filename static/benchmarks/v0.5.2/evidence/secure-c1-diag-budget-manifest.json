@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "kind": "v052-diag-snapshot-budget-evidence-manifest",
+  "firmwareVersion": "0.5.2",
+  "sourceBaselineCommit": "2881230c2ccbb98b8701730c4de930dc95da30fc",
+  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+  "board": "waveshare_core2350b_16mb_psram8mb",
+  "measuredOn": "2026-10-17",
+  "transport": "USB serial COM6",
+  "firmwareArtifact": {
+    "name": "device_profile_basic.uf2",
+    "sizeBytes": 7101440,
+    "sha256": "e21658d7b7ff4f2c23301b6ca7d2c13aed9080896879bdcab9d86c1b8866df7f"
+  },
+  "files": {
+    "measurement": {
+      "path": "secure-c1-diag-budget-live.json",
+      "sizeBytes": 964,
+      "sha256": "abf903fa83fba7837947856da36dc80357dcd48dfb0eb317926eb039588de340"
+    },
+    "serialCapture": {
+      "path": "secure-c1-diag-budget-serial.log",
+      "sizeBytes": 2883,
+      "sha256": "b5ba70b7bf1015602e6b0a7a5ce476b72c365ab60d5a6823dae78d8b9233214b"
+    },
+    "profile": {
+      "path": "secure-c1-diag-budget-profile.json",
+      "sizeBytes": 748,
+      "sha256": "0ea07534c0b638ac32667365d13e3c44f751257db78f8967040cfc7dec3fb41a"
+    },
+    "staticSize": {
+      "path": "secure-c1-diag-budget-static-size.json",
+      "sizeBytes": 11591,
+      "sha256": "e4f86a48428ebec2bb8b45aba1ea509a826aaf31cf786396427bc7c36fab7740"
+    },
+    "staticComparisonBaseline": {
+      "path": "secure-c1-opcua-resources-static-size.json",
+      "sizeBytes": 11526,
+      "sha256": "f0d50488056af03ab9e9f100502b5521fadbc75685bd856dcd602fabdb0b0f8c"
+    },
+    "stackComparison": {
+      "path": "secure-c1-stack-comparison.json",
+      "sizeBytes": 1598,
+      "sha256": "2fd47f0ec0252e51c22be4c8b5b717b10d2d3cff1b7c5053b92bd91dc6f5d031"
+    },
+    "stackConfiguration": {
+      "path": "secure-c1-stack-config.json",
+      "sizeBytes": 8332,
+      "sha256": "161ac7666dd1be225d489f72288618adff090d10436e06c93ba4904a88d6ba24"
+    },
+    "v051StackCapture": {
+      "path": "secure-c1-stack-v051.log",
+      "sizeBytes": 880,
+      "sha256": "45f47930eb7cca3d0b68148abba2bbe31d79ab132438de6b454d2508341343f3"
+    },
+    "v052StackCapture": {
+      "path": "secure-c1-stack-v052.log",
+      "sizeBytes": 880,
+      "sha256": "9bd9c773bf69f4890f9aad661fa4c462d97c97ff1cdf42a47d30199097ea8509"
+    }
+  },
+  "limits": {
+    "snapshotP99Us": 2000,
+    "sampleCount": 100,
+    "captureLimitSeconds": 120,
+    "additionalInternalSramBytes": 4096,
+    "opcUaTaskStackReserveReductionBytes": 256
+  },
+  "scope": {
+    "referenceBoardLive": "measured",
+    "collectionSnapshotP99": "passed",
+    "staticSram": "measured",
+    "incrementalTimingSramDelta": "passed",
+    "opcUaTaskStackCurrentReserve": "measured",
+    "opcUaTaskStackDeltaVsV051": "passed",
+    "uaExpertInspection": "not-run"
+  }
+}

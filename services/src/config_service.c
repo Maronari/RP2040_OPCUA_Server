@@ -38,6 +38,7 @@
 
 #include <config_store_limits.h>
 #include "services/alarm_service.h"
+#include "services/benchmark_profile.h"
 #include "services/config_compat.h"
 #include "services/config_store_service.h"
 #include "services/config_validate_service.h"
@@ -46,6 +47,12 @@
 
 #if defined(RP2_BOARD_PSRAM_CS_PIN)
 #include "psram_allocator.h"
+#endif
+
+#if RP2_BENCHMARK_PROFILE_ENABLED
+#define CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() benchmark_profile_is_enabled()
+#else
+#define CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() false
 #endif
 
 _Static_assert(sizeof(device_profile_config_t) <= CONFIG_STORE_MAX_PAYLOAD_SIZE_BYTES,
@@ -700,9 +707,11 @@ static void config_service_normalize(device_profile_config_t *config)
  * docs/known_limits.md. */
 bool config_service_init(const device_profile_config_t *defaults)
 {
+#if !RP2_BENCHMARK_PROFILE_ENABLED
     bool persisted_requires_migration = false;
     bool loaded_persisted_record = false;
     config_transaction_recovery_state_t recovery_state;
+#endif
 
 #if defined(RP2_BOARD_PSRAM_CS_PIN)
     if (g_config_state == NULL)
@@ -739,6 +748,21 @@ bool config_service_init(const device_profile_config_t *defaults)
         g_default_config_valid = true;
     }
 
+#if RP2_BENCHMARK_PROFILE_ENABLED
+    /* A benchmark image is intentionally independent of Flash configuration:
+     * construct its declared workload in the service-owned allocations before
+     * any normalize/activation path can observe it. */
+    if (!g_default_config_valid ||
+        benchmark_profile_build(&g_running_config, PLATFORM_CHANNEL_LIMIT) !=
+            BENCHMARK_PROFILE_BUILD_OK ||
+        benchmark_profile_build(&g_staged_config, PLATFORM_CHANNEL_LIMIT) !=
+            BENCHMARK_PROFILE_BUILD_OK ||
+        benchmark_profile_build(&g_default_config, PLATFORM_CHANNEL_LIMIT) !=
+            BENCHMARK_PROFILE_BUILD_OK)
+    {
+        return false;
+    }
+#else
     /*
      * v0.5.0 T4 reboot recovery: consult config_transaction_backend's (T3)
      * boot-time classification before reading anything, and react per this
@@ -804,6 +828,7 @@ bool config_service_init(const device_profile_config_t *defaults)
         g_staged_revision = g_running_revision;
         loaded_persisted_record = true;
     }
+#endif
 
     config_service_normalize(&g_running_config);
     config_service_normalize(&g_staged_config);
@@ -812,6 +837,7 @@ bool config_service_init(const device_profile_config_t *defaults)
         config_service_normalize(&g_default_config);
     }
 
+#if !RP2_BENCHMARK_PROFILE_ENABLED
     /*
      * Migration writes only to the alternate slot through the existing
      * CRC/commit path.  A failed write leaves the v0.4.0 source slot active
@@ -850,6 +876,7 @@ bool config_service_init(const device_profile_config_t *defaults)
                                         CONFIG_STORE_SCHEMA_VERSION_OPAQUE_BINARY,
                                         NULL);
     }
+#endif
     return true;
 }
 
@@ -879,6 +906,9 @@ const device_profile_config_t *config_service_get_staged(void)
 
 bool config_service_reset_to_defaults(void)
 {
+#if RP2_BENCHMARK_PROFILE_ENABLED
+    return false;
+#else
     if (!g_default_config_valid)
     {
         return false;
@@ -889,6 +919,7 @@ bool config_service_reset_to_defaults(void)
     g_staged_revision++;
     taskEXIT_CRITICAL();
     return true;
+#endif
 }
 
 /* Guards a gap in config_service_init()'s own first-boot persist (see its
@@ -929,7 +960,7 @@ bool config_service_apply(void)
     uint32_t candidate_revision;
     uint32_t previous_revision;
 
-    if (!config_service_begin_transaction())
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || !config_service_begin_transaction())
     {
         return false;
     }
@@ -1017,6 +1048,11 @@ config_service_rollback_result_t config_service_rollback_running_to_last_known_g
     uint32_t recovered_revision;
     config_service_runtime_apply_fn runtime_apply;
 
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED())
+    {
+        return CONFIG_SERVICE_ROLLBACK_UNAVAILABLE;
+    }
+
     if (!config_store_recover_fallback_to_last_known_good(NULL))
     {
         /* Nothing usable in LAST_KNOWN_GOOD -- Flash RUNNING is untouched,
@@ -1085,7 +1121,7 @@ config_service_rollback_result_t config_service_rollback_running_to_last_known_g
 
 bool config_service_set_timezone_offset_minutes(int16_t value)
 {
-    if (!config_service_is_valid_timezone_offset_minutes(value))
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || !config_service_is_valid_timezone_offset_minutes(value))
     {
         return false;
     }
@@ -1104,7 +1140,7 @@ bool config_service_set_asset_id(const char *value)
     device_profile_config_t persisted_config;
     size_t value_length;
 
-    if (value == NULL)
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || value == NULL)
     {
         return false;
     }
@@ -1143,6 +1179,11 @@ bool config_service_set_asset_id(const char *value)
 
 bool config_service_stage_set_mqtt_pubsub_enabled(bool enabled)
 {
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED())
+    {
+        return false;
+    }
+
     taskENTER_CRITICAL();
     g_staged_config.enable_mqtt_pubsub = enabled;
     g_staged_revision++;
@@ -1157,7 +1198,7 @@ bool config_service_stage_set_location_paths(const char *hierarchical_path,
     size_t hierarchical_length;
     size_t operational_length;
 
-    if (hierarchical_path == NULL || operational_path == NULL ||
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || hierarchical_path == NULL || operational_path == NULL ||
         !config_service_location_path_is_valid(hierarchical_path) ||
         !config_service_location_path_is_valid(operational_path))
     {
@@ -1205,7 +1246,7 @@ bool config_service_stage_set_identity(const device_identity_config_t *identity)
 {
     device_profile_config_t updated_config;
 
-    if (identity == NULL)
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || identity == NULL)
     {
         return false;
     }
@@ -1244,7 +1285,7 @@ bool config_service_stage_set_network(const device_network_config_t *network)
 {
     device_profile_config_t updated_config;
 
-    if (network == NULL || network->opcua_port == 0u)
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || network == NULL || network->opcua_port == 0u)
     {
         return false;
     }
@@ -1288,7 +1329,7 @@ bool config_service_stage_set_channel(size_t index, const config_channel_definit
 {
     device_profile_config_t updated_config;
 
-    if (channel == NULL || index >= PLATFORM_CHANNEL_LIMIT)
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || channel == NULL || index >= PLATFORM_CHANNEL_LIMIT)
     {
         return false;
     }
@@ -1321,7 +1362,7 @@ bool config_service_replace_and_save(const device_profile_config_t *config, bool
     uint32_t candidate_revision = 0u;
     uint32_t previous_revision = 0u;
 
-    if (config == NULL)
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED() || config == NULL)
     {
         return false;
     }
@@ -1432,6 +1473,11 @@ uint32_t config_service_get_staged_revision(void)
 bool config_service_save(void)
 {
     device_profile_config_t normalized_config;
+
+    if (CONFIG_SERVICE_BENCHMARK_MUTATIONS_LOCKED())
+    {
+        return false;
+    }
 
     taskENTER_CRITICAL();
     normalized_config = g_staged_config;

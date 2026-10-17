@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "kind": "v052-opcua-resource-evidence-manifest",
+  "firmwareVersion": "0.5.2",
+  "sourceBaselineCommit": "2881230c2ccbb98b8701730c4de930dc95da30fc",
+  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+  "board": "waveshare_core2350b_16mb_psram8mb",
+  "firmwareArtifact": {
+    "name": "device_profile_basic.uf2",
+    "sizeBytes": 7092224,
+    "sha256": "5f19f2442e14b3374b1e8bd9e385e68259492e20ae6d97e782b1a8fbfddc3d60"
+  },
+  "files": {
+    "verification": {
+      "path": "secure-c1-opcua-resources-live.json",
+      "sizeBytes": 2117,
+      "sha256": "7b2b21e4f49400e27a3090c0790b510640b26c5cb8abc28aafb1ac4ee4472798"
+    },
+    "profile": {
+      "path": "secure-c1-opcua-resources-profile.json",
+      "sizeBytes": 748,
+      "sha256": "0ea07534c0b638ac32667365d13e3c44f751257db78f8967040cfc7dec3fb41a"
+    },
+    "staticSize": {
+      "path": "secure-c1-opcua-resources-static-size.json",
+      "sizeBytes": 11526,
+      "sha256": "f0d50488056af03ab9e9f100502b5521fadbc75685bd856dcd602fabdb0b0f8c"
+    }
+  },
+  "scope": {
+    "referenceBoardLive": "measured",
+    "roleAuthorization": "measured",
+    "sessionAndSecureChannelCapacity": "measured",
+    "collectionSnapshotP99": "not-run",
+    "opcUaTaskStackDelta": "not-run",
+    "uaExpertInspection": "not-run"
+  }
+}
