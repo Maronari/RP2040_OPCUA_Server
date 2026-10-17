@@ -25,12 +25,13 @@ def main() -> int:
     env = baseline["environment"]
     lines = [
         "# v0.5.2 hardware benchmark baseline", "",
-        "Default environment (passing secure profile):  ",
-        f"Recorded: `{env['recordedAt']}`  ",
-        f"Board: `{env['board']}`  ",
-        f"Network: `{env['network']}`  ",
-        f"Toolchain: `{env['toolchain']}`  ",
-        f"Firmware source: `{env['firmwareSource']}` (`gitDirty=true`)  ",
+        "Default environment (passing secure profile):",
+        f"Recorded: `{env['recordedAt']}`",
+        f"Board: `{env['board']}`",
+        f"Network: `{env['network']}`",
+        f"Toolchain: `{env['toolchain']}`",
+        f"Firmware source: `{env['firmwareSource']}` "
+        f"(`gitDirty={str(env['gitDirty']).lower()}`)",
         f"UF2 SHA-256: `{env['firmwareUf2Sha256']}`", "",
         f"Passing measured profiles: **{len(measured_rows)}**. Failed profiles: **{len(failed_rows)}**. "
         f"Explicitly not run: **{not_run}**.", "",
@@ -57,7 +58,8 @@ def main() -> int:
             f"### `{entry['profileId']}`", "",
             f"- State: `{entry['resultState']}`",
             f"- Recorded: `{profile_env['recordedAt']}`",
-            f"- Firmware source: `{profile_env['firmwareSource']}` (`gitDirty=true`)",
+            f"- Firmware source: `{profile_env['firmwareSource']}` "
+            f"(`gitDirty={str(profile_env['gitDirty']).lower()}`)",
             f"- UF2 SHA-256: `{profile_env['firmwareUf2Sha256']}`",
             f"- Board: `{profile_env['board']}`",
             f"- Toolchain/build: `{profile_env['toolchain']}` / `{profile_env['buildType']}`",

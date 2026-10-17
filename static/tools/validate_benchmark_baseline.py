@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -25,6 +26,7 @@ STATIC_TOTALS = {
     "ElfFileBytes", "Uf2FileBytes", "BinFileBytes",
     "ExternalFlashLoadBytes", "SramStaticTotalBytes",
 }
+INTERNAL_SRAM_REGIONS = {"RAM": 524288, "SCRATCH_X": 4096, "SCRATCH_Y": 4096}
 
 
 class BaselineError(ValueError):
@@ -62,8 +64,8 @@ def validate_environment(environment: Any, release: str, prefix: str = "environm
                 "firmwareSource", "gitCommit", "firmwareUf2Sha256"):
         require(isinstance(environment.get(key), str) and environment[key],
                 f"{prefix}.{key} is required")
-    require(environment.get("gitDirty") is True,
-            f"{prefix} must disclose the dirty source image")
+    require(type(environment.get("gitDirty")) is bool,
+            f"{prefix}.gitDirty must be a Boolean")
     require(environment.get("firmwareVersion") == release,
             f"{prefix} firmware version differs from release")
 
@@ -279,11 +281,57 @@ def validate_thresholds(document: dict[str, Any], measured: dict[str, float]) ->
         require(item.get("unit") == REQUIRED_METRICS[item["metric"]], f"{key}: unit mismatch")
 
 
+def validate_release_readiness(document: dict[str, Any], thresholds: dict[str, Any]) -> None:
+    environment = document.get("environment", {})
+    require(environment.get("gitDirty") is False,
+            "release baseline must come from a clean source tree")
+    require(re.fullmatch(r"[0-9a-f]{40}", environment.get("gitCommit", "")) is not None,
+            "release baseline requires a full lowercase firmware commit SHA")
+    required = thresholds.get("releaseRequiredProfiles")
+    require(isinstance(required, list) and required
+            and all(isinstance(profile_id, str) and profile_id for profile_id in required)
+            and len(required) == len(set(required)),
+            "releaseRequiredProfiles must be a non-empty unique string list")
+    profiles = document.get("profiles", [])
+    states = {entry.get("profileId"): entry.get("resultState")
+              for entry in profiles if isinstance(entry, dict)}
+    require(not any(state == "failed" for state in states.values()),
+            "release baseline contains a failed profile")
+    for profile_id in required:
+        require(states.get(profile_id) == "measured",
+                f"required release profile is not measured: {profile_id}")
+        entry = next(item for item in profiles if item.get("profileId") == profile_id)
+        profile_environment = entry.get("environment", environment)
+        require(profile_environment.get("gitDirty") is False,
+                f"required release profile uses a dirty source tree: {profile_id}")
+        require(re.fullmatch(r"[0-9a-f]{40}",
+                             profile_environment.get("gitCommit", "")) is not None,
+                f"required release profile lacks a full firmware commit SHA: {profile_id}")
+        require(profile_environment.get("gitCommit") == environment.get("gitCommit"),
+                f"required release profile firmware commit differs from baseline: {profile_id}")
+        require(profile_environment.get("firmwareVersion") == document.get("release"),
+                f"required release profile firmware version differs from release: {profile_id}")
+
+
 def validate_static_report(report: dict[str, Any], thresholds: dict[str, Any]) -> None:
     require(report.get("schemaVersion") == 1 and report.get("measurementKind") == "static-build-layout",
             "invalid static size report")
     totals = report.get("totals")
     require(isinstance(totals, dict), "static report totals missing")
+    regions = report.get("memoryRegions")
+    require(isinstance(regions, list), "static report memoryRegions missing")
+    internal_names = set(INTERNAL_SRAM_REGIONS)
+    internal = [region for region in regions
+                if isinstance(region, dict) and region.get("name") in internal_names]
+    require(len(internal) == len(INTERNAL_SRAM_REGIONS)
+            and {region.get("name"): region.get("lengthBytes") for region in internal}
+            == INTERNAL_SRAM_REGIONS,
+            "static report internal SRAM regions differ from the reference RP2350 layout")
+    internal_capacity = sum(region["lengthBytes"] for region in internal)
+    static_limit = thresholds["staticMaxima"]["SramStaticTotalBytes"]
+    require(static_limit < internal_capacity,
+            f"SramStaticTotalBytes threshold {static_limit} must leave reserve below "
+            f"physical internal SRAM {internal_capacity}")
     for key, maximum in thresholds["staticMaxima"].items():
         value = totals.get(key)
         require(type(value) is int and value >= 0, f"static report {key} missing")
@@ -295,12 +343,15 @@ def main() -> int:
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--thresholds", type=Path, required=True)
     parser.add_argument("--static-report", type=Path)
+    parser.add_argument("--require-release-ready", action="store_true")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     try:
         measured = validate_baseline(read_json(args.baseline), args.root.resolve())
         thresholds = read_json(args.thresholds)
         validate_thresholds(thresholds, measured)
+        if args.require_release_ready:
+            validate_release_readiness(read_json(args.baseline), thresholds)
         if args.static_report:
             validate_static_report(read_json(args.static_report), thresholds)
         print(f"benchmark-baseline: PASS ({len(measured)} measured metrics, 192 profile cells)")

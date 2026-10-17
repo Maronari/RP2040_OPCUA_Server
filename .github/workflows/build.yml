@@ -44,6 +44,7 @@ jobs:
           mkdir -p build/reports
           python3 static/tools/verify_opcua_public_contract.py \
             --baseline 2881230c2ccbb98b8701730c4de930dc95da30fc \
+            --allow-v052-additions \
             --output build/reports/opcua_public_contract.json
 
       - name: Prove host-test failures propagate
@@ -75,6 +76,15 @@ jobs:
             --thresholds static/benchmarks/v0.5.2/thresholds.json \
             --output build/reports/v0.5.2-baseline.md
           cmp docs/releases/v0.5.2-baseline.md build/reports/v0.5.2-baseline.md
+
+      - name: Enforce v0.5.2 release hardware evidence
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python3 static/tools/validate_benchmark_baseline.py \
+            --baseline static/benchmarks/v0.5.2/baseline.json \
+            --thresholds static/benchmarks/v0.5.2/thresholds.json \
+            --static-report static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json \
+            --require-release-ready
 
       - name: Upload host contract evidence
         uses: actions/upload-artifact@v7

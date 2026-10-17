@@ -6,8 +6,12 @@
     "Uf2FileBytes": 7400000,
     "BinFileBytes": 3700000,
     "ExternalFlashLoadBytes": 3700000,
-    "SramStaticTotalBytes": 540000
+    "SramStaticTotalBytes": 530432
   },
+  "releaseRequiredProfiles": [
+    "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+    "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1"
+  ],
   "hardwareMaxima": [
     {
       "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",

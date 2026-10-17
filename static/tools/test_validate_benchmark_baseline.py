@@ -12,8 +12,8 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from validate_benchmark_baseline import (  # noqa: E402
-    BaselineError, read_json, validate_baseline, validate_static_report,
-    validate_thresholds,
+    BaselineError, read_json, validate_baseline, validate_environment,
+    validate_release_readiness, validate_static_report, validate_thresholds,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,6 +41,47 @@ assert len(measured) == 6
 assert sum(entry["resultState"] == "measured" for entry in baseline["profiles"]) == 1
 assert sum(entry["resultState"] == "failed" for entry in baseline["profiles"]) == 1
 assert sum(entry["resultState"] == "not-run" for entry in baseline["profiles"]) == 190
+
+clean_environment = copy.deepcopy(baseline["environment"])
+clean_environment["gitDirty"] = False
+validate_environment(clean_environment, baseline["release"])
+bad_dirty_type = copy.deepcopy(clean_environment)
+bad_dirty_type["gitDirty"] = 0
+rejects(lambda: validate_environment(bad_dirty_type, baseline["release"]),
+        "gitDirty must be a Boolean")
+
+rejects(lambda: validate_release_readiness(baseline, thresholds),
+        "clean source tree")
+release_ready = copy.deepcopy(baseline)
+release_ready["environment"]["gitDirty"] = False
+rejects(lambda: validate_release_readiness(release_ready, thresholds),
+        "failed profile")
+failed_profile = next(entry for entry in release_ready["profiles"]
+                      if entry["resultState"] == "failed")
+failed_profile["resultState"] = "measured"
+failed_profile["environment"]["gitDirty"] = False
+validate_release_readiness(release_ready, thresholds)
+short_commit = copy.deepcopy(release_ready)
+short_commit["environment"]["gitCommit"] = "2881230"
+rejects(lambda: validate_release_readiness(short_commit, thresholds),
+        "full lowercase firmware commit SHA")
+dirty_required = copy.deepcopy(release_ready)
+next(entry for entry in dirty_required["profiles"]
+     if entry["profileId"] == thresholds["releaseRequiredProfiles"][1]
+     )["environment"]["gitDirty"] = True
+rejects(lambda: validate_release_readiness(dirty_required, thresholds),
+        "required release profile uses a dirty source tree")
+mixed_required_commit = copy.deepcopy(release_ready)
+next(entry for entry in mixed_required_commit["profiles"]
+     if entry["profileId"] == thresholds["releaseRequiredProfiles"][1]
+     )["environment"]["gitCommit"] = "0" * 40
+rejects(lambda: validate_release_readiness(mixed_required_commit, thresholds),
+        "firmware commit differs from baseline")
+missing_required = copy.deepcopy(release_ready)
+next(entry for entry in missing_required["profiles"]
+     if entry["profileId"] == thresholds["releaseRequiredProfiles"][1])["resultState"] = "not-run"
+rejects(lambda: validate_release_readiness(missing_required, thresholds),
+        "required release profile is not measured")
 
 with tempfile.TemporaryDirectory() as directory:
     oversized = Path(directory) / "oversized.json"
@@ -102,5 +143,22 @@ rejects(lambda: validate_thresholds(too_low, measured), "exceeds threshold")
 static_too_low = copy.deepcopy(thresholds)
 static_too_low["staticMaxima"]["ExternalFlashLoadBytes"] = 1
 rejects(lambda: validate_static_report(read_json(STATIC_REPORT), static_too_low), "exceeds")
+
+static_above_capacity = copy.deepcopy(thresholds)
+static_above_capacity["staticMaxima"]["SramStaticTotalBytes"] = 532480
+rejects(lambda: validate_static_report(read_json(STATIC_REPORT), static_above_capacity),
+        "must leave reserve")
+
+duplicate_region = read_json(STATIC_REPORT)
+duplicate_region["memoryRegions"].append(copy.deepcopy(
+    next(region for region in duplicate_region["memoryRegions"] if region["name"] == "RAM")))
+rejects(lambda: validate_static_report(duplicate_region, thresholds),
+        "differ from the reference RP2350 layout")
+
+inflated_region = read_json(STATIC_REPORT)
+next(region for region in inflated_region["memoryRegions"]
+     if region["name"] == "RAM")["lengthBytes"] += 1
+rejects(lambda: validate_static_report(inflated_region, thresholds),
+        "differ from the reference RP2350 layout")
 
 print("benchmark-baseline tests: PASS")
