@@ -98,6 +98,8 @@ static void poll_at(uint64_t now_us)
 
 int main(int argc, char **argv)
 {
+    uint64_t started_monotonic_us;
+
     g_json = calloc(BENCHMARK_TIMING_MAX_JSON_BYTES, 1u);
     assert(g_json != NULL);
     assert(channel_manager_init());
@@ -295,13 +297,39 @@ int main(int argc, char **argv)
     assert(strstr(g_json, "\"state\":\"failed\"") != NULL);
     assert(strstr(g_json, "\"sampleCount\":0") != NULL);
 
+    /* Duration storage is compact uint32 microseconds: the inclusive limit
+     * is retained exactly, while the first value that cannot be represented
+     * terminates the evidence rather than narrowing it. */
+    assert(benchmark_timing_init());
+    g_json_length = 0u;
+    g_json[0] = '\0';
+    started_monotonic_us = benchmark_timing_diag_sample_begin();
+    g_now_us += UINT32_MAX;
+    benchmark_timing_diag_sample_end(started_monotonic_us, true);
+    benchmark_timing_diag_sample_set_opcua_task_stack_high_water(7997u);
+    benchmark_timing_diag_sample_end(benchmark_timing_diag_sample_begin(), false);
+    assert(benchmark_timing_dump_if_ready());
+    assert(strstr(g_json, "\"state\":\"failed\"") != NULL);
+    assert(strstr(g_json, "\"sampleCount\":1") != NULL);
+
+    assert(benchmark_timing_init());
+    g_json_length = 0u;
+    g_json[0] = '\0';
+    started_monotonic_us = benchmark_timing_diag_sample_begin();
+    g_now_us += UINT64_C(1);
+    g_now_us += UINT32_MAX;
+    benchmark_timing_diag_sample_end(started_monotonic_us, true);
+    assert(benchmark_timing_dump_if_ready());
+    assert(strstr(g_json, "\"state\":\"failed\"") != NULL);
+    assert(strstr(g_json, "\"sampleCount\":0") != NULL);
+
     /* The automatic capture cannot quietly extend past its bounded 120 s
      * window if a nominal one-second snapshot cadence stalls. */
     assert(benchmark_timing_init());
     g_json_length = 0u;
     g_json[0] = '\0';
     g_now_us += 1000u;
-    uint64_t started_monotonic_us = benchmark_timing_diag_sample_begin();
+    started_monotonic_us = benchmark_timing_diag_sample_begin();
     ++g_now_us;
     benchmark_timing_diag_sample_set_opcua_task_stack_high_water(7999u);
     benchmark_timing_diag_sample_end(started_monotonic_us, true);

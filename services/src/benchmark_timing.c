@@ -92,8 +92,10 @@ typedef struct
  * explicit fixed layout makes the synthetic-only internal-SRAM cost exact. */
 typedef struct
 {
-    uint64_t durations_us[BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT];
-    uint64_t sort_scratch_us[BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT];
+    /* Snapshot durations are bounded to UINT32_MAX before storage. The
+     * public evidence fields remain uint64_t device-monotonic values. */
+    uint32_t durations_us[BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT];
+    uint32_t sort_scratch_us[BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT];
     uint64_t started_monotonic_us;
     uint64_t ended_monotonic_us;
     uint64_t p99_us;
@@ -137,7 +139,7 @@ _Static_assert(sizeof(benchmark_timing_record_t) == 16u,
                "native sampling record size is part of the PSRAM bound");
 _Static_assert(sizeof(benchmark_timing_storage_t) == 131648u,
                "native sampling storage size is part of the PSRAM bound");
-_Static_assert(sizeof(benchmark_timing_diag_budget_storage_t) == 1744u,
+_Static_assert(sizeof(benchmark_timing_diag_budget_storage_t) == 944u,
                "T2 diagnostic timing storage must remain a fixed SRAM bound");
 _Static_assert(PLATFORM_CHANNEL_LIMIT <= 32u,
                "sampling observation bitmap must cover every channel slot");
@@ -455,7 +457,7 @@ static void benchmark_timing_diag_budget_calculate_quantiles(void)
      * consume or alter the measured OpcUaTask stack high-water mark. */
     for (size_t index = 1u; index < BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT; ++index)
     {
-        const uint64_t value = g_diag_budget.sort_scratch_us[index];
+        const uint32_t value = g_diag_budget.sort_scratch_us[index];
         size_t insert = index;
         while (insert > 0u && g_diag_budget.sort_scratch_us[insert - 1u] > value)
         {
@@ -830,6 +832,9 @@ void benchmark_timing_diag_sample_end(uint64_t started_monotonic_us,
                                       bool snapshot_published)
 {
     const uint64_t ended_monotonic_us = benchmark_timing_now_us();
+    const uint64_t duration_us = ended_monotonic_us >= started_monotonic_us
+                                     ? ended_monotonic_us - started_monotonic_us
+                                     : 0u;
     uint64_t completed_generation = 0u;
     bool calculate_quantiles = false;
 
@@ -838,6 +843,7 @@ void benchmark_timing_diag_sample_end(uint64_t started_monotonic_us,
         BENCHMARK_TIMING_DIAG_BUDGET_CAPTURING)
     {
         if (!snapshot_published || ended_monotonic_us < started_monotonic_us ||
+            duration_us > UINT32_MAX ||
             g_diag_budget.sample_count >= BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT)
         {
             g_diag_budget.ended_monotonic_us = ended_monotonic_us;
@@ -858,7 +864,7 @@ void benchmark_timing_diag_sample_end(uint64_t started_monotonic_us,
             BENCHMARK_TIMING_DIAG_BUDGET_CAPTURING)
         {
             g_diag_budget.durations_us[g_diag_budget.sample_count++] =
-                ended_monotonic_us - started_monotonic_us;
+                (uint32_t)duration_us;
             for (size_t phase = 0u; phase < BENCHMARK_TIMING_DIAG_PHASE_COUNT; ++phase)
             {
                 if (g_diag_budget.current_sample_phase_us[phase] >
@@ -868,16 +874,16 @@ void benchmark_timing_diag_sample_end(uint64_t started_monotonic_us,
                         g_diag_budget.current_sample_phase_us[phase];
                 }
             }
-            if (ended_monotonic_us - started_monotonic_us > g_diag_budget.max_us)
+            if (duration_us > g_diag_budget.max_us)
             {
-                g_diag_budget.max_us = ended_monotonic_us - started_monotonic_us;
+                g_diag_budget.max_us = duration_us;
                 memcpy(g_diag_budget.max_sample_phase_us,
                        g_diag_budget.current_sample_phase_us,
                        sizeof(g_diag_budget.max_sample_phase_us));
             }
             if (g_diag_budget.sample_count == BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT)
             {
-                /* The fixed 800-byte copy is protected so reset cannot tear
+                /* The fixed 400-byte copy is protected so reset cannot tear
                  * it. Sorting occurs after the critical section. */
                 memcpy(g_diag_budget.sort_scratch_us, g_diag_budget.durations_us,
                        sizeof(g_diag_budget.sort_scratch_us));

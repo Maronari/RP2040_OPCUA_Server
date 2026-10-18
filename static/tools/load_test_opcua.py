@@ -24,6 +24,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 import benchmark_profiles
 import stage_config as opcua_common
+import verify_v052_opcua_resources as resource_contract
 
 
 CONTRACT_PATH = Path(__file__).resolve().parents[1] / "benchmarks/v0.5.2/measurement-contract.json"
@@ -41,6 +42,9 @@ MONITORED_NODE_IDS = (
     "ns=1;s=Device.Configuration.SamplingPeriodMs", "ns=1;s=Device.Configuration.PublishPeriodMs",
     "ns=1;s=Device.Security.FailedLoginCount", "ns=1;s=Device.Security.DaysUntilExpiry",
 )
+RESOURCE_DIAGNOSTIC_NODE_IDS = resource_contract.RESOURCE_NODE_IDS
+RESOURCE_DIAGNOSTIC_PHASE = "post-steady-before-cleanup"
+
 DIAGNOSTIC_NODE_IDS = {
     "uptime_s": "ns=1;s=Device.Diagnostics.UptimeSec", "free_heap": "ns=1;s=Device.Diagnostics.FreeHeap",
     "min_free_heap": "ns=1;s=Device.Diagnostics.MinEverFreeHeap", "psram_used": "ns=1;s=Device.Diagnostics.PSRAM.UsedBytes",
@@ -176,6 +180,102 @@ async def validate_monitored_nodes(client: Any, node_ids: list[str] | tuple[str,
 def channel_value_node_id(channel_id: str, namespace_index: int) -> str:
     encoded = channel_id.encode("utf-8").hex().upper()
     return f"ns={namespace_index};s=Device.Channels.c_{encoded}.Value"
+
+
+def resource_diagnostic_status(status: Any) -> str:
+    """Return only the frozen status spellings that are safe for a report."""
+    name = resource_contract.status_name(status)
+    return name if name in {"Good", "BadNotSupported", "BadUserAccessDenied"} else "Unknown"
+
+
+async def capture_resource_diagnostics(client: Any, timeout_s: float) -> dict[str, Any]:
+    """Read the frozen T3 surface once after steady load, without a new session."""
+    if len(RESOURCE_DIAGNOSTIC_NODE_IDS) != 22 or len(set(RESOURCE_DIAGNOSTIC_NODE_IDS)) != 22:
+        raise RuntimeError("resource diagnostic contract is not the frozen 22-node set")
+
+    async def read_one(node_id: str) -> tuple[dict[str, Any], Any | None]:
+        try:
+            data_value = await asyncio.wait_for(
+                client.get_node(node_id).read_data_value(raise_on_bad_status=False), timeout_s)
+        except asyncio.TimeoutError:
+            return {"nodeId": node_id, "state": "failed", "status": "Timeout", "value": None}, None
+        except Exception:
+            return {"nodeId": node_id, "state": "failed", "status": "Exception", "value": None}, None
+        status = resource_diagnostic_status(getattr(data_value, "StatusCode", None))
+        if status == "BadNotSupported":
+            return {"nodeId": node_id, "state": "unavailable", "status": status, "value": None}, data_value
+        if status == "BadUserAccessDenied":
+            return {"nodeId": node_id, "state": "authorization-denied", "status": status, "value": None}, data_value
+        if status != "Good":
+            return {"nodeId": node_id, "state": "failed", "status": status, "value": None}, data_value
+        try:
+            value = resource_contract.require_u64(data_value, node_id)
+        except Exception:
+            return {"nodeId": node_id, "state": "failed", "status": status, "value": None}, data_value
+        if value >= 2**64:
+            return {"nodeId": node_id, "state": "failed", "status": status, "value": None}, data_value
+        return {"nodeId": node_id, "state": "measured", "status": status, "value": value}, data_value
+
+    started = time.perf_counter()
+    tasks = [asyncio.create_task(read_one(node_id)) for node_id in RESOURCE_DIAGNOSTIC_NODE_IDS]
+    try:
+        readings = await asyncio.wait_for(asyncio.gather(*tasks), timeout_s)
+    except asyncio.TimeoutError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        readings = [({"nodeId": node_id, "state": "failed", "status": "Timeout", "value": None}, None)
+                    for node_id in RESOURCE_DIAGNOSTIC_NODE_IDS]
+    records = [record for record, _data_value in readings]
+    values = {record["nodeId"]: data_value for record, data_value in readings
+              if data_value is not None}
+    states = [record["state"] for record in records]
+    consistency = {"state": "not-run", "reason": "per-node-diagnostic-failure"}
+    if all(item_state == "measured" for item_state in states):
+        try:
+            resource_contract.validate_resource_values(values)
+        except Exception:
+            consistency = {"state": "failed", "reason": "cross-node-invariant"}
+            state = "failed"
+        else:
+            consistency = {"state": "measured"}
+            state = "measured"
+    elif "failed" in states:
+        state = "failed"
+    elif "authorization-denied" in states:
+        state = "authorization-denied"
+    else:
+        state = "unavailable"
+    return {
+        "phase": RESOURCE_DIAGNOSTIC_PHASE,
+        "state": state,
+        "nodeCount": len(records),
+        "measuredNodeCount": states.count("measured"),
+        "unavailableNodeCount": states.count("unavailable"),
+        "authorizationDeniedNodeCount": states.count("authorization-denied"),
+        "failedNodeCount": states.count("failed"),
+        "consistency": consistency,
+        "elapsedMonotonicMs": int((time.perf_counter() - started) * 1000),
+        "nodes": records,
+    }
+
+
+def resource_diagnostic_report(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep repetition evidence finite and classify a missing snapshot explicitly."""
+    if not snapshots:
+        return {"phase": RESOURCE_DIAGNOSTIC_PHASE, "state": "not-run", "snapshotCount": 0,
+                "snapshots": []}
+    states = [snapshot["state"] for snapshot in snapshots]
+    if "failed" in states:
+        state = "failed"
+    elif "authorization-denied" in states:
+        state = "authorization-denied"
+    elif "unavailable" in states:
+        state = "unavailable"
+    else:
+        state = "measured"
+    return {"phase": RESOURCE_DIAGNOSTIC_PHASE, "state": state,
+            "snapshotCount": len(snapshots), "snapshots": snapshots}
 
 
 async def resolve_benchmark_value_nodes(client: Any, profile: dict[str, Any], timeout_s: float) -> list[str]:
@@ -628,6 +728,7 @@ async def run_benchmark(args: argparse.Namespace) -> int:
     metrics["EventDeliveryLatencyMs"].set_state("unavailable", "no source timestamp/client receive correlation is available")
     if not profile["history"]: metrics["HistoryReadLatencyMs"].set_state("unsupported", "profile disables history")
     log, clients, subscriptions, handlers = ErrorLog(args.max_errors, BOUNDS["maxErrorTextBytes"]), [], [], []
+    resource_snapshots: list[dict[str, Any]] = []
     verified, notifications = False, 0
     load_accounting = {"scheduledOperationCount": 0, "completedOperationCount": 0, "missedDeadlineCount": 0,
                        "deadlineExceededOperationCount": 0, "failedOperationCount": 0,
@@ -672,6 +773,14 @@ async def run_benchmark(args: argparse.Namespace) -> int:
                                                 history_cleanup_metric)
                     except Exception as exc:
                         log.add(f"history client {client_index + 1}", exc)
+
+            # This occurs only after the timed Read window and uses client 0,
+            # which is already counted in the declared profile.  It therefore
+            # neither adds a fifth session nor alters steady-load accounting.
+            resource_snapshot = await capture_resource_diagnostics(clients[0], args.timeout)
+            resource_snapshots.append(resource_snapshot)
+            if resource_snapshot["state"] != "measured":
+                log.add("post-steady resource diagnostics", resource_snapshot["state"])
             notifications += sum(handler.notifications for handler in handlers)
             await benchmark_cleanup(subscriptions, clients, args.timeout, log)
             handlers.clear()
@@ -715,7 +824,8 @@ async def run_benchmark(args: argparse.Namespace) -> int:
     metric_report = {name: metric.report() for name, metric in metrics.items()}
     metric_report["MethodLatencyMs"]["phase"] = "setup-export-config-profile-verification"
     metric_report["HistoryReadLatencyMs"]["continuationRelease"] = history_cleanup_metric.report()
-    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": {"state": "unavailable", "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery"}, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
+    resource_evidence = resource_diagnostic_report(resource_snapshots)
+    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": {"state": "unavailable", "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery"}, "resourceDiagnostics": resource_evidence, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
     write_bounded_json(Path(args.output), report, BOUNDS["maxJsonBytes"])
     return 1 if log.items or log.overflow or accounting["droppedSampleCount"] or load_accounting["missedDeadlineCount"] or load_accounting["failedOperationCount"] or any(metric.state in {"failed", "exhausted"} for metric in accounted_metrics) else 0
 

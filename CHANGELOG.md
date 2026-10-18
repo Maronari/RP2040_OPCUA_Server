@@ -18,8 +18,9 @@ the tag-object SHA.
   reference-board baseline records a passing secure 1-channel corner and a
   failed 16-channel, four-client, 10 Hz `test-none` corner; 650 of 1,200 Reads
   exceeded their deadline. The other 190 cells are explicit `not-run` results.
-  Broader hardware coverage, live-client role/capacity and UaExpert evidence,
-  and release acceptance remain pending.
+  Live T2/T3 role, quality and session/SecureChannel capacity evidence is
+  recorded. Broader hardware coverage, UaExpert evidence and release acceptance
+  remain pending.
 - Adds reproducible test-only synthetic firmware profiles for 1/4/8/16
   channels at 1/10 Hz, declared 1/2/4-client load, independent Events/history
   switches and exact secure versus plaintext-test endpoints. Benchmark images
@@ -27,10 +28,14 @@ the tag-object SHA.
   physical `dev_benchmark` preset and emit deterministic profile/export metadata.
 - Adds the T5 read-only benchmark client with exact profile verification,
   bounded latency/error reports and host tests, plus benchmark-only PSRAM
-  sampling capture controlled through serial. Imported device timing evidence
-  remains explicitly separate from the current client run. Cold startup,
-  successful synthetic Write, correlated event delivery and reference-board
-  timing/overhead acceptance remain open.
+  sampling capture controlled through serial. Each completed load repetition
+  also records and validates the frozen 22-node resource snapshot through an
+  existing client before cleanup. Benchmark timing samples use bounded 32-bit
+  microsecond storage internally while keeping public values 64-bit, reducing
+  the maximum-profile static SRAM footprint by 800 bytes. Imported device
+  timing evidence remains explicitly separate from the current client run.
+  Cold startup, successful synthetic Write, correlated event delivery and
+  reference-board timing/overhead acceptance remain open.
 - Adds the T2 test-only reference-board exhaustion profile, with bounded
   100-cycle Heap and PSRAM fill/fail/free runners, payload verification,
   exact allocation-failure accounting, baseline and stabilized-low-water

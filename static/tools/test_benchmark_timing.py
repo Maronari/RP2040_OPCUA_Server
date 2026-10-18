@@ -28,6 +28,11 @@ def main() -> int:
     root = pathlib.Path(__file__).resolve().parents[2]
     test_dir = root / "static" / "tests" / "benchmark_timing"
     channel_test_dir = root / "static" / "tests" / "channel_manager"
+    timing_source = (root / "services" / "src" / "benchmark_timing.c").read_text(encoding="utf-8")
+    assert "uint32_t durations_us[BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT]" in timing_source
+    assert "uint32_t sort_scratch_us[BENCHMARK_TIMING_DIAG_BUDGET_SAMPLE_COUNT]" in timing_source
+    assert "sizeof(benchmark_timing_diag_budget_storage_t) == 944u" in timing_source
+    assert "duration_us > UINT32_MAX" in timing_source
     diag_source = (root / "services" / "src" / "diag_service.c").read_text(encoding="utf-8")
     diag_sample = diag_source[diag_source.index("bool diag_service_sample("):]
     assert '#include "services/benchmark_timing.h"' in diag_source
