@@ -128,6 +128,10 @@ async def test_full_run() -> None:
         assert report["metrics"]["WriteLatencyMs"]["state"] == "unsupported"
         assert report["subscriptionEvidence"]["state"] == "unavailable"
         assert report["clientLoad"]["historyCadence"]["mode"] == "post-steady-per-client-per-repetition"
+        assert report["clientLoad"]["maxInFlightReadsPerClient"] == subject.MAX_READS_IN_FLIGHT_PER_CLIENT
+        assert report["loadAccounting"]["inFlightLimitExceededCount"] == 0
+        assert report["loadAccounting"]["peakInFlightCount"] == 1
+        assert report["loadAccounting"]["transportFencedClientCount"] == 0
         diagnostics = report["resourceDiagnostics"]
         assert diagnostics["phase"] == "post-steady-before-cleanup"
         assert diagnostics["state"] == "measured" and diagnostics["snapshotCount"] == 1
@@ -207,13 +211,14 @@ async def test_failed_connect_is_cleaned_up() -> None:
     assert client.disconnected
 
 
-async def test_read_crossing_deadline_fails_without_sample() -> None:
+async def test_read_timeout_fails_without_sample() -> None:
     item = profile()
     with tempfile.TemporaryDirectory() as temporary:
         options = args(item, Path(temporary))
-        options.duration = 0.001
+        options.duration, options.timeout = 0.02, 0.005
         class SlowNode(FakeNode):
             async def read_value(self):
+                # Profile validation reads once; only the scheduled Read is slow.
                 if self.node_id in self.client.read_node_ids:
                     await asyncio.sleep(0.02)
                 return await super().read_value()
@@ -230,6 +235,138 @@ async def test_read_crossing_deadline_fails_without_sample() -> None:
         assert report["metrics"]["ReadLatencyMs"]["state"] == "failed"
         assert report["metrics"]["ReadLatencyMs"]["sampleCount"] == 0
         assert report["loadAccounting"]["deadlineExceededOperationCount"] >= 1
+
+
+
+
+async def test_non_cooperative_read_is_fenced_and_postload_skipped() -> None:
+    global EXPORT_DOCUMENT
+    item = profile()
+    EXPORT_DOCUMENT = {"device": {"fwRevision": "0.5.2"}, "mqtt": {"enabled": False},
+        "diagnostics": {"enableHeapDiagnostics": True, "enableTaskDiagnostics": True}, "channels": []}
+    period = 1000 // item["rateHz"]
+    for slot in range(16):
+        active = slot < item["channels"]
+        EXPORT_DOCUMENT["channels"].append({"slot": slot, "inUse": active, "enabled": active,
+            "driverId": 10, "sourceIndex": slot % 8, "sourceFlags": 0, "kind": 0, "valueType": 1,
+            "id": f"benchmark.synthetic.{slot + 1}", "name": f"BenchmarkSynthetic{slot + 1}", "unit": "",
+            "flags": 1, "samplePeriodMs": period, "publishPeriodMs": period, "historyIntervalMs": period,
+            "scale": 1.0, "offset": 0.0})
+
+    class NonCooperativeNode(FakeNode):
+        async def read_value(self):
+            self.client.read_node_ids.append(self.node_id)
+            channel_reads = sum(node_id == self.node_id for node_id in self.client.read_node_ids)
+            if self.node_id.endswith(".Value") and channel_reads > 1:
+                try:
+                    await self.client.never_complete.wait()
+                except asyncio.CancelledError:
+                    self.client.cancel_seen.set()
+                    # The test controls completion after cancellation, proving
+                    # that the benchmark never awaits this quarantined coroutine.
+                    await self.client.late_release.wait()
+                    self.client.late_returned.set()
+                    return 1
+            return 1
+
+    class NonCooperativeClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.never_complete, self.cancel_seen = asyncio.Event(), asyncio.Event()
+            self.late_release, self.late_returned = asyncio.Event(), asyncio.Event()
+        def get_node(self, node_id): return NonCooperativeNode(self, node_id)
+
+    class CapturingMetric(subject.Metric):
+        created = []
+        def __post_init__(self):
+            super().__post_init__()
+            type(self).created.append(self)
+
+    with tempfile.TemporaryDirectory() as temporary:
+        options = args(item, Path(temporary))
+        options.timeout, options.duration = 0.02, 0.04
+        clients = []
+        old_configure, old_export, old_metric = (subject.configure_client,
+                                                  subject.opcua_common.export_config,
+                                                  subject.Metric)
+        async def configure(_args):
+            client = NonCooperativeClient()
+            clients.append(client)
+            return client
+        subject.configure_client, subject.opcua_common.export_config, subject.Metric = (
+            configure, fake_export, CapturingMetric)
+        baseline_tasks = {task for task in asyncio.all_tasks() if task is not asyncio.current_task()}
+        try:
+            assert await subject.run_benchmark(options) == 1
+            assert await asyncio.wait_for(clients[-1].cancel_seen.wait(), 0.1)
+            # The coroutine is still deliberately blocked when the bounded run
+            # returns; it cannot mutate the emitted metric or report.
+            assert not clients[-1].late_returned.is_set()
+            report_before = Path(options.output).read_bytes()
+            report = json.loads(report_before.decode("utf-8"))
+            assert report["loadAccounting"]["transportFencedClientCount"] == 1
+            assert report["loadAccounting"]["deadlineExceededOperationCount"] >= 1
+            assert report["resourceDiagnostics"] == {"phase": subject.RESOURCE_DIAGNOSTIC_PHASE,
+                                                       "state": "not-run", "snapshotCount": 0,
+                                                       "snapshots": []}
+            assert all(not client.resource_node_ids for client in clients)
+            assert "post-load operations: transport fenced after non-cooperative read" in report["errors"]
+            read_metric = next(metric for metric in CapturingMetric.created if metric.name == "ReadLatencyMs")
+            metric_before = read_metric.report()
+            clients[-1].late_release.set()
+            await asyncio.wait_for(clients[-1].late_returned.wait(), 0.2)
+            await asyncio.sleep(0)
+            assert read_metric.report() == metric_before
+            assert Path(options.output).read_bytes() == report_before
+            remaining = {task for task in asyncio.all_tasks() if task is not asyncio.current_task()}
+            assert remaining == baseline_tasks, "quarantined task must be observed and finish"
+        finally:
+            for client in clients:
+                client.late_release.set()
+            await asyncio.sleep(0)
+            subject.configure_client, subject.opcua_common.export_config, subject.Metric = (
+                old_configure, old_export, old_metric)
+
+
+async def test_event_loop_blocked_read_is_late_and_fenced() -> None:
+    class Node:
+        async def read_value(self):
+            # Completion after a blocked loop must not be misclassified as an
+            # on-time success merely because asyncio.wait sees a done task.
+            subject.time.sleep(0.03)
+            return 1
+    class Client:
+        def __init__(self): self.disconnected = False
+        def get_node(self, _node_id): return Node()
+        async def disconnect(self): self.disconnected = True
+    client = Client()
+    metric, log = subject.Metric("read", 4), subject.ErrorLog(4, 256)
+    result = await subject.run_client_read_schedule(
+        client, ["value"], 0, 1.0, subject.time.perf_counter() + 0.02, 0.01, metric, log)
+    assert result["completedOperationCount"] == 0
+    assert result["deadlineExceededOperationCount"] == 1
+    assert result["transportFenced"] is True and client.disconnected
+    assert metric.samples.report()["sampleCount"] == 0
+    assert metric.timeouts == 1 and metric.failures == 1
+
+
+async def test_raw_operation_cancellation_is_merged_and_fenced() -> None:
+    class Node:
+        async def read_value(self):
+            raise asyncio.CancelledError()
+    class Client:
+        def __init__(self): self.disconnected = False
+        def get_node(self, _node_id): return Node()
+        async def disconnect(self): self.disconnected = True
+    client = Client()
+    metric, log = subject.Metric("read", 4), subject.ErrorLog(4, 256)
+    result = await subject.run_client_read_schedule(
+        client, ["value"], 0, 1.0, subject.time.perf_counter() + 0.02, 0.1, metric, log)
+    assert result["failedOperationCount"] == 1
+    assert result["deadlineExceededOperationCount"] == 0
+    assert result["transportFenced"] is True and client.disconnected
+    assert metric.state == "failed" and metric.failures == 1
+    assert "RawOperationCancelledError" in log.items[0]
 
 
 async def test_independent_client_read_schedules() -> None:
@@ -260,6 +397,87 @@ async def test_independent_client_read_schedules() -> None:
     assert not log.items, log.items
 
 
+async def test_fixed_rate_single_client_allows_bounded_overlap() -> None:
+    shared = SimpleNamespace(active=0, peak=0)
+    class Node:
+        async def read_value(self):
+            shared.active += 1
+            shared.peak = max(shared.peak, shared.active)
+            try:
+                await asyncio.sleep(0.15)
+                return 1
+            finally:
+                shared.active -= 1
+    class Client:
+        def get_node(self, _node_id): return Node()
+    metric, log = subject.Metric("read", 16), subject.ErrorLog(16, 256)
+    result = await subject.run_client_read_schedule(
+        Client(), ["value"], 0, 10.0, subject.time.perf_counter() + 0.35, 1.0,
+        metric, log, max_in_flight=2)
+    assert result["scheduledOperationCount"] == 4, result
+    assert result["completedOperationCount"] == 4 and result["missedDeadlineCount"] == 0
+    assert result["peakInFlightCount"] == 2 and shared.peak == 2
+    assert shared.active == 0, "all in-flight Reads must drain before the schedule returns"
+    assert metric.timeouts == 0 and not log.items
+
+
+async def test_scheduler_lag_is_missed_not_caught_up() -> None:
+    calls = 0
+    class Node:
+        async def read_value(self):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                # Block the loop for five arrival periods: stale arrivals must
+                # be reported as misses, never dispatched in a catch-up burst.
+                subject.time.sleep(0.05)
+            return 1
+    class Client:
+        def get_node(self, _node_id): return Node()
+    metric, log = subject.Metric("read", 32), subject.ErrorLog(16, 256)
+    result = await subject.run_client_read_schedule(
+        Client(), ["value"], 0, 100.0, subject.time.perf_counter() + 0.09, 0.5,
+        metric, log, max_in_flight=4)
+    assert result["missedDeadlineCount"] >= 3, result
+    assert result["inFlightLimitExceededCount"] == 0
+    assert result["scheduledOperationCount"] == (
+        result["completedOperationCount"] + result["missedDeadlineCount"] +
+        result["deadlineExceededOperationCount"] + result["failedOperationCount"])
+
+
+async def test_in_flight_limit_is_a_bounded_missed_workload() -> None:
+    shared = SimpleNamespace(active=0, peak=0)
+    class Node:
+        async def read_value(self):
+            shared.active += 1
+            shared.peak = max(shared.peak, shared.active)
+            try:
+                await asyncio.sleep(0.06)
+                return 1
+            finally:
+                shared.active -= 1
+    class Client:
+        def get_node(self, _node_id): return Node()
+    metric, log = subject.Metric("read", 32), subject.ErrorLog(16, 256)
+    result = await subject.run_client_read_schedule(
+        Client(), ["value"], 0, 100.0, subject.time.perf_counter() + 0.08, 0.5,
+        metric, log, max_in_flight=2)
+    assert result["inFlightLimitExceededCount"] >= 1, result
+    assert result["peakInFlightCount"] <= 2 and shared.peak <= 2
+    assert shared.active == 0, "bounded drain must finish outstanding Reads"
+    assert result["scheduledOperationCount"] == (
+        result["completedOperationCount"] + result["missedDeadlineCount"] +
+        result["deadlineExceededOperationCount"] + result["failedOperationCount"])
+    try:
+        await subject.run_client_read_schedule(Client(), ["value"], 0, 1.0,
+                                               subject.time.perf_counter() + 0.01, 0.1,
+                                               metric, log, max_in_flight=17)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("in-flight bound must reject an unbounded request")
+
+
 async def test_early_read_failure_is_not_a_deadline_miss() -> None:
     class Node:
         async def read_value(self):
@@ -275,6 +493,29 @@ async def test_early_read_failure_is_not_a_deadline_miss() -> None:
         result["completedOperationCount"] + result["missedDeadlineCount"] +
         result["deadlineExceededOperationCount"] + result["failedOperationCount"])
     assert metric.state == "failed" and len(log.items) == 1
+
+
+def test_load_accounting_aggregates_in_flight_capacity() -> None:
+    destination = {"scheduledOperationCount": 0, "completedOperationCount": 0,
+                   "missedDeadlineCount": 0, "deadlineExceededOperationCount": 0,
+                   "failedOperationCount": 0, "inFlightLimitExceededCount": 0,
+                   "peakInFlightCount": 0, "transportFencedClientCount": 0,
+                   "rateHzPerClient": 10.0}
+    subject.merge_load_accounting(destination, {
+        "scheduledOperationCount": 3, "completedOperationCount": 2,
+        "missedDeadlineCount": 1, "deadlineExceededOperationCount": 0,
+        "failedOperationCount": 0, "inFlightLimitExceededCount": 1,
+        "peakInFlightCount": 2, "transportFenced": False})
+    subject.merge_load_accounting(destination, {
+        "scheduledOperationCount": 4, "completedOperationCount": 3,
+        "missedDeadlineCount": 1, "deadlineExceededOperationCount": 0,
+        "failedOperationCount": 0, "inFlightLimitExceededCount": 0,
+        "peakInFlightCount": 5, "transportFenced": False})
+    assert destination["inFlightLimitExceededCount"] == 1
+    assert destination["peakInFlightCount"] == 5
+    assert destination["scheduledOperationCount"] == (
+        destination["completedOperationCount"] + destination["missedDeadlineCount"] +
+        destination["deadlineExceededOperationCount"] + destination["failedOperationCount"])
 
 
 async def test_resource_diagnostics_authorization_failure() -> None:
@@ -443,9 +684,16 @@ async def main() -> None:
     await test_history_release_survives_cancellation()
     await test_partial_monitored_item_rejection()
     await test_failed_connect_is_cleaned_up()
-    await test_read_crossing_deadline_fails_without_sample()
+    await test_read_timeout_fails_without_sample()
+    await test_non_cooperative_read_is_fenced_and_postload_skipped()
+    await test_event_loop_blocked_read_is_late_and_fenced()
+    await test_raw_operation_cancellation_is_merged_and_fenced()
     await test_independent_client_read_schedules()
+    await test_fixed_rate_single_client_allows_bounded_overlap()
+    await test_scheduler_lag_is_missed_not_caught_up()
+    await test_in_flight_limit_is_a_bounded_missed_workload()
     await test_early_read_failure_is_not_a_deadline_miss()
+    test_load_accounting_aggregates_in_flight_capacity()
     print("load_test_opcua bounded benchmark tests: PASS")
 
 

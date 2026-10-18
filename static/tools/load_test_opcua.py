@@ -44,6 +44,11 @@ MONITORED_NODE_IDS = (
 )
 RESOURCE_DIAGNOSTIC_NODE_IDS = resource_contract.RESOURCE_NODE_IDS
 RESOURCE_DIAGNOSTIC_PHASE = "post-steady-before-cleanup"
+# Fixed-rate benchmark arrivals are bounded independently of the server's
+# timeout. At the frozen maximum of four external clients this permits 64
+# outstanding service calls and covers the observed sub-second latency tail;
+# a saturated client records missed arrivals instead of growing without bound.
+MAX_READS_IN_FLIGHT_PER_CLIENT = 16
 
 DIAGNOSTIC_NODE_IDS = {
     "uptime_s": "ns=1;s=Device.Diagnostics.UptimeSec", "free_heap": "ns=1;s=Device.Diagnostics.FreeHeap",
@@ -445,6 +450,96 @@ class Metric:
         result.update(self.samples.report()); return result
 
 
+class RawOperationCancelledError(RuntimeError):
+    """The child OPC UA operation was cancelled; this is distinct from caller cancellation."""
+
+
+def observe_quarantined_task(task: asyncio.Future[Any]) -> None:
+    """Consume a detached task result; it must never update benchmark state."""
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+def quarantine_task(task: asyncio.Future[Any]) -> None:
+    """Request cancellation without awaiting an untrusted coroutine indefinitely."""
+    if not task.done():
+        task.cancel()
+    task.add_done_callback(observe_quarantined_task)
+
+
+async def strict_bounded_call(operation: Any, timeout_s: float) -> tuple[bool, Any | None]:
+    """Return at the deadline even when an asyncua coroutine suppresses cancellation.
+
+    Python cannot terminate arbitrary coroutines.  A late operation is therefore
+    quarantined, its eventual result is observed, and its caller must fence the
+    affected client before issuing another OPC UA service request on it.
+    """
+    deadline = time.perf_counter() + timeout_s
+    task = asyncio.ensure_future(operation)
+    try:
+        done, _pending = await asyncio.wait((task,), timeout=timeout_s)
+    except asyncio.CancelledError:
+        # This task's caller was cancelled.  Preserve cancellation semantics
+        # while ensuring the child task cannot become unobserved.
+        quarantine_task(task)
+        raise
+    except BaseException:
+        quarantine_task(task)
+        raise
+    if not done:
+        quarantine_task(task)
+        return False, None
+
+    # Read the terminal result even when the loop was blocked until after the
+    # deadline.  It must be observed, but it is never a successful sample.
+    late = time.perf_counter() > deadline
+    try:
+        result = task.result()
+    except asyncio.CancelledError as exc:
+        if late:
+            return False, None
+        raise RawOperationCancelledError("raw OPC UA operation was cancelled") from exc
+    except BaseException:
+        if late:
+            return False, None
+        raise
+    return (False, None) if late else (True, result)
+
+
+async def strict_timed_read(metric: Metric, operation: Any, timeout_s: float) -> Any:
+    """Account a scheduled Read once, at its declared deadline, never later."""
+    started = time.perf_counter()
+    try:
+        completed, result = await strict_bounded_call(operation, timeout_s)
+    except asyncio.CancelledError:
+        raise
+    except BaseException as exc:
+        metric.failure(exc)
+        raise
+    if not completed:
+        exc = asyncio.TimeoutError("read exceeded declared operation timeout")
+        metric.failure(exc)
+        raise exc
+    metric.success((time.perf_counter() - started) * 1000)
+    return result
+
+
+async def bounded_disconnect(client: Any, timeout_s: float, log: ErrorLog,
+                             context: str) -> bool:
+    """Fence a client with bounded host waiting; late disconnects stay quarantined."""
+    try:
+        completed, _result = await strict_bounded_call(client.disconnect(), timeout_s)
+    except BaseException as exc:
+        log.add(context, exc)
+        return False
+    if not completed:
+        log.add(context, "TimeoutError")
+        return False
+    return True
+
+
 async def timed(metric: Metric, operation: Any, timeout_s: float,
                 deadline: float | None = None) -> Any:
     started = time.perf_counter()
@@ -658,63 +753,200 @@ async def benchmark_cleanup(subscriptions: list[Any], clients: list[Any], timeou
                             log: ErrorLog) -> None:
     for subscription in reversed(subscriptions):
         try:
-            await asyncio.wait_for(subscription.delete(), timeout_s)
+            completed, _result = await strict_bounded_call(subscription.delete(), timeout_s)
+            if not completed:
+                log.add("subscription cleanup", "TimeoutError")
         except BaseException as exc:
             log.add("subscription cleanup", exc)
     subscriptions.clear()
     for client in reversed(clients):
-        try:
-            await asyncio.wait_for(client.disconnect(), timeout_s)
-        except BaseException as exc:
-            log.add("client cleanup", exc)
+        await bounded_disconnect(client, timeout_s, log, "client cleanup")
     clients.clear()
 
 
 async def run_client_read_schedule(client: Any, nodes: list[str], client_index: int,
                                    rate_hz: float, end: float, timeout_s: float,
-                                   metric: Metric, log: ErrorLog) -> dict[str, int]:
-    """Run one external client's deadline schedule without serializing peers."""
+                                   metric: Metric, log: ErrorLog,
+                                   max_in_flight: int = MAX_READS_IN_FLIGHT_PER_CLIENT) -> dict[str, Any]:
+    """Dispatch one client's Reads at fixed arrivals with bounded outstanding work.
+
+    Arrival slots are never shortened to the rate period: every dispatched
+    call receives the declared operation timeout.  Slots made stale by event
+    loop lag, or rejected because the per-client outstanding limit is full,
+    are recorded as missed rather than silently reducing the declared load.
+    A timed-out operation fences that logical client.  Python cannot terminate
+    a coroutine which suppresses cancellation, so its result is quarantined and
+    observed while no later benchmark RPC is allowed on the fenced client.
+    """
+    if rate_hz <= 0 or not math.isfinite(rate_hz):
+        raise ValueError("read rate must be finite and positive")
+    if timeout_s <= 0 or not math.isfinite(timeout_s):
+        raise ValueError("read timeout must be finite and positive")
+    if type(max_in_flight) is not int or not 1 <= max_in_flight <= MAX_READS_IN_FLIGHT_PER_CLIENT:
+        raise ValueError("in-flight read limit is outside the fixed bound")
+    if not nodes:
+        raise ValueError("at least one benchmark value node is required")
+
     period = 1.0 / rate_hz
-    deadline = time.perf_counter()
+    next_arrival = time.perf_counter()
     index = client_index % len(nodes)
-    accounting = {"scheduledOperationCount": 0, "completedOperationCount": 0,
-                  "missedDeadlineCount": 0, "deadlineExceededOperationCount": 0,
-                  "failedOperationCount": 0}
-    while deadline < end:
-        now = time.perf_counter()
-        if now >= end:
-            remaining = math.ceil(max(0.0, end - deadline) * rate_hz)
-            accounting["scheduledOperationCount"] += remaining
-            accounting["missedDeadlineCount"] += remaining
-            break
-        if now - deadline >= period:
-            skipped = math.floor((now - deadline) / period)
-            accounting["scheduledOperationCount"] += skipped
-            accounting["missedDeadlineCount"] += skipped
-            deadline += skipped * period
-            if deadline >= end:
-                break
-        accounting["scheduledOperationCount"] += 1
-        operation_deadline = min(end, deadline + period)
+    in_flight: set[asyncio.Task[str]] = set()
+    transport_fenced = False
+    accounting: dict[str, Any] = {
+        "scheduledOperationCount": 0, "completedOperationCount": 0,
+        "missedDeadlineCount": 0, "deadlineExceededOperationCount": 0,
+        "failedOperationCount": 0, "inFlightLimitExceededCount": 0,
+        "peakInFlightCount": 0, "transportFenced": False,
+    }
+
+    async def fence_transport() -> None:
+        nonlocal transport_fenced
+        if not transport_fenced:
+            transport_fenced = True
+            accounting["transportFenced"] = True
+            await bounded_disconnect(client, timeout_s, log,
+                                     f"read client {client_index + 1} transport fence")
+
+    async def read_once(node_id: str) -> str:
         try:
-            await timed(metric, client.get_node(nodes[index]).read_value(), timeout_s, operation_deadline)
-            accounting["completedOperationCount"] += 1
+            # Deliberately no cadence deadline: the full declared timeout is
+            # part of the measured operation contract, not the 1/rate period.
+            await strict_timed_read(metric, client.get_node(node_id).read_value(), timeout_s)
+        except asyncio.TimeoutError as exc:
+            # A request that reaches its timeout may have retained the client
+            # transport.  Fence it before this task completes; later arrivals
+            # are accounted as missed and post-steady RPCs are prohibited.
+            await fence_transport()
+            log.add(f"read client {client_index + 1}", exc)
+            return "deadline-exceeded"
+        except RawOperationCancelledError as exc:
+            # A completed child cancellation is an unsafe transport outcome,
+            # not caller cancellation.  Merge it into accounting and fence.
+            await fence_transport()
+            log.add(f"read client {client_index + 1}", exc)
+            return "failed"
         except Exception as exc:
-            if isinstance(exc, asyncio.TimeoutError):
+            log.add(f"read client {client_index + 1}", exc)
+            return "failed"
+        return "completed"
+
+    def account_terminal(task: asyncio.Task[str], *, forced_timeout: bool = False) -> None:
+        if forced_timeout:
+            metric.failure(asyncio.TimeoutError("read drain exceeded declared timeout"))
+            accounting["deadlineExceededOperationCount"] += 1
+            log.add(f"read client {client_index + 1} drain", "TimeoutError")
+            return
+        try:
+            outcome = task.result()
+        except asyncio.CancelledError:
+            metric.failure(asyncio.TimeoutError("read cancelled during bounded drain"))
+            accounting["deadlineExceededOperationCount"] += 1
+            log.add(f"read client {client_index + 1} drain", "TimeoutError")
+        except BaseException as exc:
+            metric.failure(exc)
+            accounting["failedOperationCount"] += 1
+            log.add(f"read client {client_index + 1}", exc)
+        else:
+            if outcome == "completed":
+                accounting["completedOperationCount"] += 1
+            elif outcome == "deadline-exceeded":
                 accounting["deadlineExceededOperationCount"] += 1
             else:
                 accounting["failedOperationCount"] += 1
-            log.add(f"read client {client_index + 1}", exc)
-        index = (index + 1) % len(nodes)
-        deadline += period
-        await asyncio.sleep(max(0.0, min(deadline, end) - time.perf_counter()))
+
+    def harvest_done() -> None:
+        done = {task for task in in_flight if task.done()}
+        for task in done:
+            in_flight.remove(task)
+            account_terminal(task)
+
+    try:
+        while next_arrival < end:
+            now = time.perf_counter()
+            if now >= end:
+                # No operation starts after the steady interval.  Account the
+                # remaining declared arrivals exactly once as scheduler misses.
+                while next_arrival < end:
+                    accounting["scheduledOperationCount"] += 1
+                    accounting["missedDeadlineCount"] += 1
+                    next_arrival += period
+                break
+            if now < next_arrival:
+                await asyncio.sleep(max(0.0, min(next_arrival, end) - now))
+                continue
+
+            # Minor wake-up jitter still dispatches the current slot.  Once a
+            # whole period is late, older slots are stale and are never caught
+            # up in a burst that would distort the requested rate.
+            stale_slots = int((now - next_arrival) // period)
+            for _ in range(stale_slots):
+                if next_arrival >= end:
+                    break
+                accounting["scheduledOperationCount"] += 1
+                accounting["missedDeadlineCount"] += 1
+                next_arrival += period
+            if next_arrival >= end:
+                break
+
+            harvest_done()
+            accounting["scheduledOperationCount"] += 1
+            if transport_fenced:
+                accounting["missedDeadlineCount"] += 1
+            elif len(in_flight) >= max_in_flight:
+                accounting["missedDeadlineCount"] += 1
+                accounting["inFlightLimitExceededCount"] += 1
+            else:
+                task = asyncio.create_task(read_once(nodes[index]))
+                in_flight.add(task)
+                accounting["peakInFlightCount"] = max(accounting["peakInFlightCount"], len(in_flight))
+                index = (index + 1) % len(nodes)
+            next_arrival += period
+    finally:
+        # Give an arrival which started before the end its full declared
+        # timeout.  Any task that will not finish is quarantined with its
+        # exception observed; it cannot update the metric after accounting.
+        if in_flight:
+            done, pending = await asyncio.wait(in_flight, timeout=timeout_s)
+            for task in done:
+                account_terminal(task)
+            if pending:
+                # The strict read timer and this drain timer can expire in the
+                # same loop turn.  Yield once so the read task can record its
+                # timeout and fence the client before any outer cancellation.
+                await asyncio.sleep(0)
+                settled = {task for task in pending if task.done()}
+                for task in settled:
+                    account_terminal(task)
+                pending -= settled
+            if pending:
+                # These tasks have already consumed their full operation
+                # timeout.  Fence before cancelling their wrappers so a loop
+                # blocked past the deadline cannot leave the session reusable.
+                await fence_transport()
+                for task in pending:
+                    quarantine_task(task)
+                cancelled, still_pending = await asyncio.wait(pending, timeout=timeout_s)
+                for task in cancelled:
+                    account_terminal(task)
+                for task in still_pending:
+                    account_terminal(task, forced_timeout=True)
+                    quarantine_task(task)
+            in_flight.clear()
+    if accounting["scheduledOperationCount"] != (
+            accounting["completedOperationCount"] + accounting["missedDeadlineCount"] +
+            accounting["deadlineExceededOperationCount"] + accounting["failedOperationCount"]):
+        raise RuntimeError("read schedule accounting invariant violated")
     return accounting
 
 
 def merge_load_accounting(destination: dict[str, Any], source: dict[str, int]) -> None:
     for key in ("scheduledOperationCount", "completedOperationCount", "missedDeadlineCount",
-                "deadlineExceededOperationCount", "failedOperationCount"):
+                "deadlineExceededOperationCount", "failedOperationCount",
+                "inFlightLimitExceededCount"):
         destination[key] += source[key]
+    destination["peakInFlightCount"] = max(destination["peakInFlightCount"],
+                                           source["peakInFlightCount"])
+    destination["transportFencedClientCount"] += int(bool(source["transportFenced"]))
 
 
 async def run_benchmark(args: argparse.Namespace) -> int:
@@ -732,7 +964,8 @@ async def run_benchmark(args: argparse.Namespace) -> int:
     verified, notifications = False, 0
     load_accounting = {"scheduledOperationCount": 0, "completedOperationCount": 0, "missedDeadlineCount": 0,
                        "deadlineExceededOperationCount": 0, "failedOperationCount": 0,
-                       "rateHzPerClient": args.read_rate}
+                       "inFlightLimitExceededCount": 0, "peakInFlightCount": 0,
+                       "transportFencedClientCount": 0, "rateHzPerClient": args.read_rate}
     try:
         cold = await benchmark_connect(args, metrics["SecureSessionEstablishmentLatencyMs.Cold"]); clients.append(cold)
         export = await timed(metrics["MethodLatencyMs"], opcua_common.export_config(cold.get_node(opcua_common.CONFIGURATION_NODE_ID)), args.timeout)
@@ -753,37 +986,47 @@ async def run_benchmark(args: argparse.Namespace) -> int:
                                          args.timeout, metrics["ReadLatencyMs"], log))
                          for client_index, client in enumerate(clients)]
             schedule_results = await asyncio.gather(*schedules, return_exceptions=True)
+            transport_fenced = False
             for client_index, schedule_result in enumerate(schedule_results):
                 if isinstance(schedule_result, BaseException):
                     log.add(f"read schedule client {client_index + 1}", schedule_result)
                     continue
                 merge_load_accounting(load_accounting, schedule_result)
+                transport_fenced = transport_fenced or bool(schedule_result["transportFenced"])
 
-            # The frozen profile matrix has no HistoryRead request-rate axis;
-            # it fixes only the per-client continuation cap. Run exactly one
-            # bounded page per external client after the steady read interval,
-            # so history measurement cannot serialize or lower the declared
-            # per-client Read rate.
-            if profile["history"]:
-                for client_index, client in enumerate(clients):
-                    try:
-                        await history_read_once(client, nodes[client_index % len(nodes)],
-                                                args.history_max_values, args.timeout,
-                                                metrics["HistoryReadLatencyMs"],
-                                                history_cleanup_metric)
-                    except Exception as exc:
-                        log.add(f"history client {client_index + 1}", exc)
+            if transport_fenced:
+                # A timeout can leave an arbitrary asyncua coroutine alive.
+                # Its client was fenced by the schedule, so this run must not
+                # issue HistoryRead or diagnostics on any benchmark session.
+                log.add("post-load operations", "transport fenced after non-cooperative read")
+            else:
+                # The frozen profile matrix has no HistoryRead request-rate axis;
+                # it fixes only the per-client continuation cap. Run exactly one
+                # bounded page per external client after the steady read interval,
+                # so history measurement cannot serialize or lower the declared
+                # per-client Read rate.
+                if profile["history"]:
+                    for client_index, client in enumerate(clients):
+                        try:
+                            await history_read_once(client, nodes[client_index % len(nodes)],
+                                                    args.history_max_values, args.timeout,
+                                                    metrics["HistoryReadLatencyMs"],
+                                                    history_cleanup_metric)
+                        except Exception as exc:
+                            log.add(f"history client {client_index + 1}", exc)
 
-            # This occurs only after the timed Read window and uses client 0,
-            # which is already counted in the declared profile.  It therefore
-            # neither adds a fifth session nor alters steady-load accounting.
-            resource_snapshot = await capture_resource_diagnostics(clients[0], args.timeout)
-            resource_snapshots.append(resource_snapshot)
-            if resource_snapshot["state"] != "measured":
-                log.add("post-steady resource diagnostics", resource_snapshot["state"])
+                # This occurs only after the timed Read window and uses client 0,
+                # which is already counted in the declared profile.  It therefore
+                # neither adds a fifth session nor alters steady-load accounting.
+                resource_snapshot = await capture_resource_diagnostics(clients[0], args.timeout)
+                resource_snapshots.append(resource_snapshot)
+                if resource_snapshot["state"] != "measured":
+                    log.add("post-steady resource diagnostics", resource_snapshot["state"])
             notifications += sum(handler.notifications for handler in handlers)
             await benchmark_cleanup(subscriptions, clients, args.timeout, log)
             handlers.clear()
+            if transport_fenced:
+                break
     except Exception as exc:
         log.add("benchmark setup", exc)
         for metric in metrics.values():
@@ -825,9 +1068,9 @@ async def run_benchmark(args: argparse.Namespace) -> int:
     metric_report["MethodLatencyMs"]["phase"] = "setup-export-config-profile-verification"
     metric_report["HistoryReadLatencyMs"]["continuationRelease"] = history_cleanup_metric.report()
     resource_evidence = resource_diagnostic_report(resource_snapshots)
-    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": {"state": "unavailable", "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery"}, "resourceDiagnostics": resource_evidence, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
+    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "maxInFlightReadsPerClient": MAX_READS_IN_FLIGHT_PER_CLIENT, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": {"state": "unavailable", "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery"}, "resourceDiagnostics": resource_evidence, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
     write_bounded_json(Path(args.output), report, BOUNDS["maxJsonBytes"])
-    return 1 if log.items or log.overflow or accounting["droppedSampleCount"] or load_accounting["missedDeadlineCount"] or load_accounting["failedOperationCount"] or any(metric.state in {"failed", "exhausted"} for metric in accounted_metrics) else 0
+    return 1 if log.items or log.overflow or accounting["droppedSampleCount"] or load_accounting["missedDeadlineCount"] or load_accounting["deadlineExceededOperationCount"] or load_accounting["failedOperationCount"] or any(metric.state in {"failed", "exhausted"} for metric in accounted_metrics) else 0
 
 
 def asyncua_version() -> str:
