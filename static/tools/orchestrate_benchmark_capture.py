@@ -130,7 +130,13 @@ class ReadinessProbe:
 
     def _run(self) -> None:
         while True:
-            chunk = self.stream.read(4096)
+            # A large synchronous pipe read may wait for the requested byte
+            # count on Windows, hiding a short readiness token until the
+            # workload exits.  Buffered streams expose ``read1`` for one
+            # underlying read; production's unbuffered Popen pipe takes the
+            # one-byte fallback.  Both paths preserve streaming semantics.
+            read1 = getattr(self.stream, "read1", None)
+            chunk = read1(4096) if callable(read1) else self.stream.read(1)
             if not chunk:
                 return
             self.bytes_seen += len(chunk)

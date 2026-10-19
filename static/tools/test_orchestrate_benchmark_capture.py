@@ -6,6 +6,8 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 import tempfile
 import time
@@ -108,6 +110,45 @@ def identity(_root: Path): return COMMIT, False
 def fast_recovery(console, _started_at, warmup_s, duration_s, dump_timeout_s):
     subject.recover_native_capture(console, time.monotonic() - warmup_s - duration_s,
                                    warmup_s, duration_s, dump_timeout_s)
+
+
+def real_pipe_readiness() -> None:
+    """A flushed token must be visible while a real child process is alive."""
+    process = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys,time; sys.stdout.buffer.write(b'READY\\n'); "
+         "sys.stdout.buffer.flush(); time.sleep(2)"],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0)
+    assert process.stdout is not None
+    probe = subject.ReadinessProbe(process.stdout, b"READY\n", 1)
+    probe.start()
+    started = time.monotonic()
+    try:
+        subject.wait_for_readiness(process, probe, 0.5)
+        assert time.monotonic() - started < 1.0
+        assert process.poll() is None
+    finally:
+        subject.stop_process(process)
+        probe.thread.join(timeout=1)
+
+
+def read1_is_preferred() -> None:
+    class Read1Stream:
+        def __init__(self) -> None:
+            self.chunks = [b"READY\n", b""]
+
+        def read1(self, count: int) -> bytes:
+            assert count == 4096
+            return self.chunks.pop(0)
+
+        def read(self, _count: int) -> bytes:
+            raise AssertionError("read() must not be used when read1() is available")
+
+    probe = subject.ReadinessProbe(Read1Stream(), b"READY\n", 1)
+    probe.start()
+    assert probe.ready.wait(0.5)
+    probe.thread.join(timeout=1)
+    assert probe.count == 1 and not probe.failed
 
 
 def run_success() -> None:
@@ -227,4 +268,6 @@ def negative_cases() -> None:
 
 run_success()
 negative_cases()
+real_pipe_readiness()
+read1_is_preferred()
 print("orchestrate-benchmark-capture tests: PASS")
