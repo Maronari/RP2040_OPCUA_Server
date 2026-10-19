@@ -17,6 +17,7 @@ import sys
 SUITES = (
     "test_load_test_opcua.py",
     "test_benchmark_timing.py",
+    "test_orchestrate_benchmark_capture.py",
 "test_freertos_stack_hwm.py",
     "test_benchmark_profiles.py",
     "test_benchmark_cmake.py",

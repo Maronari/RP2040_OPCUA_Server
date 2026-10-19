@@ -11,8 +11,11 @@ import sys
 from typing import Any
 
 import benchmark_profiles
+import load_test_opcua
 
 MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_NATIVE_EVIDENCE_BYTES = 1024 * 1024
+MAX_ASSOCIATION_ENVELOPE_BYTES = 64 * 1024
 REQUIRED_METRICS = {
     "ReadLatencyMs.p99": "milliseconds",
     "SecureSessionEstablishmentLatencyMs.Cold.max": "milliseconds",
@@ -21,6 +24,8 @@ REQUIRED_METRICS = {
     "PSRAM.PeakUsedBytes": "bytes",
 }
 SAMPLING_JITTER_METRIC = "SamplingJitterMs.p99"
+NATIVE_ASSOCIATION_KIND = "native-association"
+METRIC_UNITS = {**REQUIRED_METRICS, SAMPLING_JITTER_METRIC: "milliseconds"}
 STATIC_TOTALS = {
     "ElfFileBytes", "Uf2FileBytes", "BinFileBytes",
     "ExternalFlashLoadBytes", "SramStaticTotalBytes",
@@ -51,8 +56,12 @@ def require(condition: bool, message: str) -> None:
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
+    total = 0
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(65536), b""):
+            total += len(block)
+            if total > MAX_JSON_BYTES:
+                raise BaselineError(f"{path}: exceeds {MAX_JSON_BYTES} bytes")
             digest.update(block)
     return digest.hexdigest()
 
@@ -70,34 +79,134 @@ def validate_environment(environment: Any, release: str, prefix: str = "environm
             f"{prefix} firmware version differs from release")
 
 
-def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, Any]) -> None:
+def validate_native_association(profile_id: str, profile: dict[str, Any], metrics: dict[str, Any],
+                                environment: dict[str, Any], documents: dict[str, dict[str, Any]],
+                                evidence_hashes: dict[str, str], evidence_sizes: dict[str, int]) -> None:
+    """Validate the runner's byte-level association before accepting native jitter."""
+    envelope = documents[NATIVE_ASSOCIATION_KIND]
+    require(set(envelope) == {"schemaVersion", "kind", "state", "associationId", "profile", "capture",
+                              "provenance", "evidence"}
+            and envelope.get("schemaVersion") == 1
+            and envelope.get("kind") == "v052-host-orchestrated-benchmark-capture"
+            and envelope.get("state") == "complete",
+            f"{profile_id}: native association envelope is invalid")
+    profile_evidence = envelope.get("profile")
+    require(isinstance(profile_evidence, dict) and profile_evidence == {
+        "profileId": profile_id,
+        "profileSchemaVersion": profile["profileSchemaVersion"],
+        "channels": profile["channels"], "clients": profile["clients"],
+        "rateHz": profile["rateHz"],
+    }, f"{profile_id}: native association profile mismatch")
+    provenance = envelope.get("provenance")
+    static = documents["static-size"]
+    static_provenance = static.get("provenance", {})
+    static_uf2 = static.get("artifacts", {}).get("uf2", {}).get("sha256")
+    require(isinstance(provenance, dict) and provenance == {
+        "gitCommit": environment["gitCommit"], "gitDirty": environment["gitDirty"],
+        "boardRevision": environment["boardId"], "toolchain": environment["compiler"],
+        "buildType": environment["buildType"], "flashedUf2Sha256": environment["firmwareUf2Sha256"],
+    }, f"{profile_id}: native association provenance mismatch")
+    require(static_provenance.get("gitCommit") == provenance["gitCommit"]
+            and static_provenance.get("gitDirty") is provenance["gitDirty"]
+            and static_provenance.get("boardRevision") == provenance["boardRevision"]
+            and static_provenance.get("toolchain") == provenance["toolchain"]
+            and static_provenance.get("buildType") == provenance["buildType"]
+            and static_uf2 == provenance["flashedUf2Sha256"],
+            f"{profile_id}: native association static provenance mismatch")
+    client = documents["client"]
+    for key in ("gitCommit", "gitDirty", "boardRevision", "toolchain", "buildType"):
+        require(client.get(key) == provenance[key],
+                f"{profile_id}: native association client provenance {key} mismatch")
+    capture = envelope.get("capture")
+    require(isinstance(capture, dict)
+            and set(capture) == {"warmupSeconds", "durationSeconds", "readiness", "nativeCaptureId"}
+            and capture.get("warmupSeconds") == client.get("warmupSeconds")
+            and capture.get("durationSeconds") == client.get("durationSeconds")
+            and capture.get("nativeCaptureId") == documents["native"].get("captureId"),
+            f"{profile_id}: native association capture mismatch")
+    readiness = capture.get("readiness")
+    require(isinstance(readiness, dict)
+            and set(readiness) == {"tokenCount", "requiredTokenCount", "stdoutBytesObserved"}
+            and readiness.get("tokenCount") == profile["clients"]
+            and readiness.get("requiredTokenCount") == profile["clients"]
+            and type(readiness.get("stdoutBytesObserved")) is int
+            and 0 <= readiness["stdoutBytesObserved"] <= 64 * 1024,
+            f"{profile_id}: native association readiness mismatch")
+    association_evidence = envelope.get("evidence")
+    require(isinstance(association_evidence, dict)
+            and set(association_evidence) == {"client", "native", "staticSize"}
+            and association_evidence.get("client") == {
+                "sha256": evidence_hashes["client"], "bytes": evidence_sizes["client"]}
+            and association_evidence.get("native") == {
+                "sha256": evidence_hashes["native"], "bytes": evidence_sizes["native"]}
+            and association_evidence.get("staticSize") == {"sha256": evidence_hashes["static-size"]},
+            f"{profile_id}: native association evidence hash mismatch")
+    expected_association = hashlib.sha256(
+        (profile_id + provenance["gitCommit"] + provenance["flashedUf2Sha256"]
+         + evidence_hashes["client"] + evidence_hashes["native"]).encode("ascii")
+    ).hexdigest()
+    require(envelope.get("associationId") == expected_association,
+            f"{profile_id}: native association ID mismatch")
+    expected_channels = {f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)}
+    try:
+        per_channel = load_test_opcua.native_jitter_metrics(
+            documents["native"], 1000 / profile["rateHz"], 8192, profile_id,
+            capture["warmupSeconds"], capture["durationSeconds"], expected_channels)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise BaselineError(f"{profile_id}: native association jitter evidence is invalid") from exc
+    p99_values = []
+    for value in per_channel.values():
+        report = value.get("samplingJitterMs") if isinstance(value, dict) else None
+        p99 = report.get("p99") if isinstance(report, dict) else None
+        require(value.get("state") == "measured" and type(p99) in (int, float),
+                f"{profile_id}: native association has incomplete channel samples")
+        p99_values.append(float(p99))
+    expected_jitter = max(p99_values)
+    jitter = metrics.get(SAMPLING_JITTER_METRIC)
+    require(isinstance(jitter, dict) and jitter.get("unit") == "milliseconds"
+            and jitter.get("value") == expected_jitter,
+            f"{profile_id}: SamplingJitter differs from associated native evidence")
+
+
+def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, Any]) -> bool:
+    profile_id = entry["profileId"]
     evidence = entry.get("evidence")
     require(isinstance(evidence, list) and 3 <= len(evidence) <= 8,
             f"{entry.get('profileId')}: expected 3..8 evidence files")
     seen: set[str] = set()
     documents: dict[str, dict[str, Any]] = {}
+    evidence_hashes: dict[str, str] = {}
+    evidence_sizes: dict[str, int] = {}
     for item in evidence:
         require(isinstance(item, dict), "evidence entry must be an object")
         kind, relative, expected = item.get("kind"), item.get("path"), item.get("sha256")
-        require(kind in {"client", "native", "resources", "boot-clock", "static-size"}
+        require(kind in {"client", "native", NATIVE_ASSOCIATION_KIND, "resources", "boot-clock", "static-size"}
                 and kind not in documents, f"unknown or duplicate evidence kind: {kind}")
         require(isinstance(relative, str) and relative.startswith("static/benchmarks/v0.5.2/evidence/"),
                 "evidence path must remain under static/benchmarks/v0.5.2/evidence")
         require(relative not in seen, f"duplicate evidence path: {relative}")
         seen.add(relative)
-        require(isinstance(expected, str) and len(expected) == 64,
+        require(isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{64}", expected) is not None,
                 f"{relative}: invalid SHA-256")
         path = root / relative
         require(path.is_file(), f"missing evidence file: {relative}")
         require(sha256(path) == expected.lower(), f"evidence hash mismatch: {relative}")
         documents[kind] = read_json(path)
+        evidence_hashes[kind] = expected.lower()
+        evidence_sizes[kind] = path.stat().st_size
+        if kind == "native":
+            require(evidence_sizes[kind] <= MAX_NATIVE_EVIDENCE_BYTES,
+                    f"{profile_id}: native evidence exceeds byte bound")
+        if kind == NATIVE_ASSOCIATION_KIND:
+            require(evidence_sizes[kind] <= MAX_ASSOCIATION_ENVELOPE_BYTES,
+                    f"{entry.get('profileId')}: native association envelope exceeds byte bound")
     required_documents = {"client", "resources", "static-size"}
     require(required_documents <= set(documents),
             f"{entry.get('profileId')}: evidence kinds are incomplete")
-    require("native" not in documents,
-            f"{entry.get('profileId')}: unassociated native capture must not be baseline evidence")
+    has_native = "native" in documents
+    require(has_native == (NATIVE_ASSOCIATION_KIND in documents),
+            f"{entry.get('profileId')}: native capture requires its association envelope")
 
-    profile_id = entry["profileId"]
     metrics = entry["metrics"]
     client = documents["client"]
     require(client.get("schemaVersion") == 1 and client.get("profileId") == profile_id,
@@ -185,6 +294,10 @@ def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, 
     ):
         require(provenance.get(source_key) == environment[environment_key],
                 f"{profile_id}: static provenance {source_key} mismatch")
+    if has_native:
+        validate_native_association(profile_id, benchmark_profiles.select(profile_id), entry["metrics"],
+                                    environment, documents, evidence_hashes, evidence_sizes)
+    return has_native
 
 
 def validate_baseline(document: dict[str, Any], root: Path) -> dict[str, float]:
@@ -230,9 +343,17 @@ def validate_baseline(document: dict[str, Any], root: Path) -> dict[str, float]:
         require(entry.get("repetitions") == 1,
                 f"{profile_id}: this baseline records exactly one repetition")
         metrics = entry.get("metrics")
-        require(isinstance(metrics, dict) and SAMPLING_JITTER_METRIC not in metrics,
+        require(isinstance(metrics, dict), f"{profile_id}: metrics are invalid")
+        entry_environment = entry.get("environment", environment)
+        validate_environment(entry_environment, document["release"],
+                             f"{profile_id}.environment")
+        has_native_association = validate_evidence(root, entry, entry_environment)
+        require(has_native_association or SAMPLING_JITTER_METRIC not in metrics,
                 f"{profile_id}: SamplingJitter requires runner-proven native association")
-        require(set(metrics) == set(REQUIRED_METRICS),
+        expected_metrics = set(REQUIRED_METRICS)
+        if has_native_association:
+            expected_metrics.add(SAMPLING_JITTER_METRIC)
+        require(set(metrics) == expected_metrics,
                 f"{profile_id}: measured metric set mismatch")
         for name, unit in REQUIRED_METRICS.items():
             metric = metrics[name]
@@ -243,10 +364,13 @@ def validate_baseline(document: dict[str, Any], root: Path) -> dict[str, float]:
                     f"{profile_id}/{name}: invalid value")
             if state == "measured":
                 measured_values[f"{profile_id}:{name}"] = float(value)
-        entry_environment = entry.get("environment", environment)
-        validate_environment(entry_environment, document["release"],
-                             f"{profile_id}.environment")
-        validate_evidence(root, entry, entry_environment)
+        if has_native_association:
+            jitter = metrics[SAMPLING_JITTER_METRIC]
+            require(jitter.get("unit") == "milliseconds"
+                    and type(jitter.get("value")) in (int, float) and jitter["value"] >= 0,
+                    f"{profile_id}/{SAMPLING_JITTER_METRIC}: invalid metric/unit")
+            if state == "measured":
+                measured_values[f"{profile_id}:{SAMPLING_JITTER_METRIC}"] = float(jitter["value"])
     require(actual == set(expected), "profile matrix is incomplete")
     require(measured_count >= 1, "at least one actual hardware profile is required")
     return measured_values
@@ -272,7 +396,7 @@ def validate_thresholds(document: dict[str, Any], measured: dict[str, float]) ->
         require(type(maximum) in (int, float) and maximum > 0, f"{key}: invalid maximum")
         require(maximum >= measured[key],
                 f"{key}: baseline {measured[key]} exceeds threshold {maximum}")
-        require(item.get("unit") == REQUIRED_METRICS[item["metric"]], f"{key}: unit mismatch")
+        require(item.get("unit") == METRIC_UNITS.get(item["metric"]), f"{key}: unit mismatch")
 
 
 def validate_release_readiness(document: dict[str, Any], thresholds: dict[str, Any]) -> None:

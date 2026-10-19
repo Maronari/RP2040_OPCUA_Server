@@ -1085,12 +1085,12 @@
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-resources.json",
-          "sha256": "c9a149c62fcb2ef28428b2696f9e7de3c04933441387f537735247a47f291ab2"
+          "sha256": "81d4a52d37855b75bf2085313bf6b4d6c34c10a9f674d5a41c6df6a05c21d996"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-static-size.json",
-          "sha256": "0be122ab22fa8cf81c83e134a49eef3d361c892cd6ef33bf337d2cf9f1591a28"
+          "sha256": "785e48c25f639555eb74dfc170545a8db2770b48634070646348f22af462a0d1"
         }
       ]
     }

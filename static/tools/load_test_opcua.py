@@ -15,6 +15,7 @@ import json
 import math
 import os
 import statistics
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -603,6 +604,10 @@ def require_benchmark_args(args: argparse.Namespace, profile: dict[str, Any]) ->
         value = getattr(args, name)
         if not isinstance(value, str) or not value or value == "unknown" or len(value.encode("utf-8")) > 256 or "@" in value:
             raise ValueError(f"--{name.replace('_', '-')} must be a bounded credential-free string")
+    token = getattr(args, "runner_readiness_token", None)
+    if token is not None and (not isinstance(token, str) or not token.isascii()
+                              or not 1 <= len(token) <= 64):
+        raise ValueError("--runner-readiness-token must be 1..64 ASCII bytes")
 
 
 def validate_benchmark_metadata(metadata: dict[str, Any], profile: dict[str, Any], git_commit: str) -> None:
@@ -950,9 +955,20 @@ def merge_load_accounting(destination: dict[str, Any], source: dict[str, int]) -
     destination["transportFencedClientCount"] += int(bool(source["transportFenced"]))
 
 
+def emit_runner_readiness(token: str | None) -> None:
+    """Emit one bounded, non-secret lifecycle marker for the host runner."""
+    if token is None:
+        return
+    if not token.isascii() or not 1 <= len(token) <= 64:
+        raise ValueError("runner readiness token must be 1..64 ASCII bytes")
+    sys.stdout.write(token)
+    sys.stdout.flush()
+
+
 async def run_benchmark(args: argparse.Namespace) -> int:
     if not args.benchmark_profile_id or not args.benchmark_metadata: raise ValueError("benchmark profile ID and metadata are required")
     profile = benchmark_profiles.select(args.benchmark_profile_id); require_benchmark_args(args, profile)
+    readiness_token = getattr(args, "runner_readiness_token", None)
     metadata = read_bounded_json(Path(args.benchmark_metadata)); validate_benchmark_metadata(metadata, profile, args.git_commit)
     metrics = {name: Metric(name, args.max_operation_samples) for name in ("StartupLatencyMs", "SecureSessionEstablishmentLatencyMs.Cold", "SecureSessionEstablishmentLatencyMs.Warm", "ReadLatencyMs", "WriteLatencyMs", "MethodLatencyMs", "HistoryReadLatencyMs", "EventDeliveryLatencyMs")}
     history_cleanup_metric = Metric("HistoryContinuationReleaseLatencyMs", args.max_operation_samples)
@@ -980,6 +996,10 @@ async def run_benchmark(args: argparse.Namespace) -> int:
                 subscriptions.append(subscription)
                 await create_monitored_items(client, subscription, nodes, len(nodes), args.create_batch, args.sampling_ms, args.timeout)
                 handlers.append(handler)
+                # The host runner counts one non-secret token for every
+                # connected client whose subscription and monitored items are
+                # established. It never includes endpoint or credential data.
+                emit_runner_readiness(readiness_token)
             if args.warmup: await asyncio.sleep(args.warmup)
             end = time.perf_counter() + args.duration
             schedules = [asyncio.create_task(
@@ -1091,7 +1111,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("server_url"); parser.add_argument("--username", default=os.getenv("OPCUA_USERNAME")); parser.add_argument("--password", default=os.getenv("OPCUA_PASSWORD")); parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--client-cert"); parser.add_argument("--client-key"); parser.add_argument("--server-cert"); parser.add_argument("--security-policy", default="Basic256Sha256", choices=["Basic256Sha256"]); parser.add_argument("--security-mode", default="SignAndEncrypt", choices=["Sign", "SignAndEncrypt"]); parser.add_argument("--no-auto-client-cert", action="store_true")
     parser.add_argument("--clients", type=csv_ints, default=[1, 2]); parser.add_argument("--items", type=csv_ints, default=[8, 32, 64]); parser.add_argument("--duration", type=float, default=15.0); parser.add_argument("--cooldown", type=float, default=3.0); parser.add_argument("--publishing-ms", type=float, default=500.0); parser.add_argument("--sampling-ms", type=float, default=250.0); parser.add_argument("--monitor-node", action="append"); parser.add_argument("--read-rate", type=float, default=5.0); parser.add_argument("--create-batch", type=int, default=32); parser.add_argument("--max-total-items", type=int, default=128); parser.add_argument("--max-operation-samples", type=int, default=BOUNDS["maxOperationSamplesPerMetric"]); parser.add_argument("--max-errors", type=int, default=BOUNDS["maxErrorsPerRun"]); parser.add_argument("--output", default="build/opcua_load_test.json")
-    parser.add_argument("--benchmark", action="store_true"); parser.add_argument("--benchmark-profile-id"); parser.add_argument("--benchmark-metadata"); parser.add_argument("--read-node", action="append"); parser.add_argument("--history-node"); parser.add_argument("--history-max-values", type=int, default=16); parser.add_argument("--warmup", type=float, default=0.0); parser.add_argument("--repetitions", type=int, default=1); parser.add_argument("--native-sampling-evidence")
+    parser.add_argument("--benchmark", action="store_true"); parser.add_argument("--benchmark-profile-id"); parser.add_argument("--benchmark-metadata"); parser.add_argument("--read-node", action="append"); parser.add_argument("--history-node"); parser.add_argument("--history-max-values", type=int, default=16); parser.add_argument("--warmup", type=float, default=0.0); parser.add_argument("--repetitions", type=int, default=1); parser.add_argument("--native-sampling-evidence"); parser.add_argument("--runner-readiness-token")
     parser.add_argument("--test-none", action="store_true", help="allow an explicit T4 test-none profile only")
     parser.add_argument("--git-commit", help="exact source commit used for this run")
     parser.add_argument("--git-dirty", action="store_true", help="record that the benchmark source tree was dirty")

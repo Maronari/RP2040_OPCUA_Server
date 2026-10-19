@@ -37,7 +37,7 @@ def main() -> int:
         f"Explicitly not run: **{not_run}**.", "",
         "| State | Profile | Read p99 | Cold session max | Warm session max | Sampling jitter p99 | Heap peak | PSRAM peak |",
         "|---|---|---:|---:|---:|---:|---:|---:|",
-        "", "Sampling jitter is intentionally not thresholded: the retained native captures have no runner-proven association with a client workload.",
+        "", "Sampling jitter is emitted only for cells whose native capture has a runner-proven association envelope; unassociated captures are excluded.",
         "",
     ]
     for entry in rows:

@@ -15,11 +15,13 @@ from validate_benchmark_baseline import (  # noqa: E402
     BaselineError, read_json, validate_baseline, validate_environment,
     validate_release_readiness, validate_static_report, validate_thresholds,
 )
+import validate_benchmark_baseline as subject  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "static/benchmarks/v0.5.2/baseline.json"
 THRESHOLDS = ROOT / "static/benchmarks/v0.5.2/thresholds.json"
 STATIC_REPORT = ROOT / "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json"
+NATIVE_PROFILE_ID = "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1"
 
 
 def rejects(callable_, phrase: str) -> None:
@@ -29,6 +31,71 @@ def rejects(callable_, phrase: str) -> None:
         assert phrase in str(exc), (phrase, exc)
     else:
         raise AssertionError(f"expected BaselineError containing {phrase!r}")
+
+
+def write_document(path: Path, document: dict) -> str:
+    path.write_bytes(json.dumps(document, indent=2, sort_keys=True).encode("utf-8") + b"\n")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def paired_native_fixture(directory: Path) -> tuple[dict, Path, dict, Path]:
+    """Make one complete runner-associated c16 cell without changing retained evidence."""
+    root = directory
+    evidence_root = root / "static/benchmarks/v0.5.2/evidence"
+    shutil.copytree(ROOT / "static/benchmarks/v0.5.2/evidence", evidence_root)
+    fixture = copy.deepcopy(baseline)
+    entry = next(item for item in fixture["profiles"] if item["profileId"] == NATIVE_PROFILE_ID)
+    client_item = next(item for item in entry["evidence"] if item["kind"] == "client")
+    static_item = next(item for item in entry["evidence"] if item["kind"] == "static-size")
+    client_path = root / client_item["path"]
+    static_path = root / static_item["path"]
+    client, static = read_json(client_path), read_json(static_path)
+    provenance = static["provenance"]
+    client["boardRevision"] = provenance["boardRevision"]
+    client["toolchain"] = provenance["toolchain"]
+    client_item["sha256"] = write_document(client_path, client)
+    entry["environment"]["clientBoardRevision"] = provenance["boardRevision"]
+    entry["environment"]["clientToolchain"] = provenance["toolchain"]
+    native_path = evidence_root / "fixture-native.json"
+    native_path.write_bytes((ROOT / "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json").read_bytes())
+    native = read_json(native_path)
+    native_hash = hashlib.sha256(native_path.read_bytes()).hexdigest()
+    native_item = {"kind": "native", "path": "static/benchmarks/v0.5.2/evidence/fixture-native.json",
+                   "sha256": native_hash}
+    entry["evidence"].append(native_item)
+    profile = next(item for item in subject.benchmark_profiles.profiles()
+                   if item["profileId"] == entry["profileId"])
+    channels = {f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)}
+    per_channel = subject.load_test_opcua.native_jitter_metrics(
+        native, 1000 / profile["rateHz"], 8192, entry["profileId"], 10.0, 30.0, channels)
+    entry["metrics"]["SamplingJitterMs.p99"] = {
+        "value": max(value["samplingJitterMs"]["p99"] for value in per_channel.values()),
+        "unit": "milliseconds",
+    }
+    client_raw = client_path.read_bytes()
+    envelope = {
+        "schemaVersion": 1, "kind": "v052-host-orchestrated-benchmark-capture", "state": "complete",
+        "profile": {"profileId": entry["profileId"], "profileSchemaVersion": profile["profileSchemaVersion"],
+                    "channels": profile["channels"], "clients": profile["clients"], "rateHz": profile["rateHz"]},
+        "capture": {"warmupSeconds": 10.0, "durationSeconds": 30.0,
+                    "readiness": {"tokenCount": 4, "requiredTokenCount": 4, "stdoutBytesObserved": 24},
+                    "nativeCaptureId": native["captureId"]},
+        "provenance": {"gitCommit": provenance["gitCommit"], "gitDirty": provenance["gitDirty"],
+                       "boardRevision": provenance["boardRevision"], "toolchain": provenance["toolchain"],
+                       "buildType": provenance["buildType"], "flashedUf2Sha256": static["artifacts"]["uf2"]["sha256"]},
+        "evidence": {"client": {"sha256": client_item["sha256"], "bytes": len(client_raw)},
+                     "native": {"sha256": native_hash, "bytes": native_path.stat().st_size},
+                     "staticSize": {"sha256": static_item["sha256"]}},
+    }
+    envelope["associationId"] = hashlib.sha256(
+        (entry["profileId"] + provenance["gitCommit"] + static["artifacts"]["uf2"]["sha256"]
+         + client_item["sha256"] + native_hash).encode("ascii")).hexdigest()
+    envelope_path = evidence_root / "fixture-native-association.json"
+    association_item = {"kind": "native-association",
+                        "path": "static/benchmarks/v0.5.2/evidence/fixture-native-association.json",
+                        "sha256": write_document(envelope_path, envelope)}
+    entry["evidence"].append(association_item)
+    return fixture, root, envelope, envelope_path
 
 
 baseline = read_json(BASELINE)
@@ -160,7 +227,39 @@ native_entry["evidence"].append({
     "sha256": hashlib.sha256((ROOT / "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json").read_bytes()).hexdigest(),
 })
 rejects(lambda: validate_baseline(native_as_baseline_evidence, ROOT),
-        "unassociated native capture must not be baseline evidence")
+        "native capture requires its association envelope")
+
+with tempfile.TemporaryDirectory() as directory:
+    paired, paired_root, envelope, envelope_path = paired_native_fixture(Path(directory))
+    paired_measured = validate_baseline(paired, paired_root)
+    assert len(paired_measured) == 11
+    paired_entry = next(item for item in paired["profiles"] if item["profileId"] == NATIVE_PROFILE_ID)
+    assert paired_measured[f"{paired_entry['profileId']}:SamplingJitterMs.p99"] == 53.089
+    paired_thresholds = copy.deepcopy(thresholds)
+    paired_thresholds["hardwareMaxima"].append({"profileId": NATIVE_PROFILE_ID,
+                                                  "metric": "SamplingJitterMs.p99",
+                                                  "max": 60.0, "unit": "milliseconds"})
+    validate_thresholds(paired_thresholds, paired_measured)
+
+with tempfile.TemporaryDirectory() as directory:
+    paired, paired_root, envelope, envelope_path = paired_native_fixture(Path(directory))
+    native_item = next(item for item in next(entry for entry in paired["profiles"]
+                                             if entry["profileId"] == NATIVE_PROFILE_ID)["evidence"]
+                       if item["kind"] == "native")
+    native_path = paired_root / native_item["path"]
+    native = read_json(native_path)
+    native["records"][0]["sampleMonotonicUs"] += 1
+    native_item["sha256"] = write_document(native_path, native)
+    rejects(lambda: validate_baseline(paired, paired_root), "native association evidence hash mismatch")
+
+with tempfile.TemporaryDirectory() as directory:
+    paired, paired_root, envelope, envelope_path = paired_native_fixture(Path(directory))
+    association_item = next(item for item in next(entry for entry in paired["profiles"]
+                                                  if entry["profileId"] == NATIVE_PROFILE_ID)["evidence"]
+                            if item["kind"] == "native-association")
+    envelope["provenance"]["gitCommit"] = "0" * 40
+    association_item["sha256"] = write_document(envelope_path, envelope)
+    rejects(lambda: validate_baseline(paired, paired_root), "native association provenance mismatch")
 
 bad_hash = copy.deepcopy(baseline)
 next(entry for entry in bad_hash["profiles"] if entry["resultState"] == "measured")["evidence"][0]["sha256"] = "0" * 64

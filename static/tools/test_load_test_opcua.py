@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import json
 import tempfile
 from pathlib import Path
@@ -10,6 +12,21 @@ from types import SimpleNamespace
 
 import benchmark_profiles
 import load_test_opcua as subject
+
+
+def test_runner_readiness_marker() -> None:
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        subject.emit_runner_readiness("READY\n")
+        subject.emit_runner_readiness("READY\n")
+        subject.emit_runner_readiness(None)
+    assert output.getvalue() == "READY\nREADY\n"
+    try:
+        subject.emit_runner_readiness("не-ascii")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-ASCII runner marker must be rejected")
 
 
 def profile(history: bool = False) -> dict:
@@ -675,6 +692,7 @@ async def test_history_release_survives_cancellation() -> None:
 
 
 async def main() -> None:
+    test_runner_readiness_marker()
     await test_full_run()
     test_bounds_sticky_failure_and_native()
     await test_auth_failure()
