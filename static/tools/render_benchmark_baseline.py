@@ -25,7 +25,7 @@ def main() -> int:
     env = baseline["environment"]
     lines = [
         "# v0.5.2 hardware benchmark baseline", "",
-        "Default environment (passing secure profile):",
+        "Default baseline environment:",
         f"Recorded: `{env['recordedAt']}`",
         f"Board: `{env['board']}`",
         f"Network: `{env['network']}`",
@@ -37,15 +37,20 @@ def main() -> int:
         f"Explicitly not run: **{not_run}**.", "",
         "| State | Profile | Read p99 | Cold session max | Warm session max | Sampling jitter p99 | Heap peak | PSRAM peak |",
         "|---|---|---:|---:|---:|---:|---:|---:|",
+        "", "Sampling jitter is intentionally not thresholded: the retained native captures have no runner-proven association with a client workload.",
+        "",
     ]
     for entry in rows:
         m = entry["metrics"]
+        jitter = m.get("SamplingJitterMs.p99")
+        jitter_text = (f"{jitter['value']:.3f} ms" if jitter is not None
+                       else "not runner-associated")
         lines.append(
             f"| `{entry['resultState']}` | `{entry['profileId']}` | {m['ReadLatencyMs.p99']['value']:.3f} ms | "
             f"{m['SecureSessionEstablishmentLatencyMs.Cold.max']['value']:.3f} ms | "
             f"{m['SecureSessionEstablishmentLatencyMs.Warm.max']['value']:.3f} ms | "
-            f"{m['SamplingJitterMs.p99']['value']:.3f} ms | "
-            f"{m['Heap.PeakUsedBytes']['value']:,} B | {m['PSRAM.PeakUsedBytes']['value']:,} B |"
+            f"{jitter_text} | {m['Heap.PeakUsedBytes']['value']:,} B | "
+            f"{m['PSRAM.PeakUsedBytes']['value']:,} B |"
         )
     if failed_rows:
         lines += ["", "Failed-profile latency values describe the successful subset before the declared failure; they are not regression baselines."]
@@ -66,7 +71,7 @@ def main() -> int:
             "",
         ]
     lines += ["", "The remaining matrix cells carry an explicit `not-run` reason in the JSON baseline.",
-              "This representative run does not claim full 192-cell hardware coverage, T2 exhaustion evidence, or UaExpert verification.", ""]
+              "These representative runs do not claim full 192-cell hardware coverage or UaExpert verification; T2 exhaustion is recorded separately.", ""]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text("\n".join(lines), encoding="utf-8")
     return 0

@@ -14,10 +14,11 @@ the tag-object SHA.
   to `0.5.2` and begins the bounded resource-instrumentation vertical: static
   ELF/map reporting, coherent Heap/PSRAM/task snapshots, and service/admin-only
   OPC UA sessions, secure-channel, subscription, monitored-item, Publish,
-  event-queue, ServiceFault rejection and event-drop diagnostics. A dirty-tree
-  reference-board baseline records a passing secure 1-channel corner and a
-  failed 16-channel, four-client, 10 Hz `test-none` corner; 650 of 1,200 Reads
-  exceeded their deadline. The other 190 cells are explicit `not-run` results.
+  event-queue, ServiceFault rejection and event-drop diagnostics. The
+  reference-board baseline records passing secure 1-channel and clean
+  16-channel, four-client, 10 Hz `test-none` corners; the maximum profile
+  completed all 1,200 fixed-rate Reads without a timeout or missed arrival.
+  The other 190 cells are explicit `not-run` results.
   Live T2/T3 role, quality and session/SecureChannel capacity evidence is
   recorded. Broader hardware coverage, UaExpert evidence and release acceptance
   remain pending.
@@ -34,8 +35,8 @@ the tag-object SHA.
   microsecond storage internally while keeping public values 64-bit, reducing
   the maximum-profile static SRAM footprint by 800 bytes. Imported device
   timing evidence remains explicitly separate from the current client run.
-  Cold startup, successful synthetic Write, correlated event delivery and
-  reference-board timing/overhead acceptance remain open.
+  Cold startup, successful synthetic Write, correlated event delivery,
+  UaExpert and clean secure-profile release evidence remain open.
 - Adds the T2 test-only reference-board exhaustion profile, with bounded
   100-cycle Heap and PSRAM fill/fail/free runners, payload verification,
   exact allocation-failure accounting, baseline and stabilized-low-water

@@ -11,17 +11,16 @@ import sys
 from typing import Any
 
 import benchmark_profiles
-import load_test_opcua
 
 MAX_JSON_BYTES = 8 * 1024 * 1024
 REQUIRED_METRICS = {
     "ReadLatencyMs.p99": "milliseconds",
     "SecureSessionEstablishmentLatencyMs.Cold.max": "milliseconds",
     "SecureSessionEstablishmentLatencyMs.Warm.max": "milliseconds",
-    "SamplingJitterMs.p99": "milliseconds",
     "Heap.PeakUsedBytes": "bytes",
     "PSRAM.PeakUsedBytes": "bytes",
 }
+SAMPLING_JITTER_METRIC = "SamplingJitterMs.p99"
 STATIC_TOTALS = {
     "ElfFileBytes", "Uf2FileBytes", "BinFileBytes",
     "ExternalFlashLoadBytes", "SramStaticTotalBytes",
@@ -92,9 +91,11 @@ def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, 
         require(path.is_file(), f"missing evidence file: {relative}")
         require(sha256(path) == expected.lower(), f"evidence hash mismatch: {relative}")
         documents[kind] = read_json(path)
-    required_documents = {"client", "native", "resources", "static-size"}
+    required_documents = {"client", "resources", "static-size"}
     require(required_documents <= set(documents),
             f"{entry.get('profileId')}: evidence kinds are incomplete")
+    require("native" not in documents,
+            f"{entry.get('profileId')}: unassociated native capture must not be baseline evidence")
 
     profile_id = entry["profileId"]
     metrics = entry["metrics"]
@@ -149,16 +150,6 @@ def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, 
         family, statistic = name.rsplit(".", 1)
         require(client.get("metrics", {}).get(family, {}).get(statistic) == metrics[name]["value"],
                 f"{profile_id}: {name} differs from client evidence")
-
-    native = documents["native"]
-    jitter = load_test_opcua.native_jitter_metrics(
-        native, client["samplePeriodMs"], 8192, profile_id,
-        client["warmupSeconds"], client["durationSeconds"],
-        set(client["clientLoad"]["channelIds"]),
-    )
-    jitter_p99 = max(value["samplingJitterMs"]["p99"] for value in jitter.values())
-    require(jitter_p99 == metrics["SamplingJitterMs.p99"]["value"],
-            f"{profile_id}: sampling jitter differs from native evidence")
 
     resources = documents["resources"]
     require(resources.get("schemaVersion") == 1 and resources.get("profileId") == profile_id,
@@ -239,7 +230,9 @@ def validate_baseline(document: dict[str, Any], root: Path) -> dict[str, float]:
         require(entry.get("repetitions") == 1,
                 f"{profile_id}: this baseline records exactly one repetition")
         metrics = entry.get("metrics")
-        require(isinstance(metrics, dict) and set(metrics) == set(REQUIRED_METRICS),
+        require(isinstance(metrics, dict) and SAMPLING_JITTER_METRIC not in metrics,
+                f"{profile_id}: SamplingJitter requires runner-proven native association")
+        require(set(metrics) == set(REQUIRED_METRICS),
                 f"{profile_id}: measured metric set mismatch")
         for name, unit in REQUIRED_METRICS.items():
             metric = metrics[name]

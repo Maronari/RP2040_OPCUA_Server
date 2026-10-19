@@ -37,9 +37,9 @@ measured = validate_baseline(baseline, ROOT)
 validate_thresholds(thresholds, measured)
 validate_static_report(read_json(STATIC_REPORT), thresholds)
 assert len(baseline["profiles"]) == 192
-assert len(measured) == 6
-assert sum(entry["resultState"] == "measured" for entry in baseline["profiles"]) == 1
-assert sum(entry["resultState"] == "failed" for entry in baseline["profiles"]) == 1
+assert len(measured) == 10
+assert sum(entry["resultState"] == "measured" for entry in baseline["profiles"]) == 2
+assert sum(entry["resultState"] == "failed" for entry in baseline["profiles"]) == 0
 assert sum(entry["resultState"] == "not-run" for entry in baseline["profiles"]) == 190
 
 clean_environment = copy.deepcopy(baseline["environment"])
@@ -51,15 +51,17 @@ rejects(lambda: validate_environment(bad_dirty_type, baseline["release"]),
         "gitDirty must be a Boolean")
 
 rejects(lambda: validate_release_readiness(baseline, thresholds),
-        "clean source tree")
+        "required release profile uses a dirty source tree")
 release_ready = copy.deepcopy(baseline)
 release_ready["environment"]["gitDirty"] = False
-rejects(lambda: validate_release_readiness(release_ready, thresholds),
-        "failed profile")
-failed_profile = next(entry for entry in release_ready["profiles"]
-                      if entry["resultState"] == "failed")
-failed_profile["resultState"] = "measured"
-failed_profile["environment"]["gitDirty"] = False
+release_commit = release_ready["environment"]["gitCommit"]
+for profile_id in thresholds["releaseRequiredProfiles"]:
+    required_entry = next(entry for entry in release_ready["profiles"]
+                          if entry["profileId"] == profile_id)
+    required_environment = required_entry.setdefault(
+        "environment", copy.deepcopy(release_ready["environment"]))
+    required_environment["gitDirty"] = False
+    required_environment["gitCommit"] = release_commit
 validate_release_readiness(release_ready, thresholds)
 short_commit = copy.deepcopy(release_ready)
 short_commit["environment"]["gitCommit"] = "2881230"
@@ -97,15 +99,24 @@ next(entry for entry in no_reason["profiles"] if entry["resultState"] == "not-ru
 rejects(lambda: validate_baseline(no_reason, ROOT), "requires a reason")
 
 no_failure_reason = copy.deepcopy(baseline)
-next(entry for entry in no_failure_reason["profiles"] if entry["resultState"] == "failed")["failureReason"] = ""
+synthetic_failed = next(entry for entry in no_failure_reason["profiles"]
+                        if entry["resultState"] == "measured")
+synthetic_failed["resultState"] = "failed"
+synthetic_failed["failureReason"] = ""
 rejects(lambda: validate_baseline(no_failure_reason, ROOT), "requires a failureReason")
 
 bad_failed_accounting = copy.deepcopy(baseline)
-next(entry for entry in bad_failed_accounting["profiles"] if entry["resultState"] == "failed")["loadAccounting"]["completed"] += 1
-rejects(lambda: validate_baseline(bad_failed_accounting, ROOT), "load accounting completed mismatch")
+synthetic_failed = next(entry for entry in bad_failed_accounting["profiles"]
+                        if entry["resultState"] == "measured")
+synthetic_failed["resultState"] = "failed"
+synthetic_failed["failureReason"] = "fixture failure"
+synthetic_failed["loadAccounting"] = {"scheduled": 1, "completed": 2}
+rejects(lambda: validate_baseline(bad_failed_accounting, ROOT),
+        "failed result requires bounded loadAccounting")
 
 bad_failed_environment = copy.deepcopy(baseline)
-next(entry for entry in bad_failed_environment["profiles"] if entry["resultState"] == "failed")["environment"]["firmwareVersion"] = "0.5.1"
+next(entry for entry in bad_failed_environment["profiles"]
+     if "environment" in entry)["environment"]["firmwareVersion"] = "0.5.1"
 rejects(lambda: validate_baseline(bad_failed_environment, ROOT), "firmware version differs")
 
 with tempfile.TemporaryDirectory() as directory:
@@ -114,9 +125,19 @@ with tempfile.TemporaryDirectory() as directory:
     shutil.copytree(ROOT / "static/benchmarks/v0.5.2/evidence", evidence_root)
     no_recorded_failure = copy.deepcopy(baseline)
     failed_entry = next(entry for entry in no_recorded_failure["profiles"]
-                        if entry["resultState"] == "failed")
+                        if entry["profileId"] == thresholds["releaseRequiredProfiles"][1])
+    failed_entry["resultState"] = "failed"
+    failed_entry["failureReason"] = "fixture failure without a recorded client error"
     client_item = next(item for item in failed_entry["evidence"] if item["kind"] == "client")
     client_path = temp_root / client_item["path"]
+    accounting = read_json(client_path)["loadAccounting"]
+    failed_entry["loadAccounting"] = {
+        "scheduled": accounting["scheduledOperationCount"],
+        "completed": accounting["completedOperationCount"],
+        "missed": accounting["missedDeadlineCount"],
+        "deadlineExceeded": accounting["deadlineExceededOperationCount"],
+        "failed": accounting["failedOperationCount"],
+    }
     client = read_json(client_path)
     client["errors"] = []
     client["errorRecordOverflow"] = 0
@@ -124,16 +145,35 @@ with tempfile.TemporaryDirectory() as directory:
     client_item["sha256"] = hashlib.sha256(client_path.read_bytes()).hexdigest()
     rejects(lambda: validate_baseline(no_recorded_failure, temp_root), "no recorded failure")
 
+unassociated_jitter = copy.deepcopy(baseline)
+jitter_entry = next(entry for entry in unassociated_jitter["profiles"]
+                    if entry["resultState"] == "measured")
+jitter_entry["metrics"]["SamplingJitterMs.p99"] = {"value": 1.0, "unit": "milliseconds"}
+rejects(lambda: validate_baseline(unassociated_jitter, ROOT),
+        "SamplingJitter requires runner-proven native association")
+
+native_as_baseline_evidence = copy.deepcopy(baseline)
+native_entry = next(entry for entry in native_as_baseline_evidence["profiles"]
+                    if entry["resultState"] == "measured")
+native_entry["evidence"].append({
+    "kind": "native", "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json",
+    "sha256": hashlib.sha256((ROOT / "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json").read_bytes()).hexdigest(),
+})
+rejects(lambda: validate_baseline(native_as_baseline_evidence, ROOT),
+        "unassociated native capture must not be baseline evidence")
+
 bad_hash = copy.deepcopy(baseline)
 next(entry for entry in bad_hash["profiles"] if entry["resultState"] == "measured")["evidence"][0]["sha256"] = "0" * 64
 rejects(lambda: validate_baseline(bad_hash, ROOT), "hash mismatch")
 
 mixed_firmware = copy.deepcopy(baseline)
-mixed_firmware["environment"]["firmwareUf2Sha256"] = "0" * 64
+next(entry for entry in mixed_firmware["profiles"]
+     if entry["resultState"] == "measured")["environment"]["firmwareUf2Sha256"] = "0" * 64
 rejects(lambda: validate_baseline(mixed_firmware, ROOT), "differs from flashed firmware")
 
 mixed_client = copy.deepcopy(baseline)
-mixed_client["environment"]["clientToolchain"] = "different-toolchain"
+next(entry for entry in mixed_client["profiles"]
+     if entry["resultState"] == "measured")["environment"]["clientToolchain"] = "different-toolchain"
 rejects(lambda: validate_baseline(mixed_client, ROOT), "client provenance toolchain mismatch")
 
 too_low = copy.deepcopy(thresholds)

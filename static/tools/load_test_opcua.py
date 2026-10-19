@@ -46,8 +46,9 @@ RESOURCE_DIAGNOSTIC_NODE_IDS = resource_contract.RESOURCE_NODE_IDS
 RESOURCE_DIAGNOSTIC_PHASE = "post-steady-before-cleanup"
 # Fixed-rate benchmark arrivals are bounded independently of the server's
 # timeout. At the frozen maximum of four external clients this permits 64
-# outstanding service calls and covers the observed sub-second latency tail;
-# a saturated client records missed arrivals instead of growing without bound.
+# outstanding service calls. The clean maximum-load run peaked at 12 calls in
+# flight despite a 1.184-second maximum latency; a saturated client records
+# missed arrivals instead of growing without bound.
 MAX_READS_IN_FLIGHT_PER_CLIENT = 16
 
 DIAGNOSTIC_NODE_IDS = {
