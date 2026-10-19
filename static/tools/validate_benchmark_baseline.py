@@ -220,6 +220,15 @@ def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, 
                 f"{profile_id}: client provenance {client_key} mismatch")
     require(client.get("repetitions") == entry["repetitions"],
             f"{profile_id}: client evidence repetitions mismatch")
+    profile = benchmark_profiles.select(profile_id)
+    expected_read_schedule = {
+        "policy": load_test_opcua.READ_ARRIVAL_PHASE_POLICY,
+        "phaseSpacingMs": round((1000 / profile["rateHz"]) / profile["clients"], 6),
+        "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount",
+        "windowClock": "host-monotonic",
+    }
+    require(client.get("clientLoad", {}).get("readArrivalSchedule") == expected_read_schedule,
+            f"{profile_id}: client read arrival schedule mismatch")
     accounting = client.get("loadAccounting", {})
     if entry["resultState"] == "measured":
         require(client.get("errors") == [] and client.get("errorRecordOverflow") == 0,

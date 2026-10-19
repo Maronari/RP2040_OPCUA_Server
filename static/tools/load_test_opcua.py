@@ -51,6 +51,7 @@ RESOURCE_DIAGNOSTIC_PHASE = "post-steady-before-cleanup"
 # flight despite a 1.184-second maximum latency; a saturated client records
 # missed arrivals instead of growing without bound.
 MAX_READS_IN_FLIGHT_PER_CLIENT = 16
+READ_ARRIVAL_PHASE_POLICY = "single-monotonic-window-even-client-phase"
 
 DIAGNOSTIC_NODE_IDS = {
     "uptime_s": "ns=1;s=Device.Diagnostics.UptimeSec", "free_heap": "ns=1;s=Device.Diagnostics.FreeHeap",
@@ -770,8 +771,18 @@ async def benchmark_cleanup(subscriptions: list[Any], clients: list[Any], timeou
     clients.clear()
 
 
+def read_arrival_phase_offset(client_index: int, client_count: int, rate_hz: float) -> float:
+    """Return one deterministic, evenly spaced phase inside a Read period."""
+    if type(client_index) is not int or type(client_count) is not int or not 0 <= client_index < client_count:
+        raise ValueError("client index/count is invalid for the read phase")
+    if not math.isfinite(rate_hz) or rate_hz <= 0:
+        raise ValueError("read rate must be finite and positive")
+    return client_index * (1.0 / rate_hz) / client_count
+
+
 async def run_client_read_schedule(client: Any, nodes: list[str], client_index: int,
-                                   rate_hz: float, end: float, timeout_s: float,
+                                   rate_hz: float, load_start: float, end: float,
+                                   phase_offset_s: float, timeout_s: float,
                                    metric: Metric, log: ErrorLog,
                                    max_in_flight: int = MAX_READS_IN_FLIGHT_PER_CLIENT) -> dict[str, Any]:
     """Dispatch one client's Reads at fixed arrivals with bounded outstanding work.
@@ -794,7 +805,11 @@ async def run_client_read_schedule(client: Any, nodes: list[str], client_index: 
         raise ValueError("at least one benchmark value node is required")
 
     period = 1.0 / rate_hz
-    next_arrival = time.perf_counter()
+    if (not math.isfinite(load_start) or not math.isfinite(end) or end <= load_start
+            or not math.isfinite(phase_offset_s) or not 0 <= phase_offset_s < period
+            or load_start + phase_offset_s >= end):
+        raise ValueError("read schedule start/end/phase is invalid")
+    next_arrival = load_start + phase_offset_s
     index = client_index % len(nodes)
     in_flight: set[asyncio.Task[str]] = set()
     transport_fenced = False
@@ -1001,9 +1016,14 @@ async def run_benchmark(args: argparse.Namespace) -> int:
                 # established. It never includes endpoint or credential data.
                 emit_runner_readiness(readiness_token)
             if args.warmup: await asyncio.sleep(args.warmup)
-            end = time.perf_counter() + args.duration
+            # Every external client shares one host-monotonic Read window.
+            # Its deterministic phase keeps c4/hz10 arrivals at 0/25/50/75 ms
+            # inside each 100 ms period without task-creation sleep races.
+            load_start = time.perf_counter()
+            end = load_start + args.duration
             schedules = [asyncio.create_task(
-                run_client_read_schedule(client, nodes, client_index, args.read_rate, end,
+                run_client_read_schedule(client, nodes, client_index, args.read_rate, load_start, end,
+                                         read_arrival_phase_offset(client_index, profile["clients"], args.read_rate),
                                          args.timeout, metrics["ReadLatencyMs"], log))
                          for client_index, client in enumerate(clients)]
             schedule_results = await asyncio.gather(*schedules, return_exceptions=True)
@@ -1089,7 +1109,7 @@ async def run_benchmark(args: argparse.Namespace) -> int:
     metric_report["MethodLatencyMs"]["phase"] = "setup-export-config-profile-verification"
     metric_report["HistoryReadLatencyMs"]["continuationRelease"] = history_cleanup_metric.report()
     resource_evidence = resource_diagnostic_report(resource_snapshots)
-    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "maxInFlightReadsPerClient": MAX_READS_IN_FLIGHT_PER_CLIENT, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": {"state": "unavailable", "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery"}, "resourceDiagnostics": resource_evidence, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
+    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "maxInFlightReadsPerClient": MAX_READS_IN_FLIGHT_PER_CLIENT, "readArrivalSchedule": {"policy": READ_ARRIVAL_PHASE_POLICY, "phaseSpacingMs": round((1000 / args.read_rate) / profile["clients"], 6), "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount", "windowClock": "host-monotonic"}, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": {"state": "unavailable", "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery"}, "resourceDiagnostics": resource_evidence, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
     write_bounded_json(Path(args.output), report, BOUNDS["maxJsonBytes"])
     return 1 if log.items or log.overflow or accounting["droppedSampleCount"] or load_accounting["missedDeadlineCount"] or load_accounting["deadlineExceededOperationCount"] or load_accounting["failedOperationCount"] or any(metric.state in {"failed", "exhausted"} for metric in accounted_metrics) else 0
 

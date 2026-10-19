@@ -17,10 +17,11 @@ from validate_benchmark_baseline import (  # noqa: E402
 )
 import validate_benchmark_baseline as subject  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[2]
-BASELINE = ROOT / "static/benchmarks/v0.5.2/baseline.json"
-THRESHOLDS = ROOT / "static/benchmarks/v0.5.2/thresholds.json"
-STATIC_REPORT = ROOT / "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ROOT = REPO_ROOT
+BASELINE = REPO_ROOT / "static/benchmarks/v0.5.2/baseline.json"
+THRESHOLDS = REPO_ROOT / "static/benchmarks/v0.5.2/thresholds.json"
+STATIC_REPORT = REPO_ROOT / "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json"
 NATIVE_PROFILE_ID = "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1"
 
 
@@ -98,7 +99,31 @@ def paired_native_fixture(directory: Path) -> tuple[dict, Path, dict, Path]:
     return fixture, root, envelope, envelope_path
 
 
-baseline = read_json(BASELINE)
+repository_baseline = read_json(BASELINE)
+rejects(lambda: validate_baseline(repository_baseline, REPO_ROOT),
+        "client read arrival schedule mismatch")
+
+# Retained hardware evidence intentionally remains untouched until a real
+# phase-staggered recapture.  Build a hash-consistent positive fixture so the
+# validator's other positive/negative cases remain independently testable.
+_fixture_temp = tempfile.TemporaryDirectory()
+ROOT = Path(_fixture_temp.name)
+shutil.copytree(REPO_ROOT / "static/benchmarks/v0.5.2/evidence",
+                ROOT / "static/benchmarks/v0.5.2/evidence")
+baseline = copy.deepcopy(repository_baseline)
+for measured_entry in (entry for entry in baseline["profiles"] if entry["resultState"] == "measured"):
+    profile = subject.benchmark_profiles.select(measured_entry["profileId"])
+    client_item = next(item for item in measured_entry["evidence"] if item["kind"] == "client")
+    client_path = ROOT / client_item["path"]
+    client = read_json(client_path)
+    client.setdefault("clientLoad", {})["readArrivalSchedule"] = {
+        "policy": subject.load_test_opcua.READ_ARRIVAL_PHASE_POLICY,
+        "phaseSpacingMs": round((1000 / profile["rateHz"]) / profile["clients"], 6),
+        "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount",
+        "windowClock": "host-monotonic",
+    }
+    client_item["sha256"] = write_document(client_path, client)
+STATIC_REPORT = ROOT / "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json"
 thresholds = read_json(THRESHOLDS)
 measured = validate_baseline(baseline, ROOT)
 validate_thresholds(thresholds, measured)
@@ -108,6 +133,20 @@ assert len(measured) == 10
 assert sum(entry["resultState"] == "measured" for entry in baseline["profiles"]) == 2
 assert sum(entry["resultState"] == "failed" for entry in baseline["profiles"]) == 0
 assert sum(entry["resultState"] == "not-run" for entry in baseline["profiles"]) == 190
+
+with tempfile.TemporaryDirectory() as directory:
+    mismatch_root = Path(directory)
+    shutil.copytree(ROOT / "static/benchmarks/v0.5.2/evidence",
+                    mismatch_root / "static/benchmarks/v0.5.2/evidence")
+    mismatch = copy.deepcopy(baseline)
+    mismatch_entry = next(entry for entry in mismatch["profiles"] if entry["resultState"] == "measured")
+    mismatch_item = next(item for item in mismatch_entry["evidence"] if item["kind"] == "client")
+    mismatch_path = mismatch_root / mismatch_item["path"]
+    mismatch_client = read_json(mismatch_path)
+    mismatch_client["clientLoad"]["readArrivalSchedule"]["phaseSpacingMs"] = 999.0
+    mismatch_item["sha256"] = write_document(mismatch_path, mismatch_client)
+    rejects(lambda: validate_baseline(mismatch, mismatch_root),
+            "client read arrival schedule mismatch")
 
 clean_environment = copy.deepcopy(baseline["environment"])
 clean_environment["gitDirty"] = False

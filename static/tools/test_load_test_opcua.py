@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import io
 import json
+import math
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -145,6 +146,10 @@ async def test_full_run() -> None:
         assert report["metrics"]["WriteLatencyMs"]["state"] == "unsupported"
         assert report["subscriptionEvidence"]["state"] == "unavailable"
         assert report["clientLoad"]["historyCadence"]["mode"] == "post-steady-per-client-per-repetition"
+        assert report["clientLoad"]["readArrivalSchedule"] == {
+            "policy": subject.READ_ARRIVAL_PHASE_POLICY, "phaseSpacingMs": 1000.0,
+            "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount",
+            "windowClock": "host-monotonic"}
         assert report["clientLoad"]["maxInFlightReadsPerClient"] == subject.MAX_READS_IN_FLIGHT_PER_CLIENT
         assert report["loadAccounting"]["inFlightLimitExceededCount"] == 0
         assert report["loadAccounting"]["peakInFlightCount"] == 1
@@ -358,8 +363,9 @@ async def test_event_loop_blocked_read_is_late_and_fenced() -> None:
         async def disconnect(self): self.disconnected = True
     client = Client()
     metric, log = subject.Metric("read", 4), subject.ErrorLog(4, 256)
+    start = subject.time.perf_counter()
     result = await subject.run_client_read_schedule(
-        client, ["value"], 0, 1.0, subject.time.perf_counter() + 0.02, 0.01, metric, log)
+        client, ["value"], 0, 1.0, start, start + 0.02, 0.0, 0.01, metric, log)
     assert result["completedOperationCount"] == 0
     assert result["deadlineExceededOperationCount"] == 1
     assert result["transportFenced"] is True and client.disconnected
@@ -377,8 +383,9 @@ async def test_raw_operation_cancellation_is_merged_and_fenced() -> None:
         async def disconnect(self): self.disconnected = True
     client = Client()
     metric, log = subject.Metric("read", 4), subject.ErrorLog(4, 256)
+    start = subject.time.perf_counter()
     result = await subject.run_client_read_schedule(
-        client, ["value"], 0, 1.0, subject.time.perf_counter() + 0.02, 0.1, metric, log)
+        client, ["value"], 0, 1.0, start, start + 0.02, 0.0, 0.1, metric, log)
     assert result["failedOperationCount"] == 1
     assert result["deadlineExceededOperationCount"] == 0
     assert result["transportFenced"] is True and client.disconnected
@@ -403,9 +410,10 @@ async def test_independent_client_read_schedules() -> None:
     # One scheduled Read per client with a one-second operation deadline is
     # deliberately generous under host contention, while still proving that
     # four client schedules overlap rather than serialize.
-    end = subject.time.perf_counter() + 1.0
+    start = subject.time.perf_counter() + 0.02
+    end = start + 1.0
     results = await asyncio.gather(*[
-        subject.run_client_read_schedule(Client(), ["value"], index, 0.5, end, 1.0, metric, log)
+        subject.run_client_read_schedule(Client(), ["value"], index, 0.5, start, end, 0.0, 1.0, metric, log)
         for index in range(4)
     ])
     assert shared.peak == 4
@@ -428,14 +436,116 @@ async def test_fixed_rate_single_client_allows_bounded_overlap() -> None:
     class Client:
         def get_node(self, _node_id): return Node()
     metric, log = subject.Metric("read", 16), subject.ErrorLog(16, 256)
+    start = subject.time.perf_counter()
     result = await subject.run_client_read_schedule(
-        Client(), ["value"], 0, 10.0, subject.time.perf_counter() + 0.35, 1.0,
+        Client(), ["value"], 0, 10.0, start, start + 0.35, 0.0, 1.0,
         metric, log, max_in_flight=2)
     assert result["scheduledOperationCount"] == 4, result
     assert result["completedOperationCount"] == 4 and result["missedDeadlineCount"] == 0
     assert result["peakInFlightCount"] == 2 and shared.peak == 2
     assert shared.active == 0, "all in-flight Reads must drain before the schedule returns"
     assert metric.timeouts == 0 and not log.items
+
+
+async def test_even_client_phases_preserve_exact_arrivals() -> None:
+    assert [round(subject.read_arrival_phase_offset(index, 4, 10.0), 6) for index in range(4)] == [0.0, 0.025, 0.05, 0.075]
+    for invalid in ((-1, 4, 10.0), (4, 4, 10.0), (0, 0, 10.0), (0, 4, 0.0)):
+        try:
+            subject.read_arrival_phase_offset(*invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid phase input must fail")
+
+    class Node:
+        async def read_value(self): return 1
+    class Client:
+        def get_node(self, _node_id): return Node()
+    start, end = subject.time.perf_counter() + 0.02, 0.0
+    end = start + 1.0
+    metric, log = subject.Metric("read", 64), subject.ErrorLog(16, 256)
+    results = await asyncio.gather(*[
+        subject.run_client_read_schedule(
+            Client(), ["value"], index, 10.0, start, end,
+            subject.read_arrival_phase_offset(index, 4, 10.0), 1.0, metric, log)
+        for index in range(4)
+    ])
+    assert all(result["scheduledOperationCount"] == 10 for result in results), results
+    assert all(result["completedOperationCount"] == 10 for result in results), results
+    assert not log.items
+
+    # Drive all four schedules concurrently through the complete 30-second
+    # contract on one controlled monotonic clock.  Recording actual read_value
+    # dispatches proves that run_client_read_schedule consumes phase_offset_s,
+    # in addition to preserving 300 arrivals per client.
+    clock = SimpleNamespace(now=0.0, sleepers=[])
+    dispatches = {index: [] for index in range(4)}
+    old_perf_counter, old_sleep = subject.time.perf_counter, subject.asyncio.sleep
+
+    async def virtual_sleep(delay: float, *_args, **_kwargs) -> None:
+        if delay <= 0:
+            await old_sleep(0)
+            return
+        future = asyncio.get_running_loop().create_future()
+        clock.sleepers.append((clock.now + delay, future))
+        await future
+
+    async def drive(tasks: list[asyncio.Task]) -> None:
+        while not all(task.done() for task in tasks):
+            # Let awakened schedules dispatch their read_once task before the
+            # driver advances to the next virtual deadline.
+            for _ in range(5):
+                await old_sleep(0)
+            pending = [(deadline, future) for deadline, future in clock.sleepers if not future.done()]
+            clock.sleepers = pending
+            if not pending:
+                continue
+            clock.now = min(deadline for deadline, _future in pending)
+            for deadline, future in pending:
+                if deadline <= clock.now and not future.done():
+                    future.set_result(None)
+
+    class PhasedNode:
+        def __init__(self, index: int): self.index = index
+        async def read_value(self):
+            dispatches[self.index].append(clock.now)
+            return 1
+    class PhasedClient:
+        def __init__(self, index: int): self.index = index
+        def get_node(self, _node_id): return PhasedNode(self.index)
+
+    subject.time.perf_counter, subject.asyncio.sleep = lambda: clock.now, virtual_sleep
+    try:
+        tasks = [asyncio.create_task(subject.run_client_read_schedule(
+            PhasedClient(index), ["value"], index, 10.0, 0.0, 30.0,
+            subject.read_arrival_phase_offset(index, 4, 10.0), 1.0,
+            subject.Metric("read", 2048), subject.ErrorLog(16, 256)))
+            for index in range(4)]
+        await drive(tasks)
+        results = await asyncio.gather(*tasks)
+        assert all(result["scheduledOperationCount"] == 300 for result in results), results
+        assert all(result["completedOperationCount"] == 300 for result in results), results
+        assert all(len(dispatches[index]) == 300 for index in range(4)), dispatches
+        expected = [[index * 0.025 + slot * 0.1 for slot in range(3)] for index in range(4)]
+        for index in range(4):
+            assert all(math.isclose(actual, wanted, abs_tol=1e-9)
+                       for actual, wanted in zip(dispatches[index][:3], expected[index])), dispatches[index][:3]
+    finally:
+        subject.time.perf_counter, subject.asyncio.sleep = old_perf_counter, old_sleep
+    try:
+        await subject.run_client_read_schedule(
+            Client(), ["value"], 0, 10.0, start, end, 0.1, 1.0, metric, log)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("phase outside a period must fail")
+    try:
+        await subject.run_client_read_schedule(
+            Client(), ["value"], 0, 10.0, end, start, 0.0, 1.0, metric, log)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid shared window must fail")
 
 
 async def test_scheduler_lag_is_missed_not_caught_up() -> None:
@@ -452,8 +562,9 @@ async def test_scheduler_lag_is_missed_not_caught_up() -> None:
     class Client:
         def get_node(self, _node_id): return Node()
     metric, log = subject.Metric("read", 32), subject.ErrorLog(16, 256)
+    start = subject.time.perf_counter()
     result = await subject.run_client_read_schedule(
-        Client(), ["value"], 0, 100.0, subject.time.perf_counter() + 0.09, 0.5,
+        Client(), ["value"], 0, 100.0, start, start + 0.09, 0.0, 0.5,
         metric, log, max_in_flight=4)
     assert result["missedDeadlineCount"] >= 3, result
     assert result["inFlightLimitExceededCount"] == 0
@@ -476,8 +587,9 @@ async def test_in_flight_limit_is_a_bounded_missed_workload() -> None:
     class Client:
         def get_node(self, _node_id): return Node()
     metric, log = subject.Metric("read", 32), subject.ErrorLog(16, 256)
+    start = subject.time.perf_counter()
     result = await subject.run_client_read_schedule(
-        Client(), ["value"], 0, 100.0, subject.time.perf_counter() + 0.08, 0.5,
+        Client(), ["value"], 0, 100.0, start, start + 0.08, 0.0, 0.5,
         metric, log, max_in_flight=2)
     assert result["inFlightLimitExceededCount"] >= 1, result
     assert result["peakInFlightCount"] <= 2 and shared.peak <= 2
@@ -486,8 +598,9 @@ async def test_in_flight_limit_is_a_bounded_missed_workload() -> None:
         result["completedOperationCount"] + result["missedDeadlineCount"] +
         result["deadlineExceededOperationCount"] + result["failedOperationCount"])
     try:
+        start = subject.time.perf_counter()
         await subject.run_client_read_schedule(Client(), ["value"], 0, 1.0,
-                                               subject.time.perf_counter() + 0.01, 0.1,
+                                               start, start + 0.01, 0.0, 0.1,
                                                metric, log, max_in_flight=17)
     except ValueError:
         pass
@@ -502,8 +615,9 @@ async def test_early_read_failure_is_not_a_deadline_miss() -> None:
     class Client:
         def get_node(self, _node_id): return Node()
     metric, log = subject.Metric("read", 4), subject.ErrorLog(4, 256)
+    start = subject.time.perf_counter()
     result = await subject.run_client_read_schedule(
-        Client(), ["value"], 0, 1.0, subject.time.perf_counter() + 0.02, 1.0, metric, log)
+        Client(), ["value"], 0, 1.0, start, start + 0.02, 0.0, 1.0, metric, log)
     assert result["failedOperationCount"] == 1
     assert result["deadlineExceededOperationCount"] == 0
     assert result["scheduledOperationCount"] == (
@@ -708,6 +822,7 @@ async def main() -> None:
     await test_raw_operation_cancellation_is_merged_and_fenced()
     await test_independent_client_read_schedules()
     await test_fixed_rate_single_client_allows_bounded_overlap()
+    await test_even_client_phases_preserve_exact_arrivals()
     await test_scheduler_lag_is_missed_not_caught_up()
     await test_in_flight_limit_is_a_bounded_missed_workload()
     await test_early_read_failure_is_not_a_deadline_miss()
