@@ -1,170 +1,170 @@
 {
-  "schemaVersion": 1,
-  "kind": "v052-native-sampling-evidence",
-  "state": "complete",
+  "bootStartedMonotonicUs": 4306,
+  "captureEndedMonotonicUs": 109325871,
+  "captureId": 1,
+  "captureStartedMonotonicUs": 79318674,
   "clock": {
     "domain": "device-monotonic",
     "unit": "microseconds",
     "valid": true
   },
-  "bootStartedMonotonicUs": 4500,
-  "captureStartedMonotonicUs": 103268856,
-  "captureEndedMonotonicUs": 133309072,
-  "captureId": 1,
-  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
-  "warmupSeconds": 10,
   "durationSeconds": 30,
+  "kind": "v052-native-sampling-evidence",
+  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
   "recordCapacity": 8192,
   "records": [
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 1,
-      "sampleMonotonicUs": 103269038
+      "sampleMonotonicUs": 79318854,
+      "sequence": 1
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 2,
-      "sampleMonotonicUs": 104269034
+      "sampleMonotonicUs": 80318846,
+      "sequence": 2
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 3,
-      "sampleMonotonicUs": 105269030
+      "sampleMonotonicUs": 81318845,
+      "sequence": 3
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 4,
-      "sampleMonotonicUs": 106269036
+      "sampleMonotonicUs": 82318850,
+      "sequence": 4
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 5,
-      "sampleMonotonicUs": 107269032
+      "sampleMonotonicUs": 83318851,
+      "sequence": 5
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 6,
-      "sampleMonotonicUs": 108269032
+      "sampleMonotonicUs": 84318850,
+      "sequence": 6
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 7,
-      "sampleMonotonicUs": 109271031
+      "sampleMonotonicUs": 85318847,
+      "sequence": 7
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 8,
-      "sampleMonotonicUs": 110271032
+      "sampleMonotonicUs": 86318844,
+      "sequence": 8
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 9,
-      "sampleMonotonicUs": 111276042
+      "sampleMonotonicUs": 87318845,
+      "sequence": 9
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 10,
-      "sampleMonotonicUs": 112282036
+      "sampleMonotonicUs": 88318845,
+      "sequence": 10
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 11,
-      "sampleMonotonicUs": 113298033
+      "sampleMonotonicUs": 89318848,
+      "sequence": 11
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 12,
-      "sampleMonotonicUs": 114298029
+      "sampleMonotonicUs": 90318843,
+      "sequence": 12
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 13,
-      "sampleMonotonicUs": 115302107
+      "sampleMonotonicUs": 91318848,
+      "sequence": 13
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 14,
-      "sampleMonotonicUs": 116309105
+      "sampleMonotonicUs": 92318869,
+      "sequence": 14
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 15,
-      "sampleMonotonicUs": 117309041
+      "sampleMonotonicUs": 93318871,
+      "sequence": 15
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 16,
-      "sampleMonotonicUs": 118309035
+      "sampleMonotonicUs": 94318872,
+      "sequence": 16
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 17,
-      "sampleMonotonicUs": 119309034
+      "sampleMonotonicUs": 95318873,
+      "sequence": 17
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 18,
-      "sampleMonotonicUs": 120309032
+      "sampleMonotonicUs": 96318867,
+      "sequence": 18
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 19,
-      "sampleMonotonicUs": 121309038
+      "sampleMonotonicUs": 97318875,
+      "sequence": 19
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 20,
-      "sampleMonotonicUs": 122309030
+      "sampleMonotonicUs": 98318876,
+      "sequence": 20
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 21,
-      "sampleMonotonicUs": 123309033
+      "sampleMonotonicUs": 99318873,
+      "sequence": 21
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 22,
-      "sampleMonotonicUs": 124309030
+      "sampleMonotonicUs": 100318877,
+      "sequence": 22
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 23,
-      "sampleMonotonicUs": 125309036
+      "sampleMonotonicUs": 101318874,
+      "sequence": 23
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 24,
-      "sampleMonotonicUs": 126309035
+      "sampleMonotonicUs": 102318875,
+      "sequence": 24
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 25,
-      "sampleMonotonicUs": 127309033
+      "sampleMonotonicUs": 103318874,
+      "sequence": 25
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 26,
-      "sampleMonotonicUs": 128309034
+      "sampleMonotonicUs": 104318873,
+      "sequence": 26
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 27,
-      "sampleMonotonicUs": 129309035
+      "sampleMonotonicUs": 105318875,
+      "sequence": 27
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 28,
-      "sampleMonotonicUs": 130309033
+      "sampleMonotonicUs": 106318870,
+      "sequence": 28
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 29,
-      "sampleMonotonicUs": 131309033
+      "sampleMonotonicUs": 107325882,
+      "sequence": 29
     },
     {
       "channelId": "benchmark.synthetic.1",
-      "sequence": 30,
-      "sampleMonotonicUs": 132309045
+      "sampleMonotonicUs": 108325847,
+      "sequence": 30
     }
-  ]
+  ],
+  "schemaVersion": 1,
+  "state": "complete",
+  "warmupSeconds": 10
 }

@@ -33,7 +33,7 @@
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 6819768
+        "value": 6820152
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
@@ -53,11 +53,11 @@
       },
       "Device.Diagnostics.PSRAM.LwIP.PeakUsedBytes": {
         "status": "BadNotSupported",
-        "value": 8732
+        "value": 9848
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 225
+        "value": 445
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -115,7 +115,7 @@
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 6819768
+        "value": 6820152
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
@@ -135,11 +135,11 @@
       },
       "Device.Diagnostics.PSRAM.LwIP.PeakUsedBytes": {
         "status": "BadNotSupported",
-        "value": 8732
+        "value": 9848
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 336
+        "value": 605
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -197,7 +197,7 @@
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 6819768
+        "value": 6820152
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
@@ -217,11 +217,11 @@
       },
       "Device.Diagnostics.PSRAM.LwIP.PeakUsedBytes": {
         "status": "BadNotSupported",
-        "value": 8732
+        "value": 9848
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 422
+        "value": 582
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -279,7 +279,7 @@
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 6819768
+        "value": 6820152
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
@@ -299,11 +299,11 @@
       },
       "Device.Diagnostics.PSRAM.LwIP.PeakUsedBytes": {
         "status": "BadNotSupported",
-        "value": 8732
+        "value": 9848
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 417
+        "value": 691
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -361,7 +361,7 @@
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 6819768
+        "value": 6820152
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
@@ -381,11 +381,11 @@
       },
       "Device.Diagnostics.PSRAM.LwIP.PeakUsedBytes": {
         "status": "BadNotSupported",
-        "value": 8732
+        "value": 9848
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 473
+        "value": 844
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",

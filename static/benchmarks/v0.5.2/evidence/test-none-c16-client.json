@@ -1,6 +1,6 @@
 {
-  "boardRevision": "waveshare_core2350b_16mb_psram8mb/W5500",
-  "buildFlags": "base;OTA_ROM_PRIMARY_APP=ON;OTA_BUILD_BOOTLOADER=OFF;synthetic;c16;hz10;cl4;events=on;history=on;test-none;allowNonePolicyPassword=test-only",
+  "boardRevision": "waveshare_core2350b_16mb_psram8mb",
+  "buildFlags": "base-synthetic-c16-hz10-cl4-events-history-test-none",
   "buildType": "Debug",
   "channelCount": 16,
   "clientCount": 4,
@@ -36,6 +36,12 @@
     ],
     "maxInFlightReadsPerClient": 16,
     "publishingMs": 100.0,
+    "readArrivalSchedule": {
+      "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount",
+      "phaseSpacingMs": 25.0,
+      "policy": "single-monotonic-window-even-client-phase",
+      "windowClock": "host-monotonic"
+    },
     "readRateHzPerClient": 10.0,
     "samplingMs": 100.0,
     "timeoutSeconds": 15.0
@@ -56,7 +62,7 @@
   "errors": [],
   "eventsEnabled": true,
   "firmwareVersion": "0.5.2",
-  "gitCommit": "572893e550524be6c163ccfab689eac3f46ce567",
+  "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
   "gitDirty": false,
   "historyEnabled": true,
   "loadAccounting": {
@@ -65,7 +71,7 @@
     "failedOperationCount": 0,
     "inFlightLimitExceededCount": 0,
     "missedDeadlineCount": 0,
-    "peakInFlightCount": 12,
+    "peakInFlightCount": 7,
     "rateHzPerClient": 10.0,
     "scheduledOperationCount": 1200,
     "transportFencedClientCount": 0
@@ -89,11 +95,11 @@
       "continuationRelease": {
         "droppedSampleCount": 0,
         "failureCount": 0,
-        "max": 73.041,
+        "max": 88.655,
         "operationCount": 4,
-        "p50": 39.984,
-        "p95": 73.041,
-        "p99": 73.041,
+        "p50": 44.721,
+        "p95": 88.655,
+        "p99": 88.655,
         "reason": null,
         "sampleCount": 4,
         "state": "measured",
@@ -102,11 +108,11 @@
       },
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 92.09,
+      "max": 96.495,
       "operationCount": 4,
-      "p50": 71.035,
-      "p95": 92.09,
-      "p99": 92.09,
+      "p50": 77.438,
+      "p95": 96.495,
+      "p99": 96.495,
       "reason": null,
       "sampleCount": 4,
       "state": "measured",
@@ -116,11 +122,11 @@
     "MethodLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 100.281,
+      "max": 153.493,
       "operationCount": 1,
-      "p50": 100.281,
-      "p95": 100.281,
-      "p99": 100.281,
+      "p50": 153.493,
+      "p95": 153.493,
+      "p99": 153.493,
       "phase": "setup-export-config-profile-verification",
       "reason": null,
       "sampleCount": 1,
@@ -131,11 +137,11 @@
     "ReadLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 1184.074,
+      "max": 637.1,
       "operationCount": 1200,
-      "p50": 86.378,
-      "p95": 453.136,
-      "p99": 803.804,
+      "p50": 78.766,
+      "p95": 289.362,
+      "p99": 363.85,
       "reason": null,
       "sampleCount": 1200,
       "state": "measured",
@@ -145,11 +151,11 @@
     "SecureSessionEstablishmentLatencyMs.Cold": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 932.445,
+      "max": 851.924,
       "operationCount": 1,
-      "p50": 932.445,
-      "p95": 932.445,
-      "p99": 932.445,
+      "p50": 851.924,
+      "p95": 851.924,
+      "p99": 851.924,
       "reason": null,
       "sampleCount": 1,
       "state": "measured",
@@ -159,11 +165,11 @@
     "SecureSessionEstablishmentLatencyMs.Warm": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 1047.596,
+      "max": 903.883,
       "operationCount": 4,
-      "p50": 971.706,
-      "p95": 1047.596,
-      "p99": 1047.596,
+      "p50": 876.031,
+      "p95": 903.883,
+      "p99": 903.883,
       "reason": null,
       "sampleCount": 4,
       "state": "measured",
@@ -200,7 +206,7 @@
     }
   },
   "namespaceZero": "full",
-  "networkSetup": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
+  "networkSetup": "host-WiFi-target-W5500-same-LAN",
   "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
   "profileSchemaVersion": 1,
   "profileVerification": {
@@ -218,7 +224,7 @@
         "consistency": {
           "state": "measured"
         },
-        "elapsedMonotonicMs": 158,
+        "elapsedMonotonicMs": 149,
         "failedNodeCount": 0,
         "measuredNodeCount": 22,
         "nodeCount": 22,
@@ -299,7 +305,7 @@
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Current",
             "state": "measured",
             "status": "Good",
-            "value": 3
+            "value": 1
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Peak",
@@ -366,7 +372,7 @@
   "runAccounting": {
     "droppedSampleCount": 0,
     "errorCount": 0,
-    "notificationCount": 20018,
+    "notificationCount": 21563,
     "operationCount": 1214,
     "sampleCount": 1214,
     "timedOutOperationCount": 0
@@ -383,7 +389,7 @@
     "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery",
     "state": "unavailable"
   },
-  "timeSynchronization": "SNTP UTC observed; same reference-board run sequence",
-  "toolchain": "GNU Arm Embedded 13.3.1",
+  "timeSynchronization": "SNTP-UTC-observed",
+  "toolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
   "warmupSeconds": 10.0
 }

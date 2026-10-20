@@ -2,12 +2,12 @@
   "artifacts": {
     "bin": {
       "name": "device_profile_basic.bin",
-      "sha256": "a18ec6a44598a08762c769c7e4787ed9ecc8c49d57e8c6474ac9c10a9e5ba350",
+      "sha256": "c506702b63d167f3d9ae128bfc88e4597b06978845b9f611140c74e618c8cf4c",
       "sizeBytes": 3569608
     },
     "elf": {
       "name": "device_profile_basic.elf",
-      "sha256": "3e83d42e0aeebc1bd859c8d9acd95d08396123deea39769ad0028b0a55f8fb63",
+      "sha256": "4a377ea94a160dae2a766961df3274106f4dfa0a6ee9b8907c64ea2eea51e207",
       "sizeBytes": 19204408
     },
     "map": {
@@ -17,7 +17,7 @@
     },
     "uf2": {
       "name": "device_profile_basic.uf2",
-      "sha256": "7facab23590eefc492dccf6df0b7e614d4bf3067c4d68f167315aba951bcba77",
+      "sha256": "0f77e81bec38f13f91c37dfca324e724c7be75dbbccf248165a9f03b316250e8",
       "sizeBytes": 7139840
     }
   },
@@ -78,7 +78,7 @@
     "buildType": "Debug",
     "driverPack": "base",
     "firmwareVersion": "0.5.2",
-    "gitCommit": "572893e550524be6c163ccfab689eac3f46ce567",
+    "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
     "gitDirty": false,
     "namespaceZero": "full",
     "profileId": "static-synthetic-base-waveshare_core2350b_16mb_psram8mb-debug",

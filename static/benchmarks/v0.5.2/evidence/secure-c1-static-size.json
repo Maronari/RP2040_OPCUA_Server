@@ -2,23 +2,23 @@
   "artifacts": {
     "bin": {
       "name": "device_profile_basic.bin",
-      "sha256": "d1121737ef8cbd7ebc0b1cdf9760cf21d54a8511e5e09b0a7d7a2cc5682f4153",
-      "sizeBytes": 3545632
+      "sha256": "61cba0e52fcb5bf2c4cf2de0cd179f57716572d2880c839519f5e8930292cbed",
+      "sizeBytes": 3550312
     },
     "elf": {
       "name": "device_profile_basic.elf",
-      "sha256": "244ad677ca9677d142f6815dc4a907caebe8179111b59ee050211ec137e340e7",
-      "sizeBytes": 19213380
+      "sha256": "71a31a14b4a660a39363d7844b5525da00a81fa10366fa01bab601c8342ffafe",
+      "sizeBytes": 19229296
     },
     "map": {
       "name": "device_profile_basic.elf.map",
-      "sha256": "0b219ec4416f751435f6c035fa2f3e474fa683c0acc848aeb8ebb51fcad80540",
-      "sizeBytes": 4605513
+      "sha256": "e5f115b210a2c085947f24834b0342a01780f5cdb2d780ad7a87d37f7721bca9",
+      "sizeBytes": 4608264
     },
     "uf2": {
       "name": "device_profile_basic.uf2",
-      "sha256": "19039623eaa2fae46e8d50fe75088f07030095c7018141244671a54997a6af8c",
-      "sizeBytes": 7092224
+      "sha256": "362e5d672372a402a13864978afb806b397429d119739e7ffc4c2ed8333c5350",
+      "sizeBytes": 7101440
     }
   },
   "contractId": "rp2-opcua-v0.5.2-resource-benchmark",
@@ -55,23 +55,33 @@
     "ELF debug metadata and runtime PSRAM use are not external-Flash load bytes."
   ],
   "provenance": {
+    "benchmarkProfile": "synthetic",
+    "benchmarkProfileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
     "boardRevision": "waveshare_core2350b_16mb_psram8mb",
     "buildFlags": {
       "CMAKE_C_FLAGS": "-mcpu=cortex-m33 -mthumb -march=armv8-m.main+fp+dsp -mfloat-abi=softfp -mcmse",
       "CMAKE_C_FLAGS_DEBUG": "-Og -g",
       "CMAKE_EXE_LINKER_FLAGS": "",
+      "FIRMWARE_BENCHMARK_CHANNELS": "1",
+      "FIRMWARE_BENCHMARK_CLIENTS": "1",
+      "FIRMWARE_BENCHMARK_EVENTS": "OFF",
+      "FIRMWARE_BENCHMARK_HISTORY": "OFF",
+      "FIRMWARE_BENCHMARK_PROFILE": "synthetic",
+      "FIRMWARE_BENCHMARK_RATE_HZ": "1",
+      "FIRMWARE_BENCHMARK_SECURITY": "basic256sha256-signandencrypt",
       "FIRMWARE_DRIVER_PACK": "base",
       "OTA_BUILD_BOOTLOADER": "OFF",
+      "OTA_ROM_PRIMARY_APP": "ON",
       "PICO_BOARD": "waveshare_core2350b_16mb_psram8mb",
       "WIZNET_CHIP": "W5500"
     },
     "buildType": "Debug",
     "driverPack": "base",
     "firmwareVersion": "0.5.2",
-    "gitCommit": "2881230c2ccbb98b8701730c4de930dc95da30fc",
-    "gitDirty": true,
+    "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
+    "gitDirty": false,
     "namespaceZero": "full",
-    "profileId": "static-base-waveshare_core2350b_16mb_psram8mb-debug",
+    "profileId": "static-synthetic-base-waveshare_core2350b_16mb_psram8mb-debug",
     "profileSchemaVersion": 1,
     "securityMode": "SignAndEncrypt",
     "securityPolicy": "Basic256Sha256",
@@ -117,7 +127,7 @@
       "loadRegion": "FLASH",
       "name": ".text",
       "runRegion": "FLASH",
-      "sizeBytes": 3206020,
+      "sizeBytes": 3208476,
       "vma": "0x10000000"
     },
     {
@@ -128,12 +138,12 @@
         "READONLY",
         "DATA"
       ],
-      "lma": "0x1030eb88",
+      "lma": "0x1030f520",
       "loadRegion": "FLASH",
       "name": ".rodata",
       "runRegion": "FLASH",
-      "sizeBytes": 246268,
-      "vma": "0x1030eb88"
+      "sizeBytes": 246764,
+      "vma": "0x1030f520"
     },
     {
       "flags": [
@@ -143,12 +153,12 @@
         "READONLY",
         "DATA"
       ],
-      "lma": "0x1034ad84",
+      "lma": "0x1034b90c",
       "loadRegion": "FLASH",
       "name": ".ARM.exidx",
       "runRegion": "FLASH",
       "sizeBytes": 8,
-      "vma": "0x1034ad84"
+      "vma": "0x1034b90c"
     },
     {
       "flags": [
@@ -158,12 +168,12 @@
         "READONLY",
         "DATA"
       ],
-      "lma": "0x1034ad8c",
+      "lma": "0x1034b914",
       "loadRegion": "FLASH",
       "name": ".binary_info",
       "runRegion": "FLASH",
       "sizeBytes": 40,
-      "vma": "0x1034ad8c"
+      "vma": "0x1034b914"
     },
     {
       "flags": [
@@ -195,7 +205,7 @@
         "READONLY",
         "CODE"
       ],
-      "lma": "0x1034adb4",
+      "lma": "0x1034b93c",
       "loadRegion": "FLASH",
       "name": ".data",
       "runRegion": "RAM",
@@ -233,11 +243,11 @@
       "flags": [
         "ALLOC"
       ],
-      "lma": "0x10360a0c",
+      "lma": "0x10361594",
       "loadRegion": "FLASH",
       "name": ".bss",
       "runRegion": "RAM",
-      "sizeBytes": 430776,
+      "sizeBytes": 431804,
       "vma": "0x20015d78"
     },
     {
@@ -245,12 +255,12 @@
         "ALLOC",
         "READONLY"
       ],
-      "lma": "0x10360a0c",
+      "lma": "0x10361594",
       "loadRegion": "FLASH",
       "name": ".heap",
       "runRegion": "RAM",
       "sizeBytes": 512,
-      "vma": "0x2007f030"
+      "vma": "0x2007f434"
     },
     {
       "flags": [
@@ -259,7 +269,7 @@
         "LOAD",
         "DATA"
       ],
-      "lma": "0x10360a0c",
+      "lma": "0x10361594",
       "loadRegion": "FLASH",
       "name": ".scratch_x",
       "runRegion": "SCRATCH_X",
@@ -268,13 +278,16 @@
     },
     {
       "flags": [
-        "CONTENTS"
+        "CONTENTS",
+        "ALLOC",
+        "LOAD",
+        "DATA"
       ],
-      "lma": "0x20081000",
-      "loadRegion": null,
+      "lma": "0x10362594",
+      "loadRegion": "FLASH",
       "name": ".scratch_y",
-      "runRegion": null,
-      "sizeBytes": 0,
+      "runRegion": "SCRATCH_Y",
+      "sizeBytes": 1728,
       "vma": "0x20081000"
     },
     {
@@ -282,12 +295,12 @@
         "ALLOC",
         "READONLY"
       ],
-      "lma": "0x20081000",
+      "lma": "0x200816c0",
       "loadRegion": "SCRATCH_Y",
       "name": ".stack_dummy",
       "runRegion": "SCRATCH_Y",
       "sizeBytes": 2048,
-      "vma": "0x20081000"
+      "vma": "0x200816c0"
     },
     {
       "flags": [
@@ -297,12 +310,12 @@
         "READONLY",
         "DATA"
       ],
-      "lma": "0x10361a0c",
+      "lma": "0x10362c54",
       "loadRegion": "FLASH",
       "name": ".flash_end",
       "runRegion": "FLASH",
       "sizeBytes": 20,
-      "vma": "0x10361a0c"
+      "vma": "0x10362c54"
     },
     {
       "flags": [
@@ -339,7 +352,7 @@
       "loadRegion": null,
       "name": ".debug_info",
       "runRegion": null,
-      "sizeBytes": 7471543,
+      "sizeBytes": 7475607,
       "vma": "0x00000000"
     },
     {
@@ -353,7 +366,7 @@
       "loadRegion": null,
       "name": ".debug_abbrev",
       "runRegion": null,
-      "sizeBytes": 214974,
+      "sizeBytes": 215006,
       "vma": "0x00000000"
     },
     {
@@ -367,7 +380,7 @@
       "loadRegion": null,
       "name": ".debug_loclists",
       "runRegion": null,
-      "sizeBytes": 2205603,
+      "sizeBytes": 2207239,
       "vma": "0x00000000"
     },
     {
@@ -381,7 +394,7 @@
       "loadRegion": null,
       "name": ".debug_aranges",
       "runRegion": null,
-      "sizeBytes": 145224,
+      "sizeBytes": 145312,
       "vma": "0x00000000"
     },
     {
@@ -395,7 +408,7 @@
       "loadRegion": null,
       "name": ".debug_rnglists",
       "runRegion": null,
-      "sizeBytes": 138996,
+      "sizeBytes": 139129,
       "vma": "0x00000000"
     },
     {
@@ -409,7 +422,7 @@
       "loadRegion": null,
       "name": ".debug_line",
       "runRegion": null,
-      "sizeBytes": 2631462,
+      "sizeBytes": 2633727,
       "vma": "0x00000000"
     },
     {
@@ -423,7 +436,7 @@
       "loadRegion": null,
       "name": ".debug_str",
       "runRegion": null,
-      "sizeBytes": 874543,
+      "sizeBytes": 876039,
       "vma": "0x00000000"
     },
     {
@@ -437,7 +450,7 @@
       "loadRegion": null,
       "name": ".debug_frame",
       "runRegion": null,
-      "sizeBytes": 630812,
+      "sizeBytes": 631168,
       "vma": "0x00000000"
     },
     {
@@ -461,15 +474,15 @@
     "state": "not-run"
   },
   "totals": {
-    "BinFileBytes": 3545632,
-    "ElfFileBytes": 19213380,
-    "ExternalFlashLoadBytes": 3545628,
+    "BinFileBytes": 3550312,
+    "ElfFileBytes": 19229296,
+    "ExternalFlashLoadBytes": 3550308,
     "PsramStaticBytes": 0,
-    "SramBssBytes": 430776,
+    "SramBssBytes": 431804,
     "SramDataBytes": 89176,
     "SramReservedHeapBytes": 368640,
     "SramReservedTaskStackBytes": null,
-    "SramStaticTotalBytes": 526896,
-    "Uf2FileBytes": 7092224
+    "SramStaticTotalBytes": 529652,
+    "Uf2FileBytes": 7101440
   }
 }

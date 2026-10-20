@@ -29,19 +29,19 @@
       },
       "Device.Diagnostics.PSRAM.UsedBytes": {
         "status": "Good",
-        "value": 5245128
+        "value": 5243376
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 5280576
+        "value": 5278848
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
-        "value": 3143480
+        "value": 3145232
       },
       "Device.Diagnostics.PSRAM.LargestFreeBlockBytes": {
         "status": "Good",
-        "value": 3124840
+        "value": 3126520
       },
       "Device.Diagnostics.PSRAM.LwIP.ReservedBytes": {
         "status": "BadNotSupported",
@@ -57,7 +57,7 @@
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 777
+        "value": 327
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -111,19 +111,19 @@
       },
       "Device.Diagnostics.PSRAM.UsedBytes": {
         "status": "Good",
-        "value": 5245128
+        "value": 5243376
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 5280576
+        "value": 5278848
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
-        "value": 3143480
+        "value": 3145232
       },
       "Device.Diagnostics.PSRAM.LargestFreeBlockBytes": {
         "status": "Good",
-        "value": 3124840
+        "value": 3126520
       },
       "Device.Diagnostics.PSRAM.LwIP.ReservedBytes": {
         "status": "BadNotSupported",
@@ -139,7 +139,7 @@
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 754
+        "value": 220
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -193,19 +193,19 @@
       },
       "Device.Diagnostics.PSRAM.UsedBytes": {
         "status": "Good",
-        "value": 5245128
+        "value": 5243376
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 5280576
+        "value": 5278848
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
-        "value": 3143480
+        "value": 3145232
       },
       "Device.Diagnostics.PSRAM.LargestFreeBlockBytes": {
         "status": "Good",
-        "value": 3124840
+        "value": 3126520
       },
       "Device.Diagnostics.PSRAM.LwIP.ReservedBytes": {
         "status": "BadNotSupported",
@@ -221,7 +221,7 @@
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 753
+        "value": 5
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -275,19 +275,19 @@
       },
       "Device.Diagnostics.PSRAM.UsedBytes": {
         "status": "Good",
-        "value": 5245128
+        "value": 5243376
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 5280576
+        "value": 5278848
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
-        "value": 3143480
+        "value": 3145232
       },
       "Device.Diagnostics.PSRAM.LargestFreeBlockBytes": {
         "status": "Good",
-        "value": 3124840
+        "value": 3126520
       },
       "Device.Diagnostics.PSRAM.LwIP.ReservedBytes": {
         "status": "BadNotSupported",
@@ -303,7 +303,7 @@
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 753
+        "value": 967
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",
@@ -357,19 +357,19 @@
       },
       "Device.Diagnostics.PSRAM.UsedBytes": {
         "status": "Good",
-        "value": 5245128
+        "value": 5243376
       },
       "Device.Diagnostics.PSRAM.PeakUsedBytes": {
         "status": "Good",
-        "value": 5280576
+        "value": 5278848
       },
       "Device.Diagnostics.PSRAM.FreeBytes": {
         "status": "Good",
-        "value": 3143480
+        "value": 3145232
       },
       "Device.Diagnostics.PSRAM.LargestFreeBlockBytes": {
         "status": "Good",
-        "value": 3124840
+        "value": 3126520
       },
       "Device.Diagnostics.PSRAM.LwIP.ReservedBytes": {
         "status": "BadNotSupported",
@@ -385,7 +385,7 @@
       },
       "Device.Diagnostics.SnapshotAgeMs": {
         "status": "Good",
-        "value": 753
+        "value": 969
       },
       "Device.Diagnostics.OpcUa.Sessions.Current": {
         "status": "Good",

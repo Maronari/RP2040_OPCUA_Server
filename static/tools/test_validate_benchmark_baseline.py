@@ -46,6 +46,8 @@ def paired_native_fixture(directory: Path) -> tuple[dict, Path, dict, Path]:
     shutil.copytree(ROOT / "static/benchmarks/v0.5.2/evidence", evidence_root)
     fixture = copy.deepcopy(baseline)
     entry = next(item for item in fixture["profiles"] if item["profileId"] == NATIVE_PROFILE_ID)
+    entry["evidence"] = [item for item in entry["evidence"]
+                         if item["kind"] not in {"native", "native-association"}]
     client_item = next(item for item in entry["evidence"] if item["kind"] == "client")
     static_item = next(item for item in entry["evidence"] if item["kind"] == "static-size")
     client_path = root / client_item["path"]
@@ -100,36 +102,22 @@ def paired_native_fixture(directory: Path) -> tuple[dict, Path, dict, Path]:
 
 
 repository_baseline = read_json(BASELINE)
-rejects(lambda: validate_baseline(repository_baseline, REPO_ROOT),
-        "client read arrival schedule mismatch")
+validate_baseline(repository_baseline, REPO_ROOT)
 
-# Retained hardware evidence intentionally remains untouched until a real
-# phase-staggered recapture.  Build a hash-consistent positive fixture so the
-# validator's other positive/negative cases remain independently testable.
+# Work on a copied, hash-consistent evidence tree so negative cases never
+# mutate the retained hardware evidence.
 _fixture_temp = tempfile.TemporaryDirectory()
 ROOT = Path(_fixture_temp.name)
 shutil.copytree(REPO_ROOT / "static/benchmarks/v0.5.2/evidence",
                 ROOT / "static/benchmarks/v0.5.2/evidence")
 baseline = copy.deepcopy(repository_baseline)
-for measured_entry in (entry for entry in baseline["profiles"] if entry["resultState"] == "measured"):
-    profile = subject.benchmark_profiles.select(measured_entry["profileId"])
-    client_item = next(item for item in measured_entry["evidence"] if item["kind"] == "client")
-    client_path = ROOT / client_item["path"]
-    client = read_json(client_path)
-    client.setdefault("clientLoad", {})["readArrivalSchedule"] = {
-        "policy": subject.load_test_opcua.READ_ARRIVAL_PHASE_POLICY,
-        "phaseSpacingMs": round((1000 / profile["rateHz"]) / profile["clients"], 6),
-        "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount",
-        "windowClock": "host-monotonic",
-    }
-    client_item["sha256"] = write_document(client_path, client)
 STATIC_REPORT = ROOT / "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json"
 thresholds = read_json(THRESHOLDS)
 measured = validate_baseline(baseline, ROOT)
 validate_thresholds(thresholds, measured)
 validate_static_report(read_json(STATIC_REPORT), thresholds)
 assert len(baseline["profiles"]) == 192
-assert len(measured) == 10
+assert len(measured) == 12
 assert sum(entry["resultState"] == "measured" for entry in baseline["profiles"]) == 2
 assert sum(entry["resultState"] == "failed" for entry in baseline["profiles"]) == 0
 assert sum(entry["resultState"] == "not-run" for entry in baseline["profiles"]) == 190
@@ -156,10 +144,7 @@ bad_dirty_type["gitDirty"] = 0
 rejects(lambda: validate_environment(bad_dirty_type, baseline["release"]),
         "gitDirty must be a Boolean")
 
-rejects(lambda: validate_release_readiness(baseline, thresholds),
-        "required release profile uses a dirty source tree")
 release_ready = copy.deepcopy(baseline)
-release_ready["environment"]["gitDirty"] = False
 release_commit = release_ready["environment"]["gitCommit"]
 for profile_id in thresholds["releaseRequiredProfiles"]:
     required_entry = next(entry for entry in release_ready["profiles"]
@@ -254,6 +239,8 @@ with tempfile.TemporaryDirectory() as directory:
 unassociated_jitter = copy.deepcopy(baseline)
 jitter_entry = next(entry for entry in unassociated_jitter["profiles"]
                     if entry["resultState"] == "measured")
+jitter_entry["evidence"] = [item for item in jitter_entry["evidence"]
+                            if item["kind"] not in {"native", "native-association"}]
 jitter_entry["metrics"]["SamplingJitterMs.p99"] = {"value": 1.0, "unit": "milliseconds"}
 rejects(lambda: validate_baseline(unassociated_jitter, ROOT),
         "SamplingJitter requires runner-proven native association")
@@ -261,23 +248,19 @@ rejects(lambda: validate_baseline(unassociated_jitter, ROOT),
 native_as_baseline_evidence = copy.deepcopy(baseline)
 native_entry = next(entry for entry in native_as_baseline_evidence["profiles"]
                     if entry["resultState"] == "measured")
-native_entry["evidence"].append({
-    "kind": "native", "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json",
-    "sha256": hashlib.sha256((ROOT / "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json").read_bytes()).hexdigest(),
-})
+native_entry["evidence"] = [item for item in native_entry["evidence"]
+                            if item["kind"] != "native-association"]
 rejects(lambda: validate_baseline(native_as_baseline_evidence, ROOT),
         "native capture requires its association envelope")
 
 with tempfile.TemporaryDirectory() as directory:
     paired, paired_root, envelope, envelope_path = paired_native_fixture(Path(directory))
     paired_measured = validate_baseline(paired, paired_root)
-    assert len(paired_measured) == 11
+    assert len(paired_measured) == 12
     paired_entry = next(item for item in paired["profiles"] if item["profileId"] == NATIVE_PROFILE_ID)
-    assert paired_measured[f"{paired_entry['profileId']}:SamplingJitterMs.p99"] == 53.089
+    assert paired_measured[f"{paired_entry['profileId']}:SamplingJitterMs.p99"] == \
+        paired_entry["metrics"]["SamplingJitterMs.p99"]["value"]
     paired_thresholds = copy.deepcopy(thresholds)
-    paired_thresholds["hardwareMaxima"].append({"profileId": NATIVE_PROFILE_ID,
-                                                  "metric": "SamplingJitterMs.p99",
-                                                  "max": 60.0, "unit": "milliseconds"})
     validate_thresholds(paired_thresholds, paired_measured)
 
 with tempfile.TemporaryDirectory() as directory:

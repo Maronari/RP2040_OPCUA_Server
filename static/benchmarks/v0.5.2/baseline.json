@@ -3,19 +3,19 @@
   "contractId": "rp2-opcua-v0.5.2-resource-benchmark",
   "release": "0.5.2",
   "environment": {
-    "recordedAt": "2026-10-19T04:20:24Z",
+    "recordedAt": "2026-10-20T18:15:56Z",
     "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
     "boardId": "waveshare_core2350b_16mb_psram8mb",
-    "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb/W5500",
+    "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
     "network": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
     "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
-    "clientToolchain": "GNU Arm Embedded 13.3.1",
+    "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
     "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
     "buildType": "Debug",
     "firmwareVersion": "0.5.2",
-    "firmwareSource": "572893e550524be6c163ccfab689eac3f46ce567 (clean v0.5.2 maximum benchmark profile)",
-    "gitCommit": "572893e550524be6c163ccfab689eac3f46ce567",
-    "firmwareUf2Sha256": "7facab23590eefc492dccf6df0b7e614d4bf3067c4d68f167315aba951bcba77",
+    "firmwareSource": "ab954928872b1ddc2283e3bf27df03652f1de0b2 (clean v0.5.2 benchmark profile)",
+    "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
+    "firmwareUf2Sha256": "0f77e81bec38f13f91c37dfca324e724c7be75dbbccf248165a9f03b316250e8",
     "gitDirty": false
   },
   "profiles": [
@@ -23,17 +23,38 @@
       "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
       "resultState": "measured",
       "repetitions": 1,
+      "association": "client and native windows bound by the host-orchestrated capture envelope",
+      "environment": {
+        "recordedAt": "2026-10-20T18:15:56Z",
+        "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
+        "boardId": "waveshare_core2350b_16mb_psram8mb",
+        "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
+        "network": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
+        "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
+        "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+        "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+        "buildType": "Debug",
+        "firmwareVersion": "0.5.2",
+        "firmwareSource": "ab954928872b1ddc2283e3bf27df03652f1de0b2 (clean v0.5.2 benchmark profile)",
+        "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
+        "firmwareUf2Sha256": "362e5d672372a402a13864978afb806b397429d119739e7ffc4c2ed8333c5350",
+        "gitDirty": false
+      },
       "metrics": {
         "ReadLatencyMs.p99": {
-          "value": 85.756,
+          "value": 96.039,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Cold.max": {
-          "value": 3421.925,
+          "value": 3702.353,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Warm.max": {
-          "value": 3287.152,
+          "value": 3465.805,
+          "unit": "milliseconds"
+        },
+        "SamplingJitterMs.p99": {
+          "value": 7.012,
           "unit": "milliseconds"
         },
         "Heap.PeakUsedBytes": {
@@ -41,7 +62,7 @@
           "unit": "bytes"
         },
         "PSRAM.PeakUsedBytes": {
-          "value": 5280576,
+          "value": 5278848,
           "unit": "bytes"
         }
       },
@@ -49,40 +70,29 @@
         {
           "kind": "client",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-client.json",
-          "sha256": "179fcfd86fc4a6c83018811f96e8399d697ee8f53d01192ea069a1b9c6dd33ea"
+          "sha256": "c96d00352a3b7e6ed5d06823ffdf790d9f1ea121c34e7accb964f6184415308b"
+        },
+        {
+          "kind": "native",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native.json",
+          "sha256": "cd813a1d16e5287bf7852e4cdb424fc6031fd06468ecad8c5e58a390c0d1c23d"
+        },
+        {
+          "kind": "native-association",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native-association.json",
+          "sha256": "69d8c9f3973be7e565d31594083ae6ce38ed77d640f49a4366b1bb4a821e449a"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-resources.json",
-          "sha256": "28bc1bb1b291d50b3da8ab5704b9e5e6c01a6e4ddeb7f7f022db6944bcfba987"
-        },
-        {
-          "kind": "boot-clock",
-          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-boot-clock.json",
-          "sha256": "6b97333f6218dec81a4e5c6d846ce122baea01771a2efa1c0f431821175f029b"
+          "sha256": "c1502ec7d77a0155f1e04653337f796c080a56a65990449cc60a1b1f0b50e171"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json",
-          "sha256": "6e270568271c84c2ced2fb7eec1cdabc0a2cacb97ff68e5b664f4a395d072320"
+          "sha256": "a0850b911ec6422f869cf2c809e2ecdc775e081b14122e0576a63c92b17ed89a"
         }
-      ],
-      "environment": {
-        "recordedAt": "2026-10-10T15:54:00Z",
-        "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
-        "boardId": "waveshare_core2350b_16mb_psram8mb",
-        "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb/W5500",
-        "network": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
-        "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
-        "clientToolchain": "GNU Arm Embedded 13.3.1",
-        "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
-        "buildType": "Debug",
-        "firmwareVersion": "0.5.2",
-        "firmwareSource": "2881230c2ccbb98b8701730c4de930dc95da30fc plus uncommitted v0.5.2 T0-T5 changes",
-        "gitCommit": "2881230c2ccbb98b8701730c4de930dc95da30fc",
-        "firmwareUf2Sha256": "19039623eaa2fae46e8d50fe75088f07030095c7018141244671a54997a6af8c",
-        "gitDirty": true
-      }
+      ]
     },
     {
       "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist1",
@@ -1038,33 +1048,38 @@
       "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
       "resultState": "measured",
       "repetitions": 1,
+      "association": "client and native windows bound by the host-orchestrated capture envelope",
       "environment": {
-        "recordedAt": "2026-10-19T04:20:24Z",
+        "recordedAt": "2026-10-20T18:15:56Z",
         "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
         "boardId": "waveshare_core2350b_16mb_psram8mb",
-        "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb/W5500",
+        "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
         "network": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
         "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
-        "clientToolchain": "GNU Arm Embedded 13.3.1",
+        "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "buildType": "Debug",
         "firmwareVersion": "0.5.2",
-        "firmwareSource": "572893e550524be6c163ccfab689eac3f46ce567 (clean v0.5.2 maximum benchmark profile)",
-        "gitCommit": "572893e550524be6c163ccfab689eac3f46ce567",
-        "firmwareUf2Sha256": "7facab23590eefc492dccf6df0b7e614d4bf3067c4d68f167315aba951bcba77",
+        "firmwareSource": "ab954928872b1ddc2283e3bf27df03652f1de0b2 (clean v0.5.2 benchmark profile)",
+        "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
+        "firmwareUf2Sha256": "0f77e81bec38f13f91c37dfca324e724c7be75dbbccf248165a9f03b316250e8",
         "gitDirty": false
       },
       "metrics": {
         "ReadLatencyMs.p99": {
-          "value": 803.804,
+          "value": 363.85,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Cold.max": {
-          "value": 932.445,
+          "value": 851.924,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Warm.max": {
-          "value": 1047.596,
+          "value": 903.883,
+          "unit": "milliseconds"
+        },
+        "SamplingJitterMs.p99": {
+          "value": 58.111,
           "unit": "milliseconds"
         },
         "Heap.PeakUsedBytes": {
@@ -1072,7 +1087,7 @@
           "unit": "bytes"
         },
         "PSRAM.PeakUsedBytes": {
-          "value": 6819768,
+          "value": 6820152,
           "unit": "bytes"
         }
       },
@@ -1080,17 +1095,27 @@
         {
           "kind": "client",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-client.json",
-          "sha256": "6c6ba79a65815b7a8b021cb5418d633def7f8abbb876bedb7bcfe2b9808a25db"
+          "sha256": "00abd687a6063559c7f0349093c7df6a244c621f282b062aefa89b2f8eddedf9"
+        },
+        {
+          "kind": "native",
+          "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json",
+          "sha256": "8d91394336e3a432f5ec1821780a5d9440388dfd0b91df1ad58ecbf8c9bedc89"
+        },
+        {
+          "kind": "native-association",
+          "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native-association.json",
+          "sha256": "ee39a3cafa99bab475cf06a6c1742e21efbfd10ad7794a555ed46fc941fee445"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-resources.json",
-          "sha256": "81d4a52d37855b75bf2085313bf6b4d6c34c10a9f674d5a41c6df6a05c21d996"
+          "sha256": "58befa1da7b3dd8829b4967ca52c683f4183f2afd566a9a44887562434c8946c"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-static-size.json",
-          "sha256": "785e48c25f639555eb74dfc170545a8db2770b48634070646348f22af462a0d1"
+          "sha256": "2ab9a6298b0a14b254c971f59a12ccbef1de307ab950642465daaee1c2572223"
         }
       ]
     }

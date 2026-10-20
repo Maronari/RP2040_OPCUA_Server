@@ -98,7 +98,7 @@ class FakeSerial:
 def options(directory: Path, profile: dict, static: Path, client: Path) -> SimpleNamespace:
     return SimpleNamespace(profile_id=profile["profileId"], client_arg=["opc.tcp://device.invalid:4840"],
         client_script=Path("static/tools/load_test_opcua.py"), python="python", client_output=client,
-        serial_port="COM-test", ready_token="READY\n", static_size_report=static,
+        serial_port="COM-test", ready_token="READY", static_size_report=static,
         flashed_uf2_sha256=UF2, git_commit=COMMIT, warmup_seconds=WARMUP, duration_seconds=DURATION,
         readiness_timeout=0.2, client_timeout=0.2, dump_timeout=0.2,
         native_output=directory / "native.json", output=directory / "envelope.json", root=directory)
@@ -183,6 +183,30 @@ def run_success() -> None:
         assert command[command.index("--duration") + 1] == str(DURATION)
 
 
+def generated_readiness_token_is_windows_safe() -> None:
+    profile = next(item for item in benchmark_profiles.profiles()
+                   if item["channels"] == 1 and item["clients"] == 1 and item["rateHz"] == 1
+                   and item["security"] == "test-none" and not item["events"] and not item["history"])
+    with tempfile.TemporaryDirectory() as temporary:
+        directory = Path(temporary)
+        client, static = directory / "client.json", directory / "static.json"
+        write_json(client, client_document(profile, "board", "toolchain", "Debug"))
+        write_json(static, static_document(profile, "board", "toolchain", "Debug"))
+        args = options(directory, profile, static, client)
+        args.ready_token = None
+        original = subject.secrets.token_hex
+        subject.secrets.token_hex = lambda _length: "c" * 32
+        try:
+            subject.run_capture(args,
+                                process_factory=lambda *_a, **_k: FakeProcess(args.ready_token.encode("ascii")),
+                                serial_factory=lambda *_a, **_k: FakeSerial(json.dumps(native_document(profile)).encode()),
+                                identity=identity)
+        finally:
+            subject.secrets.token_hex = original
+        assert args.ready_token == "RP2_BENCHMARK_READY_" + "c" * 32
+        assert "\r" not in args.ready_token and "\n" not in args.ready_token
+
+
 def rejects(callable_, phrase: str) -> None:
     try:
         callable_()
@@ -201,6 +225,16 @@ def negative_cases() -> None:
         client, static = directory / "client.json", directory / "static.json"
         write_json(client, client_document(profile, "board", "toolchain", "Debug"))
         write_json(static, static_document(profile, "board", "toolchain", "Debug"))
+        for token in ("READY\r", "READY\n"):
+            args = options(directory, profile, static, client)
+            args.ready_token = token
+            rejects(lambda: subject.run_capture(
+                        args,
+                        process_factory=lambda *_a, **_k: (_ for _ in ()).throw(
+                            AssertionError("invalid token must fail before Popen")),
+                        serial_factory=lambda *_a, **_k: FakeSerial(b""), identity=identity),
+                    "without line breaks")
+
         args = options(directory, profile, static, client)
         args.readiness_timeout = 0.01
         no_ready = FakeProcess(b"")
@@ -267,6 +301,7 @@ def negative_cases() -> None:
 
 
 run_success()
+generated_readiness_token_is_windows_safe()
 negative_cases()
 real_pipe_readiness()
 read1_is_preferred()

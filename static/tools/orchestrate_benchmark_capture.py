@@ -302,9 +302,10 @@ def run_capture(args: argparse.Namespace, *, process_factory: Callable[..., Any]
                 recovery: Callable[[Any, float, float, float, float], None] = recover_native_capture) -> dict[str, Any]:
     require(GIT_SHA.fullmatch(args.git_commit) is not None, "git commit must be a full lowercase SHA")
     if args.ready_token is None:
-        args.ready_token = f"RP2_BENCHMARK_READY_{secrets.token_hex(16)}\n"
-    require(args.ready_token.isascii() and 1 <= len(args.ready_token) <= 64,
-            "readiness token must be 1..64 ASCII bytes")
+        args.ready_token = f"RP2_BENCHMARK_READY_{secrets.token_hex(16)}"
+    require(args.ready_token.isascii() and 1 <= len(args.ready_token) <= 64
+            and "\r" not in args.ready_token and "\n" not in args.ready_token,
+            "readiness token must be 1..64 ASCII bytes without line breaks")
     require(len(args.client_arg) <= 64 and all(len(item.encode("utf-8")) <= 1024 for item in args.client_arg),
             "client argument count or byte length exceeds its bound")
     for name, value, maximum in (("readiness", args.readiness_timeout, MAX_READY_SECONDS),
