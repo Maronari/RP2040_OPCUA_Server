@@ -109,18 +109,24 @@ int main(int argc, char **argv)
     assert(benchmark_timing_init());
     benchmark_timing_set_control(control_poll, NULL);
     benchmark_timing_set_output(output, NULL);
+    g_now_us = 5123u;
+    benchmark_timing_note_opcua_ready();
+    /* A controlled-restart startup marker cannot replace the cold-start
+     * boundary recorded above. */
+    g_now_us = 6123u;
+    benchmark_timing_note_opcua_ready();
 
     /* Legacy activation/verify-style polling never has a timing observer. */
     assert(channel_manager_poll_all(9000u));
     g_control = BENCHMARK_TIMING_CONTROL_START;
     benchmark_timing_sensor_task_process_control();
     poll_at(9000000ULL);  /* still in the configured warmup */
-    poll_at(10000000ULL); /* starts capture: sequence one */
+    poll_at(10010000ULL); /* starts capture: sequence one */
     /* A start command is illegal during capture and cannot reset it. */
     g_control = BENCHMARK_TIMING_CONTROL_START;
     benchmark_timing_sensor_task_process_control();
-    poll_at(11000000ULL); /* sequence two */
-    poll_at(41000000ULL); /* deadline: this poll adds no record */
+    poll_at(11010000ULL); /* sequence two */
+    poll_at(41010000ULL); /* deadline: this poll adds no record */
     assert(!benchmark_timing_dump_if_ready());
     g_control = BENCHMARK_TIMING_CONTROL_DUMP;
     benchmark_timing_sensor_task_process_control();
@@ -128,10 +134,12 @@ int main(int argc, char **argv)
     assert(strstr(g_json, "\"state\":\"complete\"") != NULL);
     assert(strstr(g_json, "\"profileId\":\"native-test\"") != NULL);
     assert(strstr(g_json, "\"captureId\":1") != NULL);
-    assert(strstr(g_json, "\"channelId\":\"benchmark.synthetic.1\",\"sequence\":1,\"sampleMonotonicUs\":10000000") != NULL);
-    assert(strstr(g_json, "\"channelId\":\"benchmark.synthetic.2\",\"sequence\":2,\"sampleMonotonicUs\":11000000") != NULL);
+    assert(strstr(g_json, "\"opcuaReadyMonotonicUs\":{\"state\":\"measured\",\"value\":5123,\"unit\":\"microseconds\"}") != NULL);
+    assert(strstr(g_json, "\"startupLatencyMs\":{\"state\":\"measured\",\"value\":5.123,\"unit\":\"milliseconds\",\"boundary\":\"main-entry-to-UA_Server_run_startup-success\"}") != NULL);
+    assert(strstr(g_json, "\"channelId\":\"benchmark.synthetic.1\",\"sequence\":1,\"sampleMonotonicUs\":10010000") != NULL);
+    assert(strstr(g_json, "\"channelId\":\"benchmark.synthetic.2\",\"sequence\":2,\"sampleMonotonicUs\":11010000") != NULL);
     assert(strstr(g_json, "\"sampleMonotonicUs\":9000000") == NULL);
-    assert(strstr(g_json, "\"sampleMonotonicUs\":41000000") == NULL);
+    assert(strstr(g_json, "\"sampleMonotonicUs\":41010000") == NULL);
     if (argc >= 2)
     {
         FILE *const output_file = fopen(argv[1], "wb");

@@ -64,6 +64,12 @@ typedef bool (*benchmark_timing_output_fn)(const char *bytes, size_t length, voi
 
 /** Records the device-monotonic boot marker before service initialization. */
 void benchmark_timing_note_boot_started(void);
+/**
+ * Records the first successful cold-boot UA server startup.  Call only after
+ * UA_Server_run_startup() has returned UA_STATUSCODE_GOOD.  Later controlled
+ * server rebuilds deliberately preserve the original cold-start marker.
+ */
+void benchmark_timing_note_opcua_ready(void);
 /** Allocates the benchmark-only PSRAM record store.  Failure remains observable. */
 bool benchmark_timing_init(void);
 /** Installs app-owned nonblocking control and output seams. */

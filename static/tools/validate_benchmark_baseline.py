@@ -24,8 +24,13 @@ REQUIRED_METRICS = {
     "PSRAM.PeakUsedBytes": "bytes",
 }
 SAMPLING_JITTER_METRIC = "SamplingJitterMs.p99"
+STARTUP_LATENCY_METRIC = "StartupLatencyMs.max"
 NATIVE_ASSOCIATION_KIND = "native-association"
-METRIC_UNITS = {**REQUIRED_METRICS, SAMPLING_JITTER_METRIC: "milliseconds"}
+METRIC_UNITS = {
+    **REQUIRED_METRICS,
+    SAMPLING_JITTER_METRIC: "milliseconds",
+    STARTUP_LATENCY_METRIC: "milliseconds",
+}
 STATIC_TOTALS = {
     "ElfFileBytes", "Uf2FileBytes", "BinFileBytes",
     "ExternalFlashLoadBytes", "SramStaticTotalBytes",
@@ -81,7 +86,7 @@ def validate_environment(environment: Any, release: str, prefix: str = "environm
 
 def validate_native_association(profile_id: str, profile: dict[str, Any], metrics: dict[str, Any],
                                 environment: dict[str, Any], documents: dict[str, dict[str, Any]],
-                                evidence_hashes: dict[str, str], evidence_sizes: dict[str, int]) -> None:
+                                evidence_hashes: dict[str, str], evidence_sizes: dict[str, int]) -> float | None:
     """Validate the runner's byte-level association before accepting native jitter."""
     envelope = documents[NATIVE_ASSOCIATION_KIND]
     require(set(envelope) == {"schemaVersion", "kind", "state", "associationId", "profile", "capture",
@@ -166,9 +171,37 @@ def validate_native_association(profile_id: str, profile: dict[str, Any], metric
     require(isinstance(jitter, dict) and jitter.get("unit") == "milliseconds"
             and jitter.get("value") == expected_jitter,
             f"{profile_id}: SamplingJitter differs from associated native evidence")
+    startup = documents["native"].get("startupLatencyMs")
+    if startup is None:
+        return None
+    boot_started_us = documents["native"].get("bootStartedMonotonicUs")
+    ready = documents["native"].get("opcuaReadyMonotonicUs")
+    require(type(boot_started_us) is int and boot_started_us >= 0
+            and isinstance(ready, dict)
+            and ready.get("state") == "measured"
+            and ready.get("unit") == "microseconds"
+            and type(ready.get("value")) is int
+            and ready["value"] >= boot_started_us,
+            f"{profile_id}: native OPC UA ready marker is invalid")
+    require(isinstance(startup, dict)
+            and startup.get("state") == "measured"
+            and startup.get("unit") == "milliseconds"
+            and startup.get("boundary") == "main-entry-to-UA_Server_run_startup-success"
+            and type(startup.get("value")) in (int, float)
+            and startup["value"] >= 0,
+            f"{profile_id}: native startup latency evidence is invalid")
+    require(startup["value"] == round((ready["value"] - boot_started_us) / 1000, 3),
+            f"{profile_id}: native startup latency interval mismatch")
+    metric = metrics.get(STARTUP_LATENCY_METRIC)
+    require(isinstance(metric, dict)
+            and metric.get("unit") == "milliseconds"
+            and metric.get("value") == startup["value"],
+            f"{profile_id}: StartupLatency differs from native evidence")
+    return float(startup["value"])
 
 
-def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, Any]) -> bool:
+def validate_evidence(root: Path, entry: dict[str, Any],
+                      environment: dict[str, Any]) -> tuple[bool, float | None]:
     profile_id = entry["profileId"]
     evidence = entry.get("evidence")
     require(isinstance(evidence, list) and 3 <= len(evidence) <= 8,
@@ -287,8 +320,30 @@ def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, 
                 f"{profile_id}: {metric_name} differs from resource evidence")
     if "boot-clock" in documents:
         boot = documents["boot-clock"]
-        require(isinstance(boot.get("samples"), list) and boot["samples"]
-                and all(sample.get("class") == "utc" for sample in boot["samples"]),
+        boundary = boot.get("coldBootBoundary")
+        samples = boot.get("samples")
+        require(boot.get("profileId") == profile_id
+                and boot.get("gitCommit") == environment["gitCommit"]
+                and boot.get("flashedUf2Sha256") == environment["firmwareUf2Sha256"],
+                f"{profile_id}: cold-boot provenance mismatch")
+        require(isinstance(boundary, dict)
+                and boundary.get("method") == "host-monotonic-usb-serial-enumeration"
+                and isinstance(boundary.get("serialPort"), str) and boundary["serialPort"]
+                and boundary.get("absentAtObserverStart") is True
+                and type(boundary.get("enumerationObservedSeconds")) in (int, float)
+                and boundary["enumerationObservedSeconds"] >= 0,
+                f"{profile_id}: cold-boot boundary is invalid")
+        require(isinstance(samples, list) and samples
+                and boot.get("sampleCapacity") == 4096
+                and boot.get("sampleCapacityExhausted") is False
+                and len(samples) <= boot["sampleCapacity"]
+                and all(isinstance(sample, dict)
+                        and sample.get("class") in {"unreachable", "null", "utc"}
+                        for sample in samples)
+                and any(sample.get("class") == "utc" for sample in samples)
+                and boot.get("bootRelativeSeen") is False
+                and type(boot.get("firstReachableSeconds")) in (int, float)
+                and type(boot.get("firstUtcSeconds")) in (int, float),
                 f"{profile_id}: UTC clock evidence is invalid")
     static = documents["static-size"]
     require(static.get("schemaVersion") == 1 and static.get("measurementKind") == "static-build-layout",
@@ -303,10 +358,15 @@ def validate_evidence(root: Path, entry: dict[str, Any], environment: dict[str, 
     ):
         require(provenance.get(source_key) == environment[environment_key],
                 f"{profile_id}: static provenance {source_key} mismatch")
+    startup_latency = None
     if has_native:
-        validate_native_association(profile_id, benchmark_profiles.select(profile_id), entry["metrics"],
-                                    environment, documents, evidence_hashes, evidence_sizes)
-    return has_native
+        startup_latency = validate_native_association(
+            profile_id, benchmark_profiles.select(profile_id), entry["metrics"],
+            environment, documents, evidence_hashes, evidence_sizes)
+    if "boot-clock" in documents:
+        require(has_native and startup_latency is not None,
+                f"{profile_id}: cold-boot evidence requires measured native startup latency")
+    return has_native, startup_latency
 
 
 def validate_baseline(document: dict[str, Any], root: Path) -> dict[str, float]:
@@ -356,12 +416,15 @@ def validate_baseline(document: dict[str, Any], root: Path) -> dict[str, float]:
         entry_environment = entry.get("environment", environment)
         validate_environment(entry_environment, document["release"],
                              f"{profile_id}.environment")
-        has_native_association = validate_evidence(root, entry, entry_environment)
+        has_native_association, startup_latency = validate_evidence(
+            root, entry, entry_environment)
         require(has_native_association or SAMPLING_JITTER_METRIC not in metrics,
                 f"{profile_id}: SamplingJitter requires runner-proven native association")
         expected_metrics = set(REQUIRED_METRICS)
         if has_native_association:
             expected_metrics.add(SAMPLING_JITTER_METRIC)
+        if startup_latency is not None:
+            expected_metrics.add(STARTUP_LATENCY_METRIC)
         require(set(metrics) == expected_metrics,
                 f"{profile_id}: measured metric set mismatch")
         for name, unit in REQUIRED_METRICS.items():
@@ -380,6 +443,8 @@ def validate_baseline(document: dict[str, Any], root: Path) -> dict[str, float]:
                     f"{profile_id}/{SAMPLING_JITTER_METRIC}: invalid metric/unit")
             if state == "measured":
                 measured_values[f"{profile_id}:{SAMPLING_JITTER_METRIC}"] = float(jitter["value"])
+        if startup_latency is not None and state == "measured":
+            measured_values[f"{profile_id}:{STARTUP_LATENCY_METRIC}"] = startup_latency
     require(actual == set(expected), "profile matrix is incomplete")
     require(measured_count >= 1, "at least one actual hardware profile is required")
     return measured_values

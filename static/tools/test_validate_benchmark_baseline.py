@@ -101,6 +101,61 @@ def paired_native_fixture(directory: Path) -> tuple[dict, Path, dict, Path]:
     return fixture, root, envelope, envelope_path
 
 
+def add_startup_evidence(fixture: dict, root: Path, envelope: dict,
+                         envelope_path: Path) -> tuple[dict, Path]:
+    """Add hash-consistent native startup and cold-boot evidence to a paired fixture."""
+    entry = next(item for item in fixture["profiles"] if item["profileId"] == NATIVE_PROFILE_ID)
+    native_item = next(item for item in entry["evidence"] if item["kind"] == "native")
+    native_path = root / native_item["path"]
+    native = read_json(native_path)
+    ready_us = native["bootStartedMonotonicUs"] + 1230265
+    native["opcuaReadyMonotonicUs"] = {
+        "state": "measured", "value": ready_us, "unit": "microseconds"}
+    native["startupLatencyMs"] = {
+        "state": "measured", "value": 1230.265, "unit": "milliseconds",
+        "boundary": "main-entry-to-UA_Server_run_startup-success",
+    }
+    native_item["sha256"] = write_document(native_path, native)
+    envelope["evidence"]["native"] = {
+        "sha256": native_item["sha256"], "bytes": native_path.stat().st_size}
+    provenance = envelope["provenance"]
+    envelope["associationId"] = hashlib.sha256(
+        (entry["profileId"] + provenance["gitCommit"] + provenance["flashedUf2Sha256"]
+         + envelope["evidence"]["client"]["sha256"] + native_item["sha256"]
+         ).encode("ascii")).hexdigest()
+    association_item = next(item for item in entry["evidence"]
+                            if item["kind"] == "native-association")
+    association_item["sha256"] = write_document(envelope_path, envelope)
+    entry["metrics"]["StartupLatencyMs.max"] = {
+        "value": native["startupLatencyMs"]["value"], "unit": "milliseconds"}
+
+    boot = {
+        "server": "opc.tcp://192.0.2.1:4840",
+        "profileId": entry["profileId"],
+        "gitCommit": provenance["gitCommit"],
+        "flashedUf2Sha256": provenance["flashedUf2Sha256"],
+        "coldBootBoundary": {
+            "method": "host-monotonic-usb-serial-enumeration", "serialPort": "COM6",
+            "absentAtObserverStart": True, "enumerationObservedSeconds": 1.25,
+        },
+        "firstReachableSeconds": 4.5, "firstUtcSeconds": 4.5,
+        "nullWindowSamples": 0, "bootRelativeSeen": False, "login": None,
+        "sampleCapacity": 4096, "sampleCapacityExhausted": False,
+        "samples": [
+            {"t": 0.0, "class": "unreachable", "createdAt": None, "skewSeconds": None},
+            {"t": 4.5, "class": "utc", "createdAt": "2026-10-20T00:00:00+00:00",
+             "skewSeconds": 0.1},
+        ],
+    }
+    boot_path = root / "static/benchmarks/v0.5.2/evidence/fixture-boot-clock.json"
+    entry["evidence"].append({
+        "kind": "boot-clock",
+        "path": "static/benchmarks/v0.5.2/evidence/fixture-boot-clock.json",
+        "sha256": write_document(boot_path, boot),
+    })
+    return boot, boot_path
+
+
 repository_baseline = read_json(BASELINE)
 validate_baseline(repository_baseline, REPO_ROOT)
 
@@ -262,6 +317,32 @@ with tempfile.TemporaryDirectory() as directory:
         paired_entry["metrics"]["SamplingJitterMs.p99"]["value"]
     paired_thresholds = copy.deepcopy(thresholds)
     validate_thresholds(paired_thresholds, paired_measured)
+
+with tempfile.TemporaryDirectory() as directory:
+    startup, startup_root, envelope, envelope_path = paired_native_fixture(Path(directory))
+    boot, boot_path = add_startup_evidence(startup, startup_root, envelope, envelope_path)
+    startup_measured = validate_baseline(startup, startup_root)
+    assert startup_measured[f"{NATIVE_PROFILE_ID}:StartupLatencyMs.max"] == 1230.265
+
+    invalid_boundary = copy.deepcopy(startup)
+    invalid_entry = next(item for item in invalid_boundary["profiles"]
+                         if item["profileId"] == NATIVE_PROFILE_ID)
+    invalid_boot_item = next(item for item in invalid_entry["evidence"]
+                             if item["kind"] == "boot-clock")
+    boot["coldBootBoundary"]["absentAtObserverStart"] = False
+    invalid_boot_item["sha256"] = write_document(boot_path, boot)
+    rejects(lambda: validate_baseline(invalid_boundary, startup_root),
+            "cold-boot boundary is invalid")
+
+with tempfile.TemporaryDirectory() as directory:
+    startup, startup_root, envelope, envelope_path = paired_native_fixture(Path(directory))
+    boot, boot_path = add_startup_evidence(startup, startup_root, envelope, envelope_path)
+    startup_entry = next(item for item in startup["profiles"]
+                         if item["profileId"] == NATIVE_PROFILE_ID)
+    boot_item = next(item for item in startup_entry["evidence"] if item["kind"] == "boot-clock")
+    boot["gitCommit"] = "0" * 40
+    boot_item["sha256"] = write_document(boot_path, boot)
+    rejects(lambda: validate_baseline(startup, startup_root), "cold-boot provenance mismatch")
 
 with tempfile.TemporaryDirectory() as directory:
     paired, paired_root, envelope, envelope_path = paired_native_fixture(Path(directory))

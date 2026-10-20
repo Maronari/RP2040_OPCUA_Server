@@ -40,6 +40,13 @@ typedef enum
 
 typedef enum
 {
+    BENCHMARK_TIMING_STARTUP_UNAVAILABLE = 0,
+    BENCHMARK_TIMING_STARTUP_MEASURED,
+    BENCHMARK_TIMING_STARTUP_INVALID
+} benchmark_timing_startup_state_t;
+
+typedef enum
+{
     BENCHMARK_TIMING_DIAG_BUDGET_CAPTURING = 0,
     /* Quantiles are ready, but the terminating OpcUaTask HWM observation is
      * still pending outside the measured snapshot interval. */
@@ -73,6 +80,7 @@ typedef struct
     benchmark_timing_output_fn output;
     void *output_context;
     uint64_t boot_started_monotonic_us;
+    uint64_t opcua_ready_monotonic_us;
     uint64_t capture_started_monotonic_us;
     uint64_t capture_ended_monotonic_us;
     uint64_t warmup_deadline_monotonic_us;
@@ -85,6 +93,8 @@ typedef struct
     bool current_poll_open;
     bool current_poll_deadline_crossed;
     bool dump_pending;
+    bool boot_started_recorded;
+    uint8_t startup_state;
 } benchmark_timing_context_t;
 
 /* This state is shared only by OpcUaTask (sample) and SensorTask (dump).
@@ -216,6 +226,96 @@ static void benchmark_timing_writer_u64(benchmark_timing_writer_t *writer, uint6
         const char digit = digits[--length];
         benchmark_timing_writer_append(writer, &digit, 1u);
     }
+}
+
+static void benchmark_timing_writer_json_string(benchmark_timing_writer_t *writer,
+                                                const char *text);
+
+static void benchmark_timing_writer_milliseconds_from_us(benchmark_timing_writer_t *writer,
+                                                          uint64_t microseconds)
+{
+    char fractional[3];
+    uint64_t remaining = microseconds % UINT64_C(1000);
+
+    benchmark_timing_writer_u64(writer, microseconds / UINT64_C(1000));
+    benchmark_timing_writer_literal(writer, ".");
+    for (size_t index = sizeof(fractional); index > 0u; --index)
+    {
+        fractional[index - 1u] = (char)('0' + (remaining % 10u));
+        remaining /= 10u;
+    }
+    benchmark_timing_writer_append(writer, fractional, sizeof(fractional));
+}
+
+static const char *benchmark_timing_startup_state_text(
+    benchmark_timing_startup_state_t state)
+{
+    switch (state)
+    {
+    case BENCHMARK_TIMING_STARTUP_MEASURED: return "measured";
+    case BENCHMARK_TIMING_STARTUP_INVALID: return "invalid";
+    case BENCHMARK_TIMING_STARTUP_UNAVAILABLE: return "unavailable";
+    }
+    return "invalid";
+}
+
+static const char *benchmark_timing_startup_reason(
+    benchmark_timing_startup_state_t state)
+{
+    switch (state)
+    {
+    case BENCHMARK_TIMING_STARTUP_UNAVAILABLE:
+        return "OPC UA startup marker not recorded";
+    case BENCHMARK_TIMING_STARTUP_INVALID:
+        return "OPC UA ready marker has invalid boot ordering";
+    case BENCHMARK_TIMING_STARTUP_MEASURED:
+        return NULL;
+    }
+    return "OPC UA startup marker state is invalid";
+}
+
+static void benchmark_timing_write_startup_json(benchmark_timing_writer_t *writer)
+{
+    benchmark_timing_startup_state_t state;
+    uint64_t boot_started_monotonic_us;
+    uint64_t opcua_ready_monotonic_us;
+
+    taskENTER_CRITICAL();
+    state = (benchmark_timing_startup_state_t)g_timing.startup_state;
+    boot_started_monotonic_us = g_timing.boot_started_monotonic_us;
+    opcua_ready_monotonic_us = g_timing.opcua_ready_monotonic_us;
+    taskEXIT_CRITICAL();
+
+    benchmark_timing_writer_literal(writer, ",\"opcuaReadyMonotonicUs\":{\"state\":");
+    benchmark_timing_writer_json_string(writer, benchmark_timing_startup_state_text(state));
+    if (state == BENCHMARK_TIMING_STARTUP_MEASURED)
+    {
+        benchmark_timing_writer_literal(writer, ",\"value\":");
+        benchmark_timing_writer_u64(writer, opcua_ready_monotonic_us);
+    }
+    else
+    {
+        benchmark_timing_writer_literal(writer, ",\"reason\":");
+        benchmark_timing_writer_json_string(writer, benchmark_timing_startup_reason(state));
+    }
+    benchmark_timing_writer_literal(writer, ",\"unit\":\"microseconds\"}");
+
+    benchmark_timing_writer_literal(writer, ",\"startupLatencyMs\":{\"state\":");
+    benchmark_timing_writer_json_string(writer, benchmark_timing_startup_state_text(state));
+    if (state == BENCHMARK_TIMING_STARTUP_MEASURED)
+    {
+        benchmark_timing_writer_literal(writer, ",\"value\":");
+        benchmark_timing_writer_milliseconds_from_us(
+            writer, opcua_ready_monotonic_us - boot_started_monotonic_us);
+    }
+    else
+    {
+        benchmark_timing_writer_literal(writer, ",\"reason\":");
+        benchmark_timing_writer_json_string(writer, benchmark_timing_startup_reason(state));
+    }
+    benchmark_timing_writer_literal(
+        writer,
+        ",\"unit\":\"milliseconds\",\"boundary\":\"main-entry-to-UA_Server_run_startup-success\"}");
 }
 
 static void benchmark_timing_writer_json_string(benchmark_timing_writer_t *writer, const char *text)
@@ -382,6 +482,7 @@ static bool benchmark_timing_write_json(benchmark_timing_writer_t *writer)
     benchmark_timing_writer_u64(writer, g_timing.capture_started_monotonic_us);
     benchmark_timing_writer_literal(writer, ",\"captureEndedMonotonicUs\":");
     benchmark_timing_writer_u64(writer, g_timing.capture_ended_monotonic_us);
+    benchmark_timing_write_startup_json(writer);
     benchmark_timing_writer_literal(writer, ",\"captureId\":");
     benchmark_timing_writer_u64(writer, g_timing.capture_id);
     benchmark_timing_writer_literal(writer, ",\"profileId\":");
@@ -605,6 +706,31 @@ static bool benchmark_timing_dump_diag_budget_if_ready(void)
 void benchmark_timing_note_boot_started(void)
 {
     g_timing.boot_started_monotonic_us = benchmark_timing_now_us();
+    g_timing.opcua_ready_monotonic_us = 0u;
+    g_timing.boot_started_recorded = true;
+    g_timing.startup_state = (uint8_t)BENCHMARK_TIMING_STARTUP_UNAVAILABLE;
+}
+
+void benchmark_timing_note_opcua_ready(void)
+{
+    const uint64_t ready_monotonic_us = benchmark_timing_now_us();
+
+    taskENTER_CRITICAL();
+    if (!g_timing.boot_started_recorded ||
+        ready_monotonic_us < g_timing.boot_started_monotonic_us)
+    {
+        g_timing.startup_state = (uint8_t)BENCHMARK_TIMING_STARTUP_INVALID;
+    }
+    else if ((benchmark_timing_startup_state_t)g_timing.startup_state ==
+             BENCHMARK_TIMING_STARTUP_UNAVAILABLE)
+    {
+        /* This records the initial cold boot only.  A v0.5.0 controlled
+         * rebuild may start a later server, but must not replace the cold
+         * boot/readiness timing boundary. */
+        g_timing.opcua_ready_monotonic_us = ready_monotonic_us;
+        g_timing.startup_state = (uint8_t)BENCHMARK_TIMING_STARTUP_MEASURED;
+    }
+    taskEXIT_CRITICAL();
 }
 
 bool benchmark_timing_init(void)
@@ -940,6 +1066,7 @@ void benchmark_timing_diag_sample_set_opcua_task_stack_high_water(
 #else
 
 void benchmark_timing_note_boot_started(void) {}
+void benchmark_timing_note_opcua_ready(void) {}
 bool benchmark_timing_init(void) { return true; }
 void benchmark_timing_set_control(benchmark_timing_control_poll_fn poll, void *context)
 {

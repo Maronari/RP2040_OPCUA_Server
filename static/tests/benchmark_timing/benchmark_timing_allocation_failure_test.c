@@ -5,7 +5,7 @@
 #include <string.h>
 
 static benchmark_timing_control_t g_control;
-static char g_json[512];
+static char g_json[1024];
 static size_t g_json_length;
 
 uint64_t time_us_64(void) { return 0u; }
@@ -44,6 +44,9 @@ static bool output(const char *bytes, size_t length, void *context)
 
 int main(void)
 {
+    /* A startup success before main's boot marker has no trustworthy cold
+     * start boundary.  The evidence must expose invalidity, never zero. */
+    benchmark_timing_note_opcua_ready();
     assert(!benchmark_timing_init());
     benchmark_timing_set_control(control_poll, NULL);
     benchmark_timing_set_output(output, NULL);
@@ -52,5 +55,7 @@ int main(void)
     assert(benchmark_timing_dump_if_ready());
     assert(strstr(g_json, "\"state\":\"unavailable\"") != NULL);
     assert(strstr(g_json, "\"records\":[]") != NULL);
+    assert(strstr(g_json, "\"opcuaReadyMonotonicUs\":{\"state\":\"invalid\",\"reason\":\"OPC UA ready marker has invalid boot ordering\",\"unit\":\"microseconds\"}") != NULL);
+    assert(strstr(g_json, "\"startupLatencyMs\":{\"state\":\"invalid\",\"reason\":\"OPC UA ready marker has invalid boot ordering\",\"unit\":\"milliseconds\"") != NULL);
     return 0;
 }

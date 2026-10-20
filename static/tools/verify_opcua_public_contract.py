@@ -435,6 +435,9 @@ def aggregate_current_source(source_dir: pathlib.Path) -> bytes:
         # The compile-time T4 profile header selects existing endpoint/event
         # paths. Its include is build plumbing, not a public namespace string.
         data = data.replace(b'#include "services/benchmark_profile.h"\n', b'')
+        # The T5 timing hook observes successful startup without registering
+        # nodes. Its private include is likewise build plumbing.
+        data = data.replace(b'#include "services/benchmark_timing.h"\n', b'')
         chunks.append(data)
     return b"".join(chunks)
 
@@ -446,6 +449,7 @@ def aggregate_baseline_source(source_dir: pathlib.Path, baseline: str) -> bytes:
         data = normalized_source(baseline_bytes(source_dir, baseline, path))
         data = data.replace(b'#include "opcua_model_internal.h"\n', b'')
         data = data.replace(b'#include "services/benchmark_profile.h"\n', b'')
+        data = data.replace(b'#include "services/benchmark_timing.h"\n', b'')
         chunks.append(data)
     return b"".join(chunks)
 

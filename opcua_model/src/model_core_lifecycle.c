@@ -70,6 +70,8 @@
  */
 #include "opcua_model_internal.h"
 
+#include "services/benchmark_timing.h"
+
 #include <timers.h>
 
 static void model_sample_resource_diagnostics(UA_Server *server)
@@ -1471,6 +1473,8 @@ void model_core_task(void *argument)
         model_context_delete_server(server);
         vTaskDelete(NULL);
     }
+
+    benchmark_timing_note_opcua_ready();
 
     model_finalize_identity_generation_after_startup();
 
