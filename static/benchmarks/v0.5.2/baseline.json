@@ -84,22 +84,22 @@
         {
           "kind": "native-association",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native-association.json",
-          "sha256": "a3fd28a1d256f5241eb63bec14b1872b7bacf8ec083cbf716ecf9cb0e79f8d2c"
+          "sha256": "633c37185a4ee6f03bf7bc0d99b5e5067090141c75e9cab7261e61f220db38f1"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-resources.json",
-          "sha256": "deea0feb5df963cd8a64b649105374939a2fb445b6bbabdad4399c2a2a7a18a6"
+          "sha256": "55c9681805088c8b4ec340b7ef7471dcc0ac3ddbf5b25c305bd4a64df5e7fdc6"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json",
-          "sha256": "ee86f67a8763ccf2150e1c77379f096789ccf128f3a1f1c8937c6dd78b78631f"
+          "sha256": "1cfa5fd18a218df8e137bfa5fe45480049c8e5b3809fc896ba02764f553f51a6"
         },
         {
           "kind": "boot-clock",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-boot-clock.json",
-          "sha256": "d655ee5a68d31bd880e3a7e3f995dd0becc687e853d66566965bc50a072ae183"
+          "sha256": "2fea1cf1d5575c08f7ccd35ea65321e92077eed66de2fd910c4ba0cb27cda495"
         }
       ]
     },
@@ -1118,17 +1118,17 @@
         {
           "kind": "native-association",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native-association.json",
-          "sha256": "ef77b992534ce39a3bcca7f78d42291eb7f8d2e54553f92efd14737dc4dca9b2"
+          "sha256": "3c06ce895261ff142cbdf415f05eeaec1a10f6477fa70f7f6fd6e325a0faea92"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-resources.json",
-          "sha256": "a590a4beeb8d447c155197b63214b3f1f6ab59676fef3ce75278c0b1515b3f38"
+          "sha256": "48e53daadeaef4f983592a863ee5d73ea2ed328866a5dcc2c4ccf7bd6f0a63fd"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-static-size.json",
-          "sha256": "c81ee5b2e34ad80f891dc2a3cc311a6ac4cb60b2545a1a608b32fd8bd1e73a1b"
+          "sha256": "f005e4fb28a53a507764036e10c99128a8232691c0c9cb0bafe1b18c1a2ff6c2"
         }
       ]
     }
