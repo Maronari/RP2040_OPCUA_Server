@@ -780,6 +780,20 @@ def read_arrival_phase_offset(client_index: int, client_count: int, rate_hz: flo
     return client_index * (1.0 / rate_hz) / client_count
 
 
+def read_arrival_slot_count(load_start: float, end: float, phase_offset_s: float,
+                            rate_hz: float) -> int:
+    """Return the exact number of fixed arrivals in ``[load_start, end)``.
+
+    The quotient is evaluated once.  Moving it one ULP toward negative infinity
+    gives exact period endpoints their closed-open meaning: a one-second 10 Hz
+    window has slots 0 through 9, never a phantom arrival at one second.
+    """
+    period = 1.0 / rate_hz
+    first_arrival = load_start + phase_offset_s
+    quotient = (end - first_arrival) / period
+    return max(0, int(math.ceil(math.nextafter(quotient, -math.inf))))
+
+
 async def run_client_read_schedule(client: Any, nodes: list[str], client_index: int,
                                    rate_hz: float, load_start: float, end: float,
                                    phase_offset_s: float, timeout_s: float,
@@ -809,7 +823,11 @@ async def run_client_read_schedule(client: Any, nodes: list[str], client_index: 
             or not math.isfinite(phase_offset_s) or not 0 <= phase_offset_s < period
             or load_start + phase_offset_s >= end):
         raise ValueError("read schedule start/end/phase is invalid")
-    next_arrival = load_start + phase_offset_s
+    first_arrival = load_start + phase_offset_s
+    slot_count = read_arrival_slot_count(load_start, end, phase_offset_s, rate_hz)
+    if slot_count <= 0:
+        raise ValueError("read schedule contains no arrival slots")
+    slot_index = 0
     index = client_index % len(nodes)
     in_flight: set[asyncio.Task[str]] = set()
     transport_fenced = False
@@ -882,31 +900,32 @@ async def run_client_read_schedule(client: Any, nodes: list[str], client_index: 
             account_terminal(task)
 
     try:
-        while next_arrival < end:
+        while slot_index < slot_count:
+            arrival = first_arrival + slot_index * period
             now = time.perf_counter()
             if now >= end:
                 # No operation starts after the steady interval.  Account the
                 # remaining declared arrivals exactly once as scheduler misses.
-                while next_arrival < end:
-                    accounting["scheduledOperationCount"] += 1
-                    accounting["missedDeadlineCount"] += 1
-                    next_arrival += period
+                remaining_slots = slot_count - slot_index
+                accounting["scheduledOperationCount"] += remaining_slots
+                accounting["missedDeadlineCount"] += remaining_slots
+                slot_index = slot_count
                 break
-            if now < next_arrival:
-                await asyncio.sleep(max(0.0, min(next_arrival, end) - now))
+            if now < arrival:
+                await asyncio.sleep(max(0.0, min(arrival, end) - now))
                 continue
 
             # Minor wake-up jitter still dispatches the current slot.  Once a
             # whole period is late, older slots are stale and are never caught
             # up in a burst that would distort the requested rate.
-            stale_slots = int((now - next_arrival) // period)
+            stale_quotient = math.nextafter((now - arrival) / period, math.inf)
+            stale_slots = min(slot_count - slot_index,
+                              max(0, math.floor(stale_quotient)))
             for _ in range(stale_slots):
-                if next_arrival >= end:
-                    break
                 accounting["scheduledOperationCount"] += 1
                 accounting["missedDeadlineCount"] += 1
-                next_arrival += period
-            if next_arrival >= end:
+                slot_index += 1
+            if slot_index >= slot_count:
                 break
 
             harvest_done()
@@ -921,7 +940,7 @@ async def run_client_read_schedule(client: Any, nodes: list[str], client_index: 
                 in_flight.add(task)
                 accounting["peakInFlightCount"] = max(accounting["peakInFlightCount"], len(in_flight))
                 index = (index + 1) % len(nodes)
-            next_arrival += period
+            slot_index += 1
     finally:
         # Give an arrival which started before the end its full declared
         # timeout.  Any task that will not finish is quarantined with its

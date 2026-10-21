@@ -449,6 +449,13 @@ async def test_fixed_rate_single_client_allows_bounded_overlap() -> None:
 
 async def test_even_client_phases_preserve_exact_arrivals() -> None:
     assert [round(subject.read_arrival_phase_offset(index, 4, 10.0), 6) for index in range(4)] == [0.0, 0.025, 0.05, 0.075]
+    # Closed-open slot accounting has no endpoint phantom for exact decimal
+    # periods, and every fixed client phase retains the declared workload.
+    assert subject.read_arrival_slot_count(0.0, 1.0, 0.0, 10.0) == 10
+    assert subject.read_arrival_slot_count(0.0, 30.0, 0.0, 10.0) == 300
+    assert [subject.read_arrival_slot_count(0.0, 30.0,
+                                            subject.read_arrival_phase_offset(index, 4, 10.0), 10.0)
+            for index in range(4)] == [300, 300, 300, 300]
     for invalid in ((-1, 4, 10.0), (4, 4, 10.0), (0, 0, 10.0), (0, 4, 0.0)):
         try:
             subject.read_arrival_phase_offset(*invalid)
@@ -530,6 +537,35 @@ async def test_even_client_phases_preserve_exact_arrivals() -> None:
         for index in range(4):
             assert all(math.isclose(actual, wanted, abs_tol=1e-9)
                        for actual, wanted in zip(dispatches[index][:3], expected[index])), dispatches[index][:3]
+
+        # A virtual one-second phase-zero run catches the former repeated
+        # ``+= 0.1`` drift, which could schedule a phantom endpoint slot.
+        clock.now, clock.sleepers, dispatches[0] = 0.0, [], []
+        short_task = asyncio.create_task(subject.run_client_read_schedule(
+            PhasedClient(0), ["value"], 0, 10.0, 0.0, 1.0, 0.0, 1.0,
+            subject.Metric("read", 16), subject.ErrorLog(16, 256)))
+        await drive([short_task])
+        short_result = await short_task
+        assert short_result["scheduledOperationCount"] == 10, short_result
+        assert short_result["completedOperationCount"] == 10, short_result
+        assert len(dispatches[0]) == 10, dispatches[0]
+
+        # At a whole-period lag, the decimal quotient can be one ULP below the
+        # mathematical integer.  Slots 0..2 are stale at exactly 0.3 s; slot 3
+        # dispatches at 0.3 s rather than being folded into a catch-up burst.
+        clock.now, clock.sleepers, dispatches[0] = 0.3, [], []
+        stale_task = asyncio.create_task(subject.run_client_read_schedule(
+            PhasedClient(0), ["value"], 0, 10.0, 0.0, 0.5, 0.0, 1.0,
+            subject.Metric("read", 16), subject.ErrorLog(16, 256)))
+        await drive([stale_task])
+        stale_result = await stale_task
+        assert stale_result["scheduledOperationCount"] == 5, stale_result
+        assert stale_result["missedDeadlineCount"] == 3, stale_result
+        assert stale_result["completedOperationCount"] == 2, stale_result
+        assert stale_result["scheduledOperationCount"] == (
+            stale_result["completedOperationCount"] + stale_result["missedDeadlineCount"] +
+            stale_result["deadlineExceededOperationCount"] + stale_result["failedOperationCount"])
+        assert dispatches[0] == [0.3, 0.4], dispatches[0]
     finally:
         subject.time.perf_counter, subject.asyncio.sleep = old_perf_counter, old_sleep
     try:
