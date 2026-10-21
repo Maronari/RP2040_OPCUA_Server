@@ -62,7 +62,10 @@ def paired_native_fixture(directory: Path) -> tuple[dict, Path, dict, Path]:
     native_path = evidence_root / "fixture-native.json"
     native_path.write_bytes((ROOT / "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json").read_bytes())
     native = read_json(native_path)
-    native_hash = hashlib.sha256(native_path.read_bytes()).hexdigest()
+    native.pop("opcuaReadyMonotonicUs", None)
+    native.pop("startupLatencyMs", None)
+    entry["metrics"].pop("StartupLatencyMs.max", None)
+    native_hash = write_document(native_path, native)
     native_item = {"kind": "native", "path": "static/benchmarks/v0.5.2/evidence/fixture-native.json",
                    "sha256": native_hash}
     entry["evidence"].append(native_item)
@@ -172,7 +175,7 @@ measured = validate_baseline(baseline, ROOT)
 validate_thresholds(thresholds, measured)
 validate_static_report(read_json(STATIC_REPORT), thresholds)
 assert len(baseline["profiles"]) == 192
-assert len(measured) == 12
+assert len(measured) == 14
 assert sum(entry["resultState"] == "measured" for entry in baseline["profiles"]) == 2
 assert sum(entry["resultState"] == "failed" for entry in baseline["profiles"]) == 0
 assert sum(entry["resultState"] == "not-run" for entry in baseline["profiles"]) == 190
@@ -295,7 +298,7 @@ unassociated_jitter = copy.deepcopy(baseline)
 jitter_entry = next(entry for entry in unassociated_jitter["profiles"]
                     if entry["resultState"] == "measured")
 jitter_entry["evidence"] = [item for item in jitter_entry["evidence"]
-                            if item["kind"] not in {"native", "native-association"}]
+                            if item["kind"] not in {"native", "native-association", "boot-clock"}]
 jitter_entry["metrics"]["SamplingJitterMs.p99"] = {"value": 1.0, "unit": "milliseconds"}
 rejects(lambda: validate_baseline(unassociated_jitter, ROOT),
         "SamplingJitter requires runner-proven native association")
@@ -311,11 +314,16 @@ rejects(lambda: validate_baseline(native_as_baseline_evidence, ROOT),
 with tempfile.TemporaryDirectory() as directory:
     paired, paired_root, envelope, envelope_path = paired_native_fixture(Path(directory))
     paired_measured = validate_baseline(paired, paired_root)
-    assert len(paired_measured) == 12
+    assert len(paired_measured) == 13
     paired_entry = next(item for item in paired["profiles"] if item["profileId"] == NATIVE_PROFILE_ID)
     assert paired_measured[f"{paired_entry['profileId']}:SamplingJitterMs.p99"] == \
         paired_entry["metrics"]["SamplingJitterMs.p99"]["value"]
     paired_thresholds = copy.deepcopy(thresholds)
+    paired_thresholds["hardwareMaxima"] = [
+        item for item in paired_thresholds["hardwareMaxima"]
+        if not (item["profileId"] == NATIVE_PROFILE_ID
+                and item["metric"] == "StartupLatencyMs.max")
+    ]
     validate_thresholds(paired_thresholds, paired_measured)
 
 with tempfile.TemporaryDirectory() as directory:
@@ -345,6 +353,17 @@ with tempfile.TemporaryDirectory() as directory:
     rejects(lambda: validate_baseline(startup, startup_root), "cold-boot provenance mismatch")
 
 with tempfile.TemporaryDirectory() as directory:
+    startup, startup_root, envelope, envelope_path = paired_native_fixture(Path(directory))
+    boot, boot_path = add_startup_evidence(startup, startup_root, envelope, envelope_path)
+    startup_entry = next(item for item in startup["profiles"]
+                         if item["profileId"] == NATIVE_PROFILE_ID)
+    boot_item = next(item for item in startup_entry["evidence"] if item["kind"] == "boot-clock")
+    boot["firstUtcSeconds"] += 0.1
+    boot_item["sha256"] = write_document(boot_path, boot)
+    rejects(lambda: validate_baseline(startup, startup_root),
+            "cold-boot summary differs from retained samples")
+
+with tempfile.TemporaryDirectory() as directory:
     paired, paired_root, envelope, envelope_path = paired_native_fixture(Path(directory))
     native_item = next(item for item in next(entry for entry in paired["profiles"]
                                              if entry["profileId"] == NATIVE_PROFILE_ID)["evidence"]
@@ -370,7 +389,7 @@ rejects(lambda: validate_baseline(bad_hash, ROOT), "hash mismatch")
 
 mixed_firmware = copy.deepcopy(baseline)
 next(entry for entry in mixed_firmware["profiles"]
-     if entry["resultState"] == "measured")["environment"]["firmwareUf2Sha256"] = "0" * 64
+     if entry["profileId"] == NATIVE_PROFILE_ID)["environment"]["firmwareUf2Sha256"] = "0" * 64
 rejects(lambda: validate_baseline(mixed_firmware, ROOT), "differs from flashed firmware")
 
 mixed_client = copy.deepcopy(baseline)

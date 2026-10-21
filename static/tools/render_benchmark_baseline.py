@@ -35,18 +35,22 @@ def main() -> int:
         f"UF2 SHA-256: `{env['firmwareUf2Sha256']}`", "",
         f"Passing measured profiles: **{len(measured_rows)}**. Failed profiles: **{len(failed_rows)}**. "
         f"Explicitly not run: **{not_run}**.", "",
-        "| State | Profile | Read p99 | Cold session max | Warm session max | Sampling jitter p99 | Heap peak | PSRAM peak |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
-        "", "Sampling jitter is emitted only for cells whose native capture has a runner-proven association envelope; unassociated captures are excluded.",
+        "| State | Profile | Startup max | Read p99 | Cold session max | Warm session max | Sampling jitter p99 | Heap peak | PSRAM peak |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "", "Startup and sampling jitter are emitted only for cells whose native capture has a runner-proven association envelope; unassociated captures are excluded.",
         "",
     ]
     for entry in rows:
         m = entry["metrics"]
+        startup = m.get("StartupLatencyMs.max")
+        startup_text = (f"{startup['value']:.3f} ms" if startup is not None
+                        else "not runner-associated")
         jitter = m.get("SamplingJitterMs.p99")
         jitter_text = (f"{jitter['value']:.3f} ms" if jitter is not None
                        else "not runner-associated")
         lines.append(
-            f"| `{entry['resultState']}` | `{entry['profileId']}` | {m['ReadLatencyMs.p99']['value']:.3f} ms | "
+            f"| `{entry['resultState']}` | `{entry['profileId']}` | {startup_text} | "
+            f"{m['ReadLatencyMs.p99']['value']:.3f} ms | "
             f"{m['SecureSessionEstablishmentLatencyMs.Cold.max']['value']:.3f} ms | "
             f"{m['SecureSessionEstablishmentLatencyMs.Warm.max']['value']:.3f} ms | "
             f"{jitter_text} | {m['Heap.PeakUsedBytes']['value']:,} B | "

@@ -1,26 +1,26 @@
 {
-  "associationId": "b320e2587f918578587d60ef2b79e0a3e969101d1ffa087b49fd2bdd3a3b24df",
+  "associationId": "1b42fd65dd7cb20dcb481459a08b37b9b8aae94034b6d0433f67fef6d494506a",
   "capture": {
     "durationSeconds": 30.0,
     "nativeCaptureId": 1,
     "readiness": {
       "requiredTokenCount": 1,
-      "stdoutBytesObserved": 944,
+      "stdoutBytesObserved": 988,
       "tokenCount": 1
     },
     "warmupSeconds": 10.0
   },
   "evidence": {
     "client": {
-      "bytes": 10954,
-      "sha256": "c96d00352a3b7e6ed5d06823ffdf790d9f1ea121c34e7accb964f6184415308b"
+      "bytes": 10944,
+      "sha256": "519e184eb07e5b2a0a208858de6ac6374254ed4999710771d08f634654fe90b6"
     },
     "native": {
-      "bytes": 3954,
-      "sha256": "cd813a1d16e5287bf7852e4cdb424fc6031fd06468ecad8c5e58a390c0d1c23d"
+      "bytes": 4252,
+      "sha256": "45300b3570bbb50e2ec4b6addcd2f4f67d2a64668ac66ffe5448501cf584ebad"
     },
     "staticSize": {
-      "sha256": "a0850b911ec6422f869cf2c809e2ecdc775e081b14122e0576a63c92b17ed89a"
+      "sha256": "ee86f67a8763ccf2150e1c77379f096789ccf128f3a1f1c8937c6dd78b78631f"
     }
   },
   "kind": "v052-host-orchestrated-benchmark-capture",
@@ -34,8 +34,8 @@
   "provenance": {
     "boardRevision": "waveshare_core2350b_16mb_psram8mb",
     "buildType": "Debug",
-    "flashedUf2Sha256": "362e5d672372a402a13864978afb806b397429d119739e7ffc4c2ed8333c5350",
-    "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
+    "flashedUf2Sha256": "150aeb2e800a7c028697d3f023dc2494ad1e4e0f928217170fdd1716fe55247c",
+    "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
     "gitDirty": false,
     "toolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe"
   },

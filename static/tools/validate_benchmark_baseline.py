@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -345,6 +346,21 @@ def validate_evidence(root: Path, entry: dict[str, Any],
                 and type(boot.get("firstReachableSeconds")) in (int, float)
                 and type(boot.get("firstUtcSeconds")) in (int, float),
                 f"{profile_id}: UTC clock evidence is invalid")
+        sample_times = [sample.get("t") for sample in samples]
+        require(all(type(value) in (int, float) and math.isfinite(value) and value >= 0
+                    for value in sample_times)
+                and all(previous <= current
+                        for previous, current in zip(sample_times, sample_times[1:])),
+                f"{profile_id}: cold-boot sample timeline is invalid")
+        first_reachable = next(sample["t"] for sample in samples
+                               if sample["class"] != "unreachable")
+        first_utc = next(sample["t"] for sample in samples if sample["class"] == "utc")
+        require(boot["firstReachableSeconds"] == first_reachable
+                and boot["firstUtcSeconds"] == first_utc
+                and type(boot.get("nullWindowSamples")) is int
+                and boot.get("nullWindowSamples")
+                == sum(sample["class"] == "null" for sample in samples),
+                f"{profile_id}: cold-boot summary differs from retained samples")
     static = documents["static-size"]
     require(static.get("schemaVersion") == 1 and static.get("measurementKind") == "static-build-layout",
             f"{profile_id}: static evidence is invalid")

@@ -3,7 +3,7 @@
   "contractId": "rp2-opcua-v0.5.2-resource-benchmark",
   "release": "0.5.2",
   "environment": {
-    "recordedAt": "2026-10-20T18:15:56Z",
+    "recordedAt": "2026-10-21T05:29:38Z",
     "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
     "boardId": "waveshare_core2350b_16mb_psram8mb",
     "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
@@ -13,9 +13,9 @@
     "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
     "buildType": "Debug",
     "firmwareVersion": "0.5.2",
-    "firmwareSource": "ab954928872b1ddc2283e3bf27df03652f1de0b2 (clean v0.5.2 benchmark profile)",
-    "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
-    "firmwareUf2Sha256": "0f77e81bec38f13f91c37dfca324e724c7be75dbbccf248165a9f03b316250e8",
+    "firmwareSource": "17da74493fa912bd362ab89dd760e8835d75a281 (clean v0.5.2 benchmark profile)",
+    "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
+    "firmwareUf2Sha256": "6bae108fd0e3b55c03d0d0454d024970b3e8d5654c77023ffc34c6907ede2151",
     "gitDirty": false
   },
   "profiles": [
@@ -25,7 +25,7 @@
       "repetitions": 1,
       "association": "client and native windows bound by the host-orchestrated capture envelope",
       "environment": {
-        "recordedAt": "2026-10-20T18:15:56Z",
+        "recordedAt": "2026-10-21T05:29:38Z",
         "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
         "boardId": "waveshare_core2350b_16mb_psram8mb",
         "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
@@ -35,34 +35,38 @@
         "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "buildType": "Debug",
         "firmwareVersion": "0.5.2",
-        "firmwareSource": "ab954928872b1ddc2283e3bf27df03652f1de0b2 (clean v0.5.2 benchmark profile)",
-        "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
-        "firmwareUf2Sha256": "362e5d672372a402a13864978afb806b397429d119739e7ffc4c2ed8333c5350",
+        "firmwareSource": "17da74493fa912bd362ab89dd760e8835d75a281 (clean v0.5.2 benchmark profile)",
+        "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
+        "firmwareUf2Sha256": "150aeb2e800a7c028697d3f023dc2494ad1e4e0f928217170fdd1716fe55247c",
         "gitDirty": false
       },
       "metrics": {
         "ReadLatencyMs.p99": {
-          "value": 96.039,
+          "value": 99.3,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Cold.max": {
-          "value": 3702.353,
+          "value": 3442.705,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Warm.max": {
-          "value": 3465.805,
+          "value": 3372.349,
           "unit": "milliseconds"
         },
         "SamplingJitterMs.p99": {
-          "value": 7.012,
+          "value": 7.007,
+          "unit": "milliseconds"
+        },
+        "StartupLatencyMs.max": {
+          "value": 23006.202,
           "unit": "milliseconds"
         },
         "Heap.PeakUsedBytes": {
-          "value": 93112,
+          "value": 93088,
           "unit": "bytes"
         },
         "PSRAM.PeakUsedBytes": {
-          "value": 5278848,
+          "value": 5278912,
           "unit": "bytes"
         }
       },
@@ -70,27 +74,32 @@
         {
           "kind": "client",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-client.json",
-          "sha256": "c96d00352a3b7e6ed5d06823ffdf790d9f1ea121c34e7accb964f6184415308b"
+          "sha256": "519e184eb07e5b2a0a208858de6ac6374254ed4999710771d08f634654fe90b6"
         },
         {
           "kind": "native",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native.json",
-          "sha256": "cd813a1d16e5287bf7852e4cdb424fc6031fd06468ecad8c5e58a390c0d1c23d"
+          "sha256": "45300b3570bbb50e2ec4b6addcd2f4f67d2a64668ac66ffe5448501cf584ebad"
         },
         {
           "kind": "native-association",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native-association.json",
-          "sha256": "69d8c9f3973be7e565d31594083ae6ce38ed77d640f49a4366b1bb4a821e449a"
+          "sha256": "a3fd28a1d256f5241eb63bec14b1872b7bacf8ec083cbf716ecf9cb0e79f8d2c"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-resources.json",
-          "sha256": "c1502ec7d77a0155f1e04653337f796c080a56a65990449cc60a1b1f0b50e171"
+          "sha256": "deea0feb5df963cd8a64b649105374939a2fb445b6bbabdad4399c2a2a7a18a6"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json",
-          "sha256": "a0850b911ec6422f869cf2c809e2ecdc775e081b14122e0576a63c92b17ed89a"
+          "sha256": "ee86f67a8763ccf2150e1c77379f096789ccf128f3a1f1c8937c6dd78b78631f"
+        },
+        {
+          "kind": "boot-clock",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-boot-clock.json",
+          "sha256": "d655ee5a68d31bd880e3a7e3f995dd0becc687e853d66566965bc50a072ae183"
         }
       ]
     },
@@ -1050,7 +1059,7 @@
       "repetitions": 1,
       "association": "client and native windows bound by the host-orchestrated capture envelope",
       "environment": {
-        "recordedAt": "2026-10-20T18:15:56Z",
+        "recordedAt": "2026-10-21T05:29:38Z",
         "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
         "boardId": "waveshare_core2350b_16mb_psram8mb",
         "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
@@ -1060,26 +1069,30 @@
         "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "buildType": "Debug",
         "firmwareVersion": "0.5.2",
-        "firmwareSource": "ab954928872b1ddc2283e3bf27df03652f1de0b2 (clean v0.5.2 benchmark profile)",
-        "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
-        "firmwareUf2Sha256": "0f77e81bec38f13f91c37dfca324e724c7be75dbbccf248165a9f03b316250e8",
+        "firmwareSource": "17da74493fa912bd362ab89dd760e8835d75a281 (clean v0.5.2 benchmark profile)",
+        "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
+        "firmwareUf2Sha256": "6bae108fd0e3b55c03d0d0454d024970b3e8d5654c77023ffc34c6907ede2151",
         "gitDirty": false
       },
       "metrics": {
         "ReadLatencyMs.p99": {
-          "value": 363.85,
+          "value": 583.526,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Cold.max": {
-          "value": 851.924,
+          "value": 944.279,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Warm.max": {
-          "value": 903.883,
+          "value": 995.302,
           "unit": "milliseconds"
         },
         "SamplingJitterMs.p99": {
-          "value": 58.111,
+          "value": 55.039,
+          "unit": "milliseconds"
+        },
+        "StartupLatencyMs.max": {
+          "value": 29724.852,
           "unit": "milliseconds"
         },
         "Heap.PeakUsedBytes": {
@@ -1087,7 +1100,7 @@
           "unit": "bytes"
         },
         "PSRAM.PeakUsedBytes": {
-          "value": 6820152,
+          "value": 6820136,
           "unit": "bytes"
         }
       },
@@ -1095,27 +1108,27 @@
         {
           "kind": "client",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-client.json",
-          "sha256": "00abd687a6063559c7f0349093c7df6a244c621f282b062aefa89b2f8eddedf9"
+          "sha256": "9a854ce75d43d59d38daae9fce3065a6bda67d7c517f0b96f06cde6420e87b37"
         },
         {
           "kind": "native",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json",
-          "sha256": "8d91394336e3a432f5ec1821780a5d9440388dfd0b91df1ad58ecbf8c9bedc89"
+          "sha256": "3e58fefb1c0ae9eb56515c5e1388454813ff375be23121335afae7a5b710b56b"
         },
         {
           "kind": "native-association",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native-association.json",
-          "sha256": "ee39a3cafa99bab475cf06a6c1742e21efbfd10ad7794a555ed46fc941fee445"
+          "sha256": "ef77b992534ce39a3bcca7f78d42291eb7f8d2e54553f92efd14737dc4dca9b2"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-resources.json",
-          "sha256": "58befa1da7b3dd8829b4967ca52c683f4183f2afd566a9a44887562434c8946c"
+          "sha256": "a590a4beeb8d447c155197b63214b3f1f6ab59676fef3ce75278c0b1515b3f38"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-static-size.json",
-          "sha256": "2ab9a6298b0a14b254c971f59a12ccbef1de307ab950642465daaee1c2572223"
+          "sha256": "c81ee5b2e34ad80f891dc2a3cc311a6ac4cb60b2545a1a608b32fd8bd1e73a1b"
         }
       ]
     }

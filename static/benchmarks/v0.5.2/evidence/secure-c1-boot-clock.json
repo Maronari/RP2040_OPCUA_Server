@@ -1,22 +1,177 @@
 {
   "server": "opc.tcp://192.168.1.103:4840",
-  "firstReachableSeconds": 0.0,
-  "firstUtcSeconds": 0.0,
+  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+  "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
+  "flashedUf2Sha256": "150aeb2e800a7c028697d3f023dc2494ad1e4e0f928217170fdd1716fe55247c",
+  "coldBootBoundary": {
+    "method": "host-monotonic-usb-serial-enumeration",
+    "serialPort": "COM6",
+    "absentAtObserverStart": true,
+    "enumerationObservedSeconds": 38.422
+  },
+  "firstReachableSeconds": 58.6,
+  "firstUtcSeconds": 58.6,
   "nullWindowSamples": 0,
   "bootRelativeSeen": false,
+  "sampleCapacity": 4096,
+  "sampleCapacityExhausted": false,
   "login": null,
   "samples": [
     {
       "t": 0.0,
-      "class": "utc",
-      "createdAt": "2026-10-10T15:52:57.731000+00:00",
-      "skewSeconds": 0.167
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
     },
     {
-      "t": 2.1,
+      "t": 3.1,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 5.6,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 8.1,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 10.6,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 13.2,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 15.7,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 18.2,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 20.7,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 23.3,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 25.8,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 28.3,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 30.8,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 33.4,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 35.9,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 38.4,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 41.0,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 43.5,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 46.0,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 48.5,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 51.0,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 53.6,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 56.1,
+      "class": "unreachable",
+      "createdAt": null,
+      "skewSeconds": null
+    },
+    {
+      "t": 58.6,
       "class": "utc",
-      "createdAt": "2026-10-10T15:52:59.036000+00:00",
-      "skewSeconds": -0.65
+      "createdAt": "2026-10-20T21:02:00.345000+00:00",
+      "skewSeconds": 0.566
+    },
+    {
+      "t": 61.0,
+      "class": "utc",
+      "createdAt": "2026-10-20T21:02:01.642000+00:00",
+      "skewSeconds": -0.516
+    },
+    {
+      "t": 62.3,
+      "class": "utc",
+      "createdAt": "2026-10-20T21:02:02.933000+00:00",
+      "skewSeconds": -0.521
     }
   ]
 }

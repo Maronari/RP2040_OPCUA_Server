@@ -1,6 +1,6 @@
 {
   "boardRevision": "waveshare_core2350b_16mb_psram8mb",
-  "buildFlags": "base-synthetic-c16-hz10-cl4-events-history-test-none",
+  "buildFlags": "base-primary-OTA-synthetic-test-none",
   "buildType": "Debug",
   "channelCount": 16,
   "clientCount": 4,
@@ -62,7 +62,7 @@
   "errors": [],
   "eventsEnabled": true,
   "firmwareVersion": "0.5.2",
-  "gitCommit": "ab954928872b1ddc2283e3bf27df03652f1de0b2",
+  "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
   "gitDirty": false,
   "historyEnabled": true,
   "loadAccounting": {
@@ -71,7 +71,7 @@
     "failedOperationCount": 0,
     "inFlightLimitExceededCount": 0,
     "missedDeadlineCount": 0,
-    "peakInFlightCount": 7,
+    "peakInFlightCount": 13,
     "rateHzPerClient": 10.0,
     "scheduledOperationCount": 1200,
     "transportFencedClientCount": 0
@@ -95,11 +95,11 @@
       "continuationRelease": {
         "droppedSampleCount": 0,
         "failureCount": 0,
-        "max": 88.655,
+        "max": 76.633,
         "operationCount": 4,
-        "p50": 44.721,
-        "p95": 88.655,
-        "p99": 88.655,
+        "p50": 73.625,
+        "p95": 76.633,
+        "p99": 76.633,
         "reason": null,
         "sampleCount": 4,
         "state": "measured",
@@ -108,11 +108,11 @@
       },
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 96.495,
+      "max": 80.54,
       "operationCount": 4,
-      "p50": 77.438,
-      "p95": 96.495,
-      "p99": 96.495,
+      "p50": 64.513,
+      "p95": 80.54,
+      "p99": 80.54,
       "reason": null,
       "sampleCount": 4,
       "state": "measured",
@@ -122,11 +122,11 @@
     "MethodLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 153.493,
+      "max": 104.413,
       "operationCount": 1,
-      "p50": 153.493,
-      "p95": 153.493,
-      "p99": 153.493,
+      "p50": 104.413,
+      "p95": 104.413,
+      "p99": 104.413,
       "phase": "setup-export-config-profile-verification",
       "reason": null,
       "sampleCount": 1,
@@ -137,11 +137,11 @@
     "ReadLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 637.1,
+      "max": 1212.43,
       "operationCount": 1200,
-      "p50": 78.766,
-      "p95": 289.362,
-      "p99": 363.85,
+      "p50": 76.334,
+      "p95": 307.487,
+      "p99": 583.526,
       "reason": null,
       "sampleCount": 1200,
       "state": "measured",
@@ -151,11 +151,11 @@
     "SecureSessionEstablishmentLatencyMs.Cold": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 851.924,
+      "max": 944.279,
       "operationCount": 1,
-      "p50": 851.924,
-      "p95": 851.924,
-      "p99": 851.924,
+      "p50": 944.279,
+      "p95": 944.279,
+      "p99": 944.279,
       "reason": null,
       "sampleCount": 1,
       "state": "measured",
@@ -165,11 +165,11 @@
     "SecureSessionEstablishmentLatencyMs.Warm": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 903.883,
+      "max": 995.302,
       "operationCount": 4,
-      "p50": 876.031,
-      "p95": 903.883,
-      "p99": 903.883,
+      "p50": 912.022,
+      "p95": 995.302,
+      "p99": 995.302,
       "reason": null,
       "sampleCount": 4,
       "state": "measured",
@@ -224,7 +224,7 @@
         "consistency": {
           "state": "measured"
         },
-        "elapsedMonotonicMs": 149,
+        "elapsedMonotonicMs": 144,
         "failedNodeCount": 0,
         "measuredNodeCount": 22,
         "nodeCount": 22,
@@ -305,7 +305,7 @@
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Current",
             "state": "measured",
             "status": "Good",
-            "value": 1
+            "value": 2
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Peak",
@@ -341,7 +341,7 @@
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.RejectedRequests",
             "state": "measured",
             "status": "Good",
-            "value": 0
+            "value": 3
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.RejectedRequestsWrapCount",
@@ -372,7 +372,7 @@
   "runAccounting": {
     "droppedSampleCount": 0,
     "errorCount": 0,
-    "notificationCount": 21563,
+    "notificationCount": 20580,
     "operationCount": 1214,
     "sampleCount": 1214,
     "timedOutOperationCount": 0
