@@ -77,6 +77,54 @@ static void test_float_value_type_supported(void)
     assert(channel.runtime.value.f32 == 1.0f);
 }
 
+static void test_loopback_write_updates_counter_and_next_read(void)
+{
+    native_channel_source_t source = {.source_index = 1u, .source_flags = 0u};
+    telemetry_channel_t channel = make_channel(&source, TELEMETRY_CHANNEL_VALUE_DOUBLE);
+    telemetry_channel_value_t value = {.f64 = 41.0};
+
+    assert(native_synthetic_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(channel.runtime.value.f64 == 41.0);
+    assert(source.scratch.synthetic_read_count == 41u);
+    assert(native_synthetic_read(&channel, 0u) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(channel.runtime.value.f64 == 42.0);
+
+    channel.metadata.value_type = TELEMETRY_CHANNEL_VALUE_FLOAT;
+    value.f32 = 7.0f;
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(channel.runtime.value.f32 == 7.0f);
+    assert(source.scratch.synthetic_read_count == 7u);
+}
+
+static void test_loopback_write_rejects_invalid_values_without_mutation(void)
+{
+    native_channel_source_t source = {.source_index = 2u, .source_flags = 0u};
+    telemetry_channel_t channel = make_channel(&source, TELEMETRY_CHANNEL_VALUE_DOUBLE);
+    telemetry_channel_value_t value = {.f64 = 5.0};
+
+    assert(native_synthetic_start(&channel) == TELEMETRY_DRIVER_RESULT_OK);
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OK);
+    value.f64 = 5.5;
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE);
+    assert(source.scratch.synthetic_read_count == 5u);
+    value.f64 = -1.0;
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE);
+    value.f64 = (double)UINT32_MAX + 1.0;
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE);
+    value.f64 = 0.0 / 0.0;
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE);
+    assert(source.scratch.synthetic_read_count == 5u);
+    assert(native_synthetic_write(&channel, NULL) == TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT);
+
+    channel.metadata.value_type = TELEMETRY_CHANNEL_VALUE_BOOLEAN;
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_UNSUPPORTED);
+    channel.metadata.value_type = TELEMETRY_CHANNEL_VALUE_DOUBLE;
+    source.source_index = 8u;
+    assert(native_synthetic_write(&channel, &value) == TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT);
+    assert(native_synthetic_write(NULL, &value) == TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT);
+}
+
 static void test_unsupported_value_type_rejected(void)
 {
     native_channel_source_t source = {.source_index = 4u, .source_flags = 0u};
@@ -103,6 +151,8 @@ int main(void)
     test_start_resets_and_read_increments();
     test_channels_are_independent();
     test_float_value_type_supported();
+    test_loopback_write_updates_counter_and_next_read();
+    test_loopback_write_rejects_invalid_values_without_mutation();
     test_unsupported_value_type_rejected();
     test_invalid_source_rejected();
     return 0;

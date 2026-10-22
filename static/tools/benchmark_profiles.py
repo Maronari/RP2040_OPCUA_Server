@@ -77,7 +77,7 @@ def verify_export(profile: dict, document: dict) -> None:
     require({c["slot"] for c in channels} == set(range(16)), "missing/duplicate slot")
     by_slot = {c["slot"]: c for c in channels}
     period = 1000 // profile["rateHz"]
-    flags = 1 | (2 if profile["history"] else 0) | (4 if profile["events"] else 0)
+    flags = 1 | 8 | (2 if profile["history"] else 0) | (4 if profile["events"] else 0)
     for slot in range(16):
         channel = by_slot[slot]
         active = slot < profile["channels"]

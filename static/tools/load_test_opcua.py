@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Bounded OPC UA staged-load and v0.5.2 benchmark client.
 
-The default mode retains the staged, read-only load ramp. ``--benchmark`` is
-strictly read-only: it verifies the selected T4 metadata and live ExportConfig
-before collecting metrics. It never mutates configuration or channel values.
+The default mode retains the staged, read-only load ramp. ``--benchmark``
+verifies the selected T4 metadata and live ExportConfig before collecting
+metrics. Its only write is a non-persistent loopback write to an explicitly
+writable synthetic channel; no configuration or hardware changes.
 """
 from __future__ import annotations
 
@@ -52,6 +53,14 @@ RESOURCE_DIAGNOSTIC_PHASE = "post-steady-before-cleanup"
 # missed arrivals instead of growing without bound.
 MAX_READS_IN_FLIGHT_PER_CLIENT = 16
 READ_ARRIVAL_PHASE_POLICY = "single-monotonic-window-even-client-phase"
+DEVICE_EVENT_SOURCE_ID = "ns=1;s=Device"
+SECURITY_EVENT_SOURCE_ID = "ns=1;s=Device.Security"
+AUDIT_EVENT_TYPE_ID = "ns=1;s=Types.Events.AuditEvent"
+EVENT_QUEUE_DROPS_NODE_ID = "ns=1;s=Device.Diagnostics.OpcUa.EventQueueDrops"
+EVENT_QUEUE_DROPS_WRAP_NODE_ID = "ns=1;s=Device.Diagnostics.OpcUa.EventQueueDropsWrapCount"
+MAINTENANCE_NODE_ID = "ns=1;s=Device.Maintenance"
+PLAN_MAINTENANCE_METHOD_ID = "ns=1;s=Device.Maintenance.PlanMaintenance"
+EVENT_CORRELATION_SUBJECT = "PlanMaintenance"
 
 DIAGNOSTIC_NODE_IDS = {
     "uptime_s": "ns=1;s=Device.Diagnostics.UptimeSec", "free_heap": "ns=1;s=Device.Diagnostics.FreeHeap",
@@ -143,10 +152,58 @@ class StageResult:
 
 
 class SubscriptionHandler:
-    def __init__(self) -> None:
+    def __init__(self, event_capacity: int = BOUNDS["maxNotificationSamplesPerMetric"]) -> None:
         self.notifications = 0
+        self.event_notifications = 0
+        self.event_capacity = event_capacity
+        self.event_overflow = 0
+        self.event_duplicates = 0
+        self.event_invalid = 0
+        self._event_subject: str | None = None
+        self._event_result: bool | None = None
+        self._event_future: asyncio.Future[dict[str, Any]] | None = None
     def datachange_notification(self, _node: Any, _value: Any, _data: Any) -> None:
         self.notifications += 1
+    def arm_event_correlation(self, subject: str, result: bool) -> asyncio.Future[dict[str, Any]]:
+        if self._event_future is not None and not self._event_future.done():
+            raise RuntimeError("an event correlation is already pending")
+        self._event_subject = subject
+        self._event_result = result
+        self._event_future = asyncio.get_running_loop().create_future()
+        return self._event_future
+    def event_notification(self, event: Any) -> None:
+        if self.event_notifications == self.event_capacity:
+            self.event_overflow += 1
+            return
+        self.event_notifications += 1
+        if self._event_subject is None or getattr(event, "Subject", None) != self._event_subject:
+            return
+        future = self._event_future
+        if future is None:
+            return
+        event_id = getattr(event, "EventId", None)
+        source_time = getattr(event, "Time", None)
+        result = getattr(event, "Result", None)
+        source_node = getattr(event, "SourceNode", None)
+        source_node_text = (source_node.to_string()
+                            if callable(getattr(source_node, "to_string", None))
+                            else str(source_node))
+        valid_id = isinstance(event_id, (bytes, bytearray)) and 0 < len(event_id) <= 64
+        valid_time = (isinstance(source_time, datetime) and source_time.tzinfo is not None and
+                      source_time >= datetime(1970, 1, 1, tzinfo=timezone.utc))
+        if (result is not self._event_result or source_node_text != SECURITY_EVENT_SOURCE_ID
+                or not valid_id or not valid_time):
+            self.event_invalid += 1
+            if not future.done():
+                future.set_exception(ValueError("correlated audit event fields are invalid"))
+            return
+        if future.done():
+            self.event_duplicates += 1
+            return
+        future.set_result({"receivedMonotonic": time.perf_counter(),
+                           "eventId": bytes(event_id).hex(),
+                           "sourceTimestamp": source_time.astimezone(timezone.utc).isoformat(),
+                           "sourceNode": source_node_text})
     def status_change_notification(self, status: Any) -> None:
         print(f"[subscription] status changed: {status}")
 
@@ -297,6 +354,108 @@ async def resolve_benchmark_value_nodes(client: Any, profile: dict[str, Any], ti
         except Exception as exc:
             raise RuntimeError(f"required benchmark channel is unreadable ({safe_exception(exc)})") from exc
     return node_ids
+
+
+async def benchmark_write_once(client: Any, node_id: str, timeout_s: float,
+                               metric: "Metric") -> None:
+    """Measure one exact-type, non-persistent synthetic loopback Write."""
+    node = client.get_node(node_id)
+    current = await asyncio.wait_for(node.read_value(), timeout_s)
+    if isinstance(current, bool) or not isinstance(current, (int, float)):
+        raise ValueError("synthetic write target is not numeric")
+    requested = float(current)
+    if (not math.isfinite(requested) or requested < 0 or requested > 0xFFFFFFFF or
+            int(requested) != requested):
+        raise ValueError("synthetic write target is outside the loopback counter contract")
+    ua = opcua_common.ua
+    if ua is None:
+        opcua_common.load_asyncua()
+        ua = opcua_common.ua
+    if ua is None:
+        raise RuntimeError("asyncua types are unavailable")
+    await timed(metric,
+                node.write_value(ua.Variant(requested, ua.VariantType.Double)),
+                timeout_s)
+
+
+async def read_event_queue_drop_pair(client: Any, timeout_s: float) -> tuple[int, int]:
+    values = []
+    for node_id in (EVENT_QUEUE_DROPS_NODE_ID, EVENT_QUEUE_DROPS_WRAP_NODE_ID):
+        value = await asyncio.wait_for(client.get_node(node_id).read_value(), timeout_s)
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 2**64:
+            raise ValueError("event queue drop counter is not a UInt64")
+        values.append(value)
+    return values[0], values[1]
+
+
+async def subscribe_benchmark_events(subscription: Any, client: Any) -> Any:
+    return await subscription.subscribe_events(
+        client.get_node(DEVICE_EVENT_SOURCE_ID),
+        evtypes=[client.get_node(AUDIT_EVENT_TYPE_ID)])
+
+
+async def measure_correlated_event(client: Any, handler: SubscriptionHandler,
+                                   timeout_s: float, publishing_ms: float,
+                                   metric: "Metric") -> dict[str, Any]:
+    """Trigger a non-mutating validation rejection and correlate its AuditEvent."""
+    before = await read_event_queue_drop_pair(client, timeout_s)
+    future = handler.arm_event_correlation(EVENT_CORRELATION_SUBJECT, False)
+    observation_window_s = min(timeout_s, max(0.05, (2.0 * publishing_ms) / 1000.0))
+    started = time.perf_counter()
+    try:
+        ua = opcua_common.ua
+        if ua is None:
+            opcua_common.load_asyncua()
+            ua = opcua_common.ua
+        if ua is None:
+            raise RuntimeError("asyncua types are unavailable")
+        arguments = [
+            ua.Variant("", ua.VariantType.String),
+            ua.Variant(datetime.now(timezone.utc), ua.VariantType.DateTime),
+            ua.Variant(0.0, ua.VariantType.Double),
+            ua.Variant(0, ua.VariantType.Int32),
+            ua.Variant("", ua.VariantType.String),
+            ua.Variant("", ua.VariantType.String),
+        ]
+        try:
+            await asyncio.wait_for(
+                client.get_node(MAINTENANCE_NODE_ID).call_method(
+                    ua.NodeId.from_string(PLAN_MAINTENANCE_METHOD_ID), *arguments),
+                timeout_s)
+        except Exception as exc:
+            status = getattr(exc, "code", None)
+            if status != ua.StatusCodes.BadInvalidArgument:
+                raise
+        else:
+            raise RuntimeError("invalid PlanMaintenance trigger unexpectedly succeeded")
+        remaining = timeout_s - (time.perf_counter() - started)
+        if remaining <= 0:
+            raise asyncio.TimeoutError("event trigger consumed the correlation deadline")
+        event = await asyncio.wait_for(asyncio.shield(future), remaining)
+        # Keep the subscription alive for two publishing intervals (bounded by
+        # the operation timeout) so a delayed/retransmitted matching event is
+        # observed before claiming one-to-one delivery.
+        await asyncio.sleep(observation_window_s)
+        after = await read_event_queue_drop_pair(client, timeout_s)
+        if after != before:
+            raise RuntimeError("event queue drop accounting changed during correlation")
+        if handler.event_duplicates or handler.event_invalid or handler.event_overflow:
+            raise RuntimeError("correlated event delivery was duplicate, invalid or exhausted")
+    except BaseException as exc:
+        if not future.done():
+            future.cancel()
+        metric.failure(exc)
+        raise
+    metric.success((event["receivedMonotonic"] - started) * 1000.0)
+    return {"state": "measured", "trigger": "PlanMaintenance-invalid-operation-id",
+            "expectedTriggerStatus": "BadInvalidArgument", "triggerCount": 1,
+            "matchedCount": 1, "duplicateCount": handler.event_duplicates,
+            "invalidCount": handler.event_invalid, "droppedNotificationCount": handler.event_overflow,
+            "eventQueueDropsBefore": before[0], "eventQueueDropsAfter": after[0],
+            "eventQueueDropWrapCountBefore": before[1], "eventQueueDropWrapCountAfter": after[1],
+            "eventId": event["eventId"], "sourceTimestamp": event["sourceTimestamp"],
+            "sourceNode": event["sourceNode"], "latencyClock": "host-monotonic-round-trip",
+            "observationWindowMs": round(observation_window_s * 1000.0, 3)}
 
 
 async def create_monitored_items(client: Any, subscription: Any, nodes: list[str], count: int,
@@ -1007,12 +1166,13 @@ async def run_benchmark(args: argparse.Namespace) -> int:
     metrics = {name: Metric(name, args.max_operation_samples) for name in ("StartupLatencyMs", "SecureSessionEstablishmentLatencyMs.Cold", "SecureSessionEstablishmentLatencyMs.Warm", "ReadLatencyMs", "WriteLatencyMs", "MethodLatencyMs", "HistoryReadLatencyMs", "EventDeliveryLatencyMs")}
     history_cleanup_metric = Metric("HistoryContinuationReleaseLatencyMs", args.max_operation_samples)
     metrics["StartupLatencyMs"].set_state("unavailable", "no device boot/readiness hook in the host monotonic clock domain")
-    metrics["WriteLatencyMs"].set_state("unsupported", "synthetic benchmark channels are non-writable; no mutation is permitted")
-    metrics["EventDeliveryLatencyMs"].set_state("unavailable", "no source timestamp/client receive correlation is available")
+    if not profile["events"]:
+        metrics["EventDeliveryLatencyMs"].set_state("unsupported", "profile disables events")
     if not profile["history"]: metrics["HistoryReadLatencyMs"].set_state("unsupported", "profile disables history")
     log, clients, subscriptions, handlers = ErrorLog(args.max_errors, BOUNDS["maxErrorTextBytes"]), [], [], []
     resource_snapshots: list[dict[str, Any]] = []
     verified, notifications = False, 0
+    event_correlations: list[dict[str, Any]] = []
     load_accounting = {"scheduledOperationCount": 0, "completedOperationCount": 0, "missedDeadlineCount": 0,
                        "deadlineExceededOperationCount": 0, "failedOperationCount": 0,
                        "inFlightLimitExceededCount": 0, "peakInFlightCount": 0,
@@ -1025,10 +1185,12 @@ async def run_benchmark(args: argparse.Namespace) -> int:
         for _repetition in range(args.repetitions):
             for _ in range(profile["clients"]): clients.append(await benchmark_connect(args, metrics["SecureSessionEstablishmentLatencyMs.Warm"]))
             nodes = await resolve_benchmark_value_nodes(clients[0], profile, args.timeout)
-            for client in clients:
+            for client_index, client in enumerate(clients):
                 handler = SubscriptionHandler(); subscription = await asyncio.wait_for(client.create_subscription(args.publishing_ms, handler), args.timeout)
                 subscriptions.append(subscription)
                 await create_monitored_items(client, subscription, nodes, len(nodes), args.create_batch, args.sampling_ms, args.timeout)
+                if profile["events"] and client_index == 0:
+                    await asyncio.wait_for(subscribe_benchmark_events(subscription, client), args.timeout)
                 handlers.append(handler)
                 # The host runner counts one non-secret token for every
                 # connected client whose subscription and monitored items are
@@ -1060,6 +1222,29 @@ async def run_benchmark(args: argparse.Namespace) -> int:
                 # issue HistoryRead or diagnostics on any benchmark session.
                 log.add("post-load operations", "transport fenced after non-cooperative read")
             else:
+                # The synthetic write is deliberately outside the fixed-rate
+                # Read window. It writes each channel's current integral
+                # counter value back through the normal OPC UA/service/driver
+                # path; the next sample resumes at +1 without persistence or
+                # hardware side effects.
+                for client_index, client in enumerate(clients):
+                    try:
+                        await benchmark_write_once(client,
+                                                   nodes[client_index % len(nodes)],
+                                                   args.timeout,
+                                                   metrics["WriteLatencyMs"])
+                    except Exception as exc:
+                        log.add(f"write client {client_index + 1}", exc)
+
+                if profile["events"]:
+                    try:
+                        event_correlations.append(
+                            await measure_correlated_event(clients[0], handlers[0], args.timeout,
+                                                           args.publishing_ms,
+                                                           metrics["EventDeliveryLatencyMs"]))
+                    except Exception as exc:
+                        log.add("correlated event", exc)
+
                 # The frozen profile matrix has no HistoryRead request-rate axis;
                 # it fixes only the per-client continuation cap. Run exactly one
                 # bounded page per external client after the steady read interval,
@@ -1082,7 +1267,7 @@ async def run_benchmark(args: argparse.Namespace) -> int:
                 resource_snapshots.append(resource_snapshot)
                 if resource_snapshot["state"] != "measured":
                     log.add("post-steady resource diagnostics", resource_snapshot["state"])
-            notifications += sum(handler.notifications for handler in handlers)
+            notifications += sum(handler.notifications + handler.event_notifications for handler in handlers)
             await benchmark_cleanup(subscriptions, clients, args.timeout, log)
             handlers.clear()
             if transport_fenced:
@@ -1091,7 +1276,7 @@ async def run_benchmark(args: argparse.Namespace) -> int:
         log.add("benchmark setup", exc)
         for metric in metrics.values():
             if metric.state == "not-run": metric.set_state("failed", "benchmark setup failed")
-        notifications = sum(handler.notifications for handler in handlers)
+        notifications = sum(handler.notifications + handler.event_notifications for handler in handlers)
     finally:
         await benchmark_cleanup(subscriptions, clients, args.timeout, log)
     jitter: Any = {"state": "unavailable", "reason": "native sampling evidence not supplied"}
@@ -1128,7 +1313,14 @@ async def run_benchmark(args: argparse.Namespace) -> int:
     metric_report["MethodLatencyMs"]["phase"] = "setup-export-config-profile-verification"
     metric_report["HistoryReadLatencyMs"]["continuationRelease"] = history_cleanup_metric.report()
     resource_evidence = resource_diagnostic_report(resource_snapshots)
-    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "maxInFlightReadsPerClient": MAX_READS_IN_FLIGHT_PER_CLIENT, "readArrivalSchedule": {"policy": READ_ARRIVAL_PHASE_POLICY, "phaseSpacingMs": round((1000 / args.read_rate) / profile["clients"], 6), "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount", "windowClock": "host-monotonic"}, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": {"state": "unavailable", "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery"}, "resourceDiagnostics": resource_evidence, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
+    subscription_evidence = ({"state": "unsupported", "reason": "profile disables events",
+                              "correlationCount": 0, "correlations": []}
+                             if not profile["events"] else
+                             {"state": "measured" if len(event_correlations) == args.repetitions else "failed",
+                              "correlationCount": len(event_correlations),
+                              "expectedCorrelationCount": args.repetitions,
+                              "correlations": event_correlations})
+    report = {**setup, "profileVerification": {"metadata": "measured", "exportConfig": "measured" if verified else "failed"}, "clientLoad": {"clients": args.clients, "items": args.items, "channelIds": [f"benchmark.synthetic.{slot}" for slot in range(1, profile["channels"] + 1)], "readRateHzPerClient": args.read_rate, "publishingMs": args.publishing_ms, "samplingMs": args.sampling_ms, "timeoutSeconds": args.timeout, "maxInFlightReadsPerClient": MAX_READS_IN_FLIGHT_PER_CLIENT, "readArrivalSchedule": {"policy": READ_ARRIVAL_PHASE_POLICY, "phaseSpacingMs": round((1000 / args.read_rate) / profile["clients"], 6), "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount", "windowClock": "host-monotonic"}, "historyCadence": {"mode": "post-steady-per-client-per-repetition", "requestsPerClientPerRepetition": 1, "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload"}}, "metrics": metric_report, "samplingJitter": jitter, "subscriptionEvidence": subscription_evidence, "resourceDiagnostics": resource_evidence, "runAccounting": accounting, "loadAccounting": load_accounting, "errors": log.items, "errorRecordOverflow": log.overflow}
     write_bounded_json(Path(args.output), report, BOUNDS["maxJsonBytes"])
     return 1 if log.items or log.overflow or accounting["droppedSampleCount"] or load_accounting["missedDeadlineCount"] or load_accounting["deadlineExceededOperationCount"] or load_accounting["failedOperationCount"] or any(metric.state in {"failed", "exhausted"} for metric in accounted_metrics) else 0
 

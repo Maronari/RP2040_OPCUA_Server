@@ -181,7 +181,7 @@ string(CONFIGURE "${CONFIG_EXPORT_JSON}" CONFIG_EXPORT_JSON @ONLY)
 
 if(BENCHMARK_PROFILE STREQUAL "synthetic")
     math(EXPR _period "1000 / ${BENCHMARK_RATE_HZ}")
-    math(EXPR _flags "1 + 2 * ${BENCHMARK_HISTORY} + 4 * ${BENCHMARK_EVENTS}")
+    math(EXPR _flags "1 + 2 * ${BENCHMARK_HISTORY} + 4 * ${BENCHMARK_EVENTS} + 8")
     string(FIND "${CONFIG_EXPORT_JSON}" "  \"channels\": [" _channels_start)
     string(SUBSTRING "${CONFIG_EXPORT_JSON}" 0 ${_channels_start} CONFIG_EXPORT_JSON)
     string(REPLACE "\"useJson\": true" "\"useJson\": false" CONFIG_EXPORT_JSON "${CONFIG_EXPORT_JSON}")

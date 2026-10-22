@@ -13,7 +13,7 @@ import benchmark_profiles as subject
 
 def fixture(profile):
     period = 1000 // profile["rateHz"]
-    flags = 1 | (2 if profile["history"] else 0) | (4 if profile["events"] else 0)
+    flags = 1 | 8 | (2 if profile["history"] else 0) | (4 if profile["events"] else 0)
     return {"device": {"fwRevision": "0.5.2"}, "mqtt": {"enabled": False},
             "diagnostics": {"enableHeapDiagnostics": True, "enableTaskDiagnostics": True},
             "channels": [dict(slot=i, inUse=i < profile["channels"],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -58,6 +59,17 @@ def read_json(path: Path) -> dict[str, Any]:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise BaselineError(message)
+
+
+def valid_utc_timestamp(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return (parsed.tzinfo is not None
+            and parsed >= datetime(1970, 1, 1, tzinfo=timezone.utc))
 
 
 def sha256(path: Path) -> str:
@@ -489,7 +501,85 @@ def validate_thresholds(document: dict[str, Any], measured: dict[str, float]) ->
         require(item.get("unit") == METRIC_UNITS.get(item["metric"]), f"{key}: unit mismatch")
 
 
-def validate_release_readiness(document: dict[str, Any], thresholds: dict[str, Any]) -> None:
+def validate_release_client_operations(entry: dict[str, Any], profile: dict[str, Any],
+                                       root: Path) -> None:
+    profile_id = entry["profileId"]
+    client_item = next((item for item in entry.get("evidence", [])
+                        if item.get("kind") == "client"), None)
+    require(isinstance(client_item, dict),
+            f"{profile_id}: required release profile lacks client evidence")
+    client = read_json(root / client_item["path"])
+    metrics = client.get("metrics", {})
+    write = metrics.get("WriteLatencyMs", {})
+    expected_writes = profile["clients"] * entry["repetitions"]
+    require(write.get("state") == "measured"
+            and write.get("unit") == "milliseconds"
+            and write.get("operationCount") == expected_writes
+            and write.get("sampleCount") == expected_writes
+            and write.get("failureCount") == 0
+            and write.get("timedOutOperationCount") == 0
+            and write.get("droppedSampleCount") == 0,
+            f"{profile_id}: required Write evidence is not complete")
+
+    if not profile["events"]:
+        return
+    event = metrics.get("EventDeliveryLatencyMs", {})
+    expected_events = entry["repetitions"]
+    require(event.get("state") == "measured"
+            and event.get("unit") == "milliseconds"
+            and event.get("operationCount") == expected_events
+            and event.get("sampleCount") == expected_events
+            and event.get("failureCount") == 0
+            and event.get("timedOutOperationCount") == 0
+            and event.get("droppedSampleCount") == 0,
+            f"{profile_id}: required Event evidence is not complete")
+    subscription = client.get("subscriptionEvidence", {})
+    correlations = subscription.get("correlations")
+    client_load = client.get("clientLoad", {})
+    publishing_ms = client_load.get("publishingMs")
+    timeout_seconds = client_load.get("timeoutSeconds")
+    require(type(publishing_ms) in (int, float) and publishing_ms > 0
+            and type(timeout_seconds) in (int, float) and timeout_seconds > 0,
+            f"{profile_id}: Event observation timing is invalid")
+    expected_observation_ms = round(
+        min(timeout_seconds * 1000.0, max(50.0, 2.0 * publishing_ms)), 3)
+    require(subscription.get("state") == "measured"
+            and subscription.get("correlationCount") == expected_events
+            and subscription.get("expectedCorrelationCount") == expected_events
+            and isinstance(correlations, list) and len(correlations) == expected_events,
+            f"{profile_id}: required Event correlation evidence is incomplete")
+    for correlation in correlations:
+        require(isinstance(correlation, dict)
+                and correlation.get("state") == "measured"
+                and correlation.get("trigger") == "PlanMaintenance-invalid-operation-id"
+                and correlation.get("expectedTriggerStatus") == "BadInvalidArgument"
+                and correlation.get("triggerCount") == 1
+                and correlation.get("matchedCount") == 1
+                and correlation.get("duplicateCount") == 0
+                and correlation.get("invalidCount") == 0
+                and correlation.get("droppedNotificationCount") == 0
+                and all(type(correlation.get(key)) is int
+                        and 0 <= correlation[key] < 2**64
+                        for key in ("eventQueueDropsBefore", "eventQueueDropsAfter",
+                                    "eventQueueDropWrapCountBefore",
+                                    "eventQueueDropWrapCountAfter"))
+                and correlation.get("eventQueueDropsBefore")
+                    == correlation.get("eventQueueDropsAfter")
+                and correlation.get("eventQueueDropWrapCountBefore")
+                    == correlation.get("eventQueueDropWrapCountAfter")
+                and correlation.get("sourceNode") == load_test_opcua.SECURITY_EVENT_SOURCE_ID
+                and correlation.get("latencyClock") == "host-monotonic-round-trip"
+                and correlation.get("observationWindowMs") == expected_observation_ms
+                and isinstance(correlation.get("eventId"), str)
+                and 2 <= len(correlation["eventId"]) <= 128
+                and len(correlation["eventId"]) % 2 == 0
+                and re.fullmatch(r"[0-9a-f]+", correlation["eventId"]) is not None
+                and valid_utc_timestamp(correlation.get("sourceTimestamp")),
+                f"{profile_id}: invalid correlated Event evidence")
+
+
+def validate_release_readiness(document: dict[str, Any], thresholds: dict[str, Any],
+                               root: Path) -> None:
     environment = document.get("environment", {})
     require(environment.get("gitDirty") is False,
             "release baseline must come from a clean source tree")
@@ -519,6 +609,7 @@ def validate_release_readiness(document: dict[str, Any], thresholds: dict[str, A
                 f"required release profile firmware commit differs from baseline: {profile_id}")
         require(profile_environment.get("firmwareVersion") == document.get("release"),
                 f"required release profile firmware version differs from release: {profile_id}")
+        validate_release_client_operations(entry, benchmark_profiles.select(profile_id), root)
 
 
 def validate_static_report(report: dict[str, Any], thresholds: dict[str, Any]) -> None:
@@ -560,7 +651,7 @@ def main() -> int:
         thresholds = read_json(args.thresholds)
         validate_thresholds(thresholds, measured)
         if args.require_release_ready:
-            validate_release_readiness(read_json(args.baseline), thresholds)
+            validate_release_readiness(read_json(args.baseline), thresholds, args.root.resolve())
         if args.static_report:
             validate_static_report(read_json(args.static_report), thresholds)
         print(f"benchmark-baseline: PASS ({len(measured)} measured metrics, 192 profile cells)")

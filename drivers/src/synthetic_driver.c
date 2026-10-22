@@ -72,3 +72,51 @@ telemetry_driver_result_t native_synthetic_read(telemetry_channel_t *channel, ui
     }
     return TELEMETRY_DRIVER_RESULT_OK;
 }
+
+telemetry_driver_result_t native_synthetic_write(telemetry_channel_t *channel,
+                                                  const telemetry_channel_value_t *value)
+{
+    native_channel_source_t *source = synthetic_source(channel);
+    double requested;
+    uint32_t counter;
+
+    if (source == NULL || value == NULL ||
+        !native_synthetic_source_is_valid(source->source_index, source->source_flags))
+    {
+        return TELEMETRY_DRIVER_RESULT_INVALID_ARGUMENT;
+    }
+    if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_FLOAT)
+    {
+        requested = (double)value->f32;
+    }
+    else if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_DOUBLE)
+    {
+        requested = value->f64;
+    }
+    else
+    {
+        return TELEMETRY_DRIVER_RESULT_UNSUPPORTED;
+    }
+    /* These comparisons also reject NaN. Check the range before conversion
+     * so the double-to-uint32 cast is always defined. */
+    if (!(requested >= 0.0 && requested <= (double)UINT32_MAX))
+    {
+        return TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE;
+    }
+    counter = (uint32_t)requested;
+    if ((double)counter != requested)
+    {
+        return TELEMETRY_DRIVER_RESULT_OUT_OF_RANGE;
+    }
+
+    source->scratch.synthetic_read_count = counter;
+    if (channel->metadata.value_type == TELEMETRY_CHANNEL_VALUE_FLOAT)
+    {
+        channel->runtime.value.f32 = value->f32;
+    }
+    else
+    {
+        channel->runtime.value.f64 = value->f64;
+    }
+    return TELEMETRY_DRIVER_RESULT_OK;
+}

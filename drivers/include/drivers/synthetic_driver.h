@@ -9,7 +9,7 @@
  * **Read this file first if you are adding a new native driver.** It is
  * deliberately the simplest complete driver in this codebase: no bus, no
  * GPIO, no datasheet, no hardware dependency of any kind -- just the bare
- * `start`/`stop`/`read` vtable slots (see `native_channel_driver.h`'s
+ * `start`/`stop`/`read`/`write` vtable slots (see `native_channel_driver.h`'s
  * file-level doc for the full contract every driver implements against)
  * and one caller-owned per-channel counter. See
  * `docs/code/adding-a-driver.md` (v0.5.1 T16) for the full walkthrough
@@ -26,9 +26,10 @@
  * stub header at all, since there is no hardware to stub.
  *
  * Vtable contract (see `telemetry_driver_vtbl_t`): implements `start`/
- * `stop`/`read` only -- no `write`/`configure`/`self_test`, matching
- * `internal_temperature`'s/`adc_voltage`'s/`gpio_input`'s minimal shape
- * (a read-only source with nothing to diagnose or configure).
+ * `stop`/`read`/`write`. Write is a hardware-free loopback operation used by
+ * the v0.5.2 benchmark client; it accepts only exact integral counter values
+ * in the UInt32 range and makes the following read continue at value + 1.
+ * There is no `configure` or `self_test` operation.
  *
  * Ownership: `driver_context` carries only this channel's
  * `native_channel_source_t` (`source_index` = 0-7, one of eight
@@ -74,5 +75,14 @@ telemetry_driver_result_t native_synthetic_stop(telemetry_channel_t *channel);
  *         otherwise.
  */
 telemetry_driver_result_t native_synthetic_read(telemetry_channel_t *channel, uint32_t now_ms);
+/**
+ * @brief Applies an exact integral FLOAT/DOUBLE counter value to this
+ *        channel's caller-owned loopback state.
+ * @return INVALID_ARGUMENT for NULL/invalid source; UNSUPPORTED for other
+ *         channel types; OUT_OF_RANGE for non-finite, fractional or values
+ *         outside UInt32; OK after updating the counter and runtime value.
+ */
+telemetry_driver_result_t native_synthetic_write(telemetry_channel_t *channel,
+                                                  const telemetry_channel_value_t *value);
 
 #endif

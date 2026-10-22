@@ -267,6 +267,11 @@ V052_REVIEWED_MODEL_DRIFT_PATHS = frozenset({
     "opcua_model/src/model_address_space.c",
     "opcua_model/src/opcua_model_context.c",
     "opcua_model/src/model_core_lifecycle.c",
+    # T5 lets the explicit test-none benchmark exercise the existing channel
+    # Write adapter. Production builds retain the secure-channel requirement;
+    # the source gate in test_v052_benchmark_adapter_sources.py enforces the
+    # compile-time boundary. No NodeId, BrowseName or method changes.
+    "opcua_model/src/model_configuration.c",
     # T4's compile-selected benchmark adapter changes no public node or
     # method contract, but it must gate the existing event/condition paths
     # to make events=false measurable without changing production defaults.

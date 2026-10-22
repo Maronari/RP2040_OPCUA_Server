@@ -47,6 +47,7 @@ def main() -> int:
     header = read("services/include/services/benchmark_profile.h")
     lifecycle = read("opcua_model/src/model_core_lifecycle.c")
     access = read("opcua_model/src/model_access.c")
+    configuration = read("opcua_model/src/model_configuration.c")
     maintenance = read("opcua_model/src/model_maintenance.c")
     events = read("opcua_model/src/model_events.c")
     alarms = read("services/src/alarm_service.c")
@@ -82,6 +83,11 @@ def main() -> int:
             "test-none branch is not isolated from the production secure path")
     require(f"#if !({TEST_NONE})" in access,
             "plaintext role exception is not compile-selected test-only")
+    write_adapter = function_body(configuration, "UA_StatusCode model_write_value")
+    require(f"#if !({TEST_NONE})" in write_adapter and
+            "if (!model_session_is_secure(session_context))" in write_adapter and
+            "UA_STATUSCODE_BADSECURITYMODEINSUFFICIENT" in write_adapter,
+            "test-none channel Write transport exception is not compile-selected test-only")
     require("model_session_get_role(session_context, &current_role)" in access and
             "current_role < required_role" in access,
             "test-none bypasses role authorization instead of only transport security")
@@ -105,7 +111,7 @@ def main() -> int:
 
     # T4 intentionally changes profile execution only. It reserves no public
     # NodeId, BrowseName, method, or capacity, and it must not invent one here.
-    combined = lifecycle + maintenance + events + access
+    combined = lifecycle + maintenance + events + access + configuration
     require("Device.Benchmark" not in combined and "BenchmarkProfile" not in combined,
             "T4 adapter introduced a public benchmark model contract")
 

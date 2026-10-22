@@ -25,6 +25,7 @@ static void test_builds_exact_synthetic_workload(void)
     device_profile_config_t config = {0};
     const uint32_t expected_period = RP2_BENCHMARK_RATE_HZ == 1 ? 1000u : 100u;
     const uint32_t expected_flags = TELEMETRY_CHANNEL_FLAG_ENABLED |
+                                    TELEMETRY_CHANNEL_FLAG_WRITABLE |
 #if RP2_BENCHMARK_HISTORY_ENABLED
                                     TELEMETRY_CHANNEL_FLAG_HISTORIZED |
 #endif

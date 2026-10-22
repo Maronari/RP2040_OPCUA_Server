@@ -202,36 +202,108 @@ bad_dirty_type["gitDirty"] = 0
 rejects(lambda: validate_environment(bad_dirty_type, baseline["release"]),
         "gitDirty must be a Boolean")
 
-release_ready = copy.deepcopy(baseline)
-release_commit = release_ready["environment"]["gitCommit"]
+legacy_release = copy.deepcopy(baseline)
+release_commit = legacy_release["environment"]["gitCommit"]
 for profile_id in thresholds["releaseRequiredProfiles"]:
-    required_entry = next(entry for entry in release_ready["profiles"]
+    required_entry = next(entry for entry in legacy_release["profiles"]
                           if entry["profileId"] == profile_id)
     required_environment = required_entry.setdefault(
-        "environment", copy.deepcopy(release_ready["environment"]))
+        "environment", copy.deepcopy(legacy_release["environment"]))
     required_environment["gitDirty"] = False
     required_environment["gitCommit"] = release_commit
-validate_release_readiness(release_ready, thresholds)
+rejects(lambda: validate_release_readiness(legacy_release, thresholds, ROOT),
+        "required Write evidence is not complete")
+
+_release_temp = tempfile.TemporaryDirectory()
+release_root = Path(_release_temp.name)
+shutil.copytree(REPO_ROOT / "static/benchmarks/v0.5.2/evidence",
+                release_root / "static/benchmarks/v0.5.2/evidence")
+release_ready = copy.deepcopy(legacy_release)
+for profile_id in thresholds["releaseRequiredProfiles"]:
+    entry = next(item for item in release_ready["profiles"]
+                 if item["profileId"] == profile_id)
+    profile = subject.benchmark_profiles.select(profile_id)
+    client_item = next(item for item in entry["evidence"] if item["kind"] == "client")
+    client_path = release_root / client_item["path"]
+    client = read_json(client_path)
+    write_count = profile["clients"] * entry["repetitions"]
+    client["metrics"]["WriteLatencyMs"] = {
+        "state": "measured", "unit": "milliseconds", "operationCount": write_count,
+        "sampleCount": write_count, "failureCount": 0, "timedOutOperationCount": 0,
+        "droppedSampleCount": 0, "p50": 1.0, "p95": 1.0, "p99": 1.0, "max": 1.0,
+    }
+    if profile["events"]:
+        event_count = entry["repetitions"]
+        client["metrics"]["EventDeliveryLatencyMs"] = {
+            "state": "measured", "unit": "milliseconds", "operationCount": event_count,
+            "sampleCount": event_count, "failureCount": 0, "timedOutOperationCount": 0,
+            "droppedSampleCount": 0, "p50": 2.0, "p95": 2.0, "p99": 2.0, "max": 2.0,
+        }
+        correlation = {
+            "state": "measured", "trigger": "PlanMaintenance-invalid-operation-id",
+            "expectedTriggerStatus": "BadInvalidArgument", "triggerCount": 1,
+            "matchedCount": 1, "duplicateCount": 0, "invalidCount": 0,
+            "droppedNotificationCount": 0, "eventQueueDropsBefore": 0,
+            "eventQueueDropsAfter": 0, "eventQueueDropWrapCountBefore": 0,
+            "eventQueueDropWrapCountAfter": 0, "eventId": "01",
+            "sourceTimestamp": "2026-10-21T00:00:00+00:00",
+            "sourceNode": subject.load_test_opcua.SECURITY_EVENT_SOURCE_ID,
+            "latencyClock": "host-monotonic-round-trip",
+            "observationWindowMs": 200.0,
+        }
+        client["subscriptionEvidence"] = {
+            "state": "measured", "correlationCount": event_count,
+            "expectedCorrelationCount": event_count, "correlations": [correlation],
+        }
+    client_item["sha256"] = write_document(client_path, client)
+    association_item = next(item for item in entry["evidence"]
+                            if item["kind"] == "native-association")
+    association_path = release_root / association_item["path"]
+    association = read_json(association_path)
+    association["evidence"]["client"] = {
+        "sha256": client_item["sha256"], "bytes": client_path.stat().st_size}
+    association["associationId"] = hashlib.sha256(
+        (entry["profileId"] + association["provenance"]["gitCommit"]
+         + association["provenance"]["flashedUf2Sha256"]
+         + association["evidence"]["client"]["sha256"]
+         + association["evidence"]["native"]["sha256"]).encode("ascii")
+    ).hexdigest()
+    association_item["sha256"] = write_document(association_path, association)
+validate_baseline(release_ready, release_root)
+validate_release_readiness(release_ready, thresholds, release_root)
+event_entry = next(item for item in release_ready["profiles"]
+                   if subject.benchmark_profiles.select(item["profileId"])["events"]
+                   and item["profileId"] in thresholds["releaseRequiredProfiles"])
+event_client_item = next(item for item in event_entry["evidence"] if item["kind"] == "client")
+event_client_path = release_root / event_client_item["path"]
+event_client = read_json(event_client_path)
+event_client["subscriptionEvidence"]["correlations"][0]["sourceNode"] = "ns=1;s=Wrong.Source"
+write_document(event_client_path, event_client)
+rejects(lambda: validate_release_readiness(release_ready, thresholds, release_root),
+        "invalid correlated Event evidence")
+event_client["subscriptionEvidence"]["correlations"][0]["sourceNode"] = \
+    subject.load_test_opcua.SECURITY_EVENT_SOURCE_ID
+write_document(event_client_path, event_client)
 short_commit = copy.deepcopy(release_ready)
 short_commit["environment"]["gitCommit"] = "2881230"
-rejects(lambda: validate_release_readiness(short_commit, thresholds),
+rejects(lambda: validate_release_readiness(short_commit, thresholds, release_root),
         "full lowercase firmware commit SHA")
 dirty_required = copy.deepcopy(release_ready)
 next(entry for entry in dirty_required["profiles"]
      if entry["profileId"] == thresholds["releaseRequiredProfiles"][1]
      )["environment"]["gitDirty"] = True
-rejects(lambda: validate_release_readiness(dirty_required, thresholds),
+rejects(lambda: validate_release_readiness(dirty_required, thresholds, release_root),
         "required release profile uses a dirty source tree")
 mixed_required_commit = copy.deepcopy(release_ready)
 next(entry for entry in mixed_required_commit["profiles"]
      if entry["profileId"] == thresholds["releaseRequiredProfiles"][1]
      )["environment"]["gitCommit"] = "0" * 40
-rejects(lambda: validate_release_readiness(mixed_required_commit, thresholds),
+rejects(lambda: validate_release_readiness(mixed_required_commit, thresholds, release_root),
         "firmware commit differs from baseline")
 missing_required = copy.deepcopy(release_ready)
 next(entry for entry in missing_required["profiles"]
      if entry["profileId"] == thresholds["releaseRequiredProfiles"][1])["resultState"] = "not-run"
-rejects(lambda: validate_release_readiness(missing_required, thresholds),
+rejects(lambda: validate_release_readiness(missing_required, thresholds, release_root),
         "required release profile is not measured")
 
 with tempfile.TemporaryDirectory() as directory:

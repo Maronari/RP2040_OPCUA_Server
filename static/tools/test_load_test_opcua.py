@@ -8,6 +8,7 @@ import io
 import json
 import math
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,10 +31,10 @@ def test_runner_readiness_marker() -> None:
         raise AssertionError("non-ASCII runner marker must be rejected")
 
 
-def profile(history: bool = False) -> dict:
+def profile(history: bool = False, events: bool = False) -> dict:
     return next(item for item in benchmark_profiles.profiles()
                 if item["channels"] == 1 and item["clients"] == 1 and item["rateHz"] == 1
-                and item["security"] == "test-none" and item["events"] is False
+                and item["security"] == "test-none" and item["events"] is events
                 and item["history"] is history)
 
 
@@ -64,16 +65,26 @@ def args(item: dict, directory: Path) -> SimpleNamespace:
 
 
 class FakeSubscription:
-    def __init__(self, handler): self.handler, self.deleted = handler, False
+    def __init__(self, client, handler):
+        self.client, self.handler, self.deleted, self.events_enabled = client, handler, False, False
     async def subscribe_data_change(self, nodes, **_kwargs):
         self.handler.datachange_notification(nodes[0], 1, None)
         return list(range(len(nodes)))
+    async def subscribe_events(self, _source, **_kwargs):
+        self.events_enabled = True
+        return 1
     async def delete(self): self.deleted = True
 
 
 class FakeStatus:
     def __init__(self, name="Good"): self.name = name
     def is_good(self): return self.name == "Good"
+
+
+class FakeBadInvalidArgument(Exception):
+    def __init__(self):
+        super().__init__("expected validation rejection")
+        self.code = 0x80AB0000
 
 
 def resource_data_value(value=1, status="Good", variant_type="UInt64"):
@@ -87,6 +98,13 @@ class FakeNode:
         self.client.read_node_ids.append(self.node_id)
         if self.client.reject_reads: raise PermissionError("password=do-not-record")
         return 1
+    async def write_value(self, value):
+        self.client.writes.append((self.node_id, value))
+    async def call_method(self, _method_id, *_arguments):
+        if self.node_id != subject.MAINTENANCE_NODE_ID:
+            raise AssertionError("unexpected fake method target")
+        self.client.emit_audit(subject.EVENT_CORRELATION_SUBJECT, False)
+        raise FakeBadInvalidArgument()
     async def read_data_value(self, raise_on_bad_status=False):
         self.client.resource_node_ids.append(self.node_id)
         if self.client.resource_exception:
@@ -101,6 +119,8 @@ class FakeClient:
         self.reject_reads, self.read_node_ids, self.disconnected = reject_reads, [], False
         self.resource_status, self.resource_exception = resource_status, resource_exception
         self.resource_variant_type, self.resource_node_ids = resource_variant_type, []
+        self.writes, self.subscriptions, self.next_event_id = [], [], 1
+        self.delayed_duplicate = False
         self.nodes = SimpleNamespace(server_state=FakeNode(self, "server"))
     async def connect(self): return None
     async def disconnect(self): self.disconnected = True
@@ -108,20 +128,39 @@ class FakeClient:
         assert uri == subject.CHANNEL_NAMESPACE_URI
         return 9
     def get_node(self, node_id): return FakeNode(self, node_id)
-    async def create_subscription(self, _period, handler): return FakeSubscription(handler)
+    async def create_subscription(self, _period, handler):
+        subscription = FakeSubscription(self, handler)
+        self.subscriptions.append(subscription)
+        return subscription
+    def emit_audit(self, subject, result):
+        event = SimpleNamespace(Subject=subject, Result=result,
+            EventId=self.next_event_id.to_bytes(4, "big"),
+            Time=datetime.now(timezone.utc), SourceNode="ns=1;s=Device.Security")
+        self.next_event_id += 1
+        for subscription in self.subscriptions:
+            if subscription.events_enabled:
+                subscription.handler.event_notification(event)
+        if self.delayed_duplicate:
+            async def emit_duplicate():
+                await asyncio.sleep(0.01)
+                for subscription in self.subscriptions:
+                    if subscription.events_enabled:
+                        subscription.handler.event_notification(event)
+            asyncio.create_task(emit_duplicate())
 
 
-async def fake_export(_maintenance):
+async def fake_export(maintenance):
+    del maintenance
     return EXPORT_DOCUMENT
 
 
 async def test_full_run() -> None:
     global EXPORT_DOCUMENT
-    item = profile()
+    item = profile(events=True)
     EXPORT_DOCUMENT = {"device": {"fwRevision": "0.5.2"}, "mqtt": {"enabled": False},
         "diagnostics": {"enableHeapDiagnostics": True, "enableTaskDiagnostics": True}, "channels": []}
     period = 1000 // item["rateHz"]
-    flags = 1
+    flags = 1 | 8 | 4
     for slot in range(16):
         active = slot < item["channels"]
         EXPORT_DOCUMENT["channels"].append({"slot": slot, "inUse": active, "enabled": active,
@@ -137,14 +176,24 @@ async def test_full_run() -> None:
             client = FakeClient(); clients.append(client); return client
         subject.configure_client, subject.opcua_common.export_config = configure, fake_export
         try:
-            assert await subject.run_benchmark(options) == 0
+            result = await subject.run_benchmark(options)
         finally:
             subject.configure_client, subject.opcua_common.export_config = old_configure, old_export
         report = json.loads(Path(options.output).read_text(encoding="utf-8"))
+        assert result == 0, report
         assert report["metrics"]["ReadLatencyMs"]["state"] == "measured"
         assert report["metrics"]["MethodLatencyMs"]["state"] == "measured"
-        assert report["metrics"]["WriteLatencyMs"]["state"] == "unsupported"
-        assert report["subscriptionEvidence"]["state"] == "unavailable"
+        assert report["metrics"]["WriteLatencyMs"]["state"] == "measured"
+        assert report["metrics"]["WriteLatencyMs"]["operationCount"] == 1
+        assert report["metrics"]["EventDeliveryLatencyMs"]["state"] == "measured"
+        assert report["subscriptionEvidence"]["state"] == "measured"
+        assert report["subscriptionEvidence"]["correlationCount"] == 1
+        correlation = report["subscriptionEvidence"]["correlations"][0]
+        assert correlation["triggerCount"] == correlation["matchedCount"] == 1
+        assert correlation["duplicateCount"] == correlation["invalidCount"] == 0
+        assert correlation["eventQueueDropsBefore"] == correlation["eventQueueDropsAfter"] == 1
+        assert correlation["sourceNode"] == subject.SECURITY_EVENT_SOURCE_ID
+        assert correlation["observationWindowMs"] == 1000.0
         assert report["clientLoad"]["historyCadence"]["mode"] == "post-steady-per-client-per-repetition"
         assert report["clientLoad"]["readArrivalSchedule"] == {
             "policy": subject.READ_ARRIVAL_PHASE_POLICY, "phaseSpacingMs": 1000.0,
@@ -164,10 +213,55 @@ async def test_full_run() -> None:
         assert {entry["nodeId"] for entry in snapshot["nodes"]} == set(subject.RESOURCE_DIAGNOSTIC_NODE_IDS)
         assert all(entry["status"] == "Good" and entry["value"] == 1 for entry in snapshot["nodes"])
         assert any("ns=9;s=Device.Channels.c_" in node for client in clients for node in client.read_node_ids)
+        assert sum(len(client.writes) for client in clients) == 1
         # cold + the one declared warm client only: the diagnostic snapshot opens no session.
         assert len(clients) == 2
         assert all(len(client.resource_node_ids) in (0, 22) for client in clients)
         assert all(client.disconnected for client in clients)
+
+
+async def test_event_handler_rejects_wrong_source_and_bounds_notifications() -> None:
+    handler = subject.SubscriptionHandler(event_capacity=1)
+    future = handler.arm_event_correlation(subject.EVENT_CORRELATION_SUBJECT, False)
+    invalid = SimpleNamespace(
+        Subject=subject.EVENT_CORRELATION_SUBJECT, Result=False, EventId=b"id",
+        Time=datetime.now(timezone.utc), SourceNode="ns=1;s=Wrong.Source")
+    handler.event_notification(invalid)
+    try:
+        await future
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("wrong audit SourceNode must fail correlation")
+    assert handler.event_invalid == 1
+    handler.event_notification(invalid)
+    assert handler.event_overflow == 1
+
+    duplicate_handler = subject.SubscriptionHandler(event_capacity=2)
+    matched = duplicate_handler.arm_event_correlation(subject.EVENT_CORRELATION_SUBJECT, False)
+    valid = SimpleNamespace(
+        Subject=subject.EVENT_CORRELATION_SUBJECT, Result=False, EventId=b"id",
+        Time=datetime.now(timezone.utc), SourceNode=subject.SECURITY_EVENT_SOURCE_ID)
+    duplicate_handler.event_notification(valid)
+    assert (await matched)["sourceNode"] == subject.SECURITY_EVENT_SOURCE_ID
+    duplicate_handler.event_notification(valid)
+    assert duplicate_handler.event_duplicates == 1
+
+
+async def test_correlated_event_rejects_delayed_duplicate() -> None:
+    client = FakeClient()
+    client.delayed_duplicate = True
+    handler = subject.SubscriptionHandler()
+    subscription = await client.create_subscription(20.0, handler)
+    await subscription.subscribe_events(None)
+    metric = subject.Metric("EventDeliveryLatencyMs", 4)
+    try:
+        await subject.measure_correlated_event(client, handler, 0.2, 20.0, metric)
+    except RuntimeError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("delayed duplicate event must fail one-to-one correlation")
+    assert handler.event_duplicates == 1 and metric.state == "failed"
 
 
 def test_bounds_sticky_failure_and_native() -> None:
@@ -272,7 +366,7 @@ async def test_non_cooperative_read_is_fenced_and_postload_skipped() -> None:
         EXPORT_DOCUMENT["channels"].append({"slot": slot, "inUse": active, "enabled": active,
             "driverId": 10, "sourceIndex": slot % 8, "sourceFlags": 0, "kind": 0, "valueType": 1,
             "id": f"benchmark.synthetic.{slot + 1}", "name": f"BenchmarkSynthetic{slot + 1}", "unit": "",
-            "flags": 1, "samplePeriodMs": period, "publishPeriodMs": period, "historyIntervalMs": period,
+            "flags": 1 | 8, "samplePeriodMs": period, "publishPeriodMs": period, "historyIntervalMs": period,
             "scale": 1.0, "offset": 0.0})
 
     class NonCooperativeNode(FakeNode):
@@ -696,7 +790,7 @@ async def test_resource_diagnostics_authorization_failure() -> None:
         EXPORT_DOCUMENT["channels"].append({"slot": slot, "inUse": active, "enabled": active,
             "driverId": 10, "sourceIndex": slot % 8, "sourceFlags": 0, "kind": 0, "valueType": 1,
             "id": f"benchmark.synthetic.{slot + 1}", "name": f"BenchmarkSynthetic{slot + 1}", "unit": "",
-            "flags": 1, "samplePeriodMs": period, "publishPeriodMs": period, "historyIntervalMs": period,
+            "flags": 1 | 8, "samplePeriodMs": period, "publishPeriodMs": period, "historyIntervalMs": period,
             "scale": 1.0, "offset": 0.0})
     with tempfile.TemporaryDirectory() as temporary:
         options = args(item, Path(temporary))
@@ -759,7 +853,7 @@ async def test_resource_diagnostic_contract_and_bound() -> None:
 
 
 async def test_auth_failure() -> None:
-    item = profile()
+    item = profile(events=True)
     with tempfile.TemporaryDirectory() as temporary:
         options = args(item, Path(temporary))
         # An authorization rejection during mandatory profile channel reads is a failed run, never a skipped node.
@@ -769,7 +863,7 @@ async def test_auth_failure() -> None:
         try: assert await subject.run_benchmark(options) == 1
         finally: subject.configure_client, subject.opcua_common.export_config = old_configure, old_export
         report = json.loads(Path(options.output).read_text(encoding="utf-8"))
-        assert report["profileVerification"]["exportConfig"] == "measured"
+        assert report["profileVerification"]["exportConfig"] == "measured", report
         assert "password" not in " ".join(report["errors"])
 
 
@@ -844,6 +938,8 @@ async def test_history_release_survives_cancellation() -> None:
 async def main() -> None:
     test_runner_readiness_marker()
     await test_full_run()
+    await test_event_handler_rejects_wrong_source_and_bounds_notifications()
+    await test_correlated_event_rejects_delayed_duplicate()
     test_bounds_sticky_failure_and_native()
     await test_auth_failure()
     await test_resource_diagnostics_authorization_failure()
