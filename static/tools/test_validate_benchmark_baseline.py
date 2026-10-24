@@ -470,6 +470,17 @@ bad_hash = copy.deepcopy(baseline)
 next(entry for entry in bad_hash["profiles"] if entry["resultState"] == "measured")["evidence"][0]["sha256"] = "0" * 64
 rejects(lambda: validate_baseline(bad_hash, ROOT), "hash mismatch")
 
+with tempfile.TemporaryDirectory() as directory:
+    newline_root = Path(directory)
+    shutil.copytree(ROOT / "static/benchmarks/v0.5.2/evidence",
+                    newline_root / "static/benchmarks/v0.5.2/evidence")
+    newline_baseline = copy.deepcopy(baseline)
+    newline_item = next(entry for entry in newline_baseline["profiles"]
+                        if entry["resultState"] == "measured")["evidence"][0]
+    newline_path = newline_root / newline_item["path"]
+    newline_path.write_bytes(newline_path.read_bytes().replace(b"\n", b"\r\n"))
+    rejects(lambda: validate_baseline(newline_baseline, newline_root), "hash mismatch")
+
 mixed_firmware = copy.deepcopy(baseline)
 next(entry for entry in mixed_firmware["profiles"]
      if entry["profileId"] == NATIVE_PROFILE_ID)["environment"]["firmwareUf2Sha256"] = "0" * 64

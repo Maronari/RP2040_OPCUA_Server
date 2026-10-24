@@ -464,10 +464,10 @@ def main() -> int:
             "failures": failures,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
-        if len(encoded.encode("utf-8")) > MAX_REPORT_BYTES:
+        encoded = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        if len(encoded) > MAX_REPORT_BYTES:
             raise ReportError(f"report exceeds {MAX_REPORT_BYTES} bytes")
-        args.output.write_text(encoded, encoding="utf-8")
+        args.output.write_bytes(encoded)
     except (OSError, ReportError) as exc:
         print(f"static-size-report: FAIL: {exc}", file=sys.stderr)
         return 1

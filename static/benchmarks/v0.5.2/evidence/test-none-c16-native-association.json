@@ -20,7 +20,7 @@
       "sha256": "29db4e41ae5fc6377a13bfea4f0d2fe67ebc158d62001c6ac83a9e8d996336dd"
     },
     "staticSize": {
-      "sha256": "d49de8d0d6939aad94eac668d4a9fe9c27511cdf73b6f2a647710250234d242a"
+      "sha256": "00435eb3400d298499ad63ef11952531533b44795bbf6ec017e9087e9fa6c35e"
     }
   },
   "kind": "v052-host-orchestrated-benchmark-capture",

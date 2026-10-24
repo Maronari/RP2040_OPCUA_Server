@@ -91,6 +91,8 @@ def main() -> int:
         list_ports.comports = lambda: []
         module.token_created_at = unreachable
         assert asyncio.run(module.run(unavailable_args)) == 1
+        assert evidence.read_bytes().endswith(b"\n")
+        assert b"\r\n" not in evidence.read_bytes()
         document = json.loads(evidence.read_text(encoding="utf-8"))
         assert document["firstReachableSeconds"] is None
         assert document["coldBootBoundary"]["enumerationObservedSeconds"] is None
@@ -113,6 +115,8 @@ def main() -> int:
         finally:
             list_ports.comports = original_comports
             module.token_created_at = original_token_created_at
+        assert evidence.read_bytes().endswith(b"\n")
+        assert b"\r\n" not in evidence.read_bytes()
         document = json.loads(evidence.read_text(encoding="utf-8"))
         assert document["coldBootBoundary"]["absentAtObserverStart"] is True
         assert document["coldBootBoundary"]["enumerationObservedSeconds"] is not None

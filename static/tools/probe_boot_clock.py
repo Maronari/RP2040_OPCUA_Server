@@ -214,7 +214,7 @@ async def run(args: argparse.Namespace) -> int:
         "samples": samples,
     }
     args.evidence.parent.mkdir(parents=True, exist_ok=True)
-    args.evidence.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    args.evidence.write_bytes((json.dumps(summary, indent=2) + "\n").encode("utf-8"))
     print(f"first reachable: {first_reachable}s, first UTC: {first_utc}s, null samples: {classes.count('null')}")
     print(f"evidence: {args.evidence}")
 

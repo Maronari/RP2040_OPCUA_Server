@@ -152,6 +152,8 @@ def main() -> None:
             with contextlib.redirect_stderr(error_output):
                 assert MODULE.main() == 2
             assert "ExternalFlashLoadBytes" in error_output.getvalue()
+            assert output.read_bytes().endswith(b"\n")
+            assert b"\r\n" not in output.read_bytes()
             assert json.loads(output.read_text(encoding="utf-8"))["thresholds"]["state"] == "failed"
         finally:
             MODULE._run = saved_run
