@@ -5,12 +5,17 @@
 #include <stdio.h>
 #include <string.h>
 
+#if !defined(PSRAM_ALLOCATOR_TEST_HOOKS)
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/qmi.h"
 #include "hardware/structs/xip_ctrl.h"
 #include "hardware/sync.h"
 #include "pico/platform.h"
+#endif
+
+#include <FreeRTOS.h>
+#include <semphr.h>
 
 #define PSRAM_CMD_QUAD_END 0xf5u
 #define PSRAM_CMD_QUAD_ENABLE 0x35u
@@ -27,6 +32,10 @@
 #define PSRAM_ALIGNMENT 8u
 #define PSRAM_MIN_SPLIT_SIZE 32u
 #define PSRAM_BLOCK_MAGIC 0x5053524du
+#define PSRAM_BLOCK_NOT_PENDING 0u
+#define PSRAM_BLOCK_PENDING_FREE 1u
+#define PSRAM_BLOCK_REALLOC_RESERVED 2u
+#define PSRAM_LOCK_TIMEOUT_TICKS pdMS_TO_TICKS(10u)
 
 #if defined(RP2_BOARD_PSRAM_CS_PIN)
 #define PSRAM_CS_PIN RP2_BOARD_PSRAM_CS_PIN
@@ -41,14 +50,124 @@
 typedef struct psram_block
 {
     size_t size;
+    size_t requested_size;
     struct psram_block *next;
     uint32_t magic;
     uint32_t free;
+    uint32_t pending_free;
 } psram_block_t;
 
 static psram_block_t *g_free_list;
+static psram_block_t *g_pending_free_list;
+#if defined(PSRAM_ALLOCATOR_TEST_HOOKS)
+static uintptr_t g_psram_base = PSRAM_ALLOCATOR_BASE_ADDR;
+#else
+#define g_psram_base PSRAM_ALLOCATOR_BASE_ADDR
+#endif
 static size_t g_psram_total_size;
 static bool g_psram_ready;
+static bool g_psram_mutex_initialized;
+static StaticSemaphore_t g_psram_mutex_storage;
+static SemaphoreHandle_t g_psram_mutex;
+static psram_allocator_stats_t g_stats;
+
+static bool psram_is_interrupt_context(void);
+
+static void psram_counter_increment(uint64_t *value, uint64_t *wrap_count)
+{
+    if (*value == UINT64_MAX)
+    {
+        *value = 0u;
+        if (*wrap_count != UINT64_MAX)
+        {
+            ++*wrap_count;
+        }
+        return;
+    }
+    ++*value;
+}
+
+static uint64_t psram_uptime_ms(void)
+{
+    const TickType_t ticks = psram_is_interrupt_context()
+                                 ? xTaskGetTickCountFromISR()
+                                 : xTaskGetTickCount();
+    return ((uint64_t)ticks * 1000u) / configTICK_RATE_HZ;
+}
+
+static void psram_record_failure(psram_allocator_failure_reason_t reason,
+                                 size_t requested,
+                                 bool allocation_failed)
+{
+    const bool interrupt_context = psram_is_interrupt_context();
+    UBaseType_t interrupt_mask = 0u;
+    if (interrupt_context)
+    {
+        interrupt_mask = taskENTER_CRITICAL_FROM_ISR();
+    }
+    else
+    {
+        taskENTER_CRITICAL();
+    }
+
+    if (allocation_failed)
+    {
+        psram_counter_increment(&g_stats.failed_allocations,
+                                &g_stats.failed_allocations_wrap_count);
+    }
+    if (reason == PSRAM_ALLOCATOR_FAILURE_LOCK_TIMEOUT)
+    {
+        psram_counter_increment(&g_stats.lock_timeouts, &g_stats.lock_timeouts_wrap_count);
+    }
+    else if (reason == PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT)
+    {
+        psram_counter_increment(&g_stats.invalid_context_failures,
+                                &g_stats.invalid_context_failures_wrap_count);
+    }
+    g_stats.last_failed_requested_bytes = requested;
+    g_stats.last_failure_reason = reason;
+    g_stats.last_failure_uptime_ms = psram_uptime_ms();
+    g_stats.last_failure_timestamp_valid = false;
+    g_stats.last_failure_timestamp_unix_us = 0u;
+
+    if (interrupt_context)
+    {
+        taskEXIT_CRITICAL_FROM_ISR(interrupt_mask);
+    }
+    else
+    {
+        taskEXIT_CRITICAL();
+    }
+}
+
+static bool psram_is_interrupt_context(void)
+{
+    return xPortIsInsideInterrupt() != pdFALSE;
+}
+
+static bool psram_lock(size_t requested, bool allocation_failed)
+{
+    if (!g_psram_mutex_initialized || xTaskGetSchedulerState() != taskSCHEDULER_RUNNING)
+    {
+        return true;
+    }
+    if (xSemaphoreTake(g_psram_mutex, PSRAM_LOCK_TIMEOUT_TICKS) == pdTRUE)
+    {
+        return true;
+    }
+    psram_record_failure(PSRAM_ALLOCATOR_FAILURE_LOCK_TIMEOUT,
+                         requested,
+                         allocation_failed);
+    return false;
+}
+
+static void psram_unlock(void)
+{
+    if (g_psram_mutex_initialized && xTaskGetSchedulerState() == taskSCHEDULER_RUNNING)
+    {
+        (void)xSemaphoreGive(g_psram_mutex);
+    }
+}
 
 static size_t psram_align_up(size_t value)
 {
@@ -59,10 +178,11 @@ static bool psram_ptr_is_in_range(const void *ptr)
 {
     const uintptr_t address = (uintptr_t)ptr;
     return g_psram_total_size > 0u &&
-           address >= PSRAM_ALLOCATOR_BASE_ADDR &&
-           address < (PSRAM_ALLOCATOR_BASE_ADDR + g_psram_total_size);
+           address >= g_psram_base + sizeof(psram_block_t) &&
+           address < (g_psram_base + g_psram_total_size);
 }
 
+#if !defined(PSRAM_ALLOCATOR_TEST_HOOKS)
 static void __no_inline_not_in_flash_func(psram_qmi_wait_busy)(void)
 {
     while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0u)
@@ -268,16 +388,90 @@ static size_t __no_inline_not_in_flash_func(psram_setup)(uint32_t psram_cs_pin,
 
     return psram_size;
 }
+#endif
 
 static void psram_heap_reset(size_t psram_size)
 {
-    g_free_list = (psram_block_t *)PSRAM_ALLOCATOR_BASE_ADDR;
+    g_free_list = (psram_block_t *)g_psram_base;
     g_free_list->size = psram_size - sizeof(psram_block_t);
+    g_free_list->requested_size = 0u;
     g_free_list->next = NULL;
     g_free_list->magic = PSRAM_BLOCK_MAGIC;
     g_free_list->free = 1u;
+    g_free_list->pending_free = 0u;
+    g_pending_free_list = NULL;
+    memset(&g_stats, 0, sizeof(g_stats));
+    g_stats.compiled = true;
+    g_stats.ready = true;
+    g_stats.total_bytes = psram_size;
 }
 
+static size_t psram_free_size_locked(void)
+{
+    size_t total = 0u;
+    for (psram_block_t *block = g_free_list; block != NULL; block = block->next)
+    {
+        total += block->size;
+    }
+    return total;
+}
+
+static void psram_insert_free_block(psram_block_t *block)
+{
+    psram_block_t *prev = NULL;
+    psram_block_t *cur = g_free_list;
+
+    block->free = 1u;
+    block->pending_free = 0u;
+    block->requested_size = 0u;
+    while (cur != NULL && cur < block)
+    {
+        prev = cur;
+        cur = cur->next;
+    }
+    block->next = cur;
+    if (prev == NULL)
+    {
+        g_free_list = block;
+    }
+    else
+    {
+        prev->next = block;
+    }
+    if (block->next != NULL &&
+        ((uint8_t *)(block + 1) + block->size) == (uint8_t *)block->next)
+    {
+        block->size += sizeof(psram_block_t) + block->next->size;
+        block->next = block->next->next;
+    }
+    if (prev != NULL && ((uint8_t *)(prev + 1) + prev->size) == (uint8_t *)block)
+    {
+        prev->size += sizeof(psram_block_t) + block->size;
+        prev->next = block->next;
+    }
+}
+
+static void psram_drain_pending_frees(void)
+{
+    psram_block_t *pending = NULL;
+
+    /* A timed-out psram_free() enqueues while another task owns the mutex.
+     * Detach the intrusive list atomically, then coalesce it while still
+     * holding the allocator mutex. */
+    taskENTER_CRITICAL();
+    pending = g_pending_free_list;
+    g_pending_free_list = NULL;
+    taskEXIT_CRITICAL();
+
+    while (pending != NULL)
+    {
+        psram_block_t *block = pending;
+        pending = block->next;
+        psram_insert_free_block(block);
+    }
+}
+
+#if !defined(PSRAM_ALLOCATOR_TEST_HOOKS)
 static bool psram_probe_words(uintptr_t address, size_t word_count)
 {
     volatile uint32_t *words = (volatile uint32_t *)address;
@@ -317,7 +511,7 @@ static bool psram_probe_mapped_memory(size_t psram_size)
 {
     const size_t probe_bytes = 64u;
     const size_t word_count = probe_bytes / sizeof(uint32_t);
-    const uintptr_t base = PSRAM_ALLOCATOR_BASE_ADDR;
+    const uintptr_t base = g_psram_base;
     const uintptr_t middle = base + ((psram_size / 2u) & ~(uintptr_t)(probe_bytes - 1u));
     const uintptr_t end = base + psram_size - probe_bytes;
 
@@ -326,6 +520,7 @@ static bool psram_probe_mapped_memory(size_t psram_size)
            psram_probe_words(middle, word_count) &&
            psram_probe_words(end, word_count);
 }
+#endif
 
 bool psram_allocator_init(void)
 {
@@ -334,7 +529,18 @@ bool psram_allocator_init(void)
         return true;
     }
 
-#if defined(PSRAM_CS_PIN)
+#if defined(PSRAM_ALLOCATOR_TEST_HOOKS)
+    return false;
+#elif defined(PSRAM_CS_PIN)
+    if (!g_psram_mutex_initialized)
+    {
+        g_psram_mutex = xSemaphoreCreateMutexStatic(&g_psram_mutex_storage);
+        if (g_psram_mutex == NULL)
+        {
+            return false;
+        }
+        g_psram_mutex_initialized = true;
+    }
     uint8_t kgd = 0u;
     uint8_t eid = 0u;
     const size_t psram_size = psram_setup(PSRAM_CS_PIN, &kgd, &eid);
@@ -346,6 +552,8 @@ bool psram_allocator_init(void)
                (unsigned)eid);
         g_psram_total_size = 0u;
         g_psram_ready = false;
+        g_stats.compiled = true;
+        g_stats.ready = false;
         return false;
     }
 
@@ -358,6 +566,8 @@ bool psram_allocator_init(void)
                (unsigned)psram_size);
         g_psram_total_size = 0u;
         g_psram_ready = false;
+        g_stats.compiled = true;
+        g_stats.ready = false;
         return false;
     }
 
@@ -370,13 +580,41 @@ bool psram_allocator_init(void)
            (unsigned)kgd,
            (unsigned)eid,
            (unsigned)g_psram_total_size,
-           (unsigned)PSRAM_ALLOCATOR_BASE_ADDR);
+           (unsigned)g_psram_base);
     return true;
 #else
     printf("[PSRAM]\t\tdisabled: no board PSRAM CS pin\n");
+    g_stats.compiled = false;
+    g_stats.ready = false;
     return false;
 #endif
 }
+
+#if defined(PSRAM_ALLOCATOR_TEST_HOOKS)
+bool psram_allocator_test_init(void *arena, size_t arena_size)
+{
+    if (arena == NULL || arena_size <= sizeof(psram_block_t) ||
+        ((uintptr_t)arena & (PSRAM_ALIGNMENT - 1u)) != 0u)
+    {
+        return false;
+    }
+
+    g_psram_ready = false;
+    g_psram_base = (uintptr_t)arena;
+    g_psram_total_size = arena_size;
+    g_pending_free_list = NULL;
+    g_psram_mutex = xSemaphoreCreateMutexStatic(&g_psram_mutex_storage);
+    g_psram_mutex_initialized = g_psram_mutex != NULL;
+    if (!g_psram_mutex_initialized)
+    {
+        g_psram_total_size = 0u;
+        return false;
+    }
+    psram_heap_reset(arena_size);
+    g_psram_ready = true;
+    return true;
+}
+#endif
 
 bool psram_allocator_is_ready(void)
 {
@@ -420,20 +658,41 @@ bool psram_allocator_self_test(void)
     return ok;
 }
 
-void *psram_malloc(size_t size)
+static void *psram_malloc_internal(size_t size, size_t replacing_requested_bytes)
 {
+    if (psram_is_interrupt_context())
+    {
+#ifndef NDEBUG
+        configASSERT(!psram_is_interrupt_context());
+#endif
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT, size, true);
+        return NULL;
+    }
+
     if (!g_psram_ready && !psram_allocator_init())
     {
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_OUT_OF_MEMORY, size, true);
         return NULL;
     }
 
     if (size == 0u)
     {
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_OUT_OF_MEMORY, size, true);
+        return NULL;
+    }
+
+    if (size > (SIZE_MAX - (PSRAM_ALIGNMENT - 1u)))
+    {
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_SIZE_OVERFLOW, size, true);
         return NULL;
     }
 
     const size_t aligned_size = psram_align_up(size);
-    uint32_t intr_stash = save_and_disable_interrupts();
+    if (!psram_lock(size, true))
+    {
+        return NULL;
+    }
+    psram_drain_pending_frees();
 
     psram_block_t *prev = NULL;
     psram_block_t *block = g_free_list;
@@ -447,9 +706,11 @@ void *psram_malloc(size_t size)
                 psram_block_t *next =
                     (psram_block_t *)((uint8_t *)(block + 1) + aligned_size);
                 next->size = remaining - sizeof(psram_block_t);
+                next->requested_size = 0u;
                 next->next = block->next;
                 next->magic = PSRAM_BLOCK_MAGIC;
                 next->free = 1u;
+                next->pending_free = 0u;
                 block->size = aligned_size;
                 block->next = next;
             }
@@ -465,7 +726,26 @@ void *psram_malloc(size_t size)
 
             block->next = NULL;
             block->free = 0u;
-            restore_interrupts(intr_stash);
+            block->pending_free = 0u;
+            block->requested_size = size;
+            g_stats.requested_bytes_in_use += size;
+            if (g_stats.requested_bytes_in_use >= replacing_requested_bytes)
+            {
+                g_stats.requested_bytes_in_use -= replacing_requested_bytes;
+            }
+            if (g_stats.requested_bytes_in_use > g_stats.peak_requested_bytes_in_use)
+            {
+                g_stats.peak_requested_bytes_in_use = g_stats.requested_bytes_in_use;
+            }
+            const size_t used = g_psram_total_size - psram_free_size_locked();
+            g_stats.used_bytes = used;
+            if (used > g_stats.peak_used_bytes)
+            {
+                g_stats.peak_used_bytes = used;
+            }
+            psram_counter_increment(&g_stats.successful_allocations,
+                                    &g_stats.successful_allocations_wrap_count);
+            psram_unlock();
             return (void *)(block + 1);
         }
 
@@ -473,14 +753,40 @@ void *psram_malloc(size_t size)
         block = block->next;
     }
 
-    restore_interrupts(intr_stash);
+    psram_record_failure(PSRAM_ALLOCATOR_FAILURE_OUT_OF_MEMORY, size, true);
+    psram_unlock();
     return NULL;
+}
+
+void *psram_malloc(size_t size)
+{
+    return psram_malloc_internal(size, 0u);
 }
 
 void *psram_calloc(size_t count, size_t size)
 {
+    if (psram_is_interrupt_context())
+    {
+#ifndef NDEBUG
+        configASSERT(!psram_is_interrupt_context());
+#endif
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT,
+                             count == 0u || size == 0u
+                                 ? 0u
+                                 : (size <= (SIZE_MAX / count)
+                                        ? count * size
+                                        : SIZE_MAX),
+                             true);
+        return NULL;
+    }
     if (count == 0u || size == 0u || size > (SIZE_MAX / count))
     {
+        const bool overflow =
+            count != 0u && size != 0u && size > (SIZE_MAX / count);
+        psram_record_failure(overflow ? PSRAM_ALLOCATOR_FAILURE_SIZE_OVERFLOW
+                                      : PSRAM_ALLOCATOR_FAILURE_OUT_OF_MEMORY,
+                             overflow ? SIZE_MAX : 0u,
+                             true);
         return NULL;
     }
 
@@ -493,7 +799,10 @@ void *psram_calloc(size_t count, size_t size)
     return ptr;
 }
 
-void psram_free(void *ptr)
+static void psram_free_internal(void *ptr,
+                                bool count_public_operation,
+                                bool adjust_requested_bytes,
+                                bool realloc_reserved)
 {
     if (ptr == NULL)
     {
@@ -502,50 +811,97 @@ void psram_free(void *ptr)
 
     if (!psram_ptr_is_in_range(ptr))
     {
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT, 0u, false);
+        return;
+    }
+
+    if (psram_is_interrupt_context())
+    {
+#ifndef NDEBUG
+        configASSERT(!psram_is_interrupt_context());
+#endif
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT, 0u, false);
         return;
     }
 
     psram_block_t *block = ((psram_block_t *)ptr) - 1;
-    if (block->magic != PSRAM_BLOCK_MAGIC || block->free != 0u)
+    const uint32_t expected_pending = realloc_reserved
+                                          ? PSRAM_BLOCK_REALLOC_RESERVED
+                                          : PSRAM_BLOCK_NOT_PENDING;
+    if (!psram_lock(0u, false))
     {
+        bool invalid_block = false;
+        /* Void compatibility API: transfer ownership to the bounded,
+         * intrusive pending list.  The block remains arena-used until a
+         * subsequent locked operation drains it. */
+        taskENTER_CRITICAL();
+        if (block->magic == PSRAM_BLOCK_MAGIC &&
+            block->free == 0u &&
+            block->pending_free == expected_pending)
+        {
+            if (adjust_requested_bytes &&
+                g_stats.requested_bytes_in_use >= block->requested_size)
+            {
+                g_stats.requested_bytes_in_use -= block->requested_size;
+            }
+            block->pending_free = PSRAM_BLOCK_PENDING_FREE;
+            block->next = g_pending_free_list;
+            g_pending_free_list = block;
+            if (count_public_operation)
+            {
+                psram_counter_increment(&g_stats.successful_frees,
+                                        &g_stats.successful_frees_wrap_count);
+            }
+        }
+        else
+        {
+            invalid_block = true;
+        }
+        taskEXIT_CRITICAL();
+        if (invalid_block)
+        {
+            psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT,
+                                 0u,
+                                 false);
+        }
         return;
     }
 
-    uint32_t intr_stash = save_and_disable_interrupts();
-    block->free = 1u;
-
-    psram_block_t *prev = NULL;
-    psram_block_t *cur = g_free_list;
-    while (cur != NULL && cur < block)
+    bool valid_block = false;
+    taskENTER_CRITICAL();
+    if (block->magic == PSRAM_BLOCK_MAGIC &&
+        block->free == 0u &&
+        block->pending_free == expected_pending)
     {
-        prev = cur;
-        cur = cur->next;
+        block->pending_free = PSRAM_BLOCK_PENDING_FREE;
+        valid_block = true;
+    }
+    taskEXIT_CRITICAL();
+    if (!valid_block)
+    {
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT, 0u, false);
+        psram_unlock();
+        return;
     }
 
-    block->next = cur;
-    if (prev == NULL)
+    if (adjust_requested_bytes &&
+        g_stats.requested_bytes_in_use >= block->requested_size)
     {
-        g_free_list = block;
+        g_stats.requested_bytes_in_use -= block->requested_size;
     }
-    else
+    psram_insert_free_block(block);
+    if (count_public_operation)
     {
-        prev->next = block;
+        psram_counter_increment(&g_stats.successful_frees,
+                                &g_stats.successful_frees_wrap_count);
     }
+    g_stats.used_bytes = g_psram_total_size - psram_free_size_locked();
+    psram_unlock();
+}
 
-    if (block->next != NULL &&
-        ((uint8_t *)(block + 1) + block->size) == (uint8_t *)block->next)
-    {
-        block->size += sizeof(psram_block_t) + block->next->size;
-        block->next = block->next->next;
-    }
-
-    if (prev != NULL && ((uint8_t *)(prev + 1) + prev->size) == (uint8_t *)block)
-    {
-        prev->size += sizeof(psram_block_t) + block->size;
-        prev->next = block->next;
-    }
-
-    restore_interrupts(intr_stash);
+void psram_free(void *ptr)
+{
+    psram_free_internal(ptr, true, true, false);
 }
 
 void *psram_realloc(void *ptr, size_t size)
@@ -561,25 +917,86 @@ void *psram_realloc(void *ptr, size_t size)
         return NULL;
     }
 
-    psram_block_t *block = ((psram_block_t *)ptr) - 1;
-    if (!psram_ptr_is_in_range(ptr) || block->magic != PSRAM_BLOCK_MAGIC)
+    if (!psram_ptr_is_in_range(ptr))
     {
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT, size, true);
+        return NULL;
+    }
+
+    if (psram_is_interrupt_context())
+    {
+#ifndef NDEBUG
+        configASSERT(!psram_is_interrupt_context());
+#endif
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT, size, true);
+        return NULL;
+    }
+
+    psram_block_t *block = ((psram_block_t *)ptr) - 1;
+    if (!psram_lock(size, true))
+    {
+        return NULL;
+    }
+    bool valid_block = false;
+    taskENTER_CRITICAL();
+    if (block->magic == PSRAM_BLOCK_MAGIC &&
+        block->free == 0u &&
+        block->pending_free == PSRAM_BLOCK_NOT_PENDING)
+    {
+        block->pending_free = PSRAM_BLOCK_REALLOC_RESERVED;
+        valid_block = true;
+    }
+    taskEXIT_CRITICAL();
+    if (!valid_block)
+    {
+        psram_record_failure(PSRAM_ALLOCATOR_FAILURE_INVALID_CONTEXT, size, true);
+        psram_unlock();
         return NULL;
     }
 
     if (block->size >= size)
     {
+        if (size >= block->requested_size)
+        {
+            g_stats.requested_bytes_in_use += size - block->requested_size;
+        }
+        else
+        {
+            g_stats.requested_bytes_in_use -= block->requested_size - size;
+        }
+        block->requested_size = size;
+        if (g_stats.requested_bytes_in_use > g_stats.peak_requested_bytes_in_use)
+        {
+            g_stats.peak_requested_bytes_in_use = g_stats.requested_bytes_in_use;
+        }
+        psram_counter_increment(&g_stats.successful_allocations,
+                                &g_stats.successful_allocations_wrap_count);
+        taskENTER_CRITICAL();
+        block->pending_free = PSRAM_BLOCK_NOT_PENDING;
+        taskEXIT_CRITICAL();
+        psram_unlock();
         return ptr;
     }
 
-    void *new_ptr = psram_malloc(size);
+    const size_t old_requested_size = block->requested_size;
+    psram_unlock();
+
+    void *new_ptr = psram_malloc_internal(size, old_requested_size);
     if (new_ptr == NULL)
     {
+        taskENTER_CRITICAL();
+        if (block->magic == PSRAM_BLOCK_MAGIC &&
+            block->free == 0u &&
+            block->pending_free == PSRAM_BLOCK_REALLOC_RESERVED)
+        {
+            block->pending_free = PSRAM_BLOCK_NOT_PENDING;
+        }
+        taskEXIT_CRITICAL();
         return NULL;
     }
 
-    memcpy(new_ptr, ptr, block->size);
-    psram_free(ptr);
+    memcpy(new_ptr, ptr, old_requested_size);
+    psram_free_internal(ptr, false, false, true);
     return new_ptr;
 }
 
@@ -595,20 +1012,24 @@ size_t psram_total_size(void)
 
 size_t psram_free_size(void)
 {
-    size_t total = 0u;
-    uint32_t intr_stash = save_and_disable_interrupts();
-    for (psram_block_t *block = g_free_list; block != NULL; block = block->next)
+    if (!g_psram_ready || !psram_lock(0u, false))
     {
-        total += block->size;
+        return 0u;
     }
-    restore_interrupts(intr_stash);
+    psram_drain_pending_frees();
+    const size_t total = psram_free_size_locked();
+    psram_unlock();
     return total;
 }
 
 size_t psram_largest_free_block(void)
 {
     size_t largest = 0u;
-    uint32_t intr_stash = save_and_disable_interrupts();
+    if (!g_psram_ready || !psram_lock(0u, false))
+    {
+        return 0u;
+    }
+    psram_drain_pending_frees();
     for (psram_block_t *block = g_free_list; block != NULL; block = block->next)
     {
         if (block->size > largest)
@@ -616,6 +1037,42 @@ size_t psram_largest_free_block(void)
             largest = block->size;
         }
     }
-    restore_interrupts(intr_stash);
+    psram_unlock();
     return largest;
+}
+
+bool psram_allocator_get_stats(psram_allocator_stats_t *out_stats)
+{
+    if (out_stats == NULL)
+    {
+        return false;
+    }
+    if (!g_psram_ready)
+    {
+        taskENTER_CRITICAL();
+        *out_stats = g_stats;
+        taskEXIT_CRITICAL();
+        return false;
+    }
+    if (!psram_lock(0u, false))
+    {
+        return false;
+    }
+    psram_drain_pending_frees();
+    g_stats.total_bytes = g_psram_total_size;
+    g_stats.free_bytes = psram_free_size_locked();
+    g_stats.used_bytes = g_stats.total_bytes - g_stats.free_bytes;
+    g_stats.largest_free_block_bytes = 0u;
+    for (psram_block_t *block = g_free_list; block != NULL; block = block->next)
+    {
+        if (block->size > g_stats.largest_free_block_bytes)
+        {
+            g_stats.largest_free_block_bytes = block->size;
+        }
+    }
+    taskENTER_CRITICAL();
+    *out_stats = g_stats;
+    taskEXIT_CRITICAL();
+    psram_unlock();
+    return true;
 }

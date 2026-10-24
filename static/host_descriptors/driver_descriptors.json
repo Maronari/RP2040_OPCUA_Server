@@ -197,7 +197,7 @@
     {
       "driverId": 10,
       "name": "synthetic",
-      "wiring": "None -- no external hardware dependency of any kind. Each channel counts its own read() calls independently, starting from 0 at start(), wrapping modulo 2^32. ROADMAP.md's generic 'synthetic benchmark source'/'loopback... source for host tests' driver, and this project's minimal standalone example driver (ROADMAP.md:587, v0.5.1 T16) -- see drivers/include/drivers/synthetic_driver.h and docs/code/adding-a-driver.md.",
+      "wiring": "None -- no external hardware dependency of any kind. Each channel counts its own read() calls independently, starting from 0 at start(), wrapping modulo 2^32. An exact integral FLOAT/DOUBLE write updates only that channel's loopback counter/runtime value; the next read continues at +1. ROADMAP.md's generic 'synthetic benchmark source'/'loopback... source for host tests' driver, and this project's minimal standalone example driver (ROADMAP.md:587, v0.5.1 T16) -- see drivers/include/drivers/synthetic_driver.h and docs/code/adding-a-driver.md.",
       "connectionConstraints": {
         "sourceIndex": {"min": 0, "max": 7, "note": "eight independent synthetic channels so several can be configured at once without interfering"},
         "sourceFlags": {"allowed": [0], "note": "no configuration exists"}
@@ -208,7 +208,7 @@
         "unit": "",
         "flags": ["enabled"]
       },
-      "capabilities": ["start", "stop", "read"]
+      "capabilities": ["start", "stop", "read", "write"]
     }
   ]
 }

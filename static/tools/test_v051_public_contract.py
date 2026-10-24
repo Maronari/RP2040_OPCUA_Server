@@ -15,7 +15,10 @@ class ContractTests(unittest.TestCase):
         cls.root = pathlib.Path(__file__).resolve().parents[2]
         cls.baseline = contract.public_inventory(contract.aggregate_baseline_source(
             cls.root, contract.EXPECTED_V050_COMMIT))
-        cls.current = contract.public_inventory(contract.aggregate_current_source(cls.root))
+        # Keep this historical release-delta test pinned to the released
+        # v0.5.1 tree. Later additive releases are checked by their own gate.
+        cls.current = contract.public_inventory(contract.aggregate_baseline_source(
+            cls.root, contract.EXPECTED_V051_COMMIT))
 
     def test_actual_release_delta(self):
         contract.assert_v051_inventory_delta(self.baseline, self.current)

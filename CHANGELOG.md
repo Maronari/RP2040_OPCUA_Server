@@ -1,13 +1,63 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.5.0`, plus the
-in-progress `v0.5.1` line. Historical tag SHAs below are resolved from peeled
+This file tracks the firmware release line through `v0.5.1`, plus the
+in-progress `v0.5.2` line. Historical tag SHAs below are resolved from peeled
 Git tags, so annotated tags are reported by their target commit SHA rather than
 the tag-object SHA.
 
-## v0.5.1 (unreleased)
+## v0.5.2 (unreleased)
 
-Not tagged and not release-ready: see the open gates in
+- Development preparation: selects v0.5.2 as the first unreleased roadmap
+  version, updates contributor instructions and adds the scoped
+  `docs/releases/v0.5.2.md` implementation plan.
+- Sets the authoritative firmware/runtime/OTA/config-export version source
+  to `0.5.2` and begins the bounded resource-instrumentation vertical: static
+  ELF/map reporting, coherent Heap/PSRAM/task snapshots, and service/admin-only
+  OPC UA sessions, secure-channel, subscription, monitored-item, Publish,
+  event-queue, ServiceFault rejection and event-drop diagnostics. The
+  reference-board baseline records passing secure 1-channel and
+  16-channel, four-client, 10 Hz `test-none` corners from the same clean source
+  commit; the maximum profile completed all 1,200 fixed-rate Reads without a
+  timeout or missed arrival.
+  The other 190 cells are explicit `not-run` results.
+  Live T2/T3 role, quality and session/SecureChannel capacity evidence is
+  recorded. Broader hardware coverage remains explicit `not-run` under the
+  two-corner release policy. UaExpert evidence and release acceptance remain
+  pending.
+- Adds reproducible test-only synthetic firmware profiles for 1/4/8/16
+  channels at 1/10 Hz, declared 1/2/4-client load, independent Events/history
+  switches and exact secure versus plaintext-test endpoints. Benchmark images
+  ignore persisted configuration, reject configuration mutations, preserve the
+  physical `dev_benchmark` preset and emit deterministic profile/export metadata.
+- Adds the T5 benchmark client with exact profile verification, bounded
+  latency/error reports and host tests, plus benchmark-only PSRAM
+  sampling capture controlled through serial. Each completed load repetition
+  also records and validates the frozen 22-node resource snapshot through an
+  existing client before cleanup. Benchmark timing samples use bounded 32-bit
+  microsecond storage internally while keeping public values 64-bit, reducing
+  the maximum-profile static SRAM footprint by 800 bytes. Imported device
+  timing evidence remains explicitly separate from the current client run.
+  Native startup timing now records the bounded interval from firmware main
+  entry through successful `UA_Server_run_startup`; a real cold-power-cycle
+  observation binds USB enumeration and first valid UTC to the same clean
+  secure-profile image. The clean hardware rerun records successful
+  nonpersistent synthetic Writes and exactly one correlated audit event with
+  unchanged event-drop counters. UaExpert evidence remains open.
+- Adds the T2 test-only reference-board exhaustion profile, with bounded
+  100-cycle Heap and PSRAM fill/fail/free runners, payload verification,
+  exact allocation-failure accounting, baseline and stabilized-low-water
+  checks, bounded USB JSON, host validation, and a blocking CI firmware build.
+  The reference board completed all 200 cycles in 569,778 ms with exact
+  counters, verified payloads, stable low-water values and complete baseline
+  recovery. Raw JSON, provenance and static-size evidence are recorded; this
+  result is reference-board validation only.
+
+## v0.5.1
+
+Released tag commit: `2881230c2ccbb98b8701730c4de930dc95da30fc` (PR #20).
+Release confirmed by the owner on 2026-09-15; the tag was resolved locally.
+
+Historical verification gaps and exceptions are recorded in
 `docs/releases/v0.5.1-review-fixes.md` ("Roadmap checklist status and
 remaining gates"). Plan and history: `docs/releases/v0.5.1.md` (T1-T25).
 Every industrial driver below is **compile/mock validated, not hardware
@@ -84,9 +134,11 @@ qualified** -- `RP2350_INDUSTRIAL_MVP_V1` has not been assembled.
 - Verified live on the reference board (2026-09-13): capability model and
   `SupportedDrivers` against the build, NodeSet exports against an
   independent address-space walk, HistoryRead and DI/AMB model.
-- Still open for this release: UaExpert inspection, UIC quadrature mode, the
-  `environmental`/`motion`/`development` packs (deferred by decision), and
-  all industrial hardware qualification.
+- Recorded release limitations: UaExpert inspection lacks recorded completion;
+  UIC quadrature is unimplemented; `environmental`/`motion`/`development`
+  packs remain deferred by decision. Industrial hardware qualification is
+  deferred under ROADMAP section 5.2. Publication does not turn these into
+  passed checks or add them to v0.5.2 scope.
 
 ## v0.5.0
 

@@ -87,6 +87,8 @@ option(BUILD_LEGACY_EXAMPLES "Build legacy example targets" OFF)
 option(OTA_BUILD_BOOTLOADER "Build the OTA bootloader target" OFF)
 option(W5X00_DIAGNOSTIC_NO_OPCUA "Build network diagnostics firmware without open62541/opcua model" OFF)
 
+include(${CMAKE_SOURCE_DIR}/cmake/benchmark_profile.cmake)
+
 if(W5X00_DIAGNOSTIC_NO_OPCUA AND OTA_BUILD_BOOTLOADER)
     message(FATAL_ERROR
             "W5X00_DIAGNOSTIC_NO_OPCUA cannot be combined with OTA_BUILD_BOOTLOADER; "

@@ -37,6 +37,80 @@
  */
 #include "opcua_model_internal.h"
 
+/* Only this v0.5.2 surface is restricted to service/admin.  Do not broaden
+ * the test to Device.Diagnostics as a whole: FreeHeap, the original PSRAM
+ * members and the legacy Task mapping have compatibility-preserved access
+ * behavior. String NodeIds are not NUL terminated by open62541. */
+bool model_node_is_t2_resource_diagnostic(const UA_NodeId *node_id)
+{
+    static const char heap_prefix[] = "Device.Diagnostics.Heap";
+    static const char psram_lwip_prefix[] = "Device.Diagnostics.PSRAM.LwIP";
+    static const char tasks_prefix[] = "Device.Diagnostics.Tasks";
+    static const char opcua_prefix[] = "Device.Diagnostics.OpcUa";
+    static const char *const exact_ids[] = {
+        "Device.Diagnostics.SnapshotSequence",
+        "Device.Diagnostics.SnapshotSequenceWrapCount",
+        "Device.Diagnostics.SnapshotTimestamp",
+        "Device.Diagnostics.SnapshotAgeMs",
+        "Device.Diagnostics.TaskCount",
+        "Device.Diagnostics.TaskListTruncated",
+        "Device.Diagnostics.TaskNameConflict",
+        "Device.Diagnostics.TaskModelIncomplete",
+        "Device.Diagnostics.PSRAM.PeakUsedBytes",
+        "Device.Diagnostics.PSRAM.RequestedBytesInUse",
+        "Device.Diagnostics.PSRAM.PeakRequestedBytesInUse",
+        "Device.Diagnostics.PSRAM.SuccessfulAllocations",
+        "Device.Diagnostics.PSRAM.SuccessfulAllocationsWrapCount",
+        "Device.Diagnostics.PSRAM.SuccessfulFrees",
+        "Device.Diagnostics.PSRAM.SuccessfulFreesWrapCount",
+        "Device.Diagnostics.PSRAM.FailedAllocations",
+        "Device.Diagnostics.PSRAM.FailedAllocationsWrapCount",
+        "Device.Diagnostics.PSRAM.LockTimeouts",
+        "Device.Diagnostics.PSRAM.LockTimeoutsWrapCount",
+        "Device.Diagnostics.PSRAM.InvalidContextFailures",
+        "Device.Diagnostics.PSRAM.InvalidContextFailuresWrapCount",
+        "Device.Diagnostics.PSRAM.LastFailedRequestedBytes",
+        "Device.Diagnostics.PSRAM.LastFailureReason",
+        "Device.Diagnostics.PSRAM.LastFailureReasonText",
+        "Device.Diagnostics.PSRAM.LastFailureTimestamp",
+        "Device.Diagnostics.PSRAM.LastFailureUptimeMs"};
+    const UA_String *identifier;
+    const char *const subtree_prefixes[] = {
+        heap_prefix, psram_lwip_prefix, tasks_prefix, opcua_prefix};
+
+    if (node_id == NULL || node_id->namespaceIndex != 1u ||
+        node_id->identifierType != UA_NODEIDTYPE_STRING)
+    {
+        return false;
+    }
+    identifier = &node_id->identifier.string;
+    for (size_t index = 0u; index < sizeof(exact_ids) / sizeof(exact_ids[0]); ++index)
+    {
+        const size_t length = strlen(exact_ids[index]);
+        if (identifier->length == length &&
+            memcmp(identifier->data, exact_ids[index], length) == 0)
+        {
+            return true;
+        }
+    }
+    for (size_t index = 0u; index < sizeof(subtree_prefixes) / sizeof(subtree_prefixes[0]); ++index)
+    {
+        const size_t length = strlen(subtree_prefixes[index]);
+        if (identifier->length >= length &&
+            memcmp(identifier->data, subtree_prefixes[index], length) == 0 &&
+            (identifier->length == length || identifier->data[length] == '.'))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool model_session_may_access_t2_resource_diagnostic(void *session_context)
+{
+    return model_session_has_role(session_context, SECURITY_ROLE_SERVICE);
+}
+
 bool model_copy_session_username(const void *session_context, char *buffer, size_t buffer_size)
 {
     const UA_ByteString *username = model_session_get_username_bytes(session_context);
@@ -339,11 +413,13 @@ UA_StatusCode model_require_session_role(void *session_context,
 {
     security_user_role_t current_role = SECURITY_ROLE_VIEWER;
 
+#if !(RP2_BENCHMARK_PROFILE_ENABLED && RP2_BENCHMARK_SECURITY_NONE)
     if (required_role > SECURITY_ROLE_VIEWER && !model_session_is_secure(session_context))
     {
         model_set_boolean_method_output(output_size, output, false);
         return UA_STATUSCODE_BADSECURITYMODEINSUFFICIENT;
     }
+#endif
 
     if (!model_session_get_role(session_context, &current_role) || current_role < required_role)
     {
@@ -893,6 +969,12 @@ UA_Byte model_get_user_access_level_wrapper(UA_Server *server,
                                               node_context)
             : 0u;
 
+    if (model_node_is_t2_resource_diagnostic(node_id) &&
+        !model_session_may_access_t2_resource_diagnostic(session_context))
+    {
+        return 0u;
+    }
+
     if (model_session_is_anonymous(session_context))
     {
         if (model_node_is_anonymous_hidden(node_id))
@@ -903,12 +985,14 @@ UA_Byte model_get_user_access_level_wrapper(UA_Server *server,
         return model_strip_anonymous_write_access(base_access);
     }
 
+#if !(RP2_BENCHMARK_PROFILE_ENABLED && RP2_BENCHMARK_SECURITY_NONE)
     if (node_context != NULL &&
         (((const model_node_context_t *)node_context)->kind == MODEL_NODE_CHANNEL_VALUE &&
          !model_session_is_secure(session_context)))
     {
         return model_strip_anonymous_write_access(base_access);
     }
+#endif
 
     if (node_context != NULL &&
         !model_session_has_role(session_context,
@@ -944,6 +1028,12 @@ UA_Boolean model_allow_browse_node_wrapper(UA_Server *server,
     }
 
     if (model_session_is_anonymous(session_context) && model_node_is_anonymous_hidden(node_id))
+    {
+        return false;
+    }
+
+    if (model_node_is_t2_resource_diagnostic(node_id) &&
+        !model_session_may_access_t2_resource_diagnostic(session_context))
     {
         return false;
     }

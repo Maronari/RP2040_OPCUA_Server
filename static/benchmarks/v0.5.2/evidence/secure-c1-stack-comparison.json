@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "v052-opcua-task-stack-baseline-comparison",
+  "measuredOn": "2026-10-17",
+  "board": "waveshare_core2350b_16mb_psram8mb",
+  "sourceBaselineCommit": "2881230c2ccbb98b8701730c4de930dc95da30fc",
+  "workload": {
+    "buildProfile": "production-debug-base",
+    "configuration": "secure-c1-stack-config.json",
+    "channels": 1,
+    "rateHz": 1,
+    "clients": 1,
+    "namespaceZero": "full",
+    "security": "basic256sha256-signandencrypt",
+    "channelId": "benchmark.synthetic.1",
+    "clientTool": "static/tools/verify_channel_model.py",
+    "clientOperations": "identity, diagnostics and deterministic channel Browse/Read",
+    "stackNodeId": "ns=1;s=Device.Diagnostics.Task.OPC.StackHighWatermark",
+    "reportedUnit": "StackType_t words",
+    "bytesPerWord": 4
+  },
+  "baseline": {
+    "firmwareVersion": "0.5.1",
+    "firmwareArtifact": {
+      "name": "device_profile_basic.uf2",
+      "sizeBytes": 7122432,
+      "sha256": "4c24871ba55622d74fcf1ce4369ace2fe14dd55c01201d7bbe01a0fb8b48fcec"
+    },
+    "capture": "secure-c1-stack-v051.log",
+    "stackHighWaterWords": 7868,
+    "stackHighWaterBytes": 31472
+  },
+  "current": {
+    "firmwareVersion": "0.5.2",
+    "firmwareArtifact": {
+      "name": "device_profile_basic.uf2",
+      "sizeBytes": 7174144,
+      "sha256": "0bae63ebf217231ab23087ab013d457359bb7cb8648c4029d3faaabcb2a3be09"
+    },
+    "capture": "secure-c1-stack-v052.log",
+    "stackHighWaterWords": 7842,
+    "stackHighWaterBytes": 31368
+  },
+  "reserveReductionBytes": 104,
+  "limitBytes": 256,
+  "headroomBytes": 152,
+  "result": "passed"
+}

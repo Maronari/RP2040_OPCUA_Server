@@ -6,6 +6,8 @@ set(FIRMWARE_SERVICES_SOURCES
         src/config_import_service.c
         src/config_presets.c
         src/config_reset_service.c
+        src/benchmark_profile.c
+        src/benchmark_timing.c
         src/config_service.c
         src/config_store_service.c
         src/config_validate_service.c
@@ -17,6 +19,7 @@ set(FIRMWARE_SERVICES_SOURCES
         src/login_backoff.c
         src/maintenance_service.c
         src/network_manager.c
+        src/opcua_resource_service.c
         src/security_service.c
         src/security_state_service.c
         src/security_trust_expiry_service.c
@@ -24,6 +27,10 @@ set(FIRMWARE_SERVICES_SOURCES
         src/sensor_manager.c
         src/time_service.c
         )
+
+if(FIRMWARE_BENCHMARK_PROFILE STREQUAL "resource-exhaustion")
+    list(APPEND FIRMWARE_SERVICES_SOURCES src/resource_exhaustion_test.c)
+endif()
 
 if(FIRMWARE_ENABLE_NATIVE_BOARD_DIAGNOSTICS_SERVICE AND FIRMWARE_ENABLE_NATIVE_IPS2050_DRIVER)
     # board_diagnostics_service.c calls into ips2050_driver.h

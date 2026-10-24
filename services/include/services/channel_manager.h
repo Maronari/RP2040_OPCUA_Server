@@ -255,4 +255,19 @@ void channel_manager_release_driver_operation(const channel_manager_driver_opera
  */
 bool channel_manager_poll_all(uint32_t now_ms);
 
+/**
+ * Observer invoked after a successful sample has been published to the
+ * registry.  The supplied channel remains valid only for the call.
+ */
+typedef void (*channel_manager_sample_observer_t)(size_t channel_index,
+                                                  const telemetry_channel_t *channel);
+
+/**
+ * Polls channels as channel_manager_poll_all(), optionally observing each
+ * successfully published sample.  The observer runs outside registry locks
+ * and must remain bounded; it must not retain @p channel.
+ */
+bool channel_manager_poll_all_observed(uint32_t now_ms,
+                                       channel_manager_sample_observer_t observer);
+
 #endif

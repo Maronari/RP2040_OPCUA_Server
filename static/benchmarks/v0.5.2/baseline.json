@@ -1,0 +1,1136 @@
+{
+  "schemaVersion": 1,
+  "contractId": "rp2-opcua-v0.5.2-resource-benchmark",
+  "release": "0.5.2",
+  "environment": {
+    "recordedAt": "2026-10-24T14:38:41Z",
+    "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
+    "boardId": "waveshare_core2350b_16mb_psram8mb",
+    "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
+    "network": "direct Ethernet; host 169.254.34.198/16; target W5500 DHCP 169.254.34.100; local DNS/NTP",
+    "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
+    "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+    "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+    "buildType": "Debug",
+    "firmwareVersion": "0.5.2",
+    "firmwareSource": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e (clean v0.5.2 benchmark profile)",
+    "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
+    "firmwareUf2Sha256": "b5dbcf82fb6d106adab1c444859638072bfbb3e47acaeee649bda547442f7833",
+    "gitDirty": false
+  },
+  "profiles": [
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "resultState": "measured",
+      "repetitions": 1,
+      "association": "client and native windows bound by the host-orchestrated capture envelope",
+      "environment": {
+        "recordedAt": "2026-10-24T14:38:41Z",
+        "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
+        "boardId": "waveshare_core2350b_16mb_psram8mb",
+        "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
+        "network": "direct Ethernet; host 169.254.34.198/16; target W5500 DHCP 169.254.34.100; local DNS/NTP",
+        "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
+        "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+        "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+        "buildType": "Debug",
+        "firmwareVersion": "0.5.2",
+        "firmwareSource": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e (clean v0.5.2 benchmark profile)",
+        "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
+        "firmwareUf2Sha256": "b5dbcf82fb6d106adab1c444859638072bfbb3e47acaeee649bda547442f7833",
+        "gitDirty": false
+      },
+      "metrics": {
+        "ReadLatencyMs.p99": {
+          "value": 81.049,
+          "unit": "milliseconds"
+        },
+        "SecureSessionEstablishmentLatencyMs.Cold.max": {
+          "value": 3523.579,
+          "unit": "milliseconds"
+        },
+        "SecureSessionEstablishmentLatencyMs.Warm.max": {
+          "value": 3348.859,
+          "unit": "milliseconds"
+        },
+        "SamplingJitterMs.p99": {
+          "value": 8.008,
+          "unit": "milliseconds"
+        },
+        "StartupLatencyMs.max": {
+          "value": 22588.914,
+          "unit": "milliseconds"
+        },
+        "Heap.PeakUsedBytes": {
+          "value": 93088,
+          "unit": "bytes"
+        },
+        "PSRAM.PeakUsedBytes": {
+          "value": 5266720,
+          "unit": "bytes"
+        }
+      },
+      "evidence": [
+        {
+          "kind": "client",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-client.json",
+          "sha256": "49c52616a367db5d0e08dfea49881eaf6664f5d389ce0ab5b60d2fa53c43c926"
+        },
+        {
+          "kind": "native",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native.json",
+          "sha256": "56de1de4e7931129473227b8bbb375f051a8fadbb484ef05b35fdefd820e53be"
+        },
+        {
+          "kind": "native-association",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native-association.json",
+          "sha256": "b5f5f783f66f1523a6722a9104142fec5c76f57731d166046dc028f939c1f6a8"
+        },
+        {
+          "kind": "resources",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-resources.json",
+          "sha256": "ed3205cca3f5cc2d1adced4b0fdc637e5f20876d04e564d6a246602f02afefff"
+        },
+        {
+          "kind": "static-size",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json",
+          "sha256": "4407a3b8f8aa24a62104b953ca7dd0fbbe00f2be9a18055ec9bc6344dbffbc3e"
+        },
+        {
+          "kind": "boot-clock",
+          "path": "static/benchmarks/v0.5.2/evidence/secure-c1-boot-clock.json",
+          "sha256": "18e448725a8a00c4d11307706f2a9e6d8d8d638b3cdf963641ad7b8bfabc1510"
+        }
+      ]
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c4-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c8-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-secbasic256sha256-signandencrypt-cl4-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl1-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl2-hz10-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz1-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz1-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz1-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz1-ev1-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev0-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev0-hist1",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist0",
+      "resultState": "not-run",
+      "reason": "not run in the 2026-10-10 representative board session; requires another profile build/flash/run"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "resultState": "measured",
+      "repetitions": 1,
+      "association": "client and native windows bound by the host-orchestrated capture envelope",
+      "environment": {
+        "recordedAt": "2026-10-24T14:38:41Z",
+        "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
+        "boardId": "waveshare_core2350b_16mb_psram8mb",
+        "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
+        "network": "direct Ethernet; host 169.254.34.198/16; target W5500 DHCP 169.254.34.100; local DNS/NTP",
+        "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
+        "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+        "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+        "buildType": "Debug",
+        "firmwareVersion": "0.5.2",
+        "firmwareSource": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e (clean v0.5.2 benchmark profile)",
+        "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
+        "firmwareUf2Sha256": "63142a11db1a7dff3a94eefbac0335a00faee23ad58e729c59c1efea6abd5674",
+        "gitDirty": false
+      },
+      "metrics": {
+        "ReadLatencyMs.p99": {
+          "value": 506.584,
+          "unit": "milliseconds"
+        },
+        "SecureSessionEstablishmentLatencyMs.Cold.max": {
+          "value": 934.676,
+          "unit": "milliseconds"
+        },
+        "SecureSessionEstablishmentLatencyMs.Warm.max": {
+          "value": 1024.404,
+          "unit": "milliseconds"
+        },
+        "SamplingJitterMs.p99": {
+          "value": 81.048,
+          "unit": "milliseconds"
+        },
+        "StartupLatencyMs.max": {
+          "value": 29058.52,
+          "unit": "milliseconds"
+        },
+        "Heap.PeakUsedBytes": {
+          "value": 88280,
+          "unit": "bytes"
+        },
+        "PSRAM.PeakUsedBytes": {
+          "value": 6824808,
+          "unit": "bytes"
+        }
+      },
+      "evidence": [
+        {
+          "kind": "client",
+          "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-client.json",
+          "sha256": "d17068f14de2ff77bcc0338aa1b5ff8779e31e79d05fa01970cc8fdb2afdc44d"
+        },
+        {
+          "kind": "native",
+          "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json",
+          "sha256": "29db4e41ae5fc6377a13bfea4f0d2fe67ebc158d62001c6ac83a9e8d996336dd"
+        },
+        {
+          "kind": "native-association",
+          "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native-association.json",
+          "sha256": "4016686dfdc3aa5452e841027297c06965a3adc61a31e6e358dd9d744683e13a"
+        },
+        {
+          "kind": "resources",
+          "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-resources.json",
+          "sha256": "daaa0d0874193956d0e357702ddaf35dde91df358cc8d2376d0bc16d55eb9194"
+        },
+        {
+          "kind": "static-size",
+          "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-static-size.json",
+          "sha256": "00435eb3400d298499ad63ef11952531533b44795bbf6ec017e9087e9fa6c35e"
+        }
+      ]
+    }
+  ]
+}

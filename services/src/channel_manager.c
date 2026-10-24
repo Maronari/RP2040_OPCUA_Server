@@ -640,7 +640,7 @@ void channel_manager_release_driver_operation(const channel_manager_driver_opera
     taskEXIT_CRITICAL();
 }
 
-bool channel_manager_poll_all(uint32_t now_ms)
+bool channel_manager_poll_all_observed(uint32_t now_ms, channel_manager_sample_observer_t observer)
 {
     bool all_ok = true;
 
@@ -687,7 +687,18 @@ bool channel_manager_poll_all(uint32_t now_ms)
         {
             all_ok = false;
         }
+        else if (result == TELEMETRY_DRIVER_RESULT_OK && observer != NULL)
+        {
+            /* Exact hook point: the channel state is already published and
+             * the lease snapshot remains valid for this bounded callback. */
+            observer(index, &operation.snapshot.channel);
+        }
         channel_manager_release_driver_operation(&operation);
     }
     return all_ok;
+}
+
+bool channel_manager_poll_all(uint32_t now_ms)
+{
+    return channel_manager_poll_all_observed(now_ms, NULL);
 }

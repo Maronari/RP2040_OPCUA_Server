@@ -5,14 +5,39 @@ industrial OPC UA device with PSRAM and W5500 Ethernet. The reference target is
 `waveshare_core2350b_16mb_psram8mb`; the default application target is
 `device_profile_basic`.
 
-`v0.5.0` (Transactional Runtime Configuration) is merged; its transaction
-pipeline, staged/running/last-known-good Flash backend, controlled restart,
-and configuration presets are listed under "What The Firmware Already
-Implements" below. The current implementation target is `v0.5.1` (Driver SDK
-and Industrial Board Driver Integration): it freezes the pre-1.0 native
-driver API and adds source-complete, host/mock-validated drivers for the
-`RP2350_INDUSTRIAL_MVP_V1` industrial board, which does not physically exist
-yet — see [docs/releases/v0.5.1.md](docs/releases/v0.5.1.md).
+`v0.5.1` (Driver SDK and Industrial Board Driver Integration) is released at
+tag commit `2881230c2ccbb98b8701730c4de930dc95da30fc`. Its industrial drivers
+are **compile/mock validated, not hardware qualified**; release publication
+does not complete the missing checks recorded in
+[the v0.5.1 release plan](docs/releases/v0.5.1.md).
+
+The current development target is `v0.5.2` (Resource Instrumentation and
+Benchmark Suite). The development version source is `0.5.2`; no `v0.5.2`
+release is claimed. The representative hardware baseline records two passing
+profiles built from the same clean source commit, including the maximum-load
+`test-none` corner, and 190 explicit `not-run` cells. The required Write,
+correlated Event, timing and cold-boot evidence is recorded; manual UaExpert
+inspection keeps release acceptance open. See
+[the measured baseline](docs/releases/v0.5.2-baseline.md) and
+[the implementation plan](docs/releases/v0.5.2.md) for existing instrumentation,
+bounded measurement work, reproducible profiles and acceptance gates.
+The T3 resource subtree `Device.Diagnostics.OpcUa` adds read-only
+service/admin diagnostics for sessions, secure channels, subscriptions,
+monitored items, Publish requests, event queues, ServiceFault rejections and
+event drops; see [verification status](docs/releases/v0.5.2-verification.md).
+T4 adds explicit test-only synthetic benchmark firmware profiles for 1/4/8/16
+channels at 1/10 Hz, with independent event/history switches and either the
+normal Basic256Sha256/SignAndEncrypt endpoint or an explicitly selected
+plaintext test endpoint. These profiles do not replace or renumber the
+persisted `dev_benchmark` preset.
+T5 measurement semantics and remaining timing-evidence requirements are
+described in [the client measurement guide](docs/releases/v0.5.2-t5-client.md).
+T2 also has a dedicated `resource-exhaustion` reference-board image. It runs
+before configuration, network and OPC UA startup, performs 100 bounded
+fill/fail/free cycles for FreeRTOS Heap and PSRAM, and emits one validated JSON
+record over USB serial. It is a test-only profile and does not write persistent
+configuration. The reference board passed all 100 Heap and 100 PSRAM cycles on
+2026-10-11; this result does not qualify the industrial board.
 
 ## What The Firmware Already Implements
 
@@ -105,6 +130,30 @@ C:\msys64\mingw64\bin\cmake.EXE --build e:/Projects/RP2040_OPCUA_Server/build --
 
 For Linux CI, the matching workflow configures the same board and build type
 with `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON` and builds the default `all` target.
+
+To configure a T4 benchmark image, add the explicit selector and every workload
+axis, for example:
+
+```powershell
+-DFIRMWARE_BENCHMARK_PROFILE=synthetic -DFIRMWARE_BENCHMARK_CHANNELS=16 -DFIRMWARE_BENCHMARK_RATE_HZ=10 -DFIRMWARE_BENCHMARK_CLIENTS=4 -DFIRMWARE_BENCHMARK_SECURITY=test-none -DFIRMWARE_BENCHMARK_EVENTS=ON -DFIRMWARE_BENCHMARK_HISTORY=ON
+```
+
+The T2 allocator test uses the same reference build command with
+`-DFIRMWARE_BENCHMARK_PROFILE=resource-exhaustion`. Its generated
+`resource_exhaustion_profile.json` records the fixed workload and test-only
+status. Capture and validate the board result with:
+
+```powershell
+py -3.12 static/tools/capture_resource_exhaustion.py --port COM6 --output static/benchmarks/v0.5.2/evidence/resource-exhaustion-raw.json
+py -3.12 static/tools/validate_resource_exhaustion_evidence.py static/benchmarks/v0.5.2/evidence/resource-exhaustion-raw.json
+```
+
+The selector accepts only the frozen v0.5.2 matrix and only the reference
+`base`/W5500 target. `test-none` cannot be selected without the synthetic test
+profile. Benchmark builds ignore persisted configuration and reject runtime
+configuration mutations so the exported workload cannot drift. They generate
+`build/benchmark_profile.json`; `static/tools/benchmark_profiles.py` verifies
+that metadata and the generated `config_export.json` against the profile ID.
 
 ## Release Artifacts
 

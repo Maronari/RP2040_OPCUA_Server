@@ -79,6 +79,7 @@ static opcua_model_context_t g_model_context = {
     {MODEL_NODE_DIAG_PSRAM_ALLOCATOR_MODE, NULL},
     {MODEL_NODE_DIAG_CPU_LOAD_APPROX, NULL},
     {MODEL_NODE_DIAG_LAST_FAULT_CODE, NULL},
+    {MODEL_NODE_DIAG_RESOURCE_SNAPSHOT, NULL},
     {MODEL_NODE_NETWORK_MAC_ADDRESS, NULL},
     {MODEL_NODE_NETWORK_IP_MODE, NULL},
     {MODEL_NODE_NETWORK_IPV4, NULL},
@@ -161,4 +162,8 @@ void model_context_delete_server(UA_Server *server)
     }
 
     UA_Server_delete(server);
+    /* Delete triggers final close notifications. Reset occupancy only after
+     * those callbacks have completed; boot-lifetime outcomes are retained. */
+    (void)opcua_resource_service_end_server();
+    g_model_context.opcua_resource_snapshot_cache_available = false;
 }

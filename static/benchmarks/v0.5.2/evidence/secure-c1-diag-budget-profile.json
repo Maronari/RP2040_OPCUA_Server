@@ -1,0 +1,20 @@
+{
+  "profileSchemaVersion": 1,
+  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+  "firmwareVersion": "0.5.2",
+  "buildGitHash": "2881230c2ccb",
+  "buildTime": "2026-10-11T13:50:59Z",
+  "board": "waveshare_core2350b_16mb_psram8mb",
+  "driverPack": "base",
+  "namespaceZero": "full",
+  "security": "basic256sha256-signandencrypt",
+  "channels": 1,
+  "rateHz": 1,
+  "clients": 1,
+  "events": false,
+  "history": false,
+  "testOnly": true,
+  "hardwareState": "not-run",
+  "clientCountMeaning": "declared external workload; not automatically launched",
+  "configuredCapacities": {"sessions": 4, "secureChannels": 4, "subscriptions": 4, "monitoredItems": 128, "publishRequestsPerSession": 4}
+}

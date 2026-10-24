@@ -1,0 +1,181 @@
+{
+  "bootStartedMonotonicUs": 4570,
+  "captureEndedMonotonicUs": 384347235,
+  "captureId": 1,
+  "captureStartedMonotonicUs": 354338996,
+  "clock": {
+    "domain": "device-monotonic",
+    "unit": "microseconds",
+    "valid": true
+  },
+  "durationSeconds": 30,
+  "kind": "v052-native-sampling-evidence",
+  "opcuaReadyMonotonicUs": {
+    "state": "measured",
+    "unit": "microseconds",
+    "value": 22593484
+  },
+  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+  "recordCapacity": 8192,
+  "records": [
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 354339174,
+      "sequence": 1
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 355339167,
+      "sequence": 2
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 356339170,
+      "sequence": 3
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 357339171,
+      "sequence": 4
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 358339167,
+      "sequence": 5
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 359339171,
+      "sequence": 6
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 360339171,
+      "sequence": 7
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 361339170,
+      "sequence": 8
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 362339165,
+      "sequence": 9
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 363339171,
+      "sequence": 10
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 364339167,
+      "sequence": 11
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 365339165,
+      "sequence": 12
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 366339165,
+      "sequence": 13
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 367339168,
+      "sequence": 14
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 368339163,
+      "sequence": 15
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 369339168,
+      "sequence": 16
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 370339166,
+      "sequence": 17
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 371339170,
+      "sequence": 18
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 372339166,
+      "sequence": 19
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 373339170,
+      "sequence": 20
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 374339167,
+      "sequence": 21
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 375339164,
+      "sequence": 22
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 376339165,
+      "sequence": 23
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 377339167,
+      "sequence": 24
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 378339168,
+      "sequence": 25
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 379339166,
+      "sequence": 26
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 380339168,
+      "sequence": 27
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 381339165,
+      "sequence": 28
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 382347173,
+      "sequence": 29
+    },
+    {
+      "channelId": "benchmark.synthetic.1",
+      "sampleMonotonicUs": 383347170,
+      "sequence": 30
+    }
+  ],
+  "schemaVersion": 1,
+  "startupLatencyMs": {
+    "boundary": "main-entry-to-UA_Server_run_startup-success",
+    "state": "measured",
+    "unit": "milliseconds",
+    "value": 22588.914
+  },
+  "state": "complete",
+  "warmupSeconds": 10
+}

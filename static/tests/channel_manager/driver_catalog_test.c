@@ -66,6 +66,7 @@ bool native_synthetic_source_is_valid(uint8_t index, uint8_t flags) { return ind
 telemetry_driver_result_t native_synthetic_start(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_synthetic_stop(telemetry_channel_t *c) { (void)c; return TELEMETRY_DRIVER_RESULT_OK; }
 telemetry_driver_result_t native_synthetic_read(telemetry_channel_t *c, uint32_t n) { (void)c; (void)n; return TELEMETRY_DRIVER_RESULT_OK; }
+telemetry_driver_result_t native_synthetic_write(telemetry_channel_t *c, const telemetry_channel_value_t *v) { (void)c; (void)v; return TELEMETRY_DRIVER_RESULT_OK; }
 
 int main(void)
 {
@@ -309,9 +310,9 @@ int main(void)
      * so two synthetic channels at the same index never conflict. */
     assert(synthetic != NULL);
     assert((synthetic->capabilities & TELEMETRY_DRIVER_CAPABILITY_READ) != 0u);
-    assert((synthetic->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) == 0u);
+    assert((synthetic->capabilities & TELEMETRY_DRIVER_CAPABILITY_WRITE) != 0u);
     assert((synthetic->capabilities & TELEMETRY_DRIVER_CAPABILITY_SELF_TEST) == 0u);
-    assert(synthetic->driver->read != NULL && synthetic->driver->write == NULL);
+    assert(synthetic->driver->read != NULL && synthetic->driver->write != NULL);
     assert(driver_catalog_supports_value_type(synthetic, TELEMETRY_CHANNEL_VALUE_FLOAT));
     assert(driver_catalog_supports_value_type(synthetic, TELEMETRY_CHANNEL_VALUE_DOUBLE));
     assert(!driver_catalog_supports_value_type(synthetic, TELEMETRY_CHANNEL_VALUE_BOOLEAN));

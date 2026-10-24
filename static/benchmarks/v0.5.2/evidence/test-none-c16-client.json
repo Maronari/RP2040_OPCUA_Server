@@ -1,0 +1,417 @@
+{
+  "boardRevision": "waveshare_core2350b_16mb_psram8mb",
+  "buildFlags": "base-primary-OTA-synthetic-write-event",
+  "buildType": "Debug",
+  "channelCount": 16,
+  "clientCount": 4,
+  "clientLoad": {
+    "channelIds": [
+      "benchmark.synthetic.1",
+      "benchmark.synthetic.2",
+      "benchmark.synthetic.3",
+      "benchmark.synthetic.4",
+      "benchmark.synthetic.5",
+      "benchmark.synthetic.6",
+      "benchmark.synthetic.7",
+      "benchmark.synthetic.8",
+      "benchmark.synthetic.9",
+      "benchmark.synthetic.10",
+      "benchmark.synthetic.11",
+      "benchmark.synthetic.12",
+      "benchmark.synthetic.13",
+      "benchmark.synthetic.14",
+      "benchmark.synthetic.15",
+      "benchmark.synthetic.16"
+    ],
+    "clients": [
+      4
+    ],
+    "historyCadence": {
+      "mode": "post-steady-per-client-per-repetition",
+      "reason": "T0 fixes a HistoryRead continuation cap but defines no history request-rate axis; this avoids changing the declared Read workload",
+      "requestsPerClientPerRepetition": 1
+    },
+    "items": [
+      16
+    ],
+    "maxInFlightReadsPerClient": 16,
+    "publishingMs": 100.0,
+    "readArrivalSchedule": {
+      "phaseOffsetFormula": "clientIndex * (1 / rateHz) / clientCount",
+      "phaseSpacingMs": 25.0,
+      "policy": "single-monotonic-window-even-client-phase",
+      "windowClock": "host-monotonic"
+    },
+    "readRateHzPerClient": 10.0,
+    "samplingMs": 100.0,
+    "timeoutSeconds": 15.0
+  },
+  "clientVersions": {
+    "asyncua": "2.0.1"
+  },
+  "configuredCapacities": {
+    "monitoredItems": 128,
+    "publishRequestsPerSession": 4,
+    "secureChannels": 4,
+    "sessions": 4,
+    "subscriptions": 4
+  },
+  "driverPack": "base",
+  "durationSeconds": 30.0,
+  "errorRecordOverflow": 0,
+  "errors": [],
+  "eventsEnabled": true,
+  "firmwareVersion": "0.5.2",
+  "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
+  "gitDirty": false,
+  "historyEnabled": true,
+  "loadAccounting": {
+    "completedOperationCount": 1200,
+    "deadlineExceededOperationCount": 0,
+    "failedOperationCount": 0,
+    "inFlightLimitExceededCount": 0,
+    "missedDeadlineCount": 0,
+    "peakInFlightCount": 7,
+    "rateHzPerClient": 10.0,
+    "scheduledOperationCount": 1200,
+    "transportFencedClientCount": 0
+  },
+  "metrics": {
+    "EventDeliveryLatencyMs": {
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": 113.71,
+      "operationCount": 1,
+      "p50": 113.71,
+      "p95": 113.71,
+      "p99": 113.71,
+      "reason": null,
+      "sampleCount": 1,
+      "state": "measured",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    },
+    "HistoryReadLatencyMs": {
+      "continuationRelease": {
+        "droppedSampleCount": 0,
+        "failureCount": 0,
+        "max": 78.205,
+        "operationCount": 4,
+        "p50": 73.877,
+        "p95": 78.205,
+        "p99": 78.205,
+        "reason": null,
+        "sampleCount": 4,
+        "state": "measured",
+        "timedOutOperationCount": 0,
+        "unit": "milliseconds"
+      },
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": 138.42,
+      "operationCount": 4,
+      "p50": 80.809,
+      "p95": 138.42,
+      "p99": 138.42,
+      "reason": null,
+      "sampleCount": 4,
+      "state": "measured",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    },
+    "MethodLatencyMs": {
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": 164.244,
+      "operationCount": 1,
+      "p50": 164.244,
+      "p95": 164.244,
+      "p99": 164.244,
+      "phase": "setup-export-config-profile-verification",
+      "reason": null,
+      "sampleCount": 1,
+      "state": "measured",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    },
+    "ReadLatencyMs": {
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": 634.718,
+      "operationCount": 1200,
+      "p50": 82.536,
+      "p95": 312.674,
+      "p99": 506.584,
+      "reason": null,
+      "sampleCount": 1200,
+      "state": "measured",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    },
+    "SecureSessionEstablishmentLatencyMs.Cold": {
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": 934.676,
+      "operationCount": 1,
+      "p50": 934.676,
+      "p95": 934.676,
+      "p99": 934.676,
+      "reason": null,
+      "sampleCount": 1,
+      "state": "measured",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    },
+    "SecureSessionEstablishmentLatencyMs.Warm": {
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": 1024.404,
+      "operationCount": 4,
+      "p50": 978.971,
+      "p95": 1024.404,
+      "p99": 1024.404,
+      "reason": null,
+      "sampleCount": 4,
+      "state": "measured",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    },
+    "StartupLatencyMs": {
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": null,
+      "operationCount": 0,
+      "p50": null,
+      "p95": null,
+      "p99": null,
+      "reason": "no device boot/readiness hook in the host monotonic clock domain",
+      "sampleCount": 0,
+      "state": "unavailable",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    },
+    "WriteLatencyMs": {
+      "droppedSampleCount": 0,
+      "failureCount": 0,
+      "max": 78.979,
+      "operationCount": 4,
+      "p50": 71.087,
+      "p95": 78.979,
+      "p99": 78.979,
+      "reason": null,
+      "sampleCount": 4,
+      "state": "measured",
+      "timedOutOperationCount": 0,
+      "unit": "milliseconds"
+    }
+  },
+  "namespaceZero": "full",
+  "networkSetup": "direct-Ethernet-host-169.254.34.198-target-169.254.34.100",
+  "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+  "profileSchemaVersion": 1,
+  "profileVerification": {
+    "exportConfig": "measured",
+    "metadata": "measured"
+  },
+  "publishPeriodMs": 100,
+  "repetitions": 1,
+  "resourceDiagnostics": {
+    "phase": "post-steady-before-cleanup",
+    "snapshotCount": 1,
+    "snapshots": [
+      {
+        "authorizationDeniedNodeCount": 0,
+        "consistency": {
+          "state": "measured"
+        },
+        "elapsedMonotonicMs": 121,
+        "failedNodeCount": 0,
+        "measuredNodeCount": 22,
+        "nodeCount": 22,
+        "nodes": [
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.Sessions.Current",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.Sessions.Peak",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.Sessions.Capacity",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.SecureChannels.Current",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.SecureChannels.Peak",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.SecureChannels.Capacity",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.Subscriptions.Current",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.Subscriptions.Peak",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.Subscriptions.Capacity",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.MonitoredItems.Current",
+            "state": "measured",
+            "status": "Good",
+            "value": 65
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.MonitoredItems.Peak",
+            "state": "measured",
+            "status": "Good",
+            "value": 65
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.MonitoredItems.Capacity",
+            "state": "measured",
+            "status": "Good",
+            "value": 128
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Current",
+            "state": "measured",
+            "status": "Good",
+            "value": 3
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Peak",
+            "state": "measured",
+            "status": "Good",
+            "value": 4
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Capacity",
+            "state": "measured",
+            "status": "Good",
+            "value": 16
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.EventQueue.Current",
+            "state": "measured",
+            "status": "Good",
+            "value": 0
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.EventQueue.Peak",
+            "state": "measured",
+            "status": "Good",
+            "value": 0
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.EventQueue.Capacity",
+            "state": "measured",
+            "status": "Good",
+            "value": 17
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.RejectedRequests",
+            "state": "measured",
+            "status": "Good",
+            "value": 1
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.RejectedRequestsWrapCount",
+            "state": "measured",
+            "status": "Good",
+            "value": 0
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.EventQueueDrops",
+            "state": "measured",
+            "status": "Good",
+            "value": 0
+          },
+          {
+            "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.EventQueueDropsWrapCount",
+            "state": "measured",
+            "status": "Good",
+            "value": 0
+          }
+        ],
+        "phase": "post-steady-before-cleanup",
+        "state": "measured",
+        "unavailableNodeCount": 0
+      }
+    ],
+    "state": "measured"
+  },
+  "runAccounting": {
+    "droppedSampleCount": 0,
+    "errorCount": 0,
+    "notificationCount": 22365,
+    "operationCount": 1219,
+    "sampleCount": 1219,
+    "timedOutOperationCount": 0
+  },
+  "samplePeriodMs": 100,
+  "samplingJitter": {
+    "reason": "native sampling evidence not supplied",
+    "state": "unavailable"
+  },
+  "schemaVersion": 1,
+  "securityMode": "None",
+  "securityPolicy": "None",
+  "subscriptionEvidence": {
+    "correlationCount": 1,
+    "correlations": [
+      {
+        "droppedNotificationCount": 0,
+        "duplicateCount": 0,
+        "eventId": "f2d02700a9b67bcd9f9625e9994045c6",
+        "eventQueueDropWrapCountAfter": 0,
+        "eventQueueDropWrapCountBefore": 0,
+        "eventQueueDropsAfter": 0,
+        "eventQueueDropsBefore": 0,
+        "expectedTriggerStatus": "BadInvalidArgument",
+        "invalidCount": 0,
+        "latencyClock": "host-monotonic-round-trip",
+        "matchedCount": 1,
+        "observationWindowMs": 200.0,
+        "sourceNode": "ns=1;s=Device.Security",
+        "sourceTimestamp": "2026-10-24T14:27:33.150000+00:00",
+        "state": "measured",
+        "trigger": "PlanMaintenance-invalid-operation-id",
+        "triggerCount": 1
+      }
+    ],
+    "expectedCorrelationCount": 1,
+    "state": "measured"
+  },
+  "timeSynchronization": "local-DNS-NTP-UTC",
+  "toolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
+  "warmupSeconds": 10.0
+}
