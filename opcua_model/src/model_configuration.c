@@ -195,10 +195,12 @@ UA_StatusCode model_write_value(UA_Server *server,
         telemetry_channel_value_t channel_value;
         UA_StatusCode conversion_status;
 
+#if !(RP2_BENCHMARK_PROFILE_ENABLED && RP2_BENCHMARK_SECURITY_NONE)
         if (!model_session_is_secure(session_context))
         {
             return UA_STATUSCODE_BADSECURITYMODEINSUFFICIENT;
         }
+#endif
         if (!model_copy_channel_from_context(context, &snapshot))
         {
             return UA_STATUSCODE_BADNODEIDUNKNOWN;

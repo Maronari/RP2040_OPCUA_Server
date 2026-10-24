@@ -230,6 +230,7 @@ static const telemetry_driver_vtbl_t g_synthetic_driver = {
     .start = native_synthetic_start,
     .stop = native_synthetic_stop,
     .read = native_synthetic_read,
+    .write = native_synthetic_write,
 };
 #endif
 
@@ -401,7 +402,7 @@ static const driver_catalog_entry_t g_driver_catalog[] = {
         .supported_value_types = TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_FLOAT) |
                                  TELEMETRY_CHANNEL_VALUE_TYPE_BIT(TELEMETRY_CHANNEL_VALUE_DOUBLE),
         .capabilities = TELEMETRY_DRIVER_CAPABILITY_START | TELEMETRY_DRIVER_CAPABILITY_STOP |
-                        TELEMETRY_DRIVER_CAPABILITY_READ,
+                        TELEMETRY_DRIVER_CAPABILITY_READ | TELEMETRY_DRIVER_CAPABILITY_WRITE,
         .validate_source = validate_synthetic,
         .driver = &g_synthetic_driver,
     },

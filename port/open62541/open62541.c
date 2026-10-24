@@ -2015,6 +2015,11 @@ struct UA_SecureChannel {
     UA_SecureChannelRenewState renewState;
     UA_MessageSecurityMode securityMode;
     UA_ShutdownReason shutdownReason;
+    /* Server-side application lifecycle notifications must be paired. A TCP
+     * connection can allocate and destroy this object without completing its
+     * first OpenSecureChannel request; that path must not emit CLOSED without
+     * a preceding OPENED notification. */
+    UA_Boolean applicationLifecycleNotified;
 
     UA_ConnectionConfig config;
     UA_String endpointUrl;
@@ -3014,12 +3019,18 @@ UA_Session_getSubscriptionById(UA_Session *session,
 
 
 void
-UA_Session_queuePublishReq(UA_Session *session,
+UA_Session_queuePublishReq(UA_Server *server, UA_Session *session,
                            UA_PublishResponseEntry* entry,
                            UA_Boolean head);
 
 UA_PublishResponseEntry *
-UA_Session_dequeuePublishReq(UA_Session *session);
+UA_Session_dequeuePublishReq(UA_Server *server, UA_Session *session);
+
+static void
+UA_Server_resourcePublishRequestQueued(UA_Server *server);
+
+static void
+UA_Server_resourcePublishRequestDequeued(UA_Server *server);
 
 #endif
 
@@ -3294,6 +3305,7 @@ typedef enum {
  * re-bound to a new Session with the TransferSubscription Service. */
 struct UA_Subscription {
     UA_DelayedCallback delayedFreePointers;
+    UA_Server *resourceOwnerServer; /* non-owning; set before event ingress */
     LIST_ENTRY(UA_Subscription) serverListEntry;
     /* Ordered according to the priority byte and round-robin scheduling for
      * late subscriptions. See ua_session.h. Only set if session != NULL. */
@@ -3311,6 +3323,7 @@ struct UA_Subscription {
     /* Runtime information */
     UA_SubscriptionState state;
     UA_Boolean late;
+    UA_Boolean resourceLifecycleNotified; /* A matching CREATED notification was sent. */
     UA_Boolean wasTransferred; /* Set to true when this subscription was
                                 * transferred to another session. Used to
                                 * prevent incorrect diagnostic counter updates. */
@@ -4237,6 +4250,17 @@ struct UA_Server {
                                                  * from a session. */
     UA_UInt32 lastSubscriptionId; /* To generate unique SubscriptionIds */
 
+    /* Updated only under serviceMutex. The public snapshot below does not
+     * expose queue entries or retain application-owned pointers. */
+    UA_UInt64 resourcePublishRequestsCurrent;
+    UA_UInt64 resourcePublishRequestsPeak;
+    UA_Boolean resourcePublishRequestsInvalid;
+    UA_UInt64 resourceEventQueueCurrent;
+    UA_UInt64 resourceEventQueuePeak;
+    UA_Boolean resourceEventQueueInvalid;
+    UA_UInt64 resourceEventQueueDrops;
+    UA_UInt64 resourceEventQueueDropsWrapCount;
+
 # ifdef UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS
     LIST_HEAD(, UA_ConditionSource) conditionSources;
 # endif
@@ -4249,10 +4273,87 @@ struct UA_Server {
     /* Statistics */
     UA_SecureChannelStatistics secureChannelStatistics;
     UA_ServerDiagnosticsSummaryDataType serverDiagnosticsSummary;
+    UA_UInt64 resourceRejectedRequests;
+    UA_UInt64 resourceRejectedRequestsWrapCount;
 
     /* GDS Manager for certificate management */
     UA_GDSManager gdsManager;
 };
+
+static void
+UA_Server_resourceIncrement(UA_UInt64 *value, UA_UInt64 *wrapCount) {
+    if(*value == UINT64_MAX) {
+        *value = 0;
+        if(*wrapCount != UINT64_MAX)
+            ++*wrapCount;
+    } else {
+        ++*value;
+    }
+}
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS
+static void
+UA_Server_resourcePublishRequestQueued(UA_Server *server) {
+    UA_LOCK_ASSERT(&server->serviceMutex);
+    if(server->resourcePublishRequestsCurrent == UINT64_MAX) {
+        server->resourcePublishRequestsInvalid = true;
+        return;
+    }
+    server->resourcePublishRequestsCurrent++;
+    if(server->resourcePublishRequestsPeak < server->resourcePublishRequestsCurrent)
+        server->resourcePublishRequestsPeak = server->resourcePublishRequestsCurrent;
+}
+
+static void
+UA_Server_resourcePublishRequestDequeued(UA_Server *server) {
+    UA_LOCK_ASSERT(&server->serviceMutex);
+    if(server->resourcePublishRequestsCurrent == 0) {
+        server->resourcePublishRequestsInvalid = true;
+        return;
+    }
+    server->resourcePublishRequestsCurrent--;
+}
+
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+static void
+UA_Server_resourceEventQueued(UA_Subscription *sub) {
+    UA_Server *server = sub->resourceOwnerServer;
+    if(!server || sub == server->adminSubscription)
+        return; /* Internal local monitoring is outside client queue use. */
+    UA_LOCK_ASSERT(&server->serviceMutex);
+    if(server->resourceEventQueueCurrent == UINT64_MAX) {
+        server->resourceEventQueueInvalid = true;
+        return;
+    }
+    ++server->resourceEventQueueCurrent;
+    if(server->resourceEventQueuePeak < server->resourceEventQueueCurrent)
+        server->resourceEventQueuePeak = server->resourceEventQueueCurrent;
+}
+
+static void
+UA_Server_resourceEventDequeued(UA_Subscription *sub) {
+    UA_Server *server = sub->resourceOwnerServer;
+    if(!server || sub == server->adminSubscription)
+        return;
+    UA_LOCK_ASSERT(&server->serviceMutex);
+    if(server->resourceEventQueueCurrent == 0) {
+        server->resourceEventQueueInvalid = true;
+        return;
+    }
+    --server->resourceEventQueueCurrent;
+}
+
+static void
+UA_Server_resourceEventDropped(UA_Subscription *sub) {
+    UA_Server *server = sub->resourceOwnerServer;
+    if(!server || sub == server->adminSubscription)
+        return;
+    UA_LOCK_ASSERT(&server->serviceMutex);
+    UA_Server_resourceIncrement(&server->resourceEventQueueDrops,
+                                &server->resourceEventQueueDropsWrapCount);
+}
+#endif
+#endif
 
 /* In case the configuration was updated. Make the ->next pointer in the
  * internal customTypes point into the configuration. */
@@ -39128,7 +39229,7 @@ UA_Session_detachFromSecureChannel(UA_Server *server, UA_Session *session) {
      * SecureChannel so they cannot be reused. */
 #ifdef UA_ENABLE_SUBSCRIPTIONS
     UA_PublishResponseEntry *pre;
-    while((pre = UA_Session_dequeuePublishReq(session))) {
+    while((pre = UA_Session_dequeuePublishReq(server, session))) {
         UA_PublishResponse_clear(&pre->response);
         UA_free(pre);
     }
@@ -39245,7 +39346,7 @@ UA_Session_detachSubscription(UA_Server *server, UA_Session *session,
     if(!releasePublishResponses || !TAILQ_EMPTY(&session->subscriptions))
         return;
     UA_PublishResponseEntry *pre;
-    while((pre = UA_Session_dequeuePublishReq(session))) {
+    while((pre = UA_Session_dequeuePublishReq(server, session))) {
         UA_PublishResponse *response = &pre->response;
         response->responseHeader.serviceResult = UA_STATUSCODE_BADNOSUBSCRIPTION;
         sendResponse(server, session->channel, pre->requestId,
@@ -39282,23 +39383,26 @@ getSubscriptionById(UA_Server *server, UA_UInt32 subscriptionId) {
 }
 
 UA_PublishResponseEntry*
-UA_Session_dequeuePublishReq(UA_Session *session) {
+UA_Session_dequeuePublishReq(UA_Server *server, UA_Session *session) {
     UA_PublishResponseEntry *entry = SIMPLEQ_FIRST(&session->responseQueue);
     if(entry) {
         SIMPLEQ_REMOVE_HEAD(&session->responseQueue, listEntry);
         session->responseQueueSize--;
+        UA_Server_resourcePublishRequestDequeued(server);
     }
     return entry;
 }
 
 void
-UA_Session_queuePublishReq(UA_Session *session, UA_PublishResponseEntry* entry,
+UA_Session_queuePublishReq(UA_Server *server, UA_Session *session,
+                           UA_PublishResponseEntry* entry,
                            UA_Boolean head) {
     if(!head)
         SIMPLEQ_INSERT_TAIL(&session->responseQueue, entry, listEntry);
     else
         SIMPLEQ_INSERT_HEAD(&session->responseQueue, entry, listEntry);
     session->responseQueueSize++;
+    UA_Server_resourcePublishRequestQueued(server);
 }
 
 #endif
@@ -41228,6 +41332,7 @@ UA_Server_init(UA_Server *server) {
     /* Initialize the adminSubscription */
     server->adminSubscription = UA_Subscription_new();
     UA_CHECK_MEM(server->adminSubscription, goto cleanup);
+    server->adminSubscription->resourceOwnerServer = server;
     UA_Session_attachSubscription(&server->adminSession, server->adminSubscription);
 #endif
 
@@ -41849,6 +41954,58 @@ UA_Server_getStatistics(UA_Server *server) {
     stat.ss.sessionAbortCount = sds->sessionAbortCount;
     unlockServer(server);
     return stat;
+}
+
+UA_StatusCode
+UA_Server_getResourceUsage(UA_Server *server, UA_ServerResourceUsage *usage) {
+    if(!server || !usage)
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+
+    memset(usage, 0, sizeof(UA_ServerResourceUsage));
+    lockServer(server);
+    /* RejectedRequests is defined as successfully emitted ServiceFault
+     * responses, not bad per-operation results or transport handshake errors. */
+    usage->rejectedRequests = server->resourceRejectedRequests;
+    usage->rejectedRequestsWrapCount = server->resourceRejectedRequestsWrapCount;
+    usage->rejectedRequestsAvailable = true;
+#ifdef UA_ENABLE_SUBSCRIPTIONS
+    if(server->config.maxPublishReqPerSession != 0 &&
+       !server->resourcePublishRequestsInvalid) {
+        usage->publishRequestsCurrent = server->resourcePublishRequestsCurrent;
+        usage->publishRequestsPeak = server->resourcePublishRequestsPeak;
+        usage->publishRequestsCapacity =
+            (UA_UInt64)server->config.maxSessions *
+            (UA_UInt64)server->config.maxPublishReqPerSession;
+        usage->publishRequestsAvailable = true;
+    }
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    if(server->config.maxMonitoredItems != 0 &&
+       server->config.queueSizeLimits.max != 0 &&
+       !server->resourceEventQueueInvalid) {
+        usage->eventQueueCurrent = server->resourceEventQueueCurrent;
+        usage->eventQueuePeak = server->resourceEventQueuePeak;
+        usage->eventQueueDrops = server->resourceEventQueueDrops;
+        usage->eventQueueDropsWrapCount = server->resourceEventQueueDropsWrapCount;
+        usage->eventQueueAvailable = true;
+        usage->eventQueueDropsAvailable = true;
+        UA_Subscription *sub;
+        LIST_FOREACH(sub, &server->subscriptions, serverListEntry) {
+            UA_MonitoredItem *mon;
+            LIST_FOREACH(mon, &sub->monitoredItems, listEntry) {
+                if(mon->itemToMonitor.attributeId != UA_ATTRIBUTEID_EVENTNOTIFIER)
+                    continue;
+                /* A normal queue can retain q events and at most q+1
+                 * interleaved overflow markers. This is the current
+                 * negotiated bound, not preallocated memory. */
+                usage->eventQueueCapacity +=
+                    (UA_UInt64)mon->parameters.queueSize * 2u + 1u;
+            }
+        }
+    }
+#endif
+#endif
+    unlockServer(server);
+    return UA_STATUSCODE_GOOD;
 }
 
 /********************/
@@ -46315,9 +46472,15 @@ deleteServerSecureChannel(UA_BinaryProtocolManager *bpm,
         break;
     }
 
-    /* Notify the application */
-    notifySecureChannel(server, channel,
-                        UA_APPLICATIONNOTIFICATIONTYPE_SECURECHANNEL_CLOSED);
+    /* Failed or aborted transports can reach this destructor before the first
+     * OpenSecureChannel succeeds. Only close an application-visible lifecycle
+     * that was opened, otherwise resource adapters observe an unmatched
+     * decrement and permanently invalidate their gauge. */
+    if(channel->applicationLifecycleNotified) {
+        channel->applicationLifecycleNotified = false;
+        notifySecureChannel(server, channel,
+                            UA_APPLICATIONNOTIFICATIONTYPE_SECURECHANNEL_CLOSED);
+    }
 
     /* Clean up the SecureChannel. This is the only place where
      * UA_SecureChannel_clear must be called within the server code-base. */
@@ -46344,8 +46507,12 @@ sendServiceFault(UA_Server *server, UA_SecureChannel *channel,
 
     /* Send error message. Message type is MSG and not ERR, since we are on a
      * SecureChannel! */
-    return UA_SecureChannel_sendMSG(channel, requestId, &response,
-                                    &UA_TYPES[UA_TYPES_SERVICEFAULT]);
+    UA_StatusCode result = UA_SecureChannel_sendMSG(channel, requestId, &response,
+                                                    &UA_TYPES[UA_TYPES_SERVICEFAULT]);
+    if(result == UA_STATUSCODE_GOOD)
+        UA_Server_resourceIncrement(&server->resourceRejectedRequests,
+                                    &server->resourceRejectedRequestsWrapCount);
+    return result;
 }
 
 /* This is not an ERR message, the connection is not closed afterwards */
@@ -49203,6 +49370,10 @@ UA_Notification_enqueueMon(UA_Server *server, UA_Notification *n) {
     /* Add to the MonitoredItem */
     TAILQ_INSERT_TAIL(&mon->queue, n, monEntry);
     ++mon->queueSize;
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    if(mon->itemToMonitor.attributeId == UA_ATTRIBUTEID_EVENTNOTIFIER)
+        UA_Server_resourceEventQueued(mon->subscription);
+#endif
 
 #ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
     if(n->isOverflowEvent)
@@ -49342,6 +49513,10 @@ UA_Notification_dequeueMon(UA_Notification *n) {
 
     TAILQ_REMOVE(&mon->queue, n, monEntry);
     --mon->queueSize;
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+    if(mon->itemToMonitor.attributeId == UA_ATTRIBUTEID_EVENTNOTIFIER)
+        UA_Server_resourceEventDequeued(mon->subscription);
+#endif
 
     /* Test for consistency */
     UA_assert(mon->queueSize >= mon->eventOverflows);
@@ -49380,6 +49555,10 @@ UA_Notification_dequeueSub(UA_Notification *n) {
 /* Subscription */
 /****************/
 
+static void
+notifySubscription(UA_Server *server, UA_Subscription *sub,
+                   UA_ApplicationNotificationType type);
+
 UA_Subscription *
 UA_Subscription_new(void) {
     /* Allocate the memory */
@@ -49409,6 +49588,14 @@ UA_Subscription_delete(UA_Server *server, UA_Subscription *sub) {
     UA_LOCK_ASSERT(&server->serviceMutex);
 
     UA_EventLoop *el = server->config.eventLoop;
+
+    /* Report every destruction path exactly once. Failed constructions never
+     * emitted CREATED and therefore must not decrement application counters. */
+    if(sub->resourceLifecycleNotified) {
+        sub->resourceLifecycleNotified = false;
+        notifySubscription(server, sub,
+                           UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_DELETED);
+    }
 
     /* Delete monitored Items */
     UA_assert(server->monitoredItemsSize >= sub->monitoredItemsSize);
@@ -49858,7 +50045,7 @@ UA_Subscription_publish(UA_Server *server, UA_Subscription *sub) {
         UA_DateTime nowMonotonic = el->dateTime_nowMonotonic(el);
         do {
             /* Dequeue the oldest response */
-            pre = UA_Session_dequeuePublishReq(sub->session);
+            pre = UA_Session_dequeuePublishReq(server, sub->session);
             if(!pre)
                 break;
 
@@ -49912,7 +50099,7 @@ UA_Subscription_publish(UA_Server *server, UA_Subscription *sub) {
         ++sub->currentKeepAliveCount;
         if(sub->currentKeepAliveCount < sub->maxKeepAliveCount) {
             if(pre)
-                UA_Session_queuePublishReq(sub->session, pre, true); /* Re-enqueue */
+                UA_Session_queuePublishReq(server, sub->session, pre, true); /* Re-enqueue */
             return;
         }
         UA_LOG_DEBUG_SUBSCRIPTION(server->config.logging, sub, "Sending a KeepAlive");
@@ -49927,7 +50114,7 @@ UA_Subscription_publish(UA_Server *server, UA_Subscription *sub) {
                                   "The subscription is late.");
         sub->late = true;
         if(pre)
-            UA_Session_queuePublishReq(sub->session, pre, true); /* Re-enqueue */
+            UA_Session_queuePublishReq(server, sub->session, pre, true); /* Re-enqueue */
         return;
     }
 
@@ -49952,7 +50139,7 @@ UA_Subscription_publish(UA_Server *server, UA_Subscription *sub) {
                                             "Could not allocate memory for retransmission. "
                                             "The subscription is late.");
                 sub->late = true;
-                UA_Session_queuePublishReq(sub->session, pre, true); /* Re-enqueue */
+                UA_Session_queuePublishReq(server, sub->session, pre, true); /* Re-enqueue */
                 return;
             }
         }
@@ -49968,7 +50155,7 @@ UA_Subscription_publish(UA_Server *server, UA_Subscription *sub) {
             if(retransmission)
                 UA_free(retransmission);
             sub->late = true;
-            UA_Session_queuePublishReq(sub->session, pre, true); /* Re-enqueue */
+            UA_Session_queuePublishReq(server, sub->session, pre, true); /* Re-enqueue */
             return;
         }
     }
@@ -50110,7 +50297,7 @@ UA_Session_ensurePublishQueueSpace(UA_Server* server, UA_Session* session) {
 
     while(session->responseQueueSize >= server->config.maxPublishReqPerSession) {
         /* Dequeue a response */
-        UA_PublishResponseEntry *pre = UA_Session_dequeuePublishReq(session);
+        UA_PublishResponseEntry *pre = UA_Session_dequeuePublishReq(server, session);
         UA_assert(pre != NULL); /* There must be a pre as session->responseQueueSize > 0 */
 
         UA_LOG_DEBUG_SESSION(server->config.logging, session,
@@ -50270,6 +50457,7 @@ createEventOverflowNotification(UA_Server *server, UA_Subscription *sub,
     TAILQ_INSERT_BEFORE(indicator, n, monEntry);
     ++mon->eventOverflows;
     ++mon->queueSize;
+    UA_Server_resourceEventQueued(mon->subscription);
 
     /* Test for consistency */
     UA_assert(mon->queueSize >= mon->eventOverflows);
@@ -50671,6 +50859,11 @@ UA_MonitoredItem_ensureQueueSpace(UA_Server *server, UA_MonitoredItem *mon) {
         remove--;
 
         /* Delete the notification and remove it from the queues */
+#ifdef UA_ENABLE_SUBSCRIPTIONS_EVENTS
+        if(mon->itemToMonitor.attributeId == UA_ATTRIBUTEID_EVENTNOTIFIER &&
+           !del->isOverflowEvent)
+            UA_Server_resourceEventDropped(sub);
+#endif
         UA_Notification_delete(del);
 
         /* Update the subscription diagnostics statistics */
@@ -57052,6 +57245,20 @@ browseReferencTargetCallback(void *context, UA_ReferenceTarget *t) {
                                           refs, direction);
     if(!target)
         return NULL;
+
+    /* Browsing a parent must not disclose references to target nodes the
+     * session cannot browse directly. The direct-node gate in
+     * browseWithContinuation() protects only the BrowseDescription's start
+     * node; apply the same policy to every resolved target before copying its
+     * NodeId or BrowseName into the result. */
+    if(bc->session != &bc->server->adminSession &&
+       !bc->server->config.accessControl.allowBrowseNode(
+           bc->server, &bc->server->config.accessControl,
+           &bc->session->sessionId, bc->session->context,
+           &target->head.nodeId, target->head.context)) {
+        UA_NODESTORE_RELEASE(bc->server, target);
+        return NULL;
+    }
     
     /* The node class has to match */
     if(!matchClassMask(target, bd->nodeClassMask)) {
@@ -58479,7 +58686,7 @@ UA_Session_remove(UA_Server *server, UA_Session *session,
     }
 
     UA_PublishResponseEntry *entry;
-    while((entry = UA_Session_dequeuePublishReq(session))) {
+    while((entry = UA_Session_dequeuePublishReq(server, session))) {
         UA_PublishResponse_clear(&entry->response);
         UA_free(entry);
     }
@@ -59776,6 +59983,7 @@ Service_Cancel(UA_Server *server, UA_Session *session,
         else
             SIMPLEQ_REMOVE_HEAD(&session->responseQueue, listEntry);
         session->responseQueueSize--;
+        UA_Server_resourcePublishRequestDequeued(server);
 
         /* Send response and clean up */
         response->responseHeader.serviceResult = UA_STATUSCODE_BADREQUESTCANCELLEDBYCLIENT;
@@ -63127,6 +63335,7 @@ Service_CreateSubscription(UA_Server *server, UA_Session *session,
         response->responseHeader.serviceResult = UA_STATUSCODE_BADOUTOFMEMORY;
         return true;
     }
+    sub->resourceOwnerServer = server;
 
     /* Set the subscription parameters */
     setSubscriptionSettings(server, sub, request->requestedPublishingInterval,
@@ -63175,6 +63384,7 @@ Service_CreateSubscription(UA_Server *server, UA_Session *session,
     /* Notify the application */
     notifySubscription(server, sub,
                        UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_CREATED);
+    sub->resourceLifecycleNotified = true;
 
     /* Prepare the response */
     response->subscriptionId = sub->subscriptionId;
@@ -63268,7 +63478,6 @@ Operation_SetPublishingMode(UA_Server *server, UA_Session *session,
         *result = UA_STATUSCODE_BADSUBSCRIPTIONIDINVALID;
         return;
     }
-
     /* Enable/disable */
     UA_SubscriptionState sState = (*publishingEnabled) ?
         UA_SUBSCRIPTIONSTATE_ENABLED : UA_SUBSCRIPTIONSTATE_ENABLED_NOPUBLISH;
@@ -63378,7 +63587,7 @@ Service_Publish(UA_Server *server, UA_Session *session,
     /* Queue the publish response. It will be dequeued in a repeated publish
      * callback. This can also be triggered right now for a late
      * subscription. */
-    UA_Session_queuePublishReq(session, entry, false);
+    UA_Session_queuePublishReq(server, session, entry, false);
     UA_LOG_DEBUG_SESSION(server->config.logging, session, "Queued a publication message");
 
     /* If there are late subscriptions, the new publish request is used to
@@ -63433,10 +63642,6 @@ Operation_DeleteSubscription(UA_Server *server, UA_Session *session, void *_,
                              *subscriptionId, UA_StatusCode_name(*result));
         return;
     }
-
-    /* Notify the application */
-    notifySubscription(server, sub,
-                       UA_APPLICATIONNOTIFICATIONTYPE_SUBSCRIPTION_DELETED);
 
     /* Delete the Subscription */
     UA_Subscription_delete(server, sub);
@@ -63621,6 +63826,12 @@ Operation_TransferSubscription(UA_Server *server, UA_Session *session,
      * diagnostic counter updates when it is deleted */
     sub->wasTransferred = true;
 
+    /* The replacement represents the same live subscription. Transfer the
+     * lifecycle notification ownership so deleting the old object does not
+     * decrement the application counter. */
+    newSub->resourceLifecycleNotified = sub->resourceLifecycleNotified;
+    sub->resourceLifecycleNotified = false;
+
     /* Move over the MonitoredItems and adjust the backpointers */
     LIST_INIT(&newSub->monitoredItems);
     UA_MonitoredItem *mon, *mon_tmp;
@@ -63666,6 +63877,7 @@ Operation_TransferSubscription(UA_Server *server, UA_Session *session,
     /* Add to the server */
     UA_assert(newSub->subscriptionId == sub->subscriptionId);
     LIST_INSERT_HEAD(&server->subscriptions, newSub, serverListEntry);
+    newSub->resourceOwnerServer = server;
     server->subscriptionsSize++;
 
     /* Attach to the session */
@@ -64972,7 +65184,9 @@ Service_OpenSecureChannel(UA_Server *server, UA_SecureChannel *channel,
                             channel->securityPolicy->policyUri,
                             (UA_Float)response->securityToken.revisedLifetime / 1000);
 
-        /* Notify the application about the open SecureChannel */
+        /* Notify the application about the open SecureChannel. Mark it first
+         * so every later destruction path emits exactly one matching close. */
+        channel->applicationLifecycleNotified = true;
         notifySecureChannel(server, channel,
                             UA_APPLICATIONNOTIFICATIONTYPE_SECURECHANNEL_OPENED);
     } else {

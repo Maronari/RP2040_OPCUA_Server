@@ -27,7 +27,7 @@ CMake + Raspberry Pi Pico SDK, кросс-компиляция через `arm-n
 
 `cmake/` содержит только `cmake/firmware_version.cmake` — единственный
 авторитетный источник семантической версии
-(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.5.1`), упаковываемый в
+(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.5.2`), упаковываемый в
 `RP2_FIRMWARE_VERSION_NUMBER` и используемый в `project(... VERSION ...)`,
 `pico_set_program_version()` и
 `DEVICE_PROFILE_FW_REVISION`/`OTA_APP_FIRMWARE_VERSION`. Вычисление
@@ -99,6 +99,9 @@ graph TD
 | `BUILD_LEGACY_EXAMPLES` | `OFF` (`CMakeLists.txt:42`) | Управляет включением устаревшего монолитного примера `w5x00_opc_dhcp`. |
 | `OTA_BUILD_BOOTLOADER` | `OFF` (`CMakeLists.txt:43`) | Управляет включением `bootloader/` + `ota_artifacts.cmake` + варианта приложения `_bank_a`, слинкованного с поддержкой OTA. |
 | `W5X00_DIAGNOSTIC_NO_OPCUA` | `OFF` (`CMakeLists.txt:44`) | Собирает образ сетевой диагностики без open62541/модели OPC UA; исключает сервисы импорта идентичности/доверия; переименовывает цель приложения в `device_profile_basic_w5x00_diag`. Взаимно исключает `OTA_BUILD_BOOTLOADER` (`FATAL_ERROR`, если установлены оба, `CMakeLists.txt:46-50`). |
+| `FIRMWARE_BENCHMARK_PROFILE` | `off`; только `synthetic` для T4 | Явно выбирает тестовый воспроизводимый профиль v0.5.2. Он допустим только для `base` + reference RP2350/W5500, без bootloader/network-only/legacy целей; конфигурация из Flash и runtime-мутации отключаются. |
+| `FIRMWARE_BENCHMARK_CHANNELS`, `_RATE_HZ`, `_CLIENTS` | `1`, `1`, `1` | Оси T4: каналы `1/4/8/16`, частота `1/10` Гц и объявленная внешняя нагрузка `1/2/4` клиента. Число клиентов записывается в метаданные; клиенты запускаются инструментом T5. |
+| `FIRMWARE_BENCHMARK_SECURITY`, `_EVENTS`, `_HISTORY` | `basic256sha256-signandencrypt`, `ON`, `ON` | Secure-вариант оставляет только Basic256Sha256/SignAndEncrypt; `test-none` разрешён только в явной benchmark-сборке. Переключатели управляют публикацией Events/A&C и записью истории. |
 | `FIRMWARE_ENABLE_NATIVE_INTERNAL_TEMP_DRIVER` / `_ADC_VOLTAGE_DRIVER` / `_GPIO_INPUT_DRIVER` | `ON` для каждого (`drivers/CMakeLists.txt:1-3`) | Включение на этапе компиляции для каждого драйвера отдельно; отключённые драйверы полностью удаляются из ELF-файла (согласно правилу удаления драйверов из [AGENTS.md](../../AGENTS.md)). |
 | `PICO_BOARD` | следует из `FIRMWARE_DRIVER_PACK`: `base` → `waveshare_core2350b_16mb_psram8mb`, `industrial` → `rp2350_industrial_mvp_v1` (корневой `CMakeLists.txt`, раздел «Board profile») | Выбирает заголовок платы, который фиксирует `PICO_FLASH_SIZE_BYTES` (и, следовательно, всю раскладку Flash для OTA) и вывод CS PSRAM. Противоречащий паку `-DPICO_BOARD` — `FATAL_ERROR`. Выводы W5500 тоже следуют паку (`industrial` → GPIO4..8); отдельной опции `FIRMWARE_ENABLE_INDUSTRIAL_W5500_PINS` больше нет. Проверка собранного дерева: `static/tools/check_board_profile.py`. |
 | `WIZNET_CHIP` | `W5500` (`CMakeLists.txt:31-34`) | Выбирает `W5100S_FILES`/`W5500_FILES`. |

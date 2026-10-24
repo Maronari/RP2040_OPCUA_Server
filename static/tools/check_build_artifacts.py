@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import pathlib
 import sys
@@ -18,8 +19,66 @@ REQUIRED_RELATIVE_PATHS = (
     "generated/ota_layout/ota_layout.json",
     "reports/size.txt",
     "reports/sections.txt",
+    "reports/static_size_report.json",
     "reports/version_integrity.json",
 )
+
+STATIC_REPORT_ARTIFACTS = {
+    "elf": "app/basic_profile/device_profile_basic.elf",
+    "uf2": "app/basic_profile/device_profile_basic.uf2",
+    "bin": "app/basic_profile/device_profile_basic.bin",
+    "map": "app/basic_profile/device_profile_basic.elf.map",
+}
+
+
+def file_sha256(path: pathlib.Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_static_size_report(build_dir: pathlib.Path) -> list[str]:
+    report_path = build_dir / "reports/static_size_report.json"
+    try:
+        document = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"reports/static_size_report.json (malformed: {exc})"]
+    problems: list[str] = []
+    if document.get("schemaVersion") != 1:
+        problems.append("reports/static_size_report.json (schemaVersion must be 1)")
+    totals = document.get("totals")
+    if not isinstance(totals, dict):
+        problems.append("reports/static_size_report.json (totals missing)")
+    else:
+        for metric in (
+            "ElfFileBytes", "Uf2FileBytes", "BinFileBytes", "ExternalFlashLoadBytes",
+            "SramDataBytes", "SramBssBytes", "SramStaticTotalBytes",
+            "SramReservedHeapBytes", "PsramStaticBytes",
+        ):
+            value = totals.get(metric)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                problems.append(f"reports/static_size_report.json ({metric} invalid)")
+    artifacts = document.get("artifacts")
+    if not isinstance(artifacts, dict):
+        problems.append("reports/static_size_report.json (artifacts missing)")
+        return problems
+    for key, relative in STATIC_REPORT_ARTIFACTS.items():
+        entry = artifacts.get(key)
+        path = build_dir / relative
+        if not isinstance(entry, dict):
+            problems.append(f"reports/static_size_report.json (artifact {key} missing)")
+            continue
+        if not path.is_file():
+            continue
+        actual_size = path.stat().st_size
+        actual_hash = file_sha256(path)
+        if entry.get("sizeBytes") != actual_size:
+            problems.append(f"reports/static_size_report.json ({key} size mismatch)")
+        if entry.get("sha256") != actual_hash:
+            problems.append(f"reports/static_size_report.json ({key} sha256 mismatch)")
+    return problems
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +127,13 @@ def main() -> int:
             else:
                 reason = "empty"
             print(f"invalid: {relative} ({reason})")
+        return 1
+
+    report_problems = validate_static_size_report(build_dir)
+    if report_problems:
+        print("artifact-check: FAIL")
+        for problem in report_problems:
+            print(f"invalid: {problem}")
         return 1
 
     map_path = build_dir / "app/basic_profile/device_profile_basic.elf.map"

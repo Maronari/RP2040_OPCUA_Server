@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "profileId": "@RP2_RESOURCE_EXHAUSTION_PROFILE_ID@",
+  "firmwareVersion": "@DEVICE_PROFILE_FW_REVISION@",
+  "gitCommit": "@DEVICE_PROFILE_GIT_HASH@",
+  "board": "@PICO_BOARD@",
+  "driverPack": "@FIRMWARE_DRIVER_PACK@",
+  "testOnly": true,
+  "persistentWritesAllowed": false,
+  "cyclesPerAllocator": 100,
+  "pointerCapacity": 512,
+  "heapRequestBytes": 1024,
+  "psramRequestBytes": 16384
+}

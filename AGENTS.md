@@ -13,7 +13,9 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.5.1 — Driver SDK and Industrial Board Driver Integration**.
+  **v0.5.2 — Resource Instrumentation and Benchmark Suite**. Follow
+  `docs/releases/v0.5.2.md`; released `v0.5.1` at
+  `2881230c2ccbb98b8701730c4de930dc95da30fc` is the compatibility baseline.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -88,20 +90,15 @@ Delegation rules:
 8. Subagent work does not expand authorization or roadmap scope. Preserve
    unrelated user changes shared through the working tree.
 
-For v0.5.1 implementation and verification, keep assignments aligned with
-`docs/releases/v0.5.1.md`. This release runs pilot-first, not freeze-first:
-`embedded-systems` owns the driver/bus implementation (native GPIO output
-driver, SPI transport abstraction, `ADS8688` driver, and every later
-industrial driver in the Phase 1 backlog); `iot-engineer` owns any OPC UA
-capability-model work (`SupportedDrivers`/`DriverCapabilities`) once Phase 1
-reaches it — the pilot tasks (T0-T2) add no OPC UA model code, so
-`iot-engineer` is not engaged until then; `build-engineer` owns the new
-CMake driver-enable options, catalog/CMake wiring, and dual-build proof
-(driver enabled vs. disabled) for each new driver; and `code-reviewer`
-performs the final independent review, including the pilot-phase API/
-resource-claim review gate before any Phase 1 task starts. Do not begin
-Phase 1 driver work before that review gate closes and this file or the
-release plan records the outcome.
+For v0.5.2, `code-mapper` maps existing counters, allocators, task state,
+server diagnostics and tools before implementation. `embedded-systems`
+owns bounded native/service instrumentation and sampling timing;
+`iot-engineer` owns OPC UA counter adapters, additive diagnostic contracts
+and automated client verification; `build-engineer` owns ELF/map reporting,
+benchmark build profiles, version propagation and blocking CI artifact/
+regression gates. `code-reviewer` reviews the integrated change and evidence.
+Keep write ownership disjoint and follow the task order in
+`docs/releases/v0.5.2.md`.
 
 ## Architecture boundaries
 
@@ -136,51 +133,43 @@ release plan records the outcome.
 - Use a single version source for runtime firmware revision, OTA metadata,
   configuration export, artifacts, tags, and documentation.
 
-## v0.5.1 constraints
+## v0.5.2 constraints
 
-- Treat `main` at `c6da6c4` (v0.5.0, `Transactional Runtime Configuration`,
-  merged via PR #19) as the implementation and compatibility baseline.
-- Follow `docs/releases/v0.5.1.md`. This release is pilot-first, not
-  freeze-first: implement T0 (datasheet), T1 (native GPIO output driver —
-  first real `write`/`configure`/`self_test` implementation) and T2 (`ADS8688`
-  SPI driver + new SPI transport abstraction) before touching any other
-  industrial driver. Do not start a Phase 1 driver (`AD5422`, `MAX22190`,
-  `IPS2050`, UIC, `ISOW1432`, `TPS3851`, W5500 board rebind, driver-level
-  board diagnostics)
-  before the pilot-phase API/resource-claim review gate in
-  `docs/releases/v0.5.1.md` has closed and its outcome is recorded.
-- Design one minimal bus-transport interface per physical bus (SPI, I²C,
-  UART) as each is first needed by a real driver. Do not build one unified
-  transport abstraction across all three; that was explicitly rejected as
-  premature during release planning.
-- Once Phase 1 starts, implement the remaining industrial drivers strictly in
-  `ROADMAP.md`'s own listed order (`ROADMAP.md:555-579`), not reordered by
-  inferred hardware/power-sequencing dependency.
+- Use released tag `v0.5.1` at
+  `2881230c2ccbb98b8701730c4de930dc95da30fc` as the source/public-contract
+  baseline. Do not reopen its driver backlog during benchmark work.
+- Follow `docs/releases/v0.5.2.md`. Reuse `diag_service`, the PSRAM
+  allocator, existing task statistics, generic channels, the synthetic
+  driver and verification tools before adding instrumentation.
+- Instrumentation must have bounded memory, collection time and output.
+  Specify counter units, lifetime, overflow, synchronization and unavailable
+  data semantics. Do not represent unsupported or missing metrics as zero.
+- Keep internal SRAM, external PSRAM and external Flash separate in reports.
+  Separate static section sizes, current/peak runtime use and task stack
+  high-water marks; never present layout estimates as runtime measurements.
+- Benchmark profiles use synthetic sources and explicit channel/security/
+  client/load settings. Preserve existing preset IDs and `dev_benchmark`
+  behavior; it currently uses physical inputs, not synthetic channels.
+- Security-off firmware is restricted to an explicit test profile. Preserve
+  production security, authorization and resource capacities by default.
+- Add only the resource diagnostic nodes required by this release, preserving
+  existing public NodeIds, BrowseNames, types and units. Board health/fault
+  aggregation remains v0.6.2 scope; Modbus and signed OTA remain later scope.
 - `config_channel_driver_id_t` (`services/include/services/driver_catalog.h`)
   is persisted in Flash and the config-wire format: append new driver IDs
   only, never renumber or reuse existing ones. `driver_catalog_resource_type_t`
   is not persisted and may be extended freely as new bus/resource claim types
   are needed.
-- OPC UA exposure boundary for this release: AI/AO/DI/DO channel *values*
-  flow through the existing generic channel model automatically once a driver
-  is catalog-registered and configured — add no new OPC UA model code for
-  channel values. `SupportedDrivers`/`DriverCapabilities` is new, explicitly
-  in scope. Board-level diagnostics (power/fault/watchdog signals) stay
-  driver/vtable-internal only (`self_test`/diagnostic return codes); their
-  OPC UA exposure is `v0.6.2` scope, not this release.
-- Fetch each driver's datasheet into `docs/datasheets/` only as that driver's
-  implementation begins, not in bulk up front.
 - `RP2350_INDUSTRIAL_MVP_V1`'s schematic is near-final but may still change.
   Isolate each industrial driver's pin/bus/resource-index assignment into one
   small board-binding unit, separate from register/protocol logic.
-- This release is explicitly pre-hardware: `RP2350_INDUSTRIAL_MVP_V1` does
-  not physically exist. Industrial drivers must be source-complete,
-  statically analyzed, and host/mock-tested, but must never claim electrical,
-  timing, calibration, or real-device validation. `self_test` must
+- Industrial drivers inherited from v0.5.1 remain pre-hardware: do not claim
+  electrical, timing, calibration or real-device validation. `self_test` must
   distinguish "supported and passed" from "supported but hardware
   unavailable/not present" from "failed" — never report absent hardware as a
-  passed test or a board fault. Label every verification artifact for this
-  release **compile/mock validated, not hardware qualified**.
+  passed test or a board fault. Label industrial verification artifacts
+  **compile/mock validated, not hardware qualified** until section 5.2's
+  hardware qualification is actually performed.
 - The reference RP2350 + W5500 profile remains the hardware used for release
   builds and runnable verification; industrial drivers must not probe or
   initialize on a reference-board boot.
@@ -194,7 +183,7 @@ build directory.
 Required single Debug build:
 
 ```sh
-C:\msys64\mingw64\bin\cmake.EXE -DCMAKE_BUILD_TYPE:STRING=Debug -DPICO_BOARD:STRING=waveshare_core2350b_16mb_psram8mb -DOTA_ROM_PRIMARY_APP:STRING=ON -DOTA_BUILD_BOOTLOADER:STRING=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE -DCMAKE_C_COMPILER:FILEPATH=D:\Programms\ST\STM32CubeCLT_1.18.0\GNU-tools-for-STM32\bin\arm-none-eabi-gcc.exe -DCMAKE_CXX_COMPILER:FILEPATH=D:\Programms\ST\STM32CubeCLT_1.18.0\GNU-tools-for-STM32\bin\arm-none-eabi-g++.exe --no-warn-unused-cli -S E:/Projects/RP2040_OPCUA_Server -B e:/Projects/RP2040_OPCUA_Server/build -G Ninja
+C:\msys64\mingw64\bin\cmake.EXE -DCMAKE_BUILD_TYPE:STRING=Debug -DFIRMWARE_DRIVER_PACK:STRING=base -DPICO_BOARD:STRING=waveshare_core2350b_16mb_psram8mb -DOTA_ROM_PRIMARY_APP:STRING=ON -DOTA_BUILD_BOOTLOADER:STRING=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE -DCMAKE_C_COMPILER:FILEPATH=D:\Programms\ST\STM32CubeCLT_1.18.0\GNU-tools-for-STM32\bin\arm-none-eabi-gcc.exe -DCMAKE_CXX_COMPILER:FILEPATH=D:\Programms\ST\STM32CubeCLT_1.18.0\GNU-tools-for-STM32\bin\arm-none-eabi-g++.exe --no-warn-unused-cli -S E:/Projects/RP2040_OPCUA_Server -B e:/Projects/RP2040_OPCUA_Server/build -G Ninja
 C:\msys64\mingw64\bin\cmake.EXE --build e:/Projects/RP2040_OPCUA_Server/build --config Debug --target all --
 ```
 
@@ -202,27 +191,24 @@ For every feature:
 
 - Add positive, negative, authorization, illegal-state, and resource-limit tests.
   Add reboot/power-loss tests when persistence is involved.
-- For v0.5.1, run the pilot-phase gate in `docs/releases/v0.5.1.md`:
-  `static/tools/run_host_tests.py` and `static/tools/run_first_party_cppcheck.py`
-  green including every new suite, a reference-profile Debug build with each
-  new driver both enabled and disabled, a new mock bus device addable without
-  editing chip-specific or core channel-manager/OPC UA code, and `ADS8688`
-  self-test correctly reporting "hardware unavailable" rather than a false
-  pass or board fault on the reference board (no such chip attached). Do not
-  claim hardware verification for this release's industrial drivers; record
-  compile/mock-validation results in
-  `docs/releases/v0.5.1-driver-verification.md` instead of a hardware report.
+- For v0.5.2, follow the phased gates in `docs/releases/v0.5.2.md`: host
+  suites and blocking first-party cppcheck, reference Debug build, retained
+  industrial compile/mock build, deterministic report/profile tests, and
+  automated client plus UaExpert checks when diagnostic nodes are added.
+  Commit or attach benchmark JSON and a human-readable baseline with the
+  exact firmware/profile/toolchain/test setup and measured results. CI must
+  fail missing/malformed evidence and implemented regression thresholds;
+  hardware metrics require an actual board runner and cannot be inferred
+  from host/mock tests.
 - Verification scripts must exit nonzero on failure. CI release gates must
   actually fail; do not use `continue-on-error`, unconditional `|| true`, or
   smoke tests that assert no behavior.
 - Complete one Debug build for the reference target with no new first-party
   warnings.
 - Confirm affected behavior with an automated open62541/asyncua client and
-  UaExpert when public OPC UA behavior is touched. This release's pilot tasks
-  (T0-T2) add no OPC UA model code, so this bullet applies once Phase 1's
-  `SupportedDrivers`/`DriverCapabilities` capability model is implemented.
+  UaExpert when public OPC UA behavior is touched.
   Compare the public contract and exported NodeSet/inventory against the
-  v0.5.0 baseline (`main` at `c6da6c4`; no `v0.5.0` tag exists yet) and
+  released v0.5.1 baseline (`2881230c2ccbb98b8701730c4de930dc95da30fc`) and
   document every intended addition.
 - Record artifact sizes and memory/stack impact. Update public NodeId/schema
   documentation, README, release notes, and tools when affected.

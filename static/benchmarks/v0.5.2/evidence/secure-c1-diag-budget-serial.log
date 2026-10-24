@@ -1,0 +1,25 @@
+[open62541/nodesets]	DI subset ns=2, AMB subset ns=3
+[OPC UA]	UA_Server_newWithConfig completed, free heap=282064, min ever free=278872
+[ALLOC]		UA_Server_newWithConfig completed: psram=ready mode=psram-first total=8388608 free=4042240 largest=3854816
+[OPC UA]	AMB Asset Discovery ready, namespace=3
+[OPC UA]	AMB Capabilities and Requirements ready
+[OPC UA]	Device.Compatibility ready (5 supported drivers)
+[OPC UA]	AMB Locations ready, hierarchical='' operational=''
+[OPC UA]	DeviceHealth model ready, DI namespace=2
+[OPC UA]	Address space ready, free heap=282064, min ever free=278872
+[ALLOC]		Address space ready: psram=ready mode=psram-first total=8388608 free=3201224 largest=3201192
+[OPC UA]	Starting server on port 4840
+[open62541/warn]	The ApplicationUri urn:rp2-opcua:C3F9822180D224D1 in the server's ApplicationDescription does not match the URI specified in the certificate for the SecurityPolicy http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256
+[open62541/warn]	The ApplicationUri urn:rp2-opcua:C3F9822180D224D1 in the server's ApplicationDescription does not match the URI specified in the certificate for the SecurityPolicy http://opcfoundation.org/UA/SecurityPolicy#None
+[open62541/info]	TCP 0	| Creating listen socket for "192.168.1.103" on port 4840
+[open62541/info]	New DiscoveryUrl added: opc.tcp://192.168.1.103:4840
+[OPC UA]	Server startup complete, free heap=281376, min ever free=278872
+[ALLOC]		Server startup complete: psram=ready mode=psram-first total=8388608 free=3200224 largest=3200200
+[ALLOC]		Runtime allocation mode: psram=ready mode=psram-first total=8388608 free=3200224 largest=3200200
+[OPC UA]	Periodic runtime, free heap=281376, min ever free=278872
+[ALLOC]		Periodic runtime: psram=ready mode=psram-first total=8388608 free=3200224 largest=3200200
+[OPC UA]	Periodic runtime, free heap=281376, min ever free=278872
+[ALLOC]		Periodic runtime: psram=ready mode=psram-first total=8388608 free=3200224 largest=3200200
+[OPC UA]	Periodic runtime, free heap=281376, min ever free=278872
+[ALLOC]		Periodic runtime: psram=ready mode=psram-first total=8388608 free=3200224 largest=3200200
+{"schemaVersion":1,"kind":"v052-diag-snapshot-budget-evidence","state":"complete","profileId":"v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0","clock":{"domain":"device-monotonic","unit":"microseconds","valid":true},"sampleTarget":100,"captureLimitSeconds":120,"sampleCount":100,"captureStartedMonotonicUs":4190959,"captureEndedMonotonicUs":118622218,"captureDurationUs":114431259,"diagServiceSampleDurationUs":{"p99":1699,"max":1867},"opcUaTaskStackHighWaterBytes":31368,"phaseMaxUs":{"acquire":30,"copy":415,"heap":213,"psram":98,"lwip":35,"tasks":1269,"publish":40},"maxSamplePhaseUs":{"acquire":30,"copy":349,"heap":47,"psram":74,"lwip":35,"tasks":1269,"publish":39},"baselineComparisonState":"not-run"}

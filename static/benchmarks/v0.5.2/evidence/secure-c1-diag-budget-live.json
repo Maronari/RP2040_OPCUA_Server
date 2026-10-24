@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "kind": "v052-diag-snapshot-budget-evidence",
+  "state": "complete",
+  "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+  "clock": {
+    "domain": "device-monotonic",
+    "unit": "microseconds",
+    "valid": true
+  },
+  "sampleTarget": 100,
+  "captureLimitSeconds": 120,
+  "sampleCount": 100,
+  "captureStartedMonotonicUs": 4190959,
+  "captureEndedMonotonicUs": 118622218,
+  "captureDurationUs": 114431259,
+  "diagServiceSampleDurationUs": {
+    "p99": 1699,
+    "max": 1867
+  },
+  "opcUaTaskStackHighWaterBytes": 31368,
+  "phaseMaxUs": {
+    "acquire": 30,
+    "copy": 415,
+    "heap": 213,
+    "psram": 98,
+    "lwip": 35,
+    "tasks": 1269,
+    "publish": 40
+  },
+  "maxSamplePhaseUs": {
+    "acquire": 30,
+    "copy": 349,
+    "heap": 47,
+    "psram": 74,
+    "lwip": 35,
+    "tasks": 1269,
+    "publish": 39
+  },
+  "baselineComparisonState": "not-run"
+}

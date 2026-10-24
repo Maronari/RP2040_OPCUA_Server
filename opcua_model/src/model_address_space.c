@@ -1550,6 +1550,231 @@ UA_StatusCode model_add_task_stack_high_water_node(UA_Server *server,
                                        task_context);
 }
 
+/* T2 fixed diagnostic nodes share one node context. Their full NodeId is the
+ * discriminator in model_read_value(), keeping the additive surface from
+ * consuming an internal-SRAM context object per counter. */
+typedef struct
+{
+    const char *node_id;
+    const char *browse_name;
+    UA_UInt16 type_index;
+} model_t2_fixed_node_t;
+
+static UA_StatusCode model_add_t2_fixed_nodes(UA_Server *server,
+                                              UA_NodeId parent_id,
+                                              const model_t2_fixed_node_t *nodes,
+                                              size_t count)
+{
+    for (size_t index = 0u; index < count; ++index)
+    {
+        UA_StatusCode status = model_add_readonly_variable(
+            server, nodes[index].node_id, nodes[index].browse_name, parent_id,
+            UA_TYPES[nodes[index].type_index].typeId,
+            &g_fixed_node_contexts[FIXED_CTX_DIAG_RESOURCE_SNAPSHOT]);
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+typedef struct
+{
+    const char *folder_id;
+    const char *browse_name;
+    const char *current_id;
+    const char *peak_id;
+    const char *capacity_id;
+} model_t3_opcua_resource_nodes_t;
+
+static UA_StatusCode model_add_t3_opcua_resource_nodes(UA_Server *server,
+                                                       UA_NodeId diagnostics_id)
+{
+    static const model_t3_opcua_resource_nodes_t resources[] = {
+        {"Device.Diagnostics.OpcUa.Sessions", "Sessions",
+         "Device.Diagnostics.OpcUa.Sessions.Current",
+         "Device.Diagnostics.OpcUa.Sessions.Peak",
+         "Device.Diagnostics.OpcUa.Sessions.Capacity"},
+        {"Device.Diagnostics.OpcUa.SecureChannels", "SecureChannels",
+         "Device.Diagnostics.OpcUa.SecureChannels.Current",
+         "Device.Diagnostics.OpcUa.SecureChannels.Peak",
+         "Device.Diagnostics.OpcUa.SecureChannels.Capacity"},
+        {"Device.Diagnostics.OpcUa.Subscriptions", "Subscriptions",
+         "Device.Diagnostics.OpcUa.Subscriptions.Current",
+         "Device.Diagnostics.OpcUa.Subscriptions.Peak",
+         "Device.Diagnostics.OpcUa.Subscriptions.Capacity"},
+        {"Device.Diagnostics.OpcUa.MonitoredItems", "MonitoredItems",
+         "Device.Diagnostics.OpcUa.MonitoredItems.Current",
+         "Device.Diagnostics.OpcUa.MonitoredItems.Peak",
+         "Device.Diagnostics.OpcUa.MonitoredItems.Capacity"},
+        {"Device.Diagnostics.OpcUa.PublishRequests", "PublishRequests",
+         "Device.Diagnostics.OpcUa.PublishRequests.Current",
+         "Device.Diagnostics.OpcUa.PublishRequests.Peak",
+         "Device.Diagnostics.OpcUa.PublishRequests.Capacity"},
+        {"Device.Diagnostics.OpcUa.EventQueue", "EventQueue",
+         "Device.Diagnostics.OpcUa.EventQueue.Current",
+         "Device.Diagnostics.OpcUa.EventQueue.Peak",
+         "Device.Diagnostics.OpcUa.EventQueue.Capacity"}};
+    static const model_t2_fixed_node_t counters[] = {
+        {"Device.Diagnostics.OpcUa.RejectedRequests", "RejectedRequests", UA_TYPES_UINT64},
+        {"Device.Diagnostics.OpcUa.RejectedRequestsWrapCount", "RejectedRequestsWrapCount", UA_TYPES_UINT64},
+        {"Device.Diagnostics.OpcUa.EventQueueDrops", "EventQueueDrops", UA_TYPES_UINT64},
+        {"Device.Diagnostics.OpcUa.EventQueueDropsWrapCount", "EventQueueDropsWrapCount", UA_TYPES_UINT64}};
+    const UA_NodeId root_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.OpcUa");
+    UA_StatusCode status = model_add_folder(server, "Device.Diagnostics.OpcUa", "OpcUa",
+                                             diagnostics_id,
+                                             UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+
+    for (size_t index = 0u; index < sizeof(resources) / sizeof(resources[0]); ++index)
+    {
+        const model_t3_opcua_resource_nodes_t *resource = &resources[index];
+        const UA_NodeId folder_id = UA_NODEID_STRING(1, (char *)resource->folder_id);
+        const model_t2_fixed_node_t nodes[] = {
+            {resource->current_id, "Current", UA_TYPES_UINT64},
+            {resource->peak_id, "Peak", UA_TYPES_UINT64},
+            {resource->capacity_id, "Capacity", UA_TYPES_UINT64}};
+        status = model_add_folder(server, resource->folder_id, resource->browse_name,
+                                  root_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+        status = model_add_t2_fixed_nodes(server, folder_id, nodes,
+                                          sizeof(nodes) / sizeof(nodes[0]));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+    return model_add_t2_fixed_nodes(server, root_id, counters,
+                                    sizeof(counters) / sizeof(counters[0]));
+}
+
+static UA_StatusCode model_add_t2_task_subtree(UA_Server *server, const char *task_name)
+{
+    static const char *const fields[] = {
+        "Present", "Name", "TaskNumber", "Generation", "GenerationWrapCount",
+        "State", "StateText", "CurrentPriority", "BasePriority", "RuntimeCounterMs",
+        "RuntimeCounterWrapCount", "RuntimePercent", "StackHighWatermarkBytes"};
+    static const UA_UInt16 types[] = {
+        UA_TYPES_BOOLEAN, UA_TYPES_STRING, UA_TYPES_UINT32, UA_TYPES_UINT64, UA_TYPES_UINT64,
+        UA_TYPES_UINT32, UA_TYPES_STRING, UA_TYPES_UINT32, UA_TYPES_UINT32, UA_TYPES_UINT64,
+        UA_TYPES_UINT64, UA_TYPES_DOUBLE, UA_TYPES_UINT64};
+    char object_id[64];
+    char variable_id[96];
+    UA_NodeId tasks_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.Tasks");
+    UA_StatusCode status;
+
+    const int object_id_length = task_name == NULL ? -1 :
+        snprintf(object_id, sizeof(object_id), "Device.Diagnostics.Tasks.%s", task_name);
+    if (task_name == NULL || task_name[0] == '\0' || object_id_length < 0 ||
+        (size_t)object_id_length >= sizeof(object_id))
+    {
+        return UA_STATUSCODE_BADOUTOFRANGE;
+    }
+    status = model_add_object(server, object_id, task_name, task_name, tasks_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    for (size_t index = 0u; index < sizeof(fields) / sizeof(fields[0]); ++index)
+    {
+        const int written = snprintf(variable_id, sizeof(variable_id), "%s.%s", object_id, fields[index]);
+        if (written < 0 || (size_t)written >= sizeof(variable_id))
+        {
+            status = UA_STATUSCODE_BADOUTOFRANGE;
+        }
+        else
+        {
+            status = model_add_readonly_variable(server, variable_id, fields[index],
+                                                 UA_NODEID_STRING(1, object_id),
+                                                 UA_TYPES[types[index]].typeId,
+                                                 &g_fixed_node_contexts[FIXED_CTX_DIAG_RESOURCE_SNAPSHOT]);
+        }
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            (void)UA_Server_deleteNode(server, UA_NODEID_STRING(1, object_id), true);
+            return status;
+        }
+    }
+    return UA_STATUSCODE_GOOD;
+}
+
+static void model_sync_t2_task_subtrees(UA_Server *server)
+{
+    const diag_service_snapshot_t *snapshot = g_model_resource_snapshot_cache;
+    bool incomplete;
+
+    if (server == NULL || !g_model_config.enable_task_diagnostics ||
+        !g_model_resource_snapshot_cache_available || snapshot == NULL)
+    {
+        if (g_model_config.enable_task_diagnostics)
+        {
+            g_model_resource_task_model_incomplete = true;
+        }
+        return;
+    }
+    incomplete = snapshot->task_model_incomplete;
+    for (uint32_t index = 0u; index < snapshot->retained_task_count &&
+                             index < DIAG_SERVICE_MAX_SNAPSHOT_TASKS; ++index)
+    {
+        char object_id[64];
+        UA_NodeClass node_class = UA_NODECLASS_UNSPECIFIED;
+        const char *name = snapshot->tasks[index].name;
+
+        const int object_id_length = snprintf(object_id, sizeof(object_id),
+                                              "Device.Diagnostics.Tasks.%s", name);
+        if (name[0] == '\0' || object_id_length < 0 ||
+            (size_t)object_id_length >= sizeof(object_id))
+        {
+            incomplete = true;
+            continue;
+        }
+        if (UA_Server_readNodeClass(server, UA_NODEID_STRING(1, object_id), &node_class) ==
+            UA_STATUSCODE_GOOD)
+        {
+            continue;
+        }
+        /* One transactional attempt per completed service snapshot. On an
+         * allocation/add failure the object was deleted and this bounded scan
+         * retries only on the next one-second publication. */
+        if (model_add_t2_task_subtree(server, name) != UA_STATUSCODE_GOOD)
+        {
+            incomplete = true;
+        }
+    }
+    g_model_resource_task_model_incomplete = incomplete;
+}
+
+void model_refresh_resource_diagnostics(UA_Server *server)
+{
+    if (g_model_resource_snapshot_cache == NULL)
+    {
+        g_model_resource_snapshot_cache_available = false;
+        g_model_resource_task_model_incomplete = g_model_config.enable_task_diagnostics;
+        return;
+    }
+    if (!diag_service_get_snapshot(g_model_resource_snapshot_cache))
+    {
+        if (g_model_resource_snapshot_cache_available)
+        {
+            g_model_resource_snapshot_cache_stale = true;
+        }
+        return;
+    }
+    g_model_resource_snapshot_cache_available = true;
+    g_model_resource_snapshot_cache_stale = false;
+    g_model_resource_snapshot_cache_monotonic_ms = time_us_64() / 1000u;
+    model_sync_t2_task_subtrees(server);
+}
+
 /**
  * @brief Initializes and returns the fixed-slot `model_node_context_t` for
  *        one legacy per-channel field (`g_channel_node_contexts[channel_index][field_index]`),
@@ -2157,8 +2382,11 @@ UA_StatusCode model_build_address_space(UA_Server *server)
     UA_NodeId identification_id = UA_NODEID_STRING(1, (char *)"Device.Identification");
     UA_NodeId channels_id = UA_NODEID_STRING(1, (char *)DEVICE_CHANNELS_NODE_ID);
     UA_NodeId diagnostics_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics");
+    UA_NodeId heap_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.Heap");
     UA_NodeId psram_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.PSRAM");
+    UA_NodeId lwip_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.PSRAM.LwIP");
     UA_NodeId task_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.Task");
+    UA_NodeId tasks_id = UA_NODEID_STRING(1, (char *)"Device.Diagnostics.Tasks");
     UA_NodeId network_id = UA_NODEID_STRING(1, (char *)"Device.Network");
     UA_NodeId time_id = UA_NODEID_STRING(1, (char *)"Device.Time");
     UA_NodeId security_id = UA_NODEID_STRING(1, (char *)"Device.Security");
@@ -2850,6 +3078,64 @@ UA_StatusCode model_build_address_space(UA_Server *server)
         {
             return status;
         }
+
+        status = model_add_folder(server, "Device.Diagnostics.Heap", "Heap", diagnostics_id,
+                                  UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+        {
+            static const model_t2_fixed_node_t heap_nodes[] = {
+                {"Device.Diagnostics.Heap.TotalBytes", "TotalBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.UsedBytes", "UsedBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.PeakUsedBytes", "PeakUsedBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.FreeBytes", "FreeBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.MinimumEverFreeBytes", "MinimumEverFreeBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.LargestFreeBlockBytes", "LargestFreeBlockBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.SmallestFreeBlockBytes", "SmallestFreeBlockBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.FreeBlockCount", "FreeBlockCount", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.SuccessfulAllocations", "SuccessfulAllocations", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.SuccessfulAllocationsWrapCount", "SuccessfulAllocationsWrapCount", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.SuccessfulFrees", "SuccessfulFrees", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.SuccessfulFreesWrapCount", "SuccessfulFreesWrapCount", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.FailedAllocations", "FailedAllocations", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.FailedAllocationsWrapCount", "FailedAllocationsWrapCount", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.InvalidContextFailures", "InvalidContextFailures", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.InvalidContextFailuresWrapCount", "InvalidContextFailuresWrapCount", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.LastFailedRequestedBytes", "LastFailedRequestedBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.LastFailedAdjustedBytes", "LastFailedAdjustedBytes", UA_TYPES_UINT64},
+                {"Device.Diagnostics.Heap.LastFailureReason", "LastFailureReason", UA_TYPES_UINT32},
+                {"Device.Diagnostics.Heap.LastFailureReasonText", "LastFailureReasonText", UA_TYPES_STRING},
+                {"Device.Diagnostics.Heap.LastFailureTimestamp", "LastFailureTimestamp", UA_TYPES_DATETIME},
+                {"Device.Diagnostics.Heap.LastFailureUptimeMs", "LastFailureUptimeMs", UA_TYPES_UINT64}};
+            status = model_add_t2_fixed_nodes(server, heap_id, heap_nodes,
+                                              sizeof(heap_nodes) / sizeof(heap_nodes[0]));
+            if (status != UA_STATUSCODE_GOOD)
+            {
+                return status;
+            }
+        }
+    }
+
+    {
+        static const model_t2_fixed_node_t snapshot_nodes[] = {
+            {"Device.Diagnostics.SnapshotSequence", "SnapshotSequence", UA_TYPES_UINT64},
+            {"Device.Diagnostics.SnapshotSequenceWrapCount", "SnapshotSequenceWrapCount", UA_TYPES_UINT64},
+            {"Device.Diagnostics.SnapshotTimestamp", "SnapshotTimestamp", UA_TYPES_DATETIME},
+            {"Device.Diagnostics.SnapshotAgeMs", "SnapshotAgeMs", UA_TYPES_UINT64}};
+        status = model_add_t2_fixed_nodes(server, diagnostics_id, snapshot_nodes,
+                                          sizeof(snapshot_nodes) / sizeof(snapshot_nodes[0]));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+
+    status = model_add_t3_opcua_resource_nodes(server, diagnostics_id);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
     }
 
     status = model_add_readonly_variable(server,
@@ -2861,6 +3147,56 @@ UA_StatusCode model_build_address_space(UA_Server *server)
     if (status != UA_STATUSCODE_GOOD)
     {
         return status;
+    }
+
+    {
+        static const model_t2_fixed_node_t psram_nodes[] = {
+            {"Device.Diagnostics.PSRAM.PeakUsedBytes", "PeakUsedBytes", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.RequestedBytesInUse", "RequestedBytesInUse", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.PeakRequestedBytesInUse", "PeakRequestedBytesInUse", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.SuccessfulAllocations", "SuccessfulAllocations", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.SuccessfulAllocationsWrapCount", "SuccessfulAllocationsWrapCount", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.SuccessfulFrees", "SuccessfulFrees", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.SuccessfulFreesWrapCount", "SuccessfulFreesWrapCount", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.FailedAllocations", "FailedAllocations", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.FailedAllocationsWrapCount", "FailedAllocationsWrapCount", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LockTimeouts", "LockTimeouts", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LockTimeoutsWrapCount", "LockTimeoutsWrapCount", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.InvalidContextFailures", "InvalidContextFailures", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.InvalidContextFailuresWrapCount", "InvalidContextFailuresWrapCount", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LastFailedRequestedBytes", "LastFailedRequestedBytes", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LastFailureReason", "LastFailureReason", UA_TYPES_UINT32},
+            {"Device.Diagnostics.PSRAM.LastFailureReasonText", "LastFailureReasonText", UA_TYPES_STRING},
+            {"Device.Diagnostics.PSRAM.LastFailureTimestamp", "LastFailureTimestamp", UA_TYPES_DATETIME},
+            {"Device.Diagnostics.PSRAM.LastFailureUptimeMs", "LastFailureUptimeMs", UA_TYPES_UINT64}};
+        status = model_add_t2_fixed_nodes(server, psram_id, psram_nodes,
+                                          sizeof(psram_nodes) / sizeof(psram_nodes[0]));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+    }
+
+    status = model_add_folder(server, "Device.Diagnostics.PSRAM.LwIP", "LwIP", psram_id,
+                              UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        return status;
+    }
+    {
+        static const model_t2_fixed_node_t lwip_nodes[] = {
+            {"Device.Diagnostics.PSRAM.LwIP.ReservedBytes", "ReservedBytes", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LwIP.UsedBytes", "UsedBytes", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LwIP.PeakUsedBytes", "PeakUsedBytes", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LwIP.LargestFreeBlockBytes", "LargestFreeBlockBytes", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LwIP.FailedAllocations", "FailedAllocations", UA_TYPES_UINT64},
+            {"Device.Diagnostics.PSRAM.LwIP.FailedAllocationsWrapCount", "FailedAllocationsWrapCount", UA_TYPES_UINT64}};
+        status = model_add_t2_fixed_nodes(server, lwip_id, lwip_nodes,
+                                          sizeof(lwip_nodes) / sizeof(lwip_nodes[0]));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
     }
 
     status = model_add_readonly_variable(server,
@@ -2953,6 +3289,24 @@ UA_StatusCode model_build_address_space(UA_Server *server)
 
     if (g_model_config.enable_task_diagnostics)
     {
+        static const model_t2_fixed_node_t task_snapshot_nodes[] = {
+            {"Device.Diagnostics.TaskCount", "TaskCount", UA_TYPES_UINT32},
+            {"Device.Diagnostics.TaskListTruncated", "TaskListTruncated", UA_TYPES_BOOLEAN},
+            {"Device.Diagnostics.TaskNameConflict", "TaskNameConflict", UA_TYPES_BOOLEAN},
+            {"Device.Diagnostics.TaskModelIncomplete", "TaskModelIncomplete", UA_TYPES_BOOLEAN}};
+
+        status = model_add_t2_fixed_nodes(server, diagnostics_id, task_snapshot_nodes,
+                                          sizeof(task_snapshot_nodes) / sizeof(task_snapshot_nodes[0]));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
+        status = model_add_folder(server, "Device.Diagnostics.Tasks", "Tasks", diagnostics_id,
+                                  UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
+        if (status != UA_STATUSCODE_GOOD)
+        {
+            return status;
+        }
         status = model_add_folder(server, "Device.Diagnostics.Task", "Task", diagnostics_id, UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT));
         if (status != UA_STATUSCODE_GOOD)
         {

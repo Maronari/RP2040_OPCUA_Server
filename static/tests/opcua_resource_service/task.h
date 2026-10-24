@@ -1,0 +1,6 @@
+#ifndef OPCUA_RESOURCE_SERVICE_TEST_TASK_H
+#define OPCUA_RESOURCE_SERVICE_TEST_TASK_H
+
+#include "FreeRTOS.h"
+
+#endif

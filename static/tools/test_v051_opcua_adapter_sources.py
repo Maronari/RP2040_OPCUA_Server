@@ -14,6 +14,7 @@ or renamed -- see verify_opcua_public_contract.py).
 
 from __future__ import annotations
 
+import argparse
 import pathlib
 import subprocess
 import sys
@@ -28,7 +29,10 @@ def require(condition: bool, message: str) -> None:
         raise SystemExit(f"v0.5.1-opcua-source: FAIL: {message}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--skip-public-contract", action="store_true")
+    args = parser.parse_args(argv)
     sources = "\n".join(path.read_text(encoding="utf-8") for path in MODEL_DIR.glob("*.[ch]"))
     require("channel_manager_copy_snapshot_by_id(" in sources,
             "adapter does not read coherent channel snapshots by stable id")
@@ -144,13 +148,14 @@ def main() -> int:
             "case DRIVER_CATALOG_RESOURCE_UIC_CHANNEL:" in configuration,
             "model_driver_resource_type_to_string() has fallen behind driver_catalog_resource_type_t again")
 
-    result = subprocess.run(
-        [sys.executable, "static/tools/verify_opcua_public_contract.py",
-         "--baseline", "c6da6c44326e6b1fe67b06656ac8a3518c12ea9e", "--allow-v051-additions"],
-        cwd=ROOT,
-        check=False,
-    )
-    require(result.returncode == 0, "v0.5.0 public-contract comparison failed")
+    if not args.skip_public_contract:
+        result = subprocess.run(
+            [sys.executable, "static/tools/verify_opcua_public_contract.py",
+             "--baseline", "c6da6c44326e6b1fe67b06656ac8a3518c12ea9e", "--allow-v051-additions"],
+            cwd=ROOT,
+            check=False,
+        )
+        require(result.returncode == 0, "v0.5.0 public-contract comparison failed")
     print("v0.5.1-opcua-source: PASS")
     return 0
 

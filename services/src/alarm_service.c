@@ -27,6 +27,7 @@
  */
 
 #include "services/alarm_service.h"
+#include "services/benchmark_profile.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -539,6 +540,12 @@ static void alarm_service_evaluate_channel(const telemetry_channel_t *channel, u
 
 void alarm_service_evaluate_all(uint32_t now_ms)
 {
+#if RP2_BENCHMARK_PROFILE_ENABLED && !RP2_BENCHMARK_EVENTS_ENABLED
+    /* Keep the events-off workload free of channel alarm evaluation. The
+     * task remains bounded and scheduled, preserving the task profile. */
+    (void)now_ms;
+    return;
+#else
     const size_t channel_count = channel_manager_count();
 
     for (size_t index = 0u; index < channel_count; ++index)
@@ -556,6 +563,7 @@ void alarm_service_evaluate_all(uint32_t now_ms)
 
         alarm_service_evaluate_channel(&snapshot.channel, now_ms);
     }
+#endif
 }
 
 void alarm_service_task(void *argument)

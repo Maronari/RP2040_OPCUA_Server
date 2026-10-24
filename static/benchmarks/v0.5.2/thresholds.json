@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "basis": "2026-10-21 clean reference-board evidence for both required profiles; static SRAM maximum leaves a 1024-byte reserve below the 532480-byte RP2350 layout",
+  "staticMaxima": {
+    "ElfFileBytes": 20000000,
+    "Uf2FileBytes": 7400000,
+    "BinFileBytes": 3700000,
+    "ExternalFlashLoadBytes": 3700000,
+    "SramStaticTotalBytes": 531456
+  },
+  "releaseRequiredProfiles": [
+    "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+    "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1"
+  ],
+  "hardwareMaxima": [
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "metric": "ReadLatencyMs.p99",
+      "max": 120.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "metric": "SecureSessionEstablishmentLatencyMs.Cold.max",
+      "max": 5000.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "metric": "SecureSessionEstablishmentLatencyMs.Warm.max",
+      "max": 5000.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "metric": "Heap.PeakUsedBytes",
+      "max": 100000,
+      "unit": "bytes"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "metric": "PSRAM.PeakUsedBytes",
+      "max": 5500000,
+      "unit": "bytes"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "metric": "ReadLatencyMs.p99",
+      "max": 1000.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "metric": "SecureSessionEstablishmentLatencyMs.Cold.max",
+      "max": 5000.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "metric": "SecureSessionEstablishmentLatencyMs.Warm.max",
+      "max": 5000.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "metric": "Heap.PeakUsedBytes",
+      "max": 100000,
+      "unit": "bytes"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "metric": "PSRAM.PeakUsedBytes",
+      "max": 7000000,
+      "unit": "bytes"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "metric": "SamplingJitterMs.p99",
+      "max": 25.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "metric": "SamplingJitterMs.p99",
+      "max": 75.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
+      "metric": "StartupLatencyMs.max",
+      "max": 35000.0,
+      "unit": "milliseconds"
+    },
+    {
+      "profileId": "v052-syn-c1-ns0full-secbasic256sha256-signandencrypt-cl1-hz1-ev0-hist0",
+      "metric": "StartupLatencyMs.max",
+      "max": 35000.0,
+      "unit": "milliseconds"
+    }
+  ]
+}

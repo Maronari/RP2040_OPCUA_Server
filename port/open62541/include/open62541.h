@@ -44923,6 +44923,34 @@ typedef struct {
 UA_ServerStatistics UA_EXPORT UA_THREADSAFE
 UA_Server_getStatistics(UA_Server *server);
 
+/** Bounded server-owned resource snapshot. Publish and event occupancy peaks
+ * reset with the server. Event capacity is the sum of negotiated event-item
+ * queue bounds at the time of the call and may shrink below a historical peak.
+ * EventQueueDrops counts discarded non-marker event notifications.
+ * RejectedRequests counts successfully transmitted ServiceFault responses;
+ * it excludes bad per-operation results and transport-handshake failures.
+ * Counter values wrap at UInt64 and their wrap counters saturate. A false
+ * availability flag means the corresponding fields are unavailable. */
+typedef struct {
+    UA_UInt64 publishRequestsCurrent;
+    UA_UInt64 publishRequestsPeak;
+    UA_UInt64 publishRequestsCapacity;
+    UA_Boolean publishRequestsAvailable;
+    UA_UInt64 eventQueueCurrent;
+    UA_UInt64 eventQueuePeak;
+    UA_UInt64 eventQueueCapacity;
+    UA_Boolean eventQueueAvailable;
+    UA_UInt64 eventQueueDrops;
+    UA_UInt64 eventQueueDropsWrapCount;
+    UA_Boolean eventQueueDropsAvailable;
+    UA_UInt64 rejectedRequests;
+    UA_UInt64 rejectedRequestsWrapCount;
+    UA_Boolean rejectedRequestsAvailable;
+} UA_ServerResourceUsage;
+
+UA_StatusCode UA_EXPORT UA_THREADSAFE
+UA_Server_getResourceUsage(UA_Server *server, UA_ServerResourceUsage *usage);
+
 /**
  * Reverse Connect
  * ---------------

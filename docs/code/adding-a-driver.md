@@ -50,6 +50,13 @@ the simplest possible version of this: `source_index` selects one of
 eight independent channels, `source_flags` must be `0` (no
 configuration exists for this driver at all).
 
+The synthetic example also implements a deliberately narrow `write` slot for
+v0.5.2 benchmark profiles. It accepts only exactly integral floating-point
+values in the `UInt32` range and updates the caller-owned counter in RAM. Its
+catalog default remains enabled but not writable; the explicit synthetic
+benchmark profile adds the writable channel flag. This keeps the example free
+of hardware and persistence while exercising the normal channel Write path.
+
 Where should the new files live?
 
 - `drivers/include/drivers/<name>_driver.h` + `drivers/src/<name>_driver.c`

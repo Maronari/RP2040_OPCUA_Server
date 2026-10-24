@@ -1,0 +1,7 @@
+Using auto client certificate: C:\Users\IVANKO~1\AppData\Local\Temp\rp2040_opcua_client\client_cert.der
+Using secure channel: Basic256Sha256/SignAndEncrypt
+Using server certificate: E:\Projects\RP2040_OPCUA_Server\static\certs\server.crt.der
+Device identity: {"deviceName": "RP2 Basic Device", "gitHash": "2881230c2ccb", "hardwareRevision": "waveshare_core2350b_16mb_psram8mb/W5500", "macAddress": "00:08:DC:12:34:56", "model": "LocalizedText(Locale='en-US', Text='BasicFirmwareProfile')", "serialNumber": "C3F9822180D224D1", "softwareRevision": "0.5.1"}
+Resource diagnostics: {"opcStackHighWatermark": 7868, "psramFreeBytes": 3899488, "psramLargestFreeBlockBytes": 3878848, "psramReady": true, "psramTotalBytes": 8388608, "psramUsedBytes": 4489120, "spiStackHighWatermark": 874, "tempStackHighWatermark": 211}
+Generic channel namespace index: 4
+verify-channel-model: PASS

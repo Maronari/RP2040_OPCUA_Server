@@ -35,7 +35,9 @@ import asyncio
 import datetime
 import json
 import logging
+import math
 import os
+import re
 import sys
 import time
 from argparse import Namespace
@@ -45,6 +47,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 NULL_DATETIME_YEAR = 1601
 BOOT_RELATIVE_LIMIT = datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)
+MAX_BOOT_CLOCK_DURATION_SECONDS = 900.0
+MAX_BOOT_CLOCK_SAMPLES = 4096
+MIN_BOOT_CLOCK_INTERVAL_SECONDS = 0.1
+MAX_BOOT_CLOCK_TIMEOUT_SECONDS = 30.0
 
 
 def classify(created_at: datetime.datetime | None, local_now: datetime.datetime) -> tuple[str, float | None]:
@@ -58,6 +64,12 @@ def classify(created_at: datetime.datetime | None, local_now: datetime.datetime)
     if created_at < BOOT_RELATIVE_LIMIT:
         return "boot-relative", None
     return "utc", (created_at - local_now).total_seconds()
+
+
+def serial_port_present(device: str, ports) -> bool:
+    """Return whether the exact host-visible serial device is enumerated."""
+    expected = device.casefold()
+    return any(str(getattr(port, "device", "")).casefold() == expected for port in ports)
 
 
 async def token_created_at(url: str, timeout: float):
@@ -96,9 +108,39 @@ async def try_login(url: str, username: str, password: str, timeout: float) -> s
 
 async def run(args: argparse.Namespace) -> int:
     logging.disable(logging.CRITICAL)
+    numeric_bounds = (args.duration, args.interval, args.timeout)
+    if (not all(type(value) in (int, float) and math.isfinite(value)
+                for value in numeric_bounds)
+            or not 0 < args.duration <= MAX_BOOT_CLOCK_DURATION_SECONDS
+            or args.interval < MIN_BOOT_CLOCK_INTERVAL_SECONDS
+            or not 0 < args.timeout <= MAX_BOOT_CLOCK_TIMEOUT_SECONDS
+            or type(args.utc_samples) is not int or not 1 <= args.utc_samples <= 64
+            or math.ceil(args.duration / args.interval) > MAX_BOOT_CLOCK_SAMPLES):
+        print("boot-clock: FAIL: collection bounds require duration 0..900s, interval >=0.1s, "
+              "timeout 0..30s, UTC samples 1..64 and at most 4096 retained samples")
+        return 2
     samples = []
     login_result = None
     start = time.monotonic()
+    serial_boundary = None
+    if args.cold_boot_serial:
+        from serial.tools import list_ports
+
+        if (not isinstance(args.profile_id, str) or not args.profile_id
+                or re.fullmatch(r"[0-9a-f]{40}", args.git_commit or "") is None
+                or re.fullmatch(r"[0-9a-f]{64}", args.flashed_uf2_sha256 or "") is None):
+            print("boot-clock: FAIL: cold-boot evidence requires profile ID, full Git SHA and UF2 SHA-256")
+            return 2
+        initially_present = serial_port_present(args.cold_boot_serial, list_ports.comports())
+        if initially_present:
+            print("boot-clock: FAIL: cold-boot serial boundary is already present; start with the board unpowered")
+            return 2
+        serial_boundary = {
+            "method": "host-monotonic-usb-serial-enumeration",
+            "serialPort": args.cold_boot_serial,
+            "absentAtObserverStart": True,
+            "enumerationObservedSeconds": None,
+        }
     utc_seen = 0
     username = os.getenv("OPCUA_USERNAME")
     password = os.getenv("OPCUA_PASSWORD")
@@ -106,8 +148,18 @@ async def run(args: argparse.Namespace) -> int:
         print("boot-clock: FAIL: --login-check needs OPCUA_USERNAME and OPCUA_PASSWORD in your own shell")
         return 2
 
+    sample_capacity_exhausted = False
     while time.monotonic() - start < args.duration:
+        if len(samples) >= MAX_BOOT_CLOCK_SAMPLES:
+            sample_capacity_exhausted = True
+            break
         elapsed = time.monotonic() - start
+        if serial_boundary is not None and serial_boundary["enumerationObservedSeconds"] is None:
+            from serial.tools import list_ports
+
+            if serial_port_present(args.cold_boot_serial, list_ports.comports()):
+                serial_boundary["enumerationObservedSeconds"] = round(elapsed, 3)
+                print(f"t+{elapsed:6.1f}s serial-boundary {args.cold_boot_serial} enumerated")
         now = datetime.datetime.now(datetime.timezone.utc)
         try:
             created = await asyncio.wait_for(token_created_at(args.server_url, args.timeout), args.timeout + 1.0)
@@ -148,10 +200,16 @@ async def run(args: argparse.Namespace) -> int:
     first_reachable = next((s["t"] for s in samples if s["class"] != "unreachable"), None)
     summary = {
         "server": args.server_url,
+        "profileId": args.profile_id,
+        "gitCommit": args.git_commit,
+        "flashedUf2Sha256": args.flashed_uf2_sha256,
+        "coldBootBoundary": serial_boundary,
         "firstReachableSeconds": first_reachable,
         "firstUtcSeconds": first_utc,
         "nullWindowSamples": classes.count("null"),
         "bootRelativeSeen": "boot-relative" in classes,
+        "sampleCapacity": MAX_BOOT_CLOCK_SAMPLES,
+        "sampleCapacityExhausted": sample_capacity_exhausted,
         "login": login_result,
         "samples": samples,
     }
@@ -160,7 +218,10 @@ async def run(args: argparse.Namespace) -> int:
     print(f"first reachable: {first_reachable}s, first UTC: {first_utc}s, null samples: {classes.count('null')}")
     print(f"evidence: {args.evidence}")
 
-    failed = summary["bootRelativeSeen"] or (login_result is not None and login_result["verdict"] == "FAIL")
+    missing_serial_boundary = (serial_boundary is not None
+                               and serial_boundary["enumerationObservedSeconds"] is None)
+    failed = (summary["bootRelativeSeen"] or sample_capacity_exhausted or missing_serial_boundary
+              or (login_result is not None and login_result["verdict"] == "FAIL"))
     if failed:
         print("boot-clock: FAIL")
         return 1
@@ -176,6 +237,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=4.0)
     parser.add_argument("--utc-samples", type=int, default=3, help="Stop after this many UTC samples")
     parser.add_argument("--login-check", action="store_true")
+    parser.add_argument("--cold-boot-serial",
+                        help="require this serial port absent at start and record its first enumeration")
+    parser.add_argument("--profile-id")
+    parser.add_argument("--git-commit")
+    parser.add_argument("--flashed-uf2-sha256")
     parser.add_argument("--retry-after", type=float, default=1.5)
     parser.add_argument("--evidence", type=Path, default=Path("build/boot-clock.json"))
     return parser.parse_args()
