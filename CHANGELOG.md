@@ -15,20 +15,22 @@ the tag-object SHA.
   ELF/map reporting, coherent Heap/PSRAM/task snapshots, and service/admin-only
   OPC UA sessions, secure-channel, subscription, monitored-item, Publish,
   event-queue, ServiceFault rejection and event-drop diagnostics. The
-  reference-board baseline records passing secure 1-channel and clean
-  16-channel, four-client, 10 Hz `test-none` corners; the maximum profile
-  completed all 1,200 fixed-rate Reads without a timeout or missed arrival.
+  reference-board baseline records passing secure 1-channel and
+  16-channel, four-client, 10 Hz `test-none` corners from the same clean source
+  commit; the maximum profile completed all 1,200 fixed-rate Reads without a
+  timeout or missed arrival.
   The other 190 cells are explicit `not-run` results.
   Live T2/T3 role, quality and session/SecureChannel capacity evidence is
-  recorded. Broader hardware coverage, UaExpert evidence and release acceptance
-  remain pending.
+  recorded. Broader hardware coverage remains explicit `not-run` under the
+  two-corner release policy. UaExpert evidence and release acceptance remain
+  pending.
 - Adds reproducible test-only synthetic firmware profiles for 1/4/8/16
   channels at 1/10 Hz, declared 1/2/4-client load, independent Events/history
   switches and exact secure versus plaintext-test endpoints. Benchmark images
   ignore persisted configuration, reject configuration mutations, preserve the
   physical `dev_benchmark` preset and emit deterministic profile/export metadata.
-- Adds the T5 read-only benchmark client with exact profile verification,
-  bounded latency/error reports and host tests, plus benchmark-only PSRAM
+- Adds the T5 benchmark client with exact profile verification, bounded
+  latency/error reports and host tests, plus benchmark-only PSRAM
   sampling capture controlled through serial. Each completed load repetition
   also records and validates the frozen 22-node resource snapshot through an
   existing client before cleanup. Benchmark timing samples use bounded 32-bit
@@ -38,8 +40,9 @@ the tag-object SHA.
   Native startup timing now records the bounded interval from firmware main
   entry through successful `UA_Server_run_startup`; a real cold-power-cycle
   observation binds USB enumeration and first valid UTC to the same clean
-  secure-profile image. Successful synthetic Write, correlated event delivery
-  and UaExpert evidence remain open.
+  secure-profile image. The clean hardware rerun records successful
+  nonpersistent synthetic Writes and exactly one correlated audit event with
+  unchanged event-drop counters. UaExpert evidence remains open.
 - Adds the T2 test-only reference-board exhaustion profile, with bounded
   100-cycle Heap and PSRAM fill/fail/free runners, payload verification,
   exact allocation-failure accounting, baseline and stabilized-low-water

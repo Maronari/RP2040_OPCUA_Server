@@ -211,13 +211,24 @@ for profile_id in thresholds["releaseRequiredProfiles"]:
         "environment", copy.deepcopy(legacy_release["environment"]))
     required_environment["gitDirty"] = False
     required_environment["gitCommit"] = release_commit
-rejects(lambda: validate_release_readiness(legacy_release, thresholds, ROOT),
-        "required Write evidence is not complete")
+validate_release_readiness(legacy_release, thresholds, ROOT)
 
 _release_temp = tempfile.TemporaryDirectory()
 release_root = Path(_release_temp.name)
 shutil.copytree(REPO_ROOT / "static/benchmarks/v0.5.2/evidence",
                 release_root / "static/benchmarks/v0.5.2/evidence")
+incomplete_release = copy.deepcopy(legacy_release)
+incomplete_entry = next(item for item in incomplete_release["profiles"]
+                        if item["profileId"] == thresholds["releaseRequiredProfiles"][0])
+incomplete_client_item = next(item for item in incomplete_entry["evidence"]
+                              if item["kind"] == "client")
+incomplete_client_path = release_root / incomplete_client_item["path"]
+incomplete_client = read_json(incomplete_client_path)
+incomplete_client["metrics"].pop("WriteLatencyMs")
+write_document(incomplete_client_path, incomplete_client)
+rejects(lambda: validate_release_readiness(
+            incomplete_release, thresholds, release_root),
+        "required Write evidence is not complete")
 release_ready = copy.deepcopy(legacy_release)
 for profile_id in thresholds["releaseRequiredProfiles"]:
     entry = next(item for item in release_ready["profiles"]

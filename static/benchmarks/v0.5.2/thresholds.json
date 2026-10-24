@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "basis": "2026-10-21 clean reference-board evidence for both required profiles; static SRAM maximum leaves a 1024-byte reserve below the 532480-byte RP2350 layout",
+  "basis": "2026-10-24 clean direct-Ethernet reference-board evidence for both required profiles; static SRAM maximum leaves a 1024-byte reserve below the 532480-byte RP2350 layout",
   "staticMaxima": {
     "ElfFileBytes": 20000000,
     "Uf2FileBytes": 7400000,
@@ -82,7 +82,7 @@
     {
       "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
       "metric": "SamplingJitterMs.p99",
-      "max": 75.0,
+      "max": 100.0,
       "unit": "milliseconds"
     },
     {

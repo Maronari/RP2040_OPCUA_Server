@@ -1,6 +1,6 @@
 {
   "boardRevision": "waveshare_core2350b_16mb_psram8mb",
-  "buildFlags": "base-primary-OTA-synthetic-test-none",
+  "buildFlags": "base-primary-OTA-synthetic-write-event",
   "buildType": "Debug",
   "channelCount": 16,
   "clientCount": 4,
@@ -62,7 +62,7 @@
   "errors": [],
   "eventsEnabled": true,
   "firmwareVersion": "0.5.2",
-  "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
+  "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
   "gitDirty": false,
   "historyEnabled": true,
   "loadAccounting": {
@@ -71,7 +71,7 @@
     "failedOperationCount": 0,
     "inFlightLimitExceededCount": 0,
     "missedDeadlineCount": 0,
-    "peakInFlightCount": 13,
+    "peakInFlightCount": 7,
     "rateHzPerClient": 10.0,
     "scheduledOperationCount": 1200,
     "transportFencedClientCount": 0
@@ -80,14 +80,14 @@
     "EventDeliveryLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": null,
-      "operationCount": 0,
-      "p50": null,
-      "p95": null,
-      "p99": null,
-      "reason": "no source timestamp/client receive correlation is available",
-      "sampleCount": 0,
-      "state": "unavailable",
+      "max": 113.71,
+      "operationCount": 1,
+      "p50": 113.71,
+      "p95": 113.71,
+      "p99": 113.71,
+      "reason": null,
+      "sampleCount": 1,
+      "state": "measured",
       "timedOutOperationCount": 0,
       "unit": "milliseconds"
     },
@@ -95,11 +95,11 @@
       "continuationRelease": {
         "droppedSampleCount": 0,
         "failureCount": 0,
-        "max": 76.633,
+        "max": 78.205,
         "operationCount": 4,
-        "p50": 73.625,
-        "p95": 76.633,
-        "p99": 76.633,
+        "p50": 73.877,
+        "p95": 78.205,
+        "p99": 78.205,
         "reason": null,
         "sampleCount": 4,
         "state": "measured",
@@ -108,11 +108,11 @@
       },
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 80.54,
+      "max": 138.42,
       "operationCount": 4,
-      "p50": 64.513,
-      "p95": 80.54,
-      "p99": 80.54,
+      "p50": 80.809,
+      "p95": 138.42,
+      "p99": 138.42,
       "reason": null,
       "sampleCount": 4,
       "state": "measured",
@@ -122,11 +122,11 @@
     "MethodLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 104.413,
+      "max": 164.244,
       "operationCount": 1,
-      "p50": 104.413,
-      "p95": 104.413,
-      "p99": 104.413,
+      "p50": 164.244,
+      "p95": 164.244,
+      "p99": 164.244,
       "phase": "setup-export-config-profile-verification",
       "reason": null,
       "sampleCount": 1,
@@ -137,11 +137,11 @@
     "ReadLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 1212.43,
+      "max": 634.718,
       "operationCount": 1200,
-      "p50": 76.334,
-      "p95": 307.487,
-      "p99": 583.526,
+      "p50": 82.536,
+      "p95": 312.674,
+      "p99": 506.584,
       "reason": null,
       "sampleCount": 1200,
       "state": "measured",
@@ -151,11 +151,11 @@
     "SecureSessionEstablishmentLatencyMs.Cold": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 944.279,
+      "max": 934.676,
       "operationCount": 1,
-      "p50": 944.279,
-      "p95": 944.279,
-      "p99": 944.279,
+      "p50": 934.676,
+      "p95": 934.676,
+      "p99": 934.676,
       "reason": null,
       "sampleCount": 1,
       "state": "measured",
@@ -165,11 +165,11 @@
     "SecureSessionEstablishmentLatencyMs.Warm": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": 995.302,
+      "max": 1024.404,
       "operationCount": 4,
-      "p50": 912.022,
-      "p95": 995.302,
-      "p99": 995.302,
+      "p50": 978.971,
+      "p95": 1024.404,
+      "p99": 1024.404,
       "reason": null,
       "sampleCount": 4,
       "state": "measured",
@@ -193,20 +193,20 @@
     "WriteLatencyMs": {
       "droppedSampleCount": 0,
       "failureCount": 0,
-      "max": null,
-      "operationCount": 0,
-      "p50": null,
-      "p95": null,
-      "p99": null,
-      "reason": "synthetic benchmark channels are non-writable; no mutation is permitted",
-      "sampleCount": 0,
-      "state": "unsupported",
+      "max": 78.979,
+      "operationCount": 4,
+      "p50": 71.087,
+      "p95": 78.979,
+      "p99": 78.979,
+      "reason": null,
+      "sampleCount": 4,
+      "state": "measured",
       "timedOutOperationCount": 0,
       "unit": "milliseconds"
     }
   },
   "namespaceZero": "full",
-  "networkSetup": "host-WiFi-target-W5500-same-LAN",
+  "networkSetup": "direct-Ethernet-host-169.254.34.198-target-169.254.34.100",
   "profileId": "v052-syn-c16-ns0full-sectest-none-cl4-hz10-ev1-hist1",
   "profileSchemaVersion": 1,
   "profileVerification": {
@@ -224,7 +224,7 @@
         "consistency": {
           "state": "measured"
         },
-        "elapsedMonotonicMs": 144,
+        "elapsedMonotonicMs": 121,
         "failedNodeCount": 0,
         "measuredNodeCount": 22,
         "nodeCount": 22,
@@ -287,13 +287,13 @@
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.MonitoredItems.Current",
             "state": "measured",
             "status": "Good",
-            "value": 64
+            "value": 65
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.MonitoredItems.Peak",
             "state": "measured",
             "status": "Good",
-            "value": 64
+            "value": 65
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.MonitoredItems.Capacity",
@@ -305,7 +305,7 @@
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Current",
             "state": "measured",
             "status": "Good",
-            "value": 2
+            "value": 3
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.PublishRequests.Peak",
@@ -335,13 +335,13 @@
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.EventQueue.Capacity",
             "state": "measured",
             "status": "Good",
-            "value": 0
+            "value": 17
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.RejectedRequests",
             "state": "measured",
             "status": "Good",
-            "value": 3
+            "value": 1
           },
           {
             "nodeId": "ns=1;s=Device.Diagnostics.OpcUa.RejectedRequestsWrapCount",
@@ -372,9 +372,9 @@
   "runAccounting": {
     "droppedSampleCount": 0,
     "errorCount": 0,
-    "notificationCount": 20580,
-    "operationCount": 1214,
-    "sampleCount": 1214,
+    "notificationCount": 22365,
+    "operationCount": 1219,
+    "sampleCount": 1219,
     "timedOutOperationCount": 0
   },
   "samplePeriodMs": 100,
@@ -386,10 +386,32 @@
   "securityMode": "None",
   "securityPolicy": "None",
   "subscriptionEvidence": {
-    "reason": "notification count is uncorrelated; queue-one gaps cannot establish complete delivery",
-    "state": "unavailable"
+    "correlationCount": 1,
+    "correlations": [
+      {
+        "droppedNotificationCount": 0,
+        "duplicateCount": 0,
+        "eventId": "f2d02700a9b67bcd9f9625e9994045c6",
+        "eventQueueDropWrapCountAfter": 0,
+        "eventQueueDropWrapCountBefore": 0,
+        "eventQueueDropsAfter": 0,
+        "eventQueueDropsBefore": 0,
+        "expectedTriggerStatus": "BadInvalidArgument",
+        "invalidCount": 0,
+        "latencyClock": "host-monotonic-round-trip",
+        "matchedCount": 1,
+        "observationWindowMs": 200.0,
+        "sourceNode": "ns=1;s=Device.Security",
+        "sourceTimestamp": "2026-10-24T14:27:33.150000+00:00",
+        "state": "measured",
+        "trigger": "PlanMaintenance-invalid-operation-id",
+        "triggerCount": 1
+      }
+    ],
+    "expectedCorrelationCount": 1,
+    "state": "measured"
   },
-  "timeSynchronization": "SNTP-UTC-observed",
+  "timeSynchronization": "local-DNS-NTP-UTC",
   "toolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
   "warmupSeconds": 10.0
 }

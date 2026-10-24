@@ -3,19 +3,19 @@
   "contractId": "rp2-opcua-v0.5.2-resource-benchmark",
   "release": "0.5.2",
   "environment": {
-    "recordedAt": "2026-10-21T05:29:38Z",
+    "recordedAt": "2026-10-24T14:38:41Z",
     "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
     "boardId": "waveshare_core2350b_16mb_psram8mb",
     "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
-    "network": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
+    "network": "direct Ethernet; host 169.254.34.198/16; target W5500 DHCP 169.254.34.100; local DNS/NTP",
     "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
     "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
     "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
     "buildType": "Debug",
     "firmwareVersion": "0.5.2",
-    "firmwareSource": "17da74493fa912bd362ab89dd760e8835d75a281 (clean v0.5.2 benchmark profile)",
-    "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
-    "firmwareUf2Sha256": "6bae108fd0e3b55c03d0d0454d024970b3e8d5654c77023ffc34c6907ede2151",
+    "firmwareSource": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e (clean v0.5.2 benchmark profile)",
+    "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
+    "firmwareUf2Sha256": "b5dbcf82fb6d106adab1c444859638072bfbb3e47acaeee649bda547442f7833",
     "gitDirty": false
   },
   "profiles": [
@@ -25,40 +25,40 @@
       "repetitions": 1,
       "association": "client and native windows bound by the host-orchestrated capture envelope",
       "environment": {
-        "recordedAt": "2026-10-21T05:29:38Z",
+        "recordedAt": "2026-10-24T14:38:41Z",
         "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
         "boardId": "waveshare_core2350b_16mb_psram8mb",
         "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
-        "network": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
+        "network": "direct Ethernet; host 169.254.34.198/16; target W5500 DHCP 169.254.34.100; local DNS/NTP",
         "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
         "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "buildType": "Debug",
         "firmwareVersion": "0.5.2",
-        "firmwareSource": "17da74493fa912bd362ab89dd760e8835d75a281 (clean v0.5.2 benchmark profile)",
-        "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
-        "firmwareUf2Sha256": "150aeb2e800a7c028697d3f023dc2494ad1e4e0f928217170fdd1716fe55247c",
+        "firmwareSource": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e (clean v0.5.2 benchmark profile)",
+        "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
+        "firmwareUf2Sha256": "b5dbcf82fb6d106adab1c444859638072bfbb3e47acaeee649bda547442f7833",
         "gitDirty": false
       },
       "metrics": {
         "ReadLatencyMs.p99": {
-          "value": 99.3,
+          "value": 81.049,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Cold.max": {
-          "value": 3442.705,
+          "value": 3523.579,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Warm.max": {
-          "value": 3372.349,
+          "value": 3348.859,
           "unit": "milliseconds"
         },
         "SamplingJitterMs.p99": {
-          "value": 7.007,
+          "value": 8.008,
           "unit": "milliseconds"
         },
         "StartupLatencyMs.max": {
-          "value": 23006.202,
+          "value": 22588.914,
           "unit": "milliseconds"
         },
         "Heap.PeakUsedBytes": {
@@ -66,7 +66,7 @@
           "unit": "bytes"
         },
         "PSRAM.PeakUsedBytes": {
-          "value": 5278912,
+          "value": 5266720,
           "unit": "bytes"
         }
       },
@@ -74,32 +74,32 @@
         {
           "kind": "client",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-client.json",
-          "sha256": "519e184eb07e5b2a0a208858de6ac6374254ed4999710771d08f634654fe90b6"
+          "sha256": "49c52616a367db5d0e08dfea49881eaf6664f5d389ce0ab5b60d2fa53c43c926"
         },
         {
           "kind": "native",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native.json",
-          "sha256": "45300b3570bbb50e2ec4b6addcd2f4f67d2a64668ac66ffe5448501cf584ebad"
+          "sha256": "56de1de4e7931129473227b8bbb375f051a8fadbb484ef05b35fdefd820e53be"
         },
         {
           "kind": "native-association",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-native-association.json",
-          "sha256": "633c37185a4ee6f03bf7bc0d99b5e5067090141c75e9cab7261e61f220db38f1"
+          "sha256": "7ce1b9823b96519c3fc957ba6d33b75ac4809ab5e226a002cb2d3f643f093589"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-resources.json",
-          "sha256": "55c9681805088c8b4ec340b7ef7471dcc0ac3ddbf5b25c305bd4a64df5e7fdc6"
+          "sha256": "4837b08e62cab88c7e45de5ae3ce4017291f8c318d63d74a9acdd26b6791540a"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-static-size.json",
-          "sha256": "1cfa5fd18a218df8e137bfa5fe45480049c8e5b3809fc896ba02764f553f51a6"
+          "sha256": "1c9f5e1dca4f8d4251dd67337d5c488101f5dd8d4f15ae4fa5b0e7135a79ade6"
         },
         {
           "kind": "boot-clock",
           "path": "static/benchmarks/v0.5.2/evidence/secure-c1-boot-clock.json",
-          "sha256": "2fea1cf1d5575c08f7ccd35ea65321e92077eed66de2fd910c4ba0cb27cda495"
+          "sha256": "b3301de9b682b8a6f01694cf9882ddbdc9f82aa806c34201c50b2c778c902090"
         }
       ]
     },
@@ -1059,40 +1059,40 @@
       "repetitions": 1,
       "association": "client and native windows bound by the host-orchestrated capture envelope",
       "environment": {
-        "recordedAt": "2026-10-21T05:29:38Z",
+        "recordedAt": "2026-10-24T14:38:41Z",
         "board": "waveshare_core2350b_16mb_psram8mb/W5500; RP2350 UF2 bootloader 1.1; USB COM6",
         "boardId": "waveshare_core2350b_16mb_psram8mb",
         "clientBoardRevision": "waveshare_core2350b_16mb_psram8mb",
-        "network": "host Wi-Fi 192.168.1.101/24; target W5500 DHCP 192.168.1.103; same LAN",
+        "network": "direct Ethernet; host 169.254.34.198/16; target W5500 DHCP 169.254.34.100; local DNS/NTP",
         "toolchain": "GNU Tools for STM32 arm-none-eabi-gcc 13.3.1 20240614; asyncua 2.0.1",
         "clientToolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "compiler": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe",
         "buildType": "Debug",
         "firmwareVersion": "0.5.2",
-        "firmwareSource": "17da74493fa912bd362ab89dd760e8835d75a281 (clean v0.5.2 benchmark profile)",
-        "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
-        "firmwareUf2Sha256": "6bae108fd0e3b55c03d0d0454d024970b3e8d5654c77023ffc34c6907ede2151",
+        "firmwareSource": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e (clean v0.5.2 benchmark profile)",
+        "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
+        "firmwareUf2Sha256": "63142a11db1a7dff3a94eefbac0335a00faee23ad58e729c59c1efea6abd5674",
         "gitDirty": false
       },
       "metrics": {
         "ReadLatencyMs.p99": {
-          "value": 583.526,
+          "value": 506.584,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Cold.max": {
-          "value": 944.279,
+          "value": 934.676,
           "unit": "milliseconds"
         },
         "SecureSessionEstablishmentLatencyMs.Warm.max": {
-          "value": 995.302,
+          "value": 1024.404,
           "unit": "milliseconds"
         },
         "SamplingJitterMs.p99": {
-          "value": 55.039,
+          "value": 81.048,
           "unit": "milliseconds"
         },
         "StartupLatencyMs.max": {
-          "value": 29724.852,
+          "value": 29058.52,
           "unit": "milliseconds"
         },
         "Heap.PeakUsedBytes": {
@@ -1100,7 +1100,7 @@
           "unit": "bytes"
         },
         "PSRAM.PeakUsedBytes": {
-          "value": 6820136,
+          "value": 6824808,
           "unit": "bytes"
         }
       },
@@ -1108,27 +1108,27 @@
         {
           "kind": "client",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-client.json",
-          "sha256": "9a854ce75d43d59d38daae9fce3065a6bda67d7c517f0b96f06cde6420e87b37"
+          "sha256": "d17068f14de2ff77bcc0338aa1b5ff8779e31e79d05fa01970cc8fdb2afdc44d"
         },
         {
           "kind": "native",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native.json",
-          "sha256": "3e58fefb1c0ae9eb56515c5e1388454813ff375be23121335afae7a5b710b56b"
+          "sha256": "29db4e41ae5fc6377a13bfea4f0d2fe67ebc158d62001c6ac83a9e8d996336dd"
         },
         {
           "kind": "native-association",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-native-association.json",
-          "sha256": "3c06ce895261ff142cbdf415f05eeaec1a10f6477fa70f7f6fd6e325a0faea92"
+          "sha256": "12f0346f4f1c262892a7ec653166835ef46d09c7be08bdccbc09a94ef9f4132e"
         },
         {
           "kind": "resources",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-resources.json",
-          "sha256": "48e53daadeaef4f983592a863ee5d73ea2ed328866a5dcc2c4ccf7bd6f0a63fd"
+          "sha256": "d4e8ab7b6fd93fe160bf9f891a8bd9b43ff6289df1369c417b6fe9623613f511"
         },
         {
           "kind": "static-size",
           "path": "static/benchmarks/v0.5.2/evidence/test-none-c16-static-size.json",
-          "sha256": "f005e4fb28a53a507764036e10c99128a8232691c0c9cb0bafe1b18c1a2ff6c2"
+          "sha256": "d49de8d0d6939aad94eac668d4a9fe9c27511cdf73b6f2a647710250234d242a"
         }
       ]
     }

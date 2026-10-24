@@ -14,9 +14,10 @@ does not complete the missing checks recorded in
 The current development target is `v0.5.2` (Resource Instrumentation and
 Benchmark Suite). The development version source is `0.5.2`; no `v0.5.2`
 release is claimed. The representative hardware baseline records two passing
-profiles, including the clean maximum-load `test-none` corner, and 190 explicit
-`not-run` cells. The older secure profile still has dirty-tree provenance, and
-UaExpert plus the remaining timing evidence keep release acceptance open. See
+profiles built from the same clean source commit, including the maximum-load
+`test-none` corner, and 190 explicit `not-run` cells. The required Write,
+correlated Event, timing and cold-boot evidence is recorded; manual UaExpert
+inspection keeps release acceptance open. See
 [the measured baseline](docs/releases/v0.5.2-baseline.md) and
 [the implementation plan](docs/releases/v0.5.2.md) for existing instrumentation,
 bounded measurement work, reproducible profiles and acceptance gates.

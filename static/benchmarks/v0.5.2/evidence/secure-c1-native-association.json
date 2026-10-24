@@ -1,5 +1,5 @@
 {
-  "associationId": "1b42fd65dd7cb20dcb481459a08b37b9b8aae94034b6d0433f67fef6d494506a",
+  "associationId": "4442ad0cb5d86ca716b1cd27d682c20a7fa725cbcf7062662d3833b89211f593",
   "capture": {
     "durationSeconds": 30.0,
     "nativeCaptureId": 1,
@@ -12,15 +12,15 @@
   },
   "evidence": {
     "client": {
-      "bytes": 10944,
-      "sha256": "519e184eb07e5b2a0a208858de6ac6374254ed4999710771d08f634654fe90b6"
+      "bytes": 10883,
+      "sha256": "49c52616a367db5d0e08dfea49881eaf6664f5d389ce0ab5b60d2fa53c43c926"
     },
     "native": {
-      "bytes": 4252,
-      "sha256": "45300b3570bbb50e2ec4b6addcd2f4f67d2a64668ac66ffe5448501cf584ebad"
+      "bytes": 4253,
+      "sha256": "56de1de4e7931129473227b8bbb375f051a8fadbb484ef05b35fdefd820e53be"
     },
     "staticSize": {
-      "sha256": "1cfa5fd18a218df8e137bfa5fe45480049c8e5b3809fc896ba02764f553f51a6"
+      "sha256": "1c9f5e1dca4f8d4251dd67337d5c488101f5dd8d4f15ae4fa5b0e7135a79ade6"
     }
   },
   "kind": "v052-host-orchestrated-benchmark-capture",
@@ -34,8 +34,8 @@
   "provenance": {
     "boardRevision": "waveshare_core2350b_16mb_psram8mb",
     "buildType": "Debug",
-    "flashedUf2Sha256": "150aeb2e800a7c028697d3f023dc2494ad1e4e0f928217170fdd1716fe55247c",
-    "gitCommit": "17da74493fa912bd362ab89dd760e8835d75a281",
+    "flashedUf2Sha256": "b5dbcf82fb6d106adab1c444859638072bfbb3e47acaeee649bda547442f7833",
+    "gitCommit": "d4ef59224d88f388a18e72c1c0259ce51aec3a9e",
     "gitDirty": false,
     "toolchain": "D:/Programms/ST/STM32CubeCLT_1.18.0/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe"
   },
