@@ -374,7 +374,13 @@ async def benchmark_write_once(client: Any, node_id: str, timeout_s: float,
     if ua is None:
         raise RuntimeError("asyncua types are unavailable")
     await timed(metric,
-                node.write_value(ua.Variant(requested, ua.VariantType.Double)),
+                # Passing a bare Variant makes asyncua add a host
+                # SourceTimestamp.  The channel exposes Value Write, not
+                # TimestampWrite, so open62541 rejects that wire shape before
+                # calling the DataSource adapter.  A DataValue keeps the exact
+                # Double while leaving its timestamps absent.
+                node.write_value(ua.DataValue(ua.Variant(requested,
+                                                         ua.VariantType.Double))),
                 timeout_s)
 
 

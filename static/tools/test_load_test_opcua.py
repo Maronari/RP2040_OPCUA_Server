@@ -214,6 +214,11 @@ async def test_full_run() -> None:
         assert all(entry["status"] == "Good" and entry["value"] == 1 for entry in snapshot["nodes"])
         assert any("ns=9;s=Device.Channels.c_" in node for client in clients for node in client.read_node_ids)
         assert sum(len(client.writes) for client in clients) == 1
+        written = next(value for client in clients for _node_id, value in client.writes)
+        assert isinstance(written, subject.opcua_common.ua.DataValue)
+        assert written.Value.Value == 1.0
+        assert written.Value.VariantType == subject.opcua_common.ua.VariantType.Double
+        assert written.SourceTimestamp is None and written.ServerTimestamp is None
         # cold + the one declared warm client only: the diagnostic snapshot opens no session.
         assert len(clients) == 2
         assert all(len(client.resource_node_ids) in (0, 22) for client in clients)
