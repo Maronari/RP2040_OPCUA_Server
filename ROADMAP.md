@@ -2,11 +2,17 @@
 
 > **Status:** authoritative implementation plan for Codex and human contributors.
 >
-> **Current baseline:** released `v0.5.1`, tag commit
-> `2881230c2ccbb98b8701730c4de930dc95da30fc` (PR #20).
+> **Current baseline:** owner-confirmed completed `v0.5.2`, source commit
+> `2a0bcd8027b37e176e3264f739ee70cfb105e64b`. No local `v0.5.2` tag was present
+> during preparation on 2026-10-24.
 >
-> **First unreleased version:** `v0.5.2` — Resource Instrumentation and
-> Benchmark Suite. Implementation plan: `docs/releases/v0.5.2.md`.
+> **First unreleased version:** `v0.6.0` — Signed OTA and Recoverable Boot.
+> Implementation plan: `docs/releases/v0.6.0.md`.
+>
+> **Release-status maintenance (2026-10-24):** the owner confirmed completion
+> of v0.5.2 and authorized this transition. Historical unchecked items and
+> missing UaExpert evidence remain recorded as exceptions, not verified passes.
+> Existing benchmark evidence and the industrial qualification gate are retained.
 >
 > **Release-status maintenance (2026-09-15):** the owner confirmed that
 > `v0.5.1` is released; its tag was resolved locally. Versions through
@@ -682,6 +688,18 @@ The project has defensible scalability and resource-consumption data instead of 
 ### Goal
 
 Upgrade the existing CRC-checked OTA prototype to a production-oriented update chain.
+
+### Approved compatibility transition — 2026-10-25
+
+The owner approved replacing CRC-only OTA activation with mandatory signed
+manifest/image verification in v0.6.0. Preserve existing OTA NodeIds,
+BrowseNames and method signatures, but reject unsigned activation with a
+documented deterministic result. CRC-only clients must migrate to the updated
+signed-package client; no legacy bypass is permitted. Install the new
+bootloader and signed initial image once through USB/SWD, preserving persistent
+user data. Upload/verification and explicit user-requested activation are
+separate steps. See `docs/releases/v0.6.0.md` for the approved operational
+decisions and migration tests. This annotation changes no acceptance status.
 
 ### Required implementation
 

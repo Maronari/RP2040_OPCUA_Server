@@ -429,11 +429,29 @@ def strip_c_comments(data: bytes) -> bytes:
     return stripped
 
 
+def canonicalize_v060_startup_console(data: bytes) -> bytes:
+    """Normalize only two reviewed console statements, never UA values/calls.
+
+    The lexical inventory includes printf literals. DHCP-independent startup
+    replaces its old waiting message and adds a real stack-init failure log.
+    Keep the historical inventory comparable without hiding arbitrary logs or
+    changing any expected public hash. Unknown statement changes still fail.
+    """
+    data = data.replace(
+        b'printf("[OPC UA]\\tNo IPv4 address at server creation; using wildcard endpoint\\n");',
+        b'printf("[OPC UA]\\tWaiting for IPv4 before server startup\\n");',
+    )
+    return data.replace(
+        b'printf("[OPC UA]\\tNetwork manager is not initialized\\n");', b'')
+
+
 def aggregate_current_source(source_dir: pathlib.Path) -> bytes:
     """Read the refactored model in its fixed public-registration order."""
     chunks: list[bytes] = []
     for path in MODEL_SOURCE_SET:
         data = normalized_source((source_dir / path).read_bytes())
+        if path == "opcua_model/src/model_core_lifecycle.c":
+            data = canonicalize_v060_startup_console(data)
         # Module-local private-header includes are build plumbing, not source
         # inventory. The baseline has the declarations inline in one file.
         data = data.replace(b'#include "opcua_model_internal.h"\n', b'')
@@ -443,6 +461,9 @@ def aggregate_current_source(source_dir: pathlib.Path) -> bytes:
         # The T5 timing hook observes successful startup without registering
         # nodes. Its private include is likewise build plumbing.
         data = data.replace(b'#include "services/benchmark_timing.h"\n', b'')
+        # T0 console-only measurement hooks have no UA registrations. Keep
+        # their exact private include out of the lexical namespace inventory.
+        data = data.replace(b'#include "services/ota_measurement.h"\n', b'')
         chunks.append(data)
     return b"".join(chunks)
 
@@ -455,6 +476,7 @@ def aggregate_baseline_source(source_dir: pathlib.Path, baseline: str) -> bytes:
         data = data.replace(b'#include "opcua_model_internal.h"\n', b'')
         data = data.replace(b'#include "services/benchmark_profile.h"\n', b'')
         data = data.replace(b'#include "services/benchmark_timing.h"\n', b'')
+        data = data.replace(b'#include "services/ota_measurement.h"\n', b'')
         chunks.append(data)
     return b"".join(chunks)
 

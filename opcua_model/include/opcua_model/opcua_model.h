@@ -44,10 +44,13 @@ bool opcua_model_init(const opcua_model_config_t *config);
 /**
  * @brief FreeRTOS task entry point that owns the OPC UA server's lifetime.
  *
- * Blocks until `network_manager_is_ready()` (once), then builds the
- * `UA_ServerConfig`, creates the `UA_Server`, builds the full address space,
- * starts the server, and runs `UA_Server_run_iterate()` in a loop. Never
- * returns under normal operation. Two distinct events can end a server's
+ * Requires an initialized local network stack, but does not wait for an IPv4
+ * lease in production. Builds the `UA_ServerConfig`, creates the `UA_Server`,
+ * builds the full address space, starts the server, and runs
+ * `UA_Server_run_iterate()` in a loop. An addressless boot retains the wildcard
+ * listener and publishes a discovery address after IPv4 arrives. Explicit
+ * synthetic benchmark builds retain their lease-inclusive startup timing.
+ * Never returns under normal operation. Two distinct events can end a server's
  * current lifetime:
  * - A scheduled reboot: the server shuts down and the task then blocks
  *   forever, expecting a watchdog/hardware reset to actually restart the

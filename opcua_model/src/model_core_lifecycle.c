@@ -10,8 +10,9 @@
  *   `opcua_model_context_t`'s config/pending-actions/PubSub-runtime fields,
  *   and registers `model_config_service_restart_callback` with
  *   `config_service` (v0.5.0 T6).
- * - `model_core_task` is the `OpcUaTask` entry point: waits for network
- *   readiness once, then loops building the `UA_ServerConfig` (buffers,
+ * - `model_core_task` is the `OpcUaTask` entry point: requires an initialized
+ *   network stack and (outside the synthetic benchmark profile) does not wait
+ *   for DHCP, then loops building the `UA_ServerConfig` (buffers,
  *   security policies, access control, historizing), calling
  *   `UA_Server_newWithConfig`, building the address space, starting PubSub
  *   if enabled, and running the `UA_Server_run_iterate` poll loop -- until
@@ -71,6 +72,7 @@
 #include "opcua_model_internal.h"
 
 #include "services/benchmark_timing.h"
+#include "services/ota_measurement.h"
 
 #include <timers.h>
 
@@ -487,6 +489,8 @@ void model_clear_server_urls(UA_ServerConfig *config)
     config->serverUrlsSize = 0u;
 }
 
+static const char k_model_opc_tcp_url_format[] = "opc.tcp://%s:%u/";
+
 UA_StatusCode model_configure_server_url(UA_ServerConfig *config,
                                                 const char *hostname,
                                                 uint16_t port)
@@ -500,7 +504,8 @@ UA_StatusCode model_configure_server_url(UA_ServerConfig *config,
         return UA_STATUSCODE_BADINVALIDARGUMENT;
     }
 
-    snprintf(endpoint_url, sizeof(endpoint_url), "opc.tcp://%s:%u/", hostname, (unsigned)port);
+    snprintf(endpoint_url, sizeof(endpoint_url), k_model_opc_tcp_url_format,
+             hostname, (unsigned)port);
     url = UA_STRING(endpoint_url);
 
     model_clear_server_urls(config);
@@ -518,6 +523,63 @@ UA_StatusCode model_configure_server_url(UA_ServerConfig *config,
     }
 
     config->serverUrlsSize = 1u;
+    return UA_STATUSCODE_GOOD;
+}
+
+/* Publish a late DHCP lease for discovery without rebuilding the server or
+ * touching the live endpoint/listener configuration. The replacement is fully
+ * allocated before the application description is changed, so allocation or
+ * copy failure preserves the prior discovery URL array. */
+static UA_StatusCode model_publish_discovery_url(UA_ServerConfig *config,
+                                                  const network_manager_status_t *network_status,
+                                                  uint16_t port)
+{
+    char endpoint_url[160];
+    UA_String endpoint_string;
+    UA_String *replacement_urls;
+    UA_String *previous_urls;
+    size_t previous_urls_size;
+    UA_StatusCode status;
+
+    if (config == NULL || network_status == NULL || !network_status->initialized ||
+        !network_status->has_ipv4 || network_status->ipv4_address[0] == '\0')
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+
+    const int written = snprintf(endpoint_url, sizeof(endpoint_url),
+                                 k_model_opc_tcp_url_format,
+                                 network_status->ipv4_address, (unsigned)port);
+    if (written < 0 || (size_t)written >= sizeof(endpoint_url))
+    {
+        return UA_STATUSCODE_BADINVALIDARGUMENT;
+    }
+    endpoint_string = UA_STRING(endpoint_url);
+
+    replacement_urls = (UA_String *)UA_Array_new(1u, &UA_TYPES[UA_TYPES_STRING]);
+    if (replacement_urls == NULL)
+    {
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+
+    status = UA_String_copy(&endpoint_string, &replacement_urls[0]);
+    if (status != UA_STATUSCODE_GOOD)
+    {
+        UA_String_clear(&replacement_urls[0]);
+        UA_free(replacement_urls);
+        return status;
+    }
+
+    previous_urls = config->applicationDescription.discoveryUrls;
+    previous_urls_size = config->applicationDescription.discoveryUrlsSize;
+    config->applicationDescription.discoveryUrls = replacement_urls;
+    config->applicationDescription.discoveryUrlsSize = 1u;
+
+    for (size_t index = 0u; index < previous_urls_size; ++index)
+    {
+        UA_String_clear(&previous_urls[index]);
+    }
+    UA_free(previous_urls);
     return UA_STATUSCODE_GOOD;
 }
 
@@ -1041,8 +1103,17 @@ void model_core_task(void *argument)
     UA_Server *server = NULL;
     UA_ServerConfig *config = NULL;
     UA_StatusCode status = UA_STATUSCODE_GOOD;
+    network_manager_status_t network_status = {0};
+    bool discovery_url_update_pending = false;
     opcua_resource_service_init();
-    bool wait_for_network_logged = false;
+#if FIRMWARE_OTA_MEASUREMENT
+    bool server_created_reported = false;
+    bool address_space_reported = false;
+    bool server_startup_reported = false;
+    bool opcua_stack_reported = false;
+    bool first_iteration_completed = false;
+    bool ipv4_ready_reported = false;
+#endif
     /* v0.5.0 T6: true from the second and every later pass through the
      * `for (;;)` loop below, i.e. every controlled-restart rebuild; false
      * only for the initial cold-boot pass. */
@@ -1058,6 +1129,9 @@ void model_core_task(void *argument)
     model_event_runtime_state_t event_runtime_state = {0};
     (void)argument;
 
+    OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_OPCUA_TASK,
+                          OTA_MEASUREMENT_STATE_OK);
+
     if (!g_model_initialized)
     {
         printf("[OPC UA]\tModel is not initialized\n");
@@ -1066,20 +1140,36 @@ void model_core_task(void *argument)
     }
 
     log_opcua_heap("Task started");
+#if RP2_BENCHMARK_PROFILE_ENABLED
+    /* Preserve the established lease-inclusive synthetic benchmark timing.
+     * Production and measurement builds intentionally proceed without DHCP. */
     while (!network_manager_is_ready())
     {
-        if (!wait_for_network_logged)
-        {
-            printf("[OPC UA]\tWaiting for IPv4 before server startup\n");
-            fflush(stdout);
-            wait_for_network_logged = true;
-        }
-
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-
-    printf("[OPC UA]\tIPv4 is ready, continuing startup\n");
-    fflush(stdout);
+#endif
+    network_manager_get_status(&network_status);
+    if (!network_status.initialized)
+    {
+        printf("[OPC UA]\tNetwork manager is not initialized\n");
+        fflush(stdout);
+        vTaskDelete(NULL);
+    }
+    if (!network_status.has_ipv4)
+    {
+        OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_WAITING_IPV4,
+                              OTA_MEASUREMENT_STATE_UNAVAILABLE);
+    }
+    else
+    {
+        printf("[OPC UA]\tIPv4 is ready, continuing startup\n");
+        fflush(stdout);
+        OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_IPV4_READY,
+                              OTA_MEASUREMENT_STATE_OK);
+#if FIRMWARE_OTA_MEASUREMENT
+        ipv4_ready_reported = true;
+#endif
+    }
     model_bind_open62541_allocators();
     model_sample_resource_diagnostics(NULL);
     last_diag_snapshot_tick = xTaskGetTickCount();
@@ -1094,6 +1184,7 @@ void model_core_task(void *argument)
     {
     UA_ServerConfig server_config;
     memset(&server_config, 0, sizeof(server_config));
+    discovery_url_update_pending = false;
     config = &server_config;
     config->logging = &g_model_ua_logger;
 
@@ -1217,16 +1308,26 @@ void model_core_task(void *argument)
     }
 #endif
 
-    if (g_model_config.hostname != NULL && g_model_config.hostname[0] != '\0')
+    network_manager_get_status(&network_status);
+    discovery_url_update_pending = !network_status.has_ipv4;
+    if (!network_status.has_ipv4)
     {
-        network_manager_status_t network_status = {0};
-        const char *hostname_text = g_model_config.hostname;
+        printf("[OPC UA]\tNo IPv4 address at server creation; using wildcard endpoint\n");
+        fflush(stdout);
+    }
+#if FIRMWARE_OTA_MEASUREMENT
+    else if (!ipv4_ready_reported)
+    {
+        OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_IPV4_READY,
+                              OTA_MEASUREMENT_STATE_OK);
+        ipv4_ready_reported = true;
+    }
+#endif
 
-        network_manager_get_status(&network_status);
-        if (network_status.has_ipv4 && network_status.ipv4_address[0] != '\0')
-        {
-            hostname_text = network_status.ipv4_address;
-        }
+    if (network_status.has_ipv4 && network_status.ipv4_address[0] != '\0' &&
+        g_model_config.hostname != NULL && g_model_config.hostname[0] != '\0')
+    {
+        const char *hostname_text = network_status.ipv4_address;
 
         status = model_configure_server_url(config, hostname_text, g_model_config.port);
         if (status != UA_STATUSCODE_GOOD)
@@ -1241,6 +1342,7 @@ void model_core_task(void *argument)
 
         printf("[OPC UA]\tUsing endpoint host %s\n", hostname_text);
         fflush(stdout);
+        discovery_url_update_pending = false;
     }
 
 #ifdef UA_ENABLE_ENCRYPTION_MBEDTLS
@@ -1304,9 +1406,28 @@ void model_core_task(void *argument)
     server = UA_Server_newWithConfig(config);
     if (server == NULL)
     {
+#if FIRMWARE_OTA_MEASUREMENT
+        if (!server_created_reported)
+        {
+            OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_SERVER_CREATED,
+                                  OTA_MEASUREMENT_STATE_FAILED);
+            server_created_reported = true;
+        }
+#endif
         printf("[OPC UA]\tUA_Server_newWithConfig returned NULL\n");
         fflush(stdout);
         vTaskDelete(NULL);
+    }
+    else
+    {
+#if FIRMWARE_OTA_MEASUREMENT
+        if (!server_created_reported)
+        {
+            OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_SERVER_CREATED,
+                                  OTA_MEASUREMENT_STATE_OK);
+            server_created_reported = true;
+        }
+#endif
     }
 
     log_opcua_heap("UA_Server_newWithConfig completed");
@@ -1422,6 +1543,17 @@ void model_core_task(void *argument)
         fflush(stdout);
         vTaskDelete(NULL);
     }
+    else
+    {
+#if FIRMWARE_OTA_MEASUREMENT
+        if (!address_space_reported)
+        {
+            OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_ADDRESS_SPACE,
+                                  OTA_MEASUREMENT_STATE_OK);
+            address_space_reported = true;
+        }
+#endif
+    }
     address_space_rollback_attempted = false;
 
     /* The first sample predates address-space construction. Publish it now
@@ -1466,12 +1598,38 @@ void model_core_task(void *argument)
     status = UA_Server_run_startup(server);
     if (status != UA_STATUSCODE_GOOD)
     {
+#if FIRMWARE_OTA_MEASUREMENT
+        if (!server_startup_reported)
+        {
+            OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_SERVER_STARTUP,
+                                  OTA_MEASUREMENT_STATE_FAILED);
+            server_startup_reported = true;
+        }
+#endif
         printf("[OPC UA]\tUA_Server_run_startup failed: 0x%x (%s)\n",
                status,
                UA_StatusCode_name(status));
         fflush(stdout);
         model_context_delete_server(server);
         vTaskDelete(NULL);
+    }
+    else
+    {
+#if FIRMWARE_OTA_MEASUREMENT
+        if (!server_startup_reported)
+        {
+            OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_SERVER_STARTUP,
+                                  OTA_MEASUREMENT_STATE_OK);
+            server_startup_reported = true;
+        }
+        if (!opcua_stack_reported)
+        {
+            OTA_MEASUREMENT_STACK_EVENT(OTA_MEASUREMENT_PHASE_OPCUA_STACK,
+                                        (uint64_t)uxTaskGetStackHighWaterMark(NULL) *
+                                            sizeof(StackType_t));
+            opcua_stack_reported = true;
+        }
+#endif
     }
 
     benchmark_timing_note_opcua_ready();
@@ -1569,6 +1727,30 @@ void model_core_task(void *argument)
         {
             model_sample_resource_diagnostics(server);
             model_refresh_resource_diagnostics(server);
+            if (discovery_url_update_pending)
+            {
+                network_manager_status_t late_network_status = {0};
+
+                network_manager_get_status(&late_network_status);
+                if (late_network_status.initialized && late_network_status.has_ipv4 &&
+                    late_network_status.ipv4_address[0] != '\0')
+                {
+#if FIRMWARE_OTA_MEASUREMENT
+                    if (!ipv4_ready_reported)
+                    {
+                        OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_IPV4_READY,
+                                              OTA_MEASUREMENT_STATE_OK);
+                        ipv4_ready_reported = true;
+                    }
+#endif
+                    if (model_publish_discovery_url(config,
+                                                    &late_network_status,
+                                                    g_model_config.port) == UA_STATUSCODE_GOOD)
+                    {
+                        discovery_url_update_pending = false;
+                    }
+                }
+            }
             last_diag_snapshot_tick = diag_now;
         }
 
@@ -1595,6 +1777,14 @@ void model_core_task(void *argument)
         }
 
         UA_UInt16 wait_ms = UA_Server_run_iterate(server, false);
+#if FIRMWARE_OTA_MEASUREMENT
+        if (!first_iteration_completed)
+        {
+            OTA_MEASUREMENT_EVENT(OTA_MEASUREMENT_PHASE_SERVER_ITERATE,
+                                  OTA_MEASUREMENT_STATE_OK);
+            first_iteration_completed = true;
+        }
+#endif
         if (wait_ms == 0u)
         {
             wait_ms = 10u;

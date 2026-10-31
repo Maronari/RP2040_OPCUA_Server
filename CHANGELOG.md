@@ -1,11 +1,40 @@
 # Changelog
 
-This file tracks the firmware release line through `v0.5.1`, plus the
-in-progress `v0.5.2` line. Historical tag SHAs below are resolved from peeled
+This file tracks the firmware release line through owner-confirmed completed
+`v0.5.2`, plus the in-progress `v0.6.0` line. Historical tag SHAs below are resolved from peeled
 Git tags, so annotated tags are reported by their target commit SHA rather than
 the tag-object SHA.
 
-## v0.5.2 (unreleased)
+## v0.6.0 (unreleased)
+
+- Add the T1 native fixed-format signed-manifest and streamed image verifier
+  with SHA-256/low-S ECDSA P-256, compatibility/version rejection and bounded
+  private PSRAM allocation. Isolate vendored mbedTLS crypto from live TLS and
+  add real-crypto host rejection tests; service/boot integration remains pending.
+- Freeze T0 native/adapter contracts and bounded boot-window, watchdog,
+  recovery-work and resource policies with executable host checks. Preserve
+  legacy OTA Service roles; reserve new manifest/activation methods for Admin.
+  Integrated timing/resources and signed recovery remain implementation gates.
+- Initialize the local OPC UA server without waiting for a DHCP lease. An
+  addressless boot retains the lwIP wildcard listener; actual network-stack
+  initialization failure still stops OPC UA startup. OTA confirmation and
+  rollback remain unimplemented.
+- Add default-off T0 startup/stack measurement builds, bounded host collection
+  and reviewed RAM-probe execution pins. The optional single-sector Flash
+  experiment requires fresh backup/idle/blank guards; hardware execution is
+  not part of measurement-build preparation.
+- Prepare Signed OTA and Recoverable Boot: update roadmap status, contributor
+  scope, release plan and authoritative version source to `0.6.0`.
+- Preserve v0.5.2 evidence, production defaults and public contracts. This
+  preparation adds no signing, rollback or health-confirmation implementation.
+
+## v0.5.2
+
+Completion confirmed by the owner on 2026-10-24. Source baseline:
+`2a0bcd8027b37e176e3264f739ee70cfb105e64b`; no local release tag was present.
+The notes below describe implementation-time status. Historical unchecked
+acceptance and missing UaExpert evidence remain exceptions, not verified passes.
+
 
 - Development preparation: selects v0.5.2 as the first unreleased roadmap
   version, updates contributor instructions and adds the scoped

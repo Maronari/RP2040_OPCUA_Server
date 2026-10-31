@@ -27,7 +27,7 @@ CMake + Raspberry Pi Pico SDK, кросс-компиляция через `arm-n
 
 `cmake/` содержит только `cmake/firmware_version.cmake` — единственный
 авторитетный источник семантической версии
-(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.5.2`), упаковываемый в
+(`RP2_FIRMWARE_VERSION`, в настоящий момент `0.6.0`), упаковываемый в
 `RP2_FIRMWARE_VERSION_NUMBER` и используемый в `project(... VERSION ...)`,
 `pico_set_program_version()` и
 `DEVICE_PROFILE_FW_REVISION`/`OTA_APP_FIRMWARE_VERSION`. Вычисление
@@ -98,6 +98,7 @@ graph TD
 | --- | --- | --- |
 | `BUILD_LEGACY_EXAMPLES` | `OFF` (`CMakeLists.txt:42`) | Управляет включением устаревшего монолитного примера `w5x00_opc_dhcp`. |
 | `OTA_BUILD_BOOTLOADER` | `OFF` (`CMakeLists.txt:43`) | Управляет включением `bootloader/` + `ota_artifacts.cmake` + варианта приложения `_bank_a`, слинкованного с поддержкой OTA. |
+| `FIRMWARE_OTA_MEASUREMENT` | `OFF` (`cmake/ota_measurement.cmake`) | Только Debug/base/reference, без benchmark/bootloader/diagnostic и без ослабления security: добавляет serial-метки старта и watermark стеков. [Процедура T0](../releases/v0.6.0-measurements.md) описывает отдельные RAM-пробы и ограничения измерений. |
 | `W5X00_DIAGNOSTIC_NO_OPCUA` | `OFF` (`CMakeLists.txt:44`) | Собирает образ сетевой диагностики без open62541/модели OPC UA; исключает сервисы импорта идентичности/доверия; переименовывает цель приложения в `device_profile_basic_w5x00_diag`. Взаимно исключает `OTA_BUILD_BOOTLOADER` (`FATAL_ERROR`, если установлены оба, `CMakeLists.txt:46-50`). |
 | `FIRMWARE_BENCHMARK_PROFILE` | `off`; только `synthetic` для T4 | Явно выбирает тестовый воспроизводимый профиль v0.5.2. Он допустим только для `base` + reference RP2350/W5500, без bootloader/network-only/legacy целей; конфигурация из Flash и runtime-мутации отключаются. |
 | `FIRMWARE_BENCHMARK_CHANNELS`, `_RATE_HZ`, `_CLIENTS` | `1`, `1`, `1` | Оси T4: каналы `1/4/8/16`, частота `1/10` Гц и объявленная внешняя нагрузка `1/2/4` клиента. Число клиентов записывается в метаданные; клиенты запускаются инструментом T5. |

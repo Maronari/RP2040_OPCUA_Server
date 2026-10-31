@@ -114,6 +114,8 @@ set(PROJECT_NAME RP2-HAT-LWIP-C)
 # Set project informations
 project(${PROJECT_NAME} VERSION ${RP2_FIRMWARE_VERSION} LANGUAGES C CXX ASM)
 
+include(${CMAKE_SOURCE_DIR}/cmake/ota_measurement.cmake)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -230,6 +232,11 @@ if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
     add_subdirectory(opcua_model)
 endif()
 add_subdirectory(app)
+
+if(OTA_VERIFIER_RAM_PROBE)
+    target_compile_definitions(OTA_VERIFIER PRIVATE OTA_VERIFIER_MEASUREMENT=1)
+    include(${CMAKE_SOURCE_DIR}/static/tests/ota_verifier_ram_probe/CMakeLists.txt)
+endif()
 
 if(OTA_BUILD_BOOTLOADER AND EXISTS ${CMAKE_SOURCE_DIR}/bootloader/CMakeLists.txt)
     add_subdirectory(bootloader)

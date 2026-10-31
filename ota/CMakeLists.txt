@@ -1,3 +1,5 @@
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/verifier.cmake)
+
 add_library(OTA_SHARED STATIC
         src/ota_flash.c
         src/ota_state.c

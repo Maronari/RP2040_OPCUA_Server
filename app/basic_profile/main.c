@@ -86,6 +86,7 @@
 #include "services/benchmark_timing.h"
 #include "services/resource_exhaustion_test.h"
 #include "services/network_manager.h"
+#include "services/ota_measurement.h"
 #ifndef W5X00_DIAGNOSTIC_NO_OPCUA
 #include "services/security_identity_import_service.h"
 #include "services/security_service.h"
@@ -895,6 +896,8 @@ static void app_init_task(void *argument)
     const device_profile_config_t *config = NULL;
     (void)argument;
 
+    OTA_MEASUREMENT_EVENT("scheduler_running", "ok");
+
 #if RP2_RESOURCE_EXHAUSTION_TEST_ENABLED
     {
         resource_exhaustion_test_result_t result;
@@ -924,10 +927,12 @@ static void app_init_task(void *argument)
 
     if (!flash_operation_coordinator_init())
     {
+        OTA_MEASUREMENT_EVENT("flash_coordinator", "failed");
         printf("[APP]\t\tFlash operation coordinator init failed\n");
         fflush(stdout);
         app_fault_loop(true, 250u);
     }
+    OTA_MEASUREMENT_EVENT("flash_coordinator", "ok");
 
     /* The industrial pack seeds every AI/AO/DI/DO/UIC channel the board
      * provides; the reference pack seeds the single internal-temperature
@@ -939,10 +944,12 @@ static void app_init_task(void *argument)
     if (!config_service_init(&g_basic_profile))
 #endif
     {
+        OTA_MEASUREMENT_EVENT("config_init", "failed");
         printf("[APP]\t\tConfiguration state allocation failed\n");
         fflush(stdout);
         app_fault_loop(true, 250u);
     }
+    OTA_MEASUREMENT_EVENT("config_init", "ok");
     config = config_service_get();
 
 #if RP2_BENCHMARK_PROFILE_ENABLED
@@ -963,10 +970,12 @@ static void app_init_task(void *argument)
 #endif
     if (!channel_manager_init())
     {
+        OTA_MEASUREMENT_EVENT("channel_init", "failed");
         printf("[APP]\t\tChannel registry PSRAM allocation failed\n");
         fflush(stdout);
         app_fault_loop(true, 250u);
     }
+    OTA_MEASUREMENT_EVENT("channel_init", "ok");
 #if RP2_BENCHMARK_PROFILE_ENABLED
     benchmark_timing_set_control(app_benchmark_timing_control_poll, NULL);
     benchmark_timing_set_output(app_benchmark_timing_output, NULL);
@@ -976,7 +985,12 @@ static void app_init_task(void *argument)
 
     if (!network_manager_init())
     {
+        OTA_MEASUREMENT_EVENT("network_init", "failed");
         printf("[APP]\t\tNetwork manager init failed\n");
+    }
+    else
+    {
+        OTA_MEASUREMENT_EVENT("network_init", "ok");
     }
 
     /* Must precede sensor_manager_init(): that call activates the running
@@ -996,23 +1010,32 @@ static void app_init_task(void *argument)
 
     if (!history_service_init())
     {
+        OTA_MEASUREMENT_EVENT("history_init", "failed");
         printf("[APP]\t\tHistory service PSRAM allocation failed\n");
         fflush(stdout);
         app_fault_loop(true, 250u);
     }
+    OTA_MEASUREMENT_EVENT("history_init", "ok");
 
 #ifndef W5X00_DIAGNOSTIC_NO_OPCUA
     if (!security_service_init())
     {
+        OTA_MEASUREMENT_EVENT("security_init", "failed");
         printf("[APP]\t\tSecurity service init failed\n");
     }
     else if (!provision_device_identity_if_configured())
     {
+        OTA_MEASUREMENT_EVENT("security_init", "failed");
         printf("[APP]\t\tProvisioned device identity could not be stored\n");
     }
     else if (!provision_trust_list_if_configured())
     {
+        OTA_MEASUREMENT_EVENT("security_init", "failed");
         printf("[APP]\t\tProvisioned trust list could not be stored\n");
+    }
+    else
+    {
+        OTA_MEASUREMENT_EVENT("security_init", "ok");
     }
 #endif
 
@@ -1095,6 +1118,10 @@ static void app_init_task(void *argument)
     }
 
     print_heap_usage("Init task complete");
+    OTA_MEASUREMENT_STACK_EVENT("init_stack",
+                                (uint64_t)uxTaskGetStackHighWaterMark(NULL) *
+                                    sizeof(StackType_t));
+    OTA_MEASUREMENT_EVENT("init_complete", "ok");
     app_acknowledge_ota_boot_if_needed();
     vTaskDelete(NULL);
 }
@@ -1123,12 +1150,17 @@ static void app_init_task(void *argument)
 int main(void)
 {
     TaskHandle_t init_task_handle = NULL;
+#if FIRMWARE_OTA_MEASUREMENT
+    const uint64_t main_enter_us = time_us_64();
+#endif
 
     benchmark_timing_note_boot_started();
     platform_clock_init();
     led_driver_init(DEVICE_PROFILE_LED_PIN);
     stdio_init_all();
     app_wait_for_usb_console();
+    OTA_MEASUREMENT_EVENT_AT("main_enter", "ok", main_enter_us);
+    OTA_MEASUREMENT_EVENT("console_ready", "ok");
     app_init_psram_allocator();
     app_install_exception_handlers();
 #if !RP2_RESOURCE_EXHAUSTION_TEST_ENABLED

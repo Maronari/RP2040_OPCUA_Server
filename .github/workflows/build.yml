@@ -47,6 +47,12 @@ jobs:
             --allow-v052-additions \
             --output build/reports/opcua_public_contract.json
 
+      - name: Verify public OPC UA contract against v0.5.2 source baseline
+        run: |
+          python3 static/tools/verify_opcua_public_contract.py \
+            --baseline 2a0bcd8027b37e176e3264f739ee70cfb105e64b \
+            --output build/reports/opcua_v052_public_contract.json
+
       - name: Prove host-test failures propagate
         run: |
           set +e
@@ -92,6 +98,7 @@ jobs:
           name: host-contract-evidence
           path: |
             build/reports/opcua_public_contract.json
+            build/reports/opcua_v052_public_contract.json
             build/reports/v0.5.2-baseline.md
             static/benchmarks/v0.5.2/baseline.json
             static/benchmarks/v0.5.2/thresholds.json

@@ -11,16 +11,38 @@ are **compile/mock validated, not hardware qualified**; release publication
 does not complete the missing checks recorded in
 [the v0.5.1 release plan](docs/releases/v0.5.1.md).
 
-The current development target is `v0.5.2` (Resource Instrumentation and
-Benchmark Suite). The development version source is `0.5.2`; no `v0.5.2`
-release is claimed. The representative hardware baseline records two passing
-profiles built from the same clean source commit, including the maximum-load
-`test-none` corner, and 190 explicit `not-run` cells. The required Write,
-correlated Event, timing and cold-boot evidence is recorded; manual UaExpert
-inspection keeps release acceptance open. See
-[the measured baseline](docs/releases/v0.5.2-baseline.md) and
-[the implementation plan](docs/releases/v0.5.2.md) for existing instrumentation,
-bounded measurement work, reproducible profiles and acceptance gates.
+The current development target is `v0.6.0` (Signed OTA and Recoverable Boot).
+The authoritative development version is `0.6.0`. See
+[the implementation plan](docs/releases/v0.6.0.md) for scope, ordered work and
+verification gates; signed OTA and recoverable boot are not implemented by this
+preparation.
+
+The [T0 design freeze](docs/releases/v0.6.0-t0-freeze.md) fixes the signed-OTA
+contracts and checked engineering budgets. Integrated signature, watchdog,
+confirmation and recovery validation remains required before release.
+
+The [T1 native verifier](docs/releases/v0.6.0-t1-verification.md) adds bounded
+signed-manifest/image verification using isolated vendored mbedTLS primitives.
+OTA service activation and recoverable boot integration remain pending.
+
+The opt-in [T0 measurement builds and collection procedure](docs/releases/v0.6.0-measurements.md)
+cover startup timestamps, stack observations and a separately guarded RAM
+Flash experiment. Preparation/build success does not establish hardware results.
+
+Production OPC UA startup does not require a DHCP lease or an Ethernet cable. The
+network interface must initialize successfully; an addressless boot uses the
+existing wildcard TCP listener so clients can connect when an address arrives.
+This startup behavior is a prerequisite for OTA readiness measurements, not
+an implemented OTA confirmation policy.
+Explicit synthetic benchmark builds retain their previous lease-inclusive
+startup timing.
+
+The owner confirmed completion of `v0.5.2` on 2026-10-24, with source baseline
+`2a0bcd8027b37e176e3264f739ee70cfb105e64b`. No local `v0.5.2` tag was present.
+Its [measured baseline](docs/releases/v0.5.2-baseline.md) retains two passing
+reference-board profiles and 190 explicit `not-run` cells. Historical manual
+UaExpert evidence remains unrecorded; completion does not assert that check passed.
+See [the v0.5.2 plan](docs/releases/v0.5.2.md) and verification report for details.
 The T3 resource subtree `Device.Diagnostics.OpcUa` adds read-only
 service/admin diagnostics for sessions, secure channels, subscriptions,
 monitored items, Publish requests, event queues, ServiceFault rejections and

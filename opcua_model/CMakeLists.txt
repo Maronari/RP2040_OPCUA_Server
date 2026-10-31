@@ -27,6 +27,7 @@ target_include_directories(OPCUA_DEVICE_MODEL PUBLIC
 target_compile_definitions(OPCUA_DEVICE_MODEL PRIVATE
         MODEL_FIRMWARE_DRIVER_PACK_NAME=\"${FIRMWARE_DRIVER_PACK}\"
         )
+ota_measurement_apply_to_target(OPCUA_DEVICE_MODEL)
 
 target_include_directories(OPCUA_DEVICE_MODEL PRIVATE
         ${PICO_SDK_PATH}/lib/mbedtls/tests/src

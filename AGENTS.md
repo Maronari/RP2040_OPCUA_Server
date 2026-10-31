@@ -13,9 +13,9 @@ maintenance.
 ## Scope and release discipline
 
 - Work only on the first unreleased roadmap version. The current target is
-  **v0.5.2 — Resource Instrumentation and Benchmark Suite**. Follow
-  `docs/releases/v0.5.2.md`; released `v0.5.1` at
-  `2881230c2ccbb98b8701730c4de930dc95da30fc` is the compatibility baseline.
+  **v0.6.0 — Signed OTA and Recoverable Boot**. Follow
+  `docs/releases/v0.6.0.md`; owner-confirmed completed `v0.5.2` at
+  `2a0bcd8027b37e176e3264f739ee70cfb105e64b` is the compatibility baseline.
 - Do not pull features, persistence, refactors, or abstractions from later
   releases into the current release. Do not change release scope or `ROADMAP.md` unless explicitly requested. If the requested work is outside the first unreleased release, report it and stop before implementation.
 - Stop when the current release acceptance criteria are met. Do not add
@@ -24,6 +24,9 @@ maintenance.
 - Preserve existing public NodeIds, BrowseNames, method signatures,
   configuration fields, and behavior unless the roadmap includes a documented
   deprecation and migration path.
+  The v0.6.0 roadmap explicitly approves rejecting CRC-only unsigned OTA
+  activation. Preserve method signatures and identifiers; follow the signed
+  client and initial USB/SWD migration in `docs/releases/v0.6.0.md`.
 - When releasing a version, report the roadmap checklist status and release
   commit SHA in the final report without modifying `ROADMAP.md`.
 
@@ -90,15 +93,12 @@ Delegation rules:
 8. Subagent work does not expand authorization or roadmap scope. Preserve
    unrelated user changes shared through the working tree.
 
-For v0.5.2, `code-mapper` maps existing counters, allocators, task state,
-server diagnostics and tools before implementation. `embedded-systems`
-owns bounded native/service instrumentation and sampling timing;
-`iot-engineer` owns OPC UA counter adapters, additive diagnostic contracts
-and automated client verification; `build-engineer` owns ELF/map reporting,
-benchmark build profiles, version propagation and blocking CI artifact/
-regression gates. `code-reviewer` reviews the integrated change and evidence.
-Keep write ownership disjoint and follow the task order in
-`docs/releases/v0.5.2.md`.
+For v0.6.0, `code-mapper` maps OTA staging, Flash layout, persistent boot
+state, boot handoff, acknowledgement and existing tools/tests before changes.
+`embedded-systems` owns native verification, boot state and fallback/health
+confirmation; `iot-engineer` owns OPC UA adapters and client verification;
+`build-engineer` owns signing/packaging, layout/build integration and CI gates.
+Keep write boundaries disjoint and follow `docs/releases/v0.6.0.md`.
 
 ## Architecture boundaries
 
@@ -133,46 +133,48 @@ Keep write ownership disjoint and follow the task order in
 - Use a single version source for runtime firmware revision, OTA metadata,
   configuration export, artifacts, tags, and documentation.
 
-## v0.5.2 constraints
+## v0.6.0 constraints
 
-- Use released tag `v0.5.1` at
-  `2881230c2ccbb98b8701730c4de930dc95da30fc` as the source/public-contract
-  baseline. Do not reopen its driver backlog during benchmark work.
-- Follow `docs/releases/v0.5.2.md`. Reuse `diag_service`, the PSRAM
-  allocator, existing task statistics, generic channels, the synthetic
-  driver and verification tools before adding instrumentation.
-- Instrumentation must have bounded memory, collection time and output.
-  Specify counter units, lifetime, overflow, synchronization and unavailable
-  data semantics. Do not represent unsupported or missing metrics as zero.
-- Keep internal SRAM, external PSRAM and external Flash separate in reports.
-  Separate static section sizes, current/peak runtime use and task stack
-  high-water marks; never present layout estimates as runtime measurements.
-- Benchmark profiles use synthetic sources and explicit channel/security/
-  client/load settings. Preserve existing preset IDs and `dev_benchmark`
-  behavior; it currently uses physical inputs, not synthetic channels.
-- Security-off firmware is restricted to an explicit test profile. Preserve
-  production security, authorization and resource capacities by default.
-- Add only the resource diagnostic nodes required by this release, preserving
-  existing public NodeIds, BrowseNames, types and units. Board health/fault
-  aggregation remains v0.6.2 scope; Modbus and signed OTA remain later scope.
-- `config_channel_driver_id_t` (`services/include/services/driver_catalog.h`)
-  is persisted in Flash and the config-wire format: append new driver IDs
-  only, never renumber or reuse existing ones. `driver_catalog_resource_type_t`
-  is not persisted and may be extended freely as new bus/resource claim types
-  are needed.
-- `RP2350_INDUSTRIAL_MVP_V1`'s schematic is near-final but may still change.
-  Isolate each industrial driver's pin/bus/resource-index assignment into one
-  small board-binding unit, separate from register/protocol logic.
-- Industrial drivers inherited from v0.5.1 remain pre-hardware: do not claim
-  electrical, timing, calibration or real-device validation. `self_test` must
-  distinguish "supported and passed" from "supported but hardware
-  unavailable/not present" from "failed" — never report absent hardware as a
-  passed test or a board fault. Label industrial verification artifacts
-  **compile/mock validated, not hardware qualified** until section 5.2's
-  hardware qualification is actually performed.
-- The reference RP2350 + W5500 profile remains the hardware used for release
-  builds and runnable verification; industrial drivers must not probe or
-  initialize on a reference-board boot.
+- Preserve the v0.5.2 public/configuration contract and benchmark evidence.
+  Do not renumber persisted driver/preset IDs or existing public NodeIds.
+- Preserve synthetic benchmark profiles and physical `dev_benchmark` behavior.
+  Plaintext security remains restricted to explicit test profiles; production
+  security, authorization and resource capacities remain unchanged by default.
+- Metrics retain bounded collection/output, units, lifetime, overflow,
+  synchronization and unavailable-data semantics. Never report missing data as
+  zero or present static layout estimates as runtime measurements. Keep SRAM,
+  PSRAM, Flash, static sections, runtime peaks and stack watermarks separate.
+- `config_channel_driver_id_t` is persisted: append new IDs only, never reuse
+  or renumber. Industrial self-test must distinguish passed, unavailable/not
+  present and failed; absent hardware is neither a passed test nor a board fault.
+- Reuse existing OTA state, Flash coordination, staging, mbedTLS and tools.
+  Freeze manifest serialization, signature coverage, trusted-key provisioning,
+  compatibility identity, anti-rollback policy and recovery layout before coding.
+- Verify SHA-256 and ECDSA P-256 before bootability. Never expose signing
+  private keys in firmware, configuration export, logs or committed artifacts.
+- Preserve a bootable known-good image. A failed-state flag alone is not rollback.
+  Bound attempts, confirmation time, retries, buffers and recovery operations.
+- Scope health confirmation to the v0.6.0 boot window. General task supervision,
+  watchdog policy and board-health aggregation remain v0.6.2 work; security and
+  provisioning hardening outside OTA remains v0.6.1 work.
+- Reference-board runnable verification remains RP2350 + W5500. Industrial
+  drivers must not initialize on reference boot. Industrial artifacts remain
+  **compile/mock validated, not hardware qualified** until ROADMAP section 5.2.
+- Keep board pin/bus bindings separate from protocol logic. Hardware-profile
+  and board-revision compatibility must be explicit, never inferred from MCU alone.
+- Signed OTA is not a claim of hardware secure boot or physical tamper resistance.
+  Record key/recovery trust assumptions and development override behavior.
+- Follow the owner-approved operational decisions in `docs/releases/v0.6.0.md`:
+  user-requested upload and separate activation, one candidate launch attempt,
+  measured short confirmation window, OTA-only watchdog recovery, compatible
+  configuration rollback and blocked persistent mutations while unconfirmed.
+  Do not add automatic update/retry policy or fixed 60-second/three-attempt defaults.
+- Signing runs only in a manually approved protected GitHub Environment for
+  protected release tags from the main branch with mandatory checks passed.
+  Keep the private key in an environment secret, available only to the signing
+  job; never grant it to PR or ordinary build jobs or accept arbitrary binaries
+  for signing. Repository environment/ruleset configuration requires actual
+  platform configuration and evidence; workflow YAML alone does not prove it.
 
 ## Build and verification
 
@@ -191,15 +193,10 @@ For every feature:
 
 - Add positive, negative, authorization, illegal-state, and resource-limit tests.
   Add reboot/power-loss tests when persistence is involved.
-- For v0.5.2, follow the phased gates in `docs/releases/v0.5.2.md`: host
-  suites and blocking first-party cppcheck, reference Debug build, retained
-  industrial compile/mock build, deterministic report/profile tests, and
-  automated client plus UaExpert checks when diagnostic nodes are added.
-  Commit or attach benchmark JSON and a human-readable baseline with the
-  exact firmware/profile/toolchain/test setup and measured results. CI must
-  fail missing/malformed evidence and implemented regression thresholds;
-  hardware metrics require an actual board runner and cannot be inferred
-  from host/mock tests.
+- For v0.6.0, follow `docs/releases/v0.6.0.md`: host/mock and blocking
+  cppcheck, reference Debug and retained industrial builds, signature and
+  compatibility rejection, power-loss fault injection, real fallback boot and
+  health-confirmation tests. Hardware results require an actual board.
 - Verification scripts must exit nonzero on failure. CI release gates must
   actually fail; do not use `continue-on-error`, unconditional `|| true`, or
   smoke tests that assert no behavior.
@@ -208,7 +205,7 @@ For every feature:
 - Confirm affected behavior with an automated open62541/asyncua client and
   UaExpert when public OPC UA behavior is touched.
   Compare the public contract and exported NodeSet/inventory against the
-  released v0.5.1 baseline (`2881230c2ccbb98b8701730c4de930dc95da30fc`) and
+  v0.5.2 source baseline (`2a0bcd8027b37e176e3264f739ee70cfb105e64b`) and
   document every intended addition.
 - Record artifact sizes and memory/stack impact. Update public NodeId/schema
   documentation, README, release notes, and tools when affected.

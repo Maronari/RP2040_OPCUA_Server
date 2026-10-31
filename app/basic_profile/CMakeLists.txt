@@ -144,11 +144,14 @@ function(add_device_profile_target target_name use_ota_linker)
 
     target_link_libraries(${target_name} PRIVATE
             OTA_SHARED
+            OTA_VERIFIER
             OTA_FLASH_BACKEND_APPLICATION
             FIRMWARE_DRIVERS
             FIRMWARE_SERVICES
             PSRAM_ALLOCATOR
             )
+    # T1 link proof: retain the native verifier before T3 service integration.
+    target_link_options(${target_name} PRIVATE "LINKER:--undefined=ota_verify_candidate")
 
     if(NOT W5X00_DIAGNOSTIC_NO_OPCUA)
         target_link_libraries(${target_name} PRIVATE
@@ -181,6 +184,8 @@ function(add_device_profile_target target_name use_ota_linker)
             $<$<BOOL:${W5X00_DIAGNOSTIC_NO_OPCUA}>:W5X00_DIAGNOSTIC_NO_OPCUA>
             $<$<BOOL:${W5X00_DIAGNOSTIC_NO_OPCUA}>:W5X00_LWIP_ALL_DEBUG>
             )
+
+    ota_measurement_apply_to_target(${target_name})
 endfunction()
 
 add_device_profile_target(${DEVICE_PROFILE_TARGET_NAME} FALSE)
